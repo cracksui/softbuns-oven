@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.1"
+M.version = "0.9.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -42,6 +42,7 @@ M.defaults = {
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
   showEmpty    = true,       -- list empty equipment slots in eq
+  showDonation = true,       -- include empty donation-only slots (amulets, face, aura)
   eqStats      = true,       -- AR / affects column in eq, from items you have looked at
   barLines     = 1,
   barFont      = 0,          -- 0 = same size as the main window
@@ -544,7 +545,7 @@ local function renderSlots(out, slots, width, withStats)
     local pre = { { r.empty and C.dim or C.slot, pad(label, slotW) }, { C.dim, " │ " } }
     local segs
     if r.empty then
-      segs = r.donation and { { C.dim, "empty  (donation)" } } or { { C.flag, "empty" } }
+      segs = r.donation and { { C.dim, "empty · donation-only slot" } } or { { C.flag, "empty" } }
     else
       segs = itemSegs(r[2])
     end
@@ -659,6 +660,7 @@ function M.formatters.eq(raw, width)
     local worn = bySlot[sl.key] or {}
     for _, r in ipairs(worn) do rows[#rows + 1] = r end
     local applies = M.cfg.showEmpty and not sl.extra
+      and (sl.only ~= "donation" or M.cfg.showDonation)
       and (sl.only ~= "tail" or hasTail) and (sl.only ~= "wings" or hasWings)
     if applies then
       for _ = #worn + 1, (sl.n or 1) do
@@ -2003,6 +2005,7 @@ function M.help()
   <khaki>sbo items<reset>                 list remembered items
   <khaki>sbo eqstats on|off<reset>        AR and affects of each worn item in eq (look at an item once to fill it in)
   <khaki>sbo empty on|off<reset>          show empty equipment slots in eq
+  <khaki>sbo donation on|off<reset>       show / hide empty donation-only slots (amulet, face, aura)
   <khaki>sbo slots short|full<reset>      short slot names in eq tables (finger, neck…) or the game's full ones
   <khaki>sbo helpwindow on|off<reset>     game help pages (and this list) in their own window
   <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
@@ -2103,7 +2106,8 @@ function M.command(args)
   args = trim(args or "")
   local a, b = args:match("^(%S*)%s*(.-)$")
   a = a:lower()
-  local onoff = (b == "on" and true) or (b == "off" and false) or nil
+  local onoff  -- (careful: `x and false or nil` is always nil in Lua)
+  if b == "on" then onoff = true elseif b == "off" then onoff = false end
   if a == "" or a == "help" then return M.help()
   elseif a == "on" or a == "off" then M.cfg.enabled = (a == "on"); say("capturing " .. a)
   elseif a == "main" and (b == "replace" or b == "keep" or b == "off") then
@@ -2149,6 +2153,9 @@ function M.command(args)
     M.cfg.slotNames = b; say("slot names: " .. b)
   elseif a == "eqstats" and onoff ~= nil then
     M.cfg.eqStats = onoff; say("item stats column in eq: " .. b)
+  elseif a == "donation" and onoff ~= nil then
+    M.cfg.showDonation = onoff
+    say("empty donation-only slots (amulet, face, aura) " .. (onoff and "shown" or "hidden") .. " in eq")
   elseif a == "empty" and onoff ~= nil then
     M.cfg.showEmpty = onoff; say("empty slots in eq: " .. b)
   elseif a == "autocompare" and onoff ~= nil then M.cfg.autocompare = onoff; say("auto-compare " .. b)

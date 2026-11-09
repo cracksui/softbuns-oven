@@ -121,6 +121,7 @@ sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
 sbo eqstats on|off        AR / affects column in eq (look at an item once to fill it in)
 sbo empty on|off          show empty slots in eq
+sbo donation on|off       show / hide empty donation-only slots (amulet, face, aura)
 sbo slots short|full      short slot names in eq tables, or the game's full ones
 sbo helpwindow on|off     game help pages (and the sbo command list) in their own window
 sbo bar on|off            prompt bar
