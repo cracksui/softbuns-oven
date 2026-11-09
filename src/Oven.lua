@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.7.0"
+M.version = "0.7.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -38,6 +38,7 @@ M.defaults = {
   autocompare  = true,       -- compare looked-at items with what you wear in that slot
   bar          = false,      -- move the prompt into a fixed bar at the bottom
   barMode      = "gauges",   -- gauges | raw
+  barWidth     = 10,         -- length of each gauge in the prompt bar
   barLines     = 1,
   barFont      = 0,          -- 0 = same size as the main window
 }
@@ -1515,20 +1516,23 @@ function M.drawBar()
   local c, live = M.cfg.char or {}, M.live or {}
   lvl = lvl or live.level or c.level
   tnl = tnl or live.tnl or c.tnl
-  if lvl then segs[#segs + 1] = { C.title, "L" .. lvl } end
+  -- level / tnl go last: HP/SP/ST matter more
+  local tail = {}
+  if lvl then tail[#tail + 1] = { C.title, "L" .. lvl } end
   if tnl then
-    segs[#segs + 1] = { C.dim, "  tnl " }; segs[#segs + 1] = { C.plus, commaNum(tnl) }
+    tail[#tail + 1] = { C.dim, (lvl and "  " or "") .. "tnl " }; tail[#tail + 1] = { C.plus, commaNum(tnl) }
   end
-  if lvl or tnl then segs[#segs + 1] = { C.dim, "   " } end
   p.vals = pools
-  local fixed = segLen(segs) + ulen(p.rest) + 2
+  -- gauges are a fixed width (sbo bar width), shrunk only if the bar is too narrow
+  local fixed = segLen(segs) + segLen(tail) + ulen(p.rest) + 2
   for _, v in ipairs(p.vals) do
     local mx = M.cfg.maxes[v[1]]
-    fixed = fixed + #v[1] + 2 + #(tostring(v[2]) .. "/" .. tostring(mx or v[2])) + 4
+    fixed = fixed + #v[1] + 2 + #(tostring(v[2]) .. "/" .. tostring(mx or v[2])) + 3
   end
   local okC, cols = pcall(getColumnCount, win)
   cols = (okC and tonumber(cols)) or 100
-  local gw = math.max(5, math.min(20, math.floor((cols - fixed) / math.max(1, #p.vals))))
+  local room = math.floor((cols - fixed) / math.max(1, #p.vals))
+  local gw = math.max(3, math.min(M.cfg.barWidth or 10, room))
   for _, v in ipairs(p.vals) do
     local k, cur = v[1], v[2]
     local mx = M.cfg.maxes[k]
@@ -1536,9 +1540,10 @@ function M.drawBar()
     segs[#segs + 1] = { barColors[k] or C.key, k:upper() .. " " }
     addAll(segs, M.gauge(cur, mx, gw))
     segs[#segs + 1] = { C.num, " " .. cur }
-    segs[#segs + 1] = { C.dim, "/" .. mx .. "    " }
+    segs[#segs + 1] = { C.dim, "/" .. mx .. "   " }
   end
-  if p.rest ~= "" then segs[#segs + 1] = { C.text, p.rest } end
+  addAll(segs, tail)
+  if p.rest ~= "" then segs[#segs + 1] = { C.text, "   " .. p.rest } end
   for _, sg in ipairs(segs) do
     local col = sg[1]
     if color_table and not color_table[col] then col = "white" end
@@ -1751,6 +1756,7 @@ function M.help()
   <khaki>sbo items<reset>                 list remembered items
   <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
   <khaki>sbo bar gauges|raw<reset>        prompt bar as gauges, or the prompt exactly as the game sends it
+  <khaki>sbo bar width [n]<reset>         length of each gauge (default 10)
   <khaki>sbo bar lines [n]<reset> / <khaki>font [n]<reset>  prompt bar height / font size
   <khaki>sbo update<reset>                get the latest version from GitHub (settings are kept)
   <khaki>sbo update force<reset>          reinstall the latest version even if you already have it
@@ -1895,6 +1901,7 @@ function M.command(args)
     local sub, val = b:match("^(%S*)%s*(.-)$")
     if sub == "on" or sub == "off" then M.cfg.bar = (sub == "on"); M.showBar(M.cfg.bar); say("prompt bar " .. sub)
     elseif sub == "raw" or sub == "gauges" then M.cfg.barMode = sub; M.drawBar(); say("prompt bar mode " .. sub)
+    elseif sub == "width" and tonumber(val) then M.cfg.barWidth = tonumber(val); M.drawBar(); say("gauge width " .. val)
     elseif sub == "lines" and tonumber(val) then M.cfg.barLines = tonumber(val); M.layoutBar(); say("prompt bar lines " .. val)
     elseif sub == "font" and tonumber(val) then
       M.cfg.barFont = tonumber(val); if M.bar then M.bar:setFontSize(M.cfg.barFont) end; M.layoutBar(); say("prompt bar font " .. val)

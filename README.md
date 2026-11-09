@@ -120,6 +120,7 @@ sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
 sbo bar on|off            prompt bar
 sbo bar gauges|raw        prompt bar as gauges, or the prompt exactly as the game sends it
+sbo bar width [n]         length of each gauge (default 10)
 sbo bar lines [n]         prompt bar height
 sbo bar font [n]          prompt bar font size (0 = same as the main window)
 sbo update                get the newest version
