@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.0"
+M.version = "0.9.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -670,18 +670,33 @@ function M.formatters.eq(raw, width)
   renderSlots(out, rows, width, M.cfg.eqStats)
 
   if #ar > 0 then
-    -- body-location totals (each is the sum of everything protecting that location)
+    -- body-location totals as a small table (each is the sum of everything protecting that location)
     local total = 0
     for _, a in ipairs(ar) do total = total + (tonumber(a[2]) or 0) end
-    blank(out)
-    local segs = { { C.num, tostring(total) }, { C.dim, "  " } }
-    for n, a in ipairs(ar) do
-      if n > 1 then segs[#segs + 1] = { C.dim, " · " } end
-      segs[#segs + 1] = { C.slot, a[1]:lower() .. " " }
-      segs[#segs + 1] = { C.num, tostring(a[2]) }
-      if tonumber(a[3]) then segs[#segs + 1] = { C.dim, " %-" .. string.format("%.2f", tonumber(a[3])) } end
+    local cw = 8
+    for _, a in ipairs(ar) do cw = math.max(cw, ulen(a[1]) + 2) end
+    local function cell(txt) return string.format("%" .. cw .. "s", txt) end
+    local head = { { C.title, pad("Armor", 10) } }
+    local arRow = { { C.key, pad("AR", 10) } }
+    local dmgRow = { { C.key, pad("damage", 10) } }
+    for _, a in ipairs(ar) do
+      head[#head + 1] = { C.slot, cell(a[1]:lower()) }
+      arRow[#arRow + 1] = { C.num, cell(tostring(a[2])) }
+      dmgRow[#dmgRow + 1] = { C.text, cell(tonumber(a[3]) and ("%-" .. string.format("%.2f", tonumber(a[3]))) or "") }
     end
-    kvLine(out, "AR", 2, segs, width)
+    head[#head + 1] = { C.dim, cell("total") }
+    arRow[#arRow + 1] = { C.num, cell(tostring(total)) }
+    blank(out)
+    if 10 + cw * (#ar + 1) <= width then
+      out[#out + 1] = head; out[#out + 1] = arRow; out[#out + 1] = dmgRow
+    else
+      -- too narrow for columns: one location per line
+      for _, a in ipairs(ar) do
+        out[#out + 1] = { { C.slot, pad(a[1]:lower(), 10) }, { C.num, string.format("%3s", a[2]) },
+          { C.text, tonumber(a[3]) and ("   %-" .. string.format("%.2f", tonumber(a[3])) .. " damage") or "" } }
+      end
+      out[#out + 1] = { { C.dim, pad("total", 10) }, { C.num, string.format("%3s", total) } }
+    end
   end
 
   if #misc > 0 then
