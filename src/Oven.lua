@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.7.1"
+M.version = "0.7.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -683,25 +683,50 @@ function M.parseItem(raw)
   return it
 end
 
+-- creature look / examine:
+--   description, hair, race & height, posture, distance, health, then <slot> lines
+local healthColor = { perfect = "plus", excellent = "plus", good = "plus", fair = "gold", poor = "minus", awful = "minus" }
 function M.formatMob(raw, width)
-  local desc, slots, after, who = {}, {}, {}, nil
-  local phase = "desc"
+  local desc, slots, after, facts = {}, {}, {}, {}
+  local name
+  local seenSlot = false
   for _, l in ipairs(raw) do
     local t = trim(l)
     local slot, item = parseSlot(l)
-    local w = t:match("^(.-) is using:$")
-    if w then who = w; phase = "eq"
-    elseif slot then slots[#slots + 1] = { slot, item }; phase = "eq"
-    elseif phase == "desc" then desc[#desc + 1] = t
-    elseif t ~= "" then after[#after + 1] = t end
+    local hn, health = t:match("^(.-) is in (.-) health%.?$")
+    local dist, dn, range = t:match("^You are (%d+) distance away from (.-) and your attack range is (%d+)%.?$")
+    local race, height = t:match("^%S+ is an? (.-) approximately (.-) tall%.?$")
+    local hair = t:match("^.-'s hair .-, and is:%s*(.-)%.?$")
+    local pn, posture = t:match("^(.-) is (%a+)%.$")
+    if slot then slots[#slots + 1] = { slot, item }; seenSlot = true
+    elseif seenSlot then if t ~= "" then after[#after + 1] = t end
+    elseif hn then name = name or hn
+      local word = health:lower():match("(%a+)%s*$") or ""
+      local col = healthColor[word] == "plus" and C.plus or (healthColor[word] == "minus" and C.minus or "gold")
+      facts.health = { { col, health } }
+    elseif dist then name = dn
+      facts.distance = { { C.num, dist }, { C.dim, "  (your attack range " .. range .. ")" } }
+    elseif race then facts.race = { { C.item, race }, { C.dim, ", " .. height } }
+    elseif hair then facts.hair = { { C.item, hair } }
+    elseif pn and #t < 40 then facts.posture = { { C.item, posture } }
+    else desc[#desc + 1] = t end
   end
-  if #slots == 0 then return nil end
+  if #slots == 0 and not facts.health and not facts.distance then return nil end
   local out = {}
+  local cells = {}
+  if facts.health then cells[#cells + 1] = { "Health", facts.health } end
+  if facts.posture then cells[#cells + 1] = { "Status", facts.posture } end
+  if facts.distance then cells[#cells + 1] = { "Distance", facts.distance } end
+  grid(out, cells, width)
+  if facts.race then kvLine(out, "Race", 8, facts.race, width) end
+  if facts.hair then kvLine(out, "Hair", 8, facts.hair, width) end
   paragraphs(out, desc, width)
-  subhead(out, (who or "Equipment") .. " is using")
-  renderSlots(out, slots, width)
+  if #slots > 0 then
+    subhead(out, "Equipment")
+    renderSlots(out, slots, width)
+  end
   if #after > 0 then blank(out); for _, o in ipairs(after) do prose(out, { o }, width) end end
-  return out, who and (who:gsub("^%l", string.upper))
+  return out, name
 end
 
 function M.formatters.item(raw, width)
