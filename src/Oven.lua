@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.3"
+M.version = "0.9.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1413,9 +1413,13 @@ function M.helpPage(title, lines, fmt)
     font, size, table.concat(html, "\n"))
   M.helpLabel:resize(nil, 1)   -- collapse first so the panel scrolls back to the top
   M.helpLabel:rawEcho(doc)
+  -- wrapped rows, and the label's real line height (rich text spaces lines wider than the font)
   local rows = 0
   for _, p in ipairs(plainCount) do rows = rows + math.max(1, math.ceil(ulen(p) / cols)) end
-  M.helpLabel:resize(nil, rows * ch + 24)
+  local lineH = ch * 1.25
+  local okH, _, hintH = pcall(function() return M.helpLabel:getSizeHint() end)
+  if okH and tonumber(hintH) and hintH > 0 then lineH = math.max(lineH, hintH / #plainCount) end
+  M.helpLabel:resize(nil, math.ceil(rows * lineH + 3 * lineH + 12))   -- a little spare at the bottom
 end
 
 function M.showHelp(topic, dechoLines)
@@ -1886,6 +1890,18 @@ end
 function M.onLine()
   local cap = M.cap
   if not cap and not M.cfg.bar then return end
+  -- the game's pager: "[C]ontinue [R]edraw [B]ack [E]xit:"
+  if line:match("^%s*%[C%]ontinue") then
+    if cap and cap.kind == "help" and (cap.pages or 1) < 30 then
+      -- keep reading the help page into the window: answer the pager ourselves
+      cap.pages = (cap.pages or 1) + 1
+      if cap.gag then deleteLine() end
+      if cap.maxTimer then killTimer(cap.maxTimer) end
+      cap.maxTimer = tempTimer(M.cfg.maxTime, function() M.finish("maxtime") end)
+      send("c", false)
+    end
+    return   -- otherwise leave it in the main window so you can answer it
+  end
   if isPromptLine() then
     if cap and #cap.plain > 0 then M.finish("prompt") end
     if M.cfg.bar then
