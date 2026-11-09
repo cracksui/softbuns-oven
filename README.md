@@ -2,50 +2,164 @@
 
 *by softbuns* — raw Materia Magica output goes in, baked output comes out.
 
-A [Mudlet](https://www.mudlet.org/) package (tested target: Mudlet 5.1.1) that rebuilds the game's
-walls of text into clean, aligned, colour-highlighted layouts — in the main window and in a
-floating **oven window**.
+Soft Bun's Oven is a package for the [Mudlet](https://www.mudlet.org/) client that turns
+Materia Magica's walls of text — `eq`, item looks, `score`, `aff`, your inventory — into clean,
+aligned, colour-highlighted layouts. It also remembers gear you look at so you can compare it,
+and can move your prompt into a status bar with HP / SP / ST gauges.
 
-## What it bakes
+```
+── a venomous hook ──────────────────────────────────────────
+Type       weapon                Level      13
+Worn       wielded as a weapon   Align      50
+Weight     0 st 12 pb            Value      4,425 gold
+Special    poisoned
+Grants     parry 100%  move to block a weapon with your weapon
 
-| Command (any abbreviation the game accepts) | Becomes |
-|---|---|
-| `eq` | slot table, armor resistance grid, defenses, weapon damage breakdown |
-| `look` / `examine` / `identify` an item | stat grid, keywords, flags, affects, relics, weapon block, description |
-| `ex` / `look` a mob | description + what it is using |
-| `i`, `look in <container>` | one item per row, stack counts, capacity footer |
-| `score` | level & exp to level first, vitals and attribute gauges, standing, kill record |
-| `aff` | resistances, spell/racial affects with their modifiers |
+▸ Weapon
+Damage    High pierce   Accuracy  Low
+Range     Min           Crit      Max (2x)
+```
 
-Plus:
+---
 
-- **Gear compare** — every item you look at is remembered. Looking at an item automatically compares
-  it with what you wear in that slot; `sbo pin <item>` compares everything against one item;
-  `sbo compare <a> vs <b>` compares any two.
-- **Prompt bar** — `sbo bar on` moves the prompt into a fixed bar under the text with HP/SP/ST
-  gauges, your level and exp to level.
+## First-time install
 
-## Install
+### 1. Get Mudlet
 
-**Quickest:** paste this into Mudlet's command line while connected to your profile:
+Download and install Mudlet from **https://www.mudlet.org/download/** (version 5 or newer).
+
+### 2. Connect to Materia Magica
+
+1. Start Mudlet. The **Connect** window opens.
+2. If Materia Magica is in the list, pick it. Otherwise click **New** and fill in:
+   - **Profile name:** `Materia Magica`
+   - **Server address:** `materiamagica.com`
+   - **Port:** `23`
+3. Click **Connect** and log in to your character.
+
+### 3. Install Soft Bun's Oven
+
+**Option A — one line (easiest).** While connected, copy this line, paste it into Mudlet's
+command bar (where you type game commands) and press Enter:
 
 ```
 lua installPackage("https://raw.githubusercontent.com/cracksui/softbuns-oven/main/Oven.mpackage")
 ```
 
-**Or by hand:**
+**Option B — by hand.**
 
-1. Download [`Oven.mpackage`](../../raw/main/Oven.mpackage).
-2. In Mudlet: **Toolbox → Package Manager → Install**, pick the file (or drag it onto the Mudlet window).
+1. Download **[Oven.mpackage](../../raw/main/Oven.mpackage)** (or open `Oven.mpackage` in the file
+   list above and click the **↓ Download raw file** button).
+2. In Mudlet, open **Toolbox → Package Manager**, click **Install**, and choose the file you
+   downloaded. (Dragging the file onto the Mudlet window works too.)
 
-Then type `sbo` for the list of commands, or `sbo test` for a demo.
+When it's installed you'll see:
 
-## Update
+```
+[Soft Bun's Oven] v0.7.0 by softbuns :: preheated :: raw stream in, baked output out :: type sbo for commands
+```
 
-Type `sbo update`. It checks this repository and installs the newest version, keeping your
-settings and remembered items. You're also told on login when a new version is out.
+The package is installed into the profile you have open, so if you play several characters in
+separate profiles, install it in each.
+
+### 4. Your first five minutes
+
+| Type this | What happens |
+|---|---|
+| `sbo test` | Shows a demo, so you can see what the layouts look like. |
+| `score` | Your score, reorganised: level and exp-to-level first. This also teaches the prompt bar your max HP / SP / ST. |
+| `eq` | Your equipment as a table, with armor and weapon breakdowns. |
+| `look <something you wear>` | The item's stats, laid out. Do this for your worn gear once — Oven remembers it, so later items are compared against what you wear. |
+| `sbo bar on` | Moves your prompt into a fixed bar under the text, with gauges, your level and exp to level. |
+| `sbo` | The full list of commands. |
+
+Formatted output appears in the main window **and** in a floating **oven window**. Drag the oven
+window by its title bar and resize it from its edges; it remembers where you put it.
+
+---
+
+## What gets baked
+
+Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipment`…).
+
+| Command | Becomes |
+|---|---|
+| `eq` | slot table, armor resistance grid, defenses, weapon damage breakdown |
+| `look` / `examine` / `identify` an item | stat grid, keywords, flags, affects, relics, weapon block, description |
+| `ex` / `look` a creature | its description, then what it is using |
+| `i`, `look in <container>` | one item per row, stack counts, capacity footer |
+| `score` | level and exp to level first, vitals and attribute gauges, standing, kill record |
+| `aff` | resistances, spell and racial affects with their modifiers |
+
+## Comparing gear
+
+Every item you look at is remembered (it survives logging out).
+
+- **Automatic:** look at an item and it's compared with whatever you wear in that slot
+  (run `eq` and look at your worn item once so Oven knows it).
+- **Pin one item:** `sbo pin <name>` (or click **[pin for comparing]** under an item in the oven
+  window) — everything you look at next is compared against it. Handy in shops. `sbo unpin` stops.
+- **Any two:** `sbo compare` compares the last two items you looked at;
+  `sbo compare hook vs dagger` compares any two remembered items by part of their names.
+- `sbo items` lists what Oven remembers.
+
+Green marks the better value in each row.
+
+## Commands
+
+```
+sbo                       list of commands
+sbo test                  demo
+sbo on|off                turn formatting on / off
+sbo main replace|keep     replace the raw text in the main window, or leave it alone
+                          (keep = formatted output only in the oven window)
+sbo window on|off         show / hide the oven window
+sbo clear                 clear the oven window
+sbo font [size]           oven window font size
+sbo raw                   reprint the last output exactly as the game sent it
+sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
+sbo bar on|off            prompt bar
+sbo bar gauges|raw        prompt bar as gauges, or the prompt exactly as the game sends it
+sbo bar lines [n]         prompt bar height
+sbo bar font [n]          prompt bar font size (0 = same as the main window)
+sbo update                get the newest version
+```
+
+`oven` works as well as `sbo`.
+
+## Updating
+
+Type **`sbo update`**. Oven checks this page for a newer version and installs it, keeping your
+settings and remembered items. You'll also get a one-line notice when you log in if an update
+is out. `sbo update force` reinstalls even if you're current.
+
+## Troubleshooting
+
+- **Nothing is formatted.** Check you installed into the profile you're playing (Toolbox →
+  Package Manager should list *Oven*), and that `sbo on` is set. Type `sbo` to see the current
+  settings.
+- **A layout looks wrong or something is missing.** Type `sbo raw` to see exactly what the game
+  sent. Very short replies (one line) are left untouched on purpose.
+- **The oven window disappeared.** `sbo window on`. If it's off-screen, drag it back by its title
+  bar or resize the Mudlet window.
+- **The prompt bar overlaps something or looks off.** `sbo bar off` puts the prompt back in the
+  text. `sbo bar raw` shows the prompt as the game sends it instead of gauges.
+- **Level / exp to level on the bar is out of date.** It's taken from your last `score`; type
+  `score` to refresh it.
+- **`sbo update` says the download failed.** Check your internet connection, or reinstall by hand
+  (step 3 above) — your settings are kept either way.
+
+## Removing it
+
+**Toolbox → Package Manager**, select *Oven*, click **Uninstall**. Your settings and remembered
+items stay in your Mudlet profile folder (`oven_*.lua`) in case you reinstall; delete those files
+too if you want a completely clean slate.
+
+---
 
 ## Development
 
-Edit `src/Oven.lua`, bump `M.version`, then run `python3 build.py` and commit
-`src/Oven.lua`, `Oven.mpackage` and `VERSION`.
+Source is `src/Oven.lua`. To release: bump `M.version` in it, run `python3 build.py` (writes
+`Oven.mpackage` and `VERSION`), and commit all three. Players get it with `sbo update`.
+
+MIT licensed — see [LICENSE](LICENSE).
