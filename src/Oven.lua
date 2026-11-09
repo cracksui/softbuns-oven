@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.8.4"
+M.version = "0.9.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -42,6 +42,7 @@ M.defaults = {
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
   showEmpty    = true,       -- list empty equipment slots in eq
+  eqStats      = true,       -- AR / affects column in eq, from items you have looked at
   barLines     = 1,
   barFont      = 0,          -- 0 = same size as the main window
 }
@@ -482,10 +483,58 @@ local function slotLabel(name)
   return sl and sl.key or name
 end
 
-local function renderSlots(out, slots, width)
+-- what a worn item does for you, from Oven's memory of `look`:
+-- a list of units ({segs}), e.g. {AR 1} {+1 agility} {+1 saving-spell}; nil if never looked at
+local function itemStatUnits(name)
+  local it = M.items and M.items[name]
+  if not it then return nil end
+  local units = {}
+  if it.ar then units[#units + 1] = { { C.key, "AR " }, { C.num, tostring(it.ar) } } end
+  local sums, order = {}, {}
+  for _, list in ipairs({ it.affects or {}, it.relicAffects or {} }) do
+    for _, af in ipairs(list) do
+      if not sums[af[1]] then order[#order + 1] = af[1] end
+      sums[af[1]] = (sums[af[1]] or 0) + (tonumber(af[2]) or 0)
+    end
+  end
+  for _, k in ipairs(order) do
+    local v = sums[k]
+    units[#units + 1] = { { v >= 0 and C.plus or C.minus, (v >= 0 and "+" or "") .. v }, { C.item, " " .. k } }
+  end
+  if #units == 0 then units[1] = { { C.dim, "—" } } end
+  return units
+end
+
+-- lay units out in a column of `avail` characters; returns lines of segments
+local function flowUnits(units, avail)
+  local lines, cur, w = {}, {}, 0
+  for _, u in ipairs(units) do
+    local uw = segLen(u)
+    local sep = (#cur > 0) and 2 or 0
+    if #cur > 0 and w + sep + uw > avail then
+      lines[#lines + 1] = cur; cur, w, sep = {}, 0, 0
+    end
+    if sep > 0 then cur[#cur + 1] = { C.dim, "  " } end
+    addAll(cur, u); w = w + sep + uw
+  end
+  if #cur > 0 then lines[#lines + 1] = cur end
+  return lines
+end
+
+local function renderSlots(out, slots, width, withStats)
   local slotW = 0
   for _, r in ipairs(slots) do slotW = math.max(slotW, ulen(slotLabel(r[1]))) end
   slotW = math.min(slotW, 22)
+  local indent = slotW + 3
+  -- stats column starts after the longest item name that leaves room for them
+  local statCol
+  if withStats then
+    local longest = 0
+    for _, r in ipairs(slots) do
+      if not r.empty then longest = math.max(longest, segLen(itemSegs(r[2]))) end
+    end
+    statCol = indent + math.min(longest, math.max(16, width - indent - 24)) + 2
+  end
   local prev
   for _, r in ipairs(slots) do
     local sl = M.slotByName[r[1]:lower()]
@@ -500,11 +549,38 @@ local function renderSlots(out, slots, width)
       segs = itemSegs(r[2])
     end
     local row = { unpack(pre) }
-    if slotW + 3 + segLen(segs) <= width then
+    local nameW = indent + segLen(segs)
+    if nameW <= width then
       for _, sg in ipairs(segs) do row[#row + 1] = sg end
       out[#out + 1] = row
     else
-      addAll(out, wrapWords(r[2] or "", width, slotW + 3, C.item, pre, slotW + 3))
+      addAll(out, wrapWords(r[2] or "", width, indent, C.item, pre, indent))
+      row = out[#out]; nameW = segLen(row)
+    end
+    if withStats and not r.empty then
+      local units = itemStatUnits((stripConds(r[2])))
+      local cont = { { C.text, string.rep(" ", slotW) }, { C.dim, " │ " } }
+      if not units then
+        -- never looked at: a small "?" after the name (or under it if there's no room)
+        if nameW + 3 <= width then
+          row[#row + 1] = { C.text, string.rep(" ", math.max(2, statCol - nameW)) }
+          if nameW + 2 > statCol then row[#row] = { C.text, "  " } end
+          row[#row + 1] = { C.dim, "?" }
+        end
+      else
+        local lines = flowUnits(units, math.max(10, width - statCol))
+        local first = 1
+        if nameW + 2 <= statCol then
+          row[#row + 1] = { C.text, string.rep(" ", statCol - nameW) }
+          addAll(row, lines[1]); first = 2
+        end
+        for i = first, #lines do
+          local l = { unpack(cont) }
+          l[#l + 1] = { C.text, string.rep(" ", statCol - indent) }
+          addAll(l, lines[i])
+          out[#out + 1] = l
+        end
+      end
     end
   end
 end
@@ -591,18 +667,21 @@ function M.formatters.eq(raw, width)
     end
   end
   for _, r in ipairs(unknown) do rows[#rows + 1] = r end   -- slots we don't know: still shown
-  renderSlots(out, rows, width)
+  renderSlots(out, rows, width, M.cfg.eqStats)
 
   if #ar > 0 then
+    -- body-location totals (each is the sum of everything protecting that location)
     local total = 0
     for _, a in ipairs(ar) do total = total + (tonumber(a[2]) or 0) end
-    subhead(out, "Armor resistance  (total " .. total .. ")")
-    local cells = {}
-    for _, a in ipairs(ar) do
-      cells[#cells + 1] = { a[1], { { C.num, string.format("%3s", a[2]) },
-        { C.dim, tonumber(a[3]) and string.format("  %7s dmg", "%-" .. string.format("%.2f", tonumber(a[3]))) or "" } } }
+    blank(out)
+    local segs = { { C.num, tostring(total) }, { C.dim, "  " } }
+    for n, a in ipairs(ar) do
+      if n > 1 then segs[#segs + 1] = { C.dim, " · " } end
+      segs[#segs + 1] = { C.slot, a[1]:lower() .. " " }
+      segs[#segs + 1] = { C.num, tostring(a[2]) }
+      if tonumber(a[3]) then segs[#segs + 1] = { C.dim, " %-" .. string.format("%.2f", tonumber(a[3])) } end
     end
-    grid(out, cells, width)
+    kvLine(out, "AR", 2, segs, width)
   end
 
   if #misc > 0 then
@@ -1907,6 +1986,7 @@ function M.help()
   <khaki>sbo pin [name]<reset> / <khaki>unpin<reset>    compare every item you look at against this one
   <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
   <khaki>sbo items<reset>                 list remembered items
+  <khaki>sbo eqstats on|off<reset>        AR and affects of each worn item in eq (look at an item once to fill it in)
   <khaki>sbo empty on|off<reset>          show empty equipment slots in eq
   <khaki>sbo slots short|full<reset>      short slot names in eq tables (finger, neck…) or the game's full ones
   <khaki>sbo helpwindow on|off<reset>     game help pages (and this list) in their own window
@@ -2052,6 +2132,8 @@ function M.command(args)
     say("help window " .. b)
   elseif a == "slots" and (b == "short" or b == "full") then
     M.cfg.slotNames = b; say("slot names: " .. b)
+  elseif a == "eqstats" and onoff ~= nil then
+    M.cfg.eqStats = onoff; say("item stats column in eq: " .. b)
   elseif a == "empty" and onoff ~= nil then
     M.cfg.showEmpty = onoff; say("empty slots in eq: " .. b)
   elseif a == "autocompare" and onoff ~= nil then M.cfg.autocompare = onoff; say("auto-compare " .. b)
