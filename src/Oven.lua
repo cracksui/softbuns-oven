@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.8.3"
+M.version = "0.8.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -600,7 +600,7 @@ function M.formatters.eq(raw, width)
     local cells = {}
     for _, a in ipairs(ar) do
       cells[#cells + 1] = { a[1], { { C.num, string.format("%3s", a[2]) },
-        { C.dim, a[3] and string.format("  -%s%% dmg", (a[3]:gsub("0+$", ""):gsub("%.$", ""))) or "" } } }
+        { C.dim, tonumber(a[3]) and string.format("  %7s dmg", "%-" .. string.format("%.2f", tonumber(a[3]))) or "" } } }
     end
     grid(out, cells, width)
   end
