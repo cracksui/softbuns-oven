@@ -126,6 +126,7 @@ sbo slots short|full      short slot names in eq tables, or the game's full ones
 sbo helpwindow on|off     game help pages (and the sbo command list) in their own window
 sbo bar on|off            prompt bar
 sbo bar gauges|raw        prompt bar as gauges, or the prompt exactly as the game sends it
+sbo bar blanks on|off     keep / remove the blank line before each prompt (removed by default)
 sbo bar width [n]         length of each gauge (default 10)
 sbo bar lines [n]         prompt bar height
 sbo bar font [n]          prompt bar font size (0 = same as the main window)

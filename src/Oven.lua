@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.4"
+M.version = "0.9.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -39,6 +39,7 @@ M.defaults = {
   bar          = false,      -- move the prompt into a fixed bar at the bottom
   barMode      = "gauges",   -- gauges | raw
   barWidth     = 10,         -- length of each gauge in the prompt bar
+  barBlank     = true,       -- with the bar on, also drop the blank line before each prompt
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
   showEmpty    = true,       -- list empty equipment slots in eq
@@ -1881,6 +1882,21 @@ function M.onSend(_, cmd)
   end
 end
 
+-- Remove empty lines directly above the current (prompt) line, leaving the cursor on it.
+function M.dropBlankAbove()
+  if not M.cfg.barBlank then return end
+  for _ = 1, 2 do
+    local ok, ln = pcall(getLineNumber)
+    if not ok or not ln or ln < 1 then return end
+    local okL, prev = pcall(getLines, ln - 1, ln)
+    local text = okL and type(prev) == "table" and prev[1]
+    if type(text) ~= "string" or text:match("%S") then return end
+    moveCursor(0, ln - 1)
+    deleteLine()
+    moveCursor(0, ln - 1)   -- the prompt has moved up one line
+  end
+end
+
 local function isPromptLine()
   local ok, p = pcall(isPrompt)
   if ok and p then return true end
@@ -1914,7 +1930,9 @@ function M.onLine()
         end
       end
       M.barUpdate(d)
+      M.dropBlankAbove()   -- the blank line the game sends before each prompt
       deleteLine()
+      moveCursorEnd()
     end
     return
   end
@@ -2066,6 +2084,7 @@ function M.help()
   <khaki>sbo helpwindow on|off<reset>     game help pages (and this list) in their own window
   <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
   <khaki>sbo bar gauges|raw<reset>        prompt bar as gauges, or the prompt exactly as the game sends it
+  <khaki>sbo bar blanks on|off<reset>     keep (on) or remove (off) the blank line the game puts before each prompt
   <khaki>sbo bar width [n]<reset>         length of each gauge (default 10)
   <khaki>sbo bar lines [n]<reset> / <khaki>font [n]<reset>  prompt bar height / font size
   <khaki>sbo update<reset>                get the latest version from GitHub (settings are kept)
@@ -2235,6 +2254,9 @@ function M.command(args)
     local sub, val = b:match("^(%S*)%s*(.-)$")
     if sub == "on" or sub == "off" then M.cfg.bar = (sub == "on"); M.showBar(M.cfg.bar); say("prompt bar " .. sub)
     elseif sub == "raw" or sub == "gauges" then M.cfg.barMode = sub; M.drawBar(); say("prompt bar mode " .. sub)
+    elseif sub == "blanks" and (val == "on" or val == "off") then
+      M.cfg.barBlank = (val == "off")
+      say("blank line before each prompt " .. (val == "on" and "kept" or "removed"))
     elseif sub == "width" and tonumber(val) then M.cfg.barWidth = tonumber(val); M.drawBar(); say("gauge width " .. val)
     elseif sub == "lines" and tonumber(val) then M.cfg.barLines = tonumber(val); M.layoutBar(); say("prompt bar lines " .. val)
     elseif sub == "font" and tonumber(val) then
