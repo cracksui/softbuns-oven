@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.8.1"
+M.version = "0.8.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -462,11 +462,11 @@ M.slotTable = {
   { key = "hip",       names = { "worn on hip", "held on hip" } },
   { key = "legs",      names = { "worn on legs" } },
   { key = "feet",      names = { "worn on feet" } },
-  { key = "L wing",    names = { "worn on left wing" }, only = "wings" },
-  { key = "R wing",    names = { "worn on right wing" }, only = "wings" },
+  { key = "wing (L)",  names = { "worn on left wing" }, only = "wings" },
+  { key = "wing (R)",  names = { "worn on right wing" }, only = "wings" },
   { key = "tail",      names = { "worn on tail" }, only = "tail" },
-  { key = "R hand",    names = { "right hand", "wielded" } },
-  { key = "L hand",    names = { "left hand", "held" } },
+  { key = "hand (R)",  names = { "right hand", "wielded" } },
+  { key = "hand (L)",  names = { "left hand", "held" } },
   -- seen on creatures / special items, not in the help page
   { key = "spellbook", names = { "studying spellbook" }, extra = true },
   { key = "tome",      names = { "studying tome" }, extra = true },
@@ -566,7 +566,7 @@ function M.formatters.eq(raw, width)
     local sl = M.slotByName[r[1]:lower()]
     if sl then used[sl.key] = (used[sl.key] or 0) + 1 end
   end
-  local hasTail, hasWings = used["tail"], used["L wing"] or used["R wing"]
+  local hasTail, hasWings = used["tail"], used["wing (L)"] or used["wing (R)"]
   for _, a in ipairs(ar) do
     if a[1]:lower():match("tail") then hasTail = true end
     if a[1]:lower():match("wing") then hasWings = true end
