@@ -84,7 +84,7 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 
 | Command | Becomes |
 |---|---|
-| `eq` | slot table, armor resistance grid, defenses, weapon damage breakdown |
+| `eq` | slot table with short slot names, your empty slots, armor resistance grid, defenses, weapon damage breakdown |
 | `look` / `examine` / `identify` an item | stat grid, keywords, flags, affects, relics, weapon block, description |
 | `ex` / `look` a creature | its description, then what it is using |
 | `i`, `look in <container>` | one item per row, stack counts, capacity footer |
@@ -119,6 +119,7 @@ sbo clear                 clear the oven window
 sbo font [size]           oven window font size
 sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
+sbo slots short|full      short slot names in eq tables, or the game's full ones
 sbo helpwindow on|off     game help pages (and the sbo command list) in their own window
 sbo bar on|off            prompt bar
 sbo bar gauges|raw        prompt bar as gauges, or the prompt exactly as the game sends it

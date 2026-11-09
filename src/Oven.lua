@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.8.0"
+M.version = "0.8.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -39,7 +39,8 @@ M.defaults = {
   bar          = false,      -- move the prompt into a fixed bar at the bottom
   barMode      = "gauges",   -- gauges | raw
   barWidth     = 10,         -- length of each gauge in the prompt bar
-  helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
+  helpWindow   = true,
+  slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)       -- game `help` (and `sbo`) output goes to its own window
   barLines     = 1,
   barFont      = 0,          -- 0 = same size as the main window
 }
@@ -441,13 +442,53 @@ local function renderWeapon(out, w, width)
 end
 
 ---------------------------------------------------------------- equipment
+-- Equipment slots (from HELP EQUIPMENT SLOTS plus what eq actually prints).
+-- names: every spelling the game uses for the slot; n: how many; only: race/donation notes
+M.slotTable = {
+  { key = "light",     names = { "used as light" } },
+  { key = "head",      names = { "worn on head" } },
+  { key = "face",      names = { "worn over face" }, only = "donation" },
+  { key = "neck",      names = { "worn around neck" }, n = 2 },
+  { key = "amulet",    names = { "amulet around neck" }, n = 2, only = "donation" },
+  { key = "torso",     names = { "worn on body", "worn on torso" } },
+  { key = "cloak",     names = { "worn about body", "over shoulders" } },
+  { key = "aura",      names = { "worn around body", "encompassing" }, only = "donation" },
+  { key = "arms",      names = { "worn on arms" } },
+  { key = "wrist",     names = { "worn around wrist" }, n = 2 },
+  { key = "hands",     names = { "worn on hands" } },
+  { key = "finger",    names = { "worn on finger" }, n = 2 },
+  { key = "shield",    names = { "worn as shield" } },
+  { key = "waist",     names = { "worn about waist", "worn around waist" } },
+  { key = "hip",       names = { "worn on hip", "held on hip" } },
+  { key = "legs",      names = { "worn on legs" } },
+  { key = "feet",      names = { "worn on feet" } },
+  { key = "L wing",    names = { "worn on left wing" }, only = "wings" },
+  { key = "R wing",    names = { "worn on right wing" }, only = "wings" },
+  { key = "tail",      names = { "worn on tail" }, only = "tail" },
+  { key = "R hand",    names = { "right hand", "wielded" } },
+  { key = "L hand",    names = { "left hand", "held" } },
+  -- seen on creatures / special items, not in the help page
+  { key = "spellbook", names = { "studying spellbook" }, extra = true },
+  { key = "tome",      names = { "studying tome" }, extra = true },
+  { key = "quiver",    names = { "slung quiver" }, extra = true },
+}
+M.slotByName = {}
+for _, sl in ipairs(M.slotTable) do
+  for _, n in ipairs(sl.names) do M.slotByName[n] = sl end
+end
+local function slotLabel(name)
+  if M.cfg.slotNames == "full" then return name end
+  local sl = M.slotByName[name:lower()]
+  return sl and sl.key or name
+end
+
 local function renderSlots(out, slots, width)
   local slotW = 0
-  for _, r in ipairs(slots) do slotW = math.max(slotW, ulen(r[1])) end
+  for _, r in ipairs(slots) do slotW = math.max(slotW, ulen(slotLabel(r[1]))) end
   slotW = math.min(slotW, 22)
   local prev
   for _, r in ipairs(slots) do
-    local label = (r[1] == prev) and "" or r[1]
+    local label = (r[1] == prev) and "" or slotLabel(r[1])
     prev = r[1]
     local pre = { { C.slot, pad(label, slotW) }, { C.dim, " │ " } }
     local segs = itemSegs(r[2])
@@ -518,6 +559,35 @@ function M.formatters.eq(raw, width)
 
   local out = {}
   renderSlots(out, slots, width)
+
+  -- empty slots (what CHECK EQUIPMENT MISSING would tell you)
+  local used = {}
+  for _, r in ipairs(slots) do
+    local sl = M.slotByName[r[1]:lower()]
+    if sl then used[sl.key] = (used[sl.key] or 0) + 1 end
+  end
+  local hasTail, hasWings = used["tail"], used["L wing"] or used["R wing"]
+  for _, a in ipairs(ar) do
+    if a[1]:lower():match("tail") then hasTail = true end
+    if a[1]:lower():match("wing") then hasWings = true end
+  end
+  local empty = {}
+  for _, sl in ipairs(M.slotTable) do
+    local free = (sl.n or 1) - (used[sl.key] or 0)
+    local applies = not sl.extra and (sl.only ~= "tail" or hasTail) and (sl.only ~= "wings" or hasWings)
+    if applies and free > 0 then
+      empty[#empty + 1] = { sl.key .. (free > 1 and (" ×" .. free) or ""), sl.only == "donation" }
+    end
+  end
+  if #empty > 0 then
+    blank(out)
+    local segs = {}
+    for n, e in ipairs(empty) do
+      if n > 1 then segs[#segs + 1] = { C.dim, " · " } end
+      segs[#segs + 1] = { e[2] and C.dim or C.flag, e[1] .. (e[2] and " (donation)" or "") }
+    end
+    kvLine(out, "Empty", 6, segs, width)
+  end
 
   if #ar > 0 then
     local total = 0
@@ -1833,6 +1903,7 @@ function M.help()
   <khaki>sbo pin [name]<reset> / <khaki>unpin<reset>    compare every item you look at against this one
   <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
   <khaki>sbo items<reset>                 list remembered items
+  <khaki>sbo slots short|full<reset>      short slot names in eq tables (finger, neck…) or the game's full ones
   <khaki>sbo helpwindow on|off<reset>     game help pages (and this list) in their own window
   <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
   <khaki>sbo bar gauges|raw<reset>        prompt bar as gauges, or the prompt exactly as the game sends it
@@ -1974,6 +2045,8 @@ function M.command(args)
     M.cfg.helpWindow = onoff
     if not onoff and M.helpContainer then M.helpContainer:hide() end
     say("help window " .. b)
+  elseif a == "slots" and (b == "short" or b == "full") then
+    M.cfg.slotNames = b; say("slot names: " .. b)
   elseif a == "autocompare" and onoff ~= nil then M.cfg.autocompare = onoff; say("auto-compare " .. b)
   elseif a == "items" then
     say(#M.recent .. " remembered items (most recent last):")
