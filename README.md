@@ -27,9 +27,18 @@ Plus:
 
 ## Install
 
+**Quickest:** paste this into Mudlet's command line while connected to your profile:
+
+```
+lua installPackage("https://raw.githubusercontent.com/cracksui/softbuns-oven/main/Oven.mpackage")
+```
+
+**Or by hand:**
+
 1. Download [`Oven.mpackage`](../../raw/main/Oven.mpackage).
 2. In Mudlet: **Toolbox → Package Manager → Install**, pick the file (or drag it onto the Mudlet window).
-3. Type `sbo` for the list of commands, `sbo test` for a demo.
+
+Then type `sbo` for the list of commands, or `sbo test` for a demo.
 
 ## Update
 
