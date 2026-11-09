@@ -90,6 +90,7 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 | `i`, `look in <container>` | one item per row, stack counts, capacity footer |
 | `score` | level and exp to level first, vitals and attribute gauges, standing, kill record |
 | `aff` | resistances, spell and racial affects with their modifiers |
+| `help <topic>` | the help page opens in its own **help window**, exactly as the game sends it |
 
 ## Comparing gear
 
@@ -118,6 +119,7 @@ sbo clear                 clear the oven window
 sbo font [size]           oven window font size
 sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
+sbo helpwindow on|off     game help pages (and the sbo command list) in their own window
 sbo bar on|off            prompt bar
 sbo bar gauges|raw        prompt bar as gauges, or the prompt exactly as the game sends it
 sbo bar width [n]         length of each gauge (default 10)

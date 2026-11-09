@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.7.2"
+M.version = "0.8.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -39,6 +39,7 @@ M.defaults = {
   bar          = false,      -- move the prompt into a fixed bar at the bottom
   barMode      = "gauges",   -- gauges | raw
   barWidth     = 10,         -- length of each gauge in the prompt bar
+  helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
   barLines     = 1,
   barFont      = 0,          -- 0 = same size as the main window
 }
@@ -83,12 +84,14 @@ M.commands = {
   { word = "lore",      min = 3, kind = "item",     needsArgs = true },
   { word = "score",     min = 3, kind = "score" },
   { word = "affects",   min = 2, kind = "affects" },
+  { word = "help",      min = 3, kind = "help" },     -- shown as-is in the help window
 }
 
 function M.classify(cmd)
   local c = cmd:lower():gsub("^%s+", ""):gsub("%s+$", "")
   local verb, rest = c:match("^(%S+)%s*(.-)$")
   if not verb or verb == "" then return nil end
+  if verb == "?" then return "help", rest end
   for _, def in ipairs(M.commands) do
     if #verb >= def.min and def.word:sub(1, #verb) == verb and not (def.except and def.except[verb]) then
       if def.needsArgs and rest == "" then return nil end
@@ -1178,6 +1181,34 @@ function M.createWindow()
   }, M.container)
 end
 
+-- help window: game help pages exactly as sent (colours and layout kept)
+function M.createHelpWindow()
+  if M.helpContainer then return end
+  M.helpContainer = Adjustable.Container:new({
+    name = "ovenHelp",
+    titleText = "help",
+    x = "2%", y = "4%", width = "45%", height = "70%",
+    adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+    titleTxtColor = "#e6c35c",
+  })
+  M.helpConsole = Geyser.MiniConsole:new({
+    name = "ovenHelpConsole",
+    x = 0, y = 0, width = "100%", height = "100%",
+    autoWrap = true, scrollBar = true,
+    fontSize = M.cfg.fontSize, color = "black",
+  }, M.helpContainer)
+end
+
+function M.showHelp(topic, dechoLines)
+  M.createHelpWindow()
+  M.helpContainer:show()
+  local win = "ovenHelpConsole"
+  clearWindow(win)
+  render(win, { header("help", topic or "", columns(win), "Help" .. ((topic and topic ~= "") and (": " .. topic) or "")) })
+  for _, d in ipairs(dechoLines) do decho(win, d .. "\n") end
+  pcall(scrollTo, win, 0)   -- start at the top of the page
+end
+
 function M.showWindow(on)
   if on then
     M.createWindow()
@@ -1617,7 +1648,8 @@ end
 function M.start(kind, target, cmd)
   M.cap = { kind = kind, target = target, cmd = cmd, plain = {}, decho = {},
             hasLayout = M.formatters[kind] ~= nil }
-  M.cap.gag = M.cfg.main == "replace" and M.cap.hasLayout
+  if kind == "help" then M.cap.gag = M.cfg.helpWindow
+  else M.cap.gag = M.cfg.main == "replace" and M.cap.hasLayout end
   M.cap.maxTimer = tempTimer(M.cfg.maxTime, function() M.finish("maxtime") end)
 end
 
@@ -1669,7 +1701,7 @@ function M.onLine()
   end
   if cap.idleTimer then killTimer(cap.idleTimer) end
   cap.idleTimer = tempTimer(M.cfg.idle, function() M.finish("idle") end)
-  if #cap.plain >= M.cfg.maxLines then M.finish("maxlines") end
+  if #cap.plain >= (cap.kind == "help" and 2000 or M.cfg.maxLines) then M.finish("maxlines") end
 end
 
 local function writeSample(cap)
@@ -1730,6 +1762,22 @@ function M.finish(reason)
 
   -- draw after the game's text for this packet has been processed
   tempTimer(0, function()
+    if cap.kind == "help" then
+      if replace then
+        moveCursorEnd("main")
+        if getCurrentLine("main") ~= "" then echo("main", "\n") end
+        if nonBlank >= 2 then
+          M.showHelp(cap.target, cap.decho)
+          cecho("main", "<dim_grey>[sbo] help" .. (cap.target ~= "" and (" " .. cap.target) or "") ..
+            " → help window<reset>\n")
+        else
+          for _, d in ipairs(cap.decho) do decho("main", d .. "\n") end
+        end
+        if promptDecho then decho("main", promptDecho) end
+        if heldPrompt then decho("main", heldPrompt) end
+      end
+      return
+    end
     if replace then
       moveCursorEnd("main")
       if getCurrentLine("main") ~= "" then echo("main", "\n") end
@@ -1762,6 +1810,12 @@ end
 local function say(msg) cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg .. "\n") end
 
 function M.help()
+  local win = "main"
+  if M.cfg.helpWindow then
+    M.createHelpWindow(); M.helpContainer:show()
+    win = "ovenHelpConsole"; clearWindow(win)
+  end
+  local function cecho(a, b) if b then return _G.cecho(win, b) end return _G.cecho(win, a) end
   cecho("\n<orange>Soft Bun's Oven<reset> <dim_grey>v" .. M.version .. " by softbuns :: bakes raw game output into something edible<reset>\n")
   cecho([[
   <khaki>sbo on|off<reset>                enable / disable capturing
@@ -1779,6 +1833,7 @@ function M.help()
   <khaki>sbo pin [name]<reset> / <khaki>unpin<reset>    compare every item you look at against this one
   <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
   <khaki>sbo items<reset>                 list remembered items
+  <khaki>sbo helpwindow on|off<reset>     game help pages (and this list) in their own window
   <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
   <khaki>sbo bar gauges|raw<reset>        prompt bar as gauges, or the prompt exactly as the game sends it
   <khaki>sbo bar width [n]<reset>         length of each gauge (default 10)
@@ -1787,8 +1842,10 @@ function M.help()
   <khaki>sbo update force<reset>          reinstall the latest version even if you already have it
   <khaki>sbo update [file]<reset>         install a local .mpackage file instead
 ]])
-  say(string.format("enabled=%s main=%s window=%s samples=%s prompt=%q",
-    tostring(M.cfg.enabled), M.cfg.main, tostring(M.cfg.window), tostring(M.cfg.samples), M.cfg.promptPattern))
+  cecho(string.format("\n<dim_grey>settings: enabled=%s main=%s window=%s helpwindow=%s bar=%s samples=%s<reset>\n",
+    tostring(M.cfg.enabled), M.cfg.main, tostring(M.cfg.window), tostring(M.cfg.helpWindow),
+    tostring(M.cfg.bar), tostring(M.cfg.samples)))
+  if win ~= "main" then pcall(scrollTo, win, 0); _G.cecho("main", "<dim_grey>[sbo] command list → help window<reset>\n") end
 end
 
 M.demo = {
@@ -1913,6 +1970,10 @@ function M.command(args)
     return
   elseif a == "pin" then return M.pin(b ~= "" and b or nil)
   elseif a == "unpin" then M.pinned = nil; M.saveItems(); say("unpinned"); return
+  elseif a == "helpwindow" and onoff ~= nil then
+    M.cfg.helpWindow = onoff
+    if not onoff and M.helpContainer then M.helpContainer:hide() end
+    say("help window " .. b)
   elseif a == "autocompare" and onoff ~= nil then M.cfg.autocompare = onoff; say("auto-compare " .. b)
   elseif a == "items" then
     say(#M.recent .. " remembered items (most recent last):")
@@ -2036,6 +2097,7 @@ function M.init()
       if pkg == "Oven" then
         M.teardown()
         if M.container then M.container:hide() end
+        if M.helpContainer then M.helpContainer:hide() end
         if M.bar then M.bar:hide(); setBorderBottom(0) end
       end
     end),
