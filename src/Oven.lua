@@ -1,0 +1,2030 @@
+-- Soft Bun's Oven (sbo), by softbuns :: bakes raw Materia Magica output into something edible (Mudlet 5.x)
+--   formats eq / items / score / affects, compares gear, prompt gauge bar.
+--   (formerly "MMFormat", then "SoftbunsOS")
+--
+-- How it works:
+--   * Watches commands you send (eq, look <thing>, identify ...).
+--   * Captures the lines the game sends back, until the next prompt
+--     (or a short pause when no prompt is detected).
+--   * Prints a formatted version in the main window and/or a floating
+--     "oven window" window.
+--
+-- Type `sbo` in Mudlet for the list of commands (`oven` works too).
+
+sbo = sbo or oven or {}
+oven = sbo           -- old name, kept so older links/commands still work
+local M = sbo
+
+M.version = "0.7.0"
+M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
+M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
+
+---------------------------------------------------------------------------
+-- Settings
+---------------------------------------------------------------------------
+M.defaults = {
+  enabled      = true,
+  main         = "replace",  -- replace | keep | off   (what to do in the main window)
+  window       = true,       -- show the floating oven window
+  idle         = 0.4,        -- seconds of silence that ends a capture when no prompt is seen
+  maxTime      = 4,          -- hard limit on how long a capture can last
+  maxLines     = 120,
+  samples      = true,       -- write raw captures to oven_samples.txt (for tuning the parsers)
+  fontSize     = 10,
+  -- Lua pattern for your prompt, used in addition to telnet GA/EOR detection.
+  -- Default: a line that is just <...> containing a digit, e.g. "<120hp 80sp 90st>".
+  promptPattern = "^%s*<[^>]*%d[^>]*>%s*$",
+  updateCheck  = true,       -- on login, quietly check GitHub for a newer version
+  autocompare  = true,       -- compare looked-at items with what you wear in that slot
+  bar          = false,      -- move the prompt into a fixed bar at the bottom
+  barMode      = "gauges",   -- gauges | raw
+  barLines     = 1,
+  barFont      = 0,          -- 0 = same size as the main window
+}
+
+M.cfg = M.cfg or {}
+local function migrate(newFile, oldName)
+  local old = getMudletHomeDir() .. "/" .. oldName
+  if not io.exists(newFile) and io.exists(old) then
+    local i = io.open(old, "rb"); local data = i:read("*a"); i:close()
+    local o = io.open(newFile, "wb"); o:write(data); o:close()
+  end
+end
+
+function M.loadSettings()
+  migrate(M.settingsFile, "softbunsos_settings.lua")
+  migrate(M.settingsFile, "mmformat_settings.lua")
+  local t = {}
+  if io.exists(M.settingsFile) then pcall(table.load, M.settingsFile, t) end
+  t.updatePath = nil  -- old local-file updater setting
+  for k, v in pairs(M.defaults) do
+    if t[k] == nil then t[k] = v end
+  end
+  M.cfg = t
+end
+function M.saveSettings() table.save(M.settingsFile, M.cfg) end
+
+-- Which commands start a capture. Checked against the lower-cased command.
+-- Return a kind ("eq", "item", "contents") or nil.
+local directions = { n=1,s=1,e=1,w=1,u=1,d=1,ne=1,nw=1,se=1,sw=1,
+  north=1,south=1,east=1,west=1,up=1,down=1,northeast=1,northwest=1,southeast=1,southwest=1 }
+
+-- Command words, matched the way the game does: any abbreviation of `word`
+-- at least `min` letters long.  `except` lists abbreviations that the game
+-- gives to a different command (e.g. "equip" is not "equipment").
+-- kind = which layout to use; kinds without a layout are only logged.
+M.commands = {
+  { word = "equipment", min = 2, kind = "eq",       except = { equip = true } },
+  { word = "inventory", min = 1, kind = "contents", target = "inventory" },
+  { word = "look",      min = 1, kind = "item",     needsArgs = true },
+  { word = "examine",   min = 2, kind = "item",     needsArgs = true },  -- bare "ex" (exits) is ignored
+  { word = "identify",  min = 2, kind = "item",     needsArgs = true },
+  { word = "lore",      min = 3, kind = "item",     needsArgs = true },
+  { word = "score",     min = 3, kind = "score" },
+  { word = "affects",   min = 2, kind = "affects" },
+}
+
+function M.classify(cmd)
+  local c = cmd:lower():gsub("^%s+", ""):gsub("%s+$", "")
+  local verb, rest = c:match("^(%S+)%s*(.-)$")
+  if not verb or verb == "" then return nil end
+  for _, def in ipairs(M.commands) do
+    if #verb >= def.min and def.word:sub(1, #verb) == verb and not (def.except and def.except[verb]) then
+      if def.needsArgs and rest == "" then return nil end
+      if def.word == "look" or def.word == "examine" then
+        if directions[rest] then return nil end
+        local inside = rest:match("^in%s+(.+)$")
+        if inside then return "contents", inside end
+        rest = rest:gsub("^at%s+", "")
+      end
+      return def.kind, def.target or rest
+    end
+  end
+  if (verb == "c" or ("cast"):sub(1, #verb) == verb) and rest:match("^'?ident") then
+    return "item", (rest:gsub("^'?identify'?%s*", ""))
+  end
+  return nil
+end
+
+---------------------------------------------------------------------------
+-- Small helpers
+---------------------------------------------------------------------------
+local function trim(s) s = s:gsub("^%s+", ""); s = s:gsub("%s+$", ""); return s end
+local function rtrim(s) return (s:gsub("%s+$", "")) end
+local function ulen(s) return (utf8 and utf8.len(s)) or #s end
+local function pad(s, n) return s .. string.rep(" ", math.max(0, n - ulen(s))) end
+local unpack = table.unpack or unpack
+
+local C = {
+  title  = "gold",
+  rule   = "dim_grey",
+  key    = "khaki",
+  slot   = "light_sky_blue",
+  text   = "light_grey",
+  item   = "white",
+  num    = "cyan",
+  plus   = "pale_green",
+  minus  = "tomato",
+  dim    = "dim_grey",
+  flag   = "orange",
+}
+
+-- colour a single word
+local function wordColor(w, base)
+  if w:match("^%(.*%)$") or w:match("^%[.*%]$") then return C.flag end
+  if w:match("^%+%d") then return C.plus end
+  if w:match("^%-%d") then return C.minus end
+  if w:match("%d") then return C.num end
+  return base
+end
+
+-- Word wrap `text` into segments lines. Returns list of lines (each a list of {color,text}).
+-- first: segments placed before the first line (already rendered prefix, width `firstW`)
+local function wrapWords(text, width, indent, base, prefix, prefixW)
+  local lines = {}
+  local cur = prefix and { unpack(prefix) } or {}
+  local curW = prefixW or 0
+  local startW = curW
+  for word in text:gmatch("%S+") do
+    local wl = ulen(word)
+    if curW > startW and curW + 1 + wl > width then
+      lines[#lines + 1] = cur
+      cur = { { C.text, string.rep(" ", indent) } }
+      curW, startW = indent, indent
+    end
+    if curW > startW then
+      cur[#cur + 1] = { base, " " }
+      curW = curW + 1
+    end
+    cur[#cur + 1] = { wordColor(word, base), word }
+    curW = curW + wl
+  end
+  lines[#lines + 1] = cur
+  return lines
+end
+
+local function addAll(dst, src) for _, l in ipairs(src) do dst[#dst + 1] = l end end
+
+---------------------------------------------------------------------------
+-- Parsers / formatters.  Each returns a list of lines (list of {color,text}).
+---------------------------------------------------------------------------
+M.formatters = {}
+
+-- "<worn on head>   a battered helm"  /  "[head]  a helm"
+local function parseSlot(l)
+  local slot, item = l:match("^%s*<([^>]+)>%s*(.-)%s*$")
+  if not slot then slot, item = l:match("^%s*%[([^%]]+)%]%s*(.-)%s*$") end
+  if slot and item ~= "" then return trim(slot), item end
+end
+
+-- "Key: value" detection
+local function parseKV(chunk)
+  local k, v = chunk:match("^%s*([%a][%w '%-/%.]-)%s*:%s*(.*)$")
+  if k and ulen(k) <= 24 and select(2, k:gsub("%S+", "")) <= 4 and not k:match("%.%s") then
+    return trim(k), trim(v)
+  end
+end
+
+-- split a line into "Key: value" fields separated by 2+ spaces; nil if not all fields are KV
+local function splitKVLine(l)
+  local fields = {}
+  for chunk in (trim(l) .. "  "):gmatch("(.-)%s%s+") do
+    if chunk ~= "" then fields[#fields + 1] = chunk end
+  end
+  if #fields == 0 then return nil end
+  local res = {}
+  for _, f in ipairs(fields) do
+    local k, v = parseKV(f)
+    if not k then return nil end
+    res[#res + 1] = { k, v }
+  end
+  return res
+end
+
+-- Does a block of lines look like server-wrapped prose (vs. a list)?
+local function looksWrapped(block)
+  if #block < 2 then return ulen(block[1] or "") > 60 end
+  local maxL = 0
+  for _, l in ipairs(block) do maxL = math.max(maxL, ulen(l)) end
+  if maxL < 50 then return false end
+  local long = 0
+  for i = 1, #block - 1 do
+    if ulen(block[i]) >= maxL * 0.7 then long = long + 1 end
+  end
+  return long >= (#block - 1) * 0.75
+end
+
+function M.formatters.generic(raw, width)
+  -- 1. group into paragraphs separated by blank lines
+  local paras, cur = {}, {}
+  for _, l in ipairs(raw) do
+    if trim(l) == "" then
+      if #cur > 0 then paras[#paras + 1] = cur; cur = {} end
+    else
+      cur[#cur + 1] = rtrim(l)
+    end
+  end
+  if #cur > 0 then paras[#paras + 1] = cur end
+
+  -- 2. find KV width across the whole text so values line up
+  local keyW = 0
+  for _, p in ipairs(paras) do
+    for _, l in ipairs(p) do
+      local kv = splitKVLine(l)
+      if kv then for _, f in ipairs(kv) do keyW = math.max(keyW, ulen(f[1])) end end
+    end
+  end
+  keyW = math.min(keyW, 20)
+
+  local out = {}
+  local function flushBlock(block)
+    if #block == 0 then return end
+    if looksWrapped(block) then
+      local text = table.concat(block, " ")
+      addAll(out, wrapWords(text, width, 0, C.text))
+    else
+      for _, l in ipairs(block) do
+        addAll(out, wrapWords(l, width, 2, C.text))
+      end
+    end
+  end
+
+  for pi, p in ipairs(paras) do
+    if pi > 1 then out[#out + 1] = {} end
+    local block = {}
+    for _, l in ipairs(p) do
+      local kv = splitKVLine(l)
+      if kv then
+        flushBlock(block); block = {}
+        for _, f in ipairs(kv) do
+          local pre = { { C.key, pad(f[1], keyW) }, { C.dim, " : " } }
+          addAll(out, wrapWords(f[2], width, keyW + 3, C.item, pre, keyW + 3))
+        end
+      else
+        block[#block + 1] = l
+      end
+    end
+    flushBlock(block)
+  end
+  return out
+end
+
+---------------------------------------------------------------------------
+-- Materia Magica specific layouts.  Anything a parser does not recognise is
+-- still printed (as plain text) so nothing from the game is ever lost.
+---------------------------------------------------------------------------
+local function segLen(segs) local n = 0 for _, s in ipairs(segs) do n = n + ulen(s[2]) end return n end
+local function blank(out) if #out > 0 and #out[#out] > 0 then out[#out + 1] = {} end end
+local function subhead(out, text)
+  blank(out)
+  out[#out + 1] = { { C.title, "▸ " .. text } }
+end
+
+-- trailing "(new) (unlit)" -> name, {"new","unlit"}
+local function stripConds(s)
+  local conds = {}
+  while true do
+    local body, c = s:match("^(.-)%s*%(([^()]+)%)%s*$")
+    if not body or body == "" then break end
+    table.insert(conds, 1, c); s = body
+  end
+  return s, conds
+end
+
+local goodCond = { new = true, fresh = true, perfect = true, excellent = true, pristine = true }
+local function condSegs(conds)
+  local segs = {}
+  for _, c in ipairs(conds) do
+    local col = goodCond[c:lower()] and "dark_sea_green" or (c:match("lit") and C.dim or C.flag)
+    segs[#segs + 1] = { col, " (" .. c .. ")" }
+  end
+  return segs
+end
+
+local function itemSegs(text)
+  local name, conds = stripConds(text)
+  local segs = { { C.item, name } }
+  for _, c in ipairs(condSegs(conds)) do segs[#segs + 1] = c end
+  return segs
+end
+
+-- key  value  (value given as segments; wraps long values with a hanging indent)
+local function kvLine(out, key, keyW, segs, width)
+  local pre = { { C.key, pad(key, keyW) }, { C.dim, "  " } }
+  local indent = keyW + 2
+  if segs[1] and segs[1][2]:match("^ +$") then indent = indent + ulen(segs[1][2]) + 2 end
+  local cur, curW = { unpack(pre) }, keyW + 2
+  for _, s in ipairs(segs) do
+    local col, txt = s[1], s[2]
+    if curW + ulen(txt) <= width then
+      cur[#cur + 1] = s; curW = curW + ulen(txt)
+    elseif indent + ulen(trim(txt)) <= width and curW > indent then
+      out[#out + 1] = cur
+      cur = { { C.text, string.rep(" ", indent) }, { col, trim(txt) } }
+      curW = indent + ulen(trim(txt))
+    else -- word wrap this segment
+      local first = true
+      for sp, word in txt:gmatch("(%s*)(%S+)") do
+        local piece = sp .. word
+        if curW + ulen(piece) > width and curW > indent then
+          out[#out + 1] = cur
+          cur, curW = { { C.text, string.rep(" ", indent) } }, indent
+          piece = word
+        end
+        cur[#cur + 1] = { col, piece }; curW = curW + ulen(piece)
+        first = false
+      end
+    end
+  end
+  out[#out + 1] = cur
+end
+
+-- short key/value cells laid out in two columns when there is room
+local function grid(out, cells, width)
+  if #cells == 0 then return end
+  local kw, vw = 0, 0
+  for _, c in ipairs(cells) do kw = math.max(kw, ulen(c[1])); vw = math.max(vw, segLen(c[2])) end
+  local cellW = kw + 2 + vw
+  local twoCol = width >= cellW * 2 + 3
+  local i = 1
+  while i <= #cells do
+    local c = cells[i]
+    local row = { { C.key, pad(c[1], kw) }, { C.dim, "  " } }
+    for _, s in ipairs(c[2]) do row[#row + 1] = s end
+    if twoCol and cells[i + 1] then
+      row[#row + 1] = { C.text, string.rep(" ", vw - segLen(c[2]) + 3) }
+      local d = cells[i + 1]
+      row[#row + 1] = { C.key, pad(d[1], kw) }; row[#row + 1] = { C.dim, "  " }
+      for _, s in ipairs(d[2]) do row[#row + 1] = s end
+      i = i + 2
+    else
+      i = i + 1
+    end
+    out[#out + 1] = row
+  end
+end
+
+local function numSegs(n, suffix)
+  local col = tostring(n):match("^%-") and C.minus or C.num
+  return { { col, tostring(n) }, suffix and { C.text, suffix } or nil }
+end
+
+-- "Affects agility by 1." -> {"+1 agility"} segments
+local function affectSegs(what, by)
+  local n = tonumber(by) or 0
+  local sign = n >= 0 and "+" or ""
+  return { { n >= 0 and C.plus or C.minus, sign .. by }, { C.item, " " .. what } }
+end
+
+local function prose(out, lines, width)
+  if #lines == 0 then return end
+  local text = table.concat(lines, " "):gsub("%s+", " ")
+  addAll(out, wrapWords(trim(text), width, 0, C.text))
+end
+
+-- split "Sentence one. Sentence two." into sentences
+local function sentences(t)
+  local res = {}
+  for s in (t:gsub("([%.!?])%s+(%u)", "%1\n%2") .. "\n"):gmatch("(.-)\n") do
+    if trim(s) ~= "" then res[#res + 1] = trim(s) end
+  end
+  return res
+end
+
+---------------------------------------------------------------- weapons (eq + item)
+local function parseWeaponSummary(s)
+  local w = { summary = s, stats = {} }
+  w.dmgLevel, w.dmgType = s:match("deal (%a+) ([%a%-]+) damage")
+  w.accuracy = s:match("with (%a+) accuracy")
+  w.range = s:match("at (%a+) range")
+  w.critChance, w.critMult = s:match("with a (%a+) chance to crit for (%S+) damage")
+  return w
+end
+
+-- "7 Damage: (+20 from weapon) (+-12 from skill & strength)"
+local function parseWeaponStat(t)
+  local val, label, src = t:match("^(%-?%d+%%?) ([%a ]-):%s*(.*)$")
+  if not val then return nil end
+  local parts = {}
+  for num, why in src:gmatch("%(([+%-]+%d+) (.-)%)") do
+    local n = num:gsub("^%+%-", "-"):gsub("^%-%+", "-")
+    parts[#parts + 1] = { n, (why:gsub("^from ", "")) }
+  end
+  return { label, val, parts }
+end
+
+local function renderWeapon(out, w, width)
+  local cells = {}
+  if w.dmgLevel then cells[#cells + 1] = { "Damage", { { C.num, w.dmgLevel }, { C.text, " " .. w.dmgType } } } end
+  if w.accuracy then cells[#cells + 1] = { "Accuracy", { { C.num, w.accuracy } } } end
+  if w.range then cells[#cells + 1] = { "Range", { { C.num, w.range } } } end
+  if w.critChance then cells[#cells + 1] = { "Crit", { { C.num, w.critChance }, { C.text, " (" .. w.critMult .. ")" } } } end
+  if #cells > 0 then grid(out, cells, width) else prose(out, { w.summary }, width) end
+  if #w.stats > 0 then
+    blank(out)
+    local lw = 0
+    for _, st in ipairs(w.stats) do lw = math.max(lw, ulen(st[1])) end
+    for _, st in ipairs(w.stats) do
+      local segs = { { C.num, string.format("%-4s", st[2]) } }
+      for i, p in ipairs(st[3]) do
+        segs[#segs + 1] = { C.dim, i == 1 and " " or " · " }
+        segs[#segs + 1] = { p[1]:match("^%-") and C.minus or C.plus, p[1] }
+        segs[#segs + 1] = { C.text, " " .. p[2] }
+      end
+      kvLine(out, st[1], lw, segs, width)
+    end
+  end
+end
+
+---------------------------------------------------------------- equipment
+local function renderSlots(out, slots, width)
+  local slotW = 0
+  for _, r in ipairs(slots) do slotW = math.max(slotW, ulen(r[1])) end
+  slotW = math.min(slotW, 22)
+  local prev
+  for _, r in ipairs(slots) do
+    local label = (r[1] == prev) and "" or r[1]
+    prev = r[1]
+    local pre = { { C.slot, pad(label, slotW) }, { C.dim, " │ " } }
+    local segs = itemSegs(r[2])
+    local row = { unpack(pre) }
+    if slotW + 3 + segLen(segs) <= width then
+      for _, sg in ipairs(segs) do row[#row + 1] = sg end
+      out[#out + 1] = row
+    else
+      addAll(out, wrapWords(r[2], width, slotW + 3, C.item, pre, slotW + 3))
+    end
+  end
+end
+
+-- prose with paragraph breaks ("" entries split paragraphs)
+local function paragraphs(out, lines, width)
+  local cur = {}
+  local function flush()
+    if #cur > 0 then blank(out); prose(out, cur, width); cur = {} end
+  end
+  for _, l in ipairs(lines) do
+    if trim(l) == "" then flush() else cur[#cur + 1] = l end
+  end
+  flush()
+end
+
+local eqMisc = {
+  { "^Your value if CPKed would be (.-)%.?$", function(v) return "CPK value", { { C.num, v } } end },
+  { "^You have a (%d+%%) chance to resist a critical hit%.?$",
+    function(v) return "Crit resist", { { C.num, v } } end },
+  { "^You have a (%d+%%) chance to reduce spell damage taken by (%d+%%)%.?$",
+    function(c, r) return "Spell ward", { { C.num, c }, { C.text, " chance to cut spell damage by " }, { C.num, r } } end },
+}
+
+function M.formatters.eq(raw, width)
+  local slots, ar, misc, weapons, other = {}, {}, {}, {}, {}
+  local slotW, header = 0, nil
+  local weapon
+  for _, l in ipairs(raw) do
+    local t = trim(l)
+    local slot, item = parseSlot(l)
+    local arLoc, arVal, arRest = t:match("^%((%a[%a ]-)%s*%)%s+(%-?%d+)%s*(.*)$")
+    if t == "" or t:match("^You are using:?$") or t:match("^Current Armor Resistance")
+       or t:match("^Equipped weapon damage") then
+      -- section headings are re-drawn by us
+    elseif slot then
+      slots[#slots + 1] = { slot, item }; slotW = math.max(slotW, ulen(slot))
+    elseif arLoc then
+      ar[#ar + 1] = { arLoc, arVal, arRest:match("([%d%.]+)%%") }
+    elseif t:match("^With .-, you will deal") then
+      weapon = parseWeaponSummary(t)
+      weapon.name = t:match("^With (.-), you will deal")
+      weapons[#weapons + 1] = weapon
+    elseif weapon and parseWeaponStat(t) then
+      weapon.stats[#weapon.stats + 1] = parseWeaponStat(t)
+    else
+      local matched = false
+      for _, s in ipairs(sentences(t)) do
+        local hit
+        for _, m in ipairs(eqMisc) do
+          local a, b = s:match(m[1])
+          if a then misc[#misc + 1] = { m[2](a, b) }; hit = true; break end
+        end
+        if not hit then other[#other + 1] = s end
+      end
+    end
+  end
+  if #slots == 0 then return M.formatters.generic(raw, width) end
+
+  local out = {}
+  renderSlots(out, slots, width)
+
+  if #ar > 0 then
+    local total = 0
+    for _, a in ipairs(ar) do total = total + (tonumber(a[2]) or 0) end
+    subhead(out, "Armor resistance  (total " .. total .. ")")
+    local cells = {}
+    for _, a in ipairs(ar) do
+      cells[#cells + 1] = { a[1], { { C.num, string.format("%3s", a[2]) },
+        { C.dim, a[3] and string.format("  -%s%% dmg", (a[3]:gsub("0+$", ""):gsub("%.$", ""))) or "" } } }
+    end
+    grid(out, cells, width)
+  end
+
+  if #misc > 0 then
+    subhead(out, "Defense")
+    local kw = 0
+    for _, m in ipairs(misc) do kw = math.max(kw, ulen(m[1])) end
+    for _, m in ipairs(misc) do kvLine(out, m[1], kw, m[2], width) end
+  end
+
+  for _, w in ipairs(weapons) do
+    subhead(out, "Weapon: " .. w.name)
+    renderWeapon(out, w, width)
+  end
+
+  if #other > 0 then
+    blank(out)
+    for _, o in ipairs(other) do prose(out, { o }, width) end
+  end
+  return out
+end
+
+---------------------------------------------------------------- item look
+-- extra one-line facts that some item types show.  Returns {label, segments} or nil.
+M.itemExtras = {
+  { "^This level (%d+) item has no special attributes%.?$", function(l) return "@level", l end },
+  { "^Contains the level (%d+) spells? of (.-)%.?$",
+    function(l, sp) return "Spell", { { C.slot, sp }, { C.dim, "  level " }, { C.num, l } } end },
+  { "^Contains knowledge of the spell of (.-), scribed at level (%d+)%.?$",
+    function(sp, l) return "Spell", { { C.slot, sp }, { C.dim, "  scribed at level " }, { C.num, l } } end },
+  { "^%*Your level must be less than or equal to (%d+) to use this item%.?$",
+    function(l) return "Max level", { { C.num, l } } end },
+  { "^%*Your level must be at least (%d+) to use this item%.?$",
+    function(l) return "Min level", { { C.num, l } } end },
+  { "^%*.- will last approximately ([%d,]+) more (.-)%.?$",
+    function(n, u) return "Lasts", { { C.num, "~" .. n }, { C.text, " " .. u } } end },
+  { "^This item, when USEd, will (.-)%.?$",
+    function(what) return "Use", { { C.slot, what } } end },
+  { "^There are (%d+) charges? remaining bound within .-%.?$",
+    function(n) return "Charges", { { C.num, n } } end },
+  { "^Casts the level (%d+) spell, (.-)%.?$",
+    function(l, sp) return "Casts", { { C.slot, sp }, { C.dim, "  level " }, { C.num, l } } end },
+  { "^Your weapon special attribute (%S+) (.-)%.?$",
+    function(n, what) return "Effect", { { C.flag, n }, { C.text, " " .. what } } end },
+  { "^%*This item cannot be repaired due to its (.-), but may be renewed (%d+) times?%.?$",
+    function(why, n) return "Renewals", { { C.num, n }, { C.dim, "  (cannot be repaired)" } } end },
+  { "^%*This item is bound to (.-)%.?$",
+    function(who) return "Bound to", { { C.flag, who } } end },
+  { "^There are (%d+) out of (%d+) (%a+) of (.-) in this vessel%.?$",
+    function(a, b, u, what) return "Holds", { { C.num, a }, { C.dim, "/" .. b .. " " .. u .. " of " }, { C.item, what } } end },
+}
+function M.itemExtra(t)
+  for _, e in ipairs(M.itemExtras) do
+    local a, b, c, d = t:match(e[1])
+    if a then
+      local k, v = e[2](a, b, c, d)
+      return { k, v }
+    end
+  end
+end
+
+function M.parseItem(raw)
+  local L = {}
+  for _, l in ipairs(raw) do L[#L + 1] = rtrim(l) end
+  local start
+  for i, l in ipairs(L) do if l:match("^Item '") then start = i break end end
+  if not start then return nil end
+
+  local it = { other = {}, affects = {}, relics = {}, desc = {}, flags = {}, extra = {}, notes = {},
+               relicAffects = {}, grants = {}, bonus = {} }
+  for i = 1, start - 1 do
+    local n = L[i]:match("^You focus your powers of observation on (.-):%s*$")
+    if n then it.focus = n elseif trim(L[i]) ~= "" then it.other[#it.other + 1] = L[i] end
+  end
+
+  -- the "Item '...' is type ..." sentence wraps over several lines; join until it ends with "."
+  local hdr, i = {}, start
+  repeat
+    hdr[#hdr + 1] = trim(L[i]); i = i + 1
+  until hdr[#hdr]:match("%.$") or i > #L or i - start >= 5
+  local h = table.concat(hdr, " ")
+  it.header = h
+  it.name, it.type = h:match("^Item '(.-)' is type ([^,]+)")
+  it.align = h:match("alignment (%-?%d+)")
+  it.material, it.cond = h:match("made of (.-) %(in %((.-)%) condition%)")
+  if not it.material then it.material = h:match("made of ([^,%(]+)") end
+  for f in h:gmatch("%[([^%]]+)%]") do it.flags[#it.flags + 1] = f end
+  it.keywords = h:match("keywords '(.-)'")
+  it.worn = h:match("equipped ([^,%.]+)")
+
+  local lastKnown = i - 1
+  local inRelics, inBonus = false, false
+  local unknown = {}   -- {index, text}
+  while i <= #L do
+    local l = L[i]; local t = trim(l)
+    local indented = l:match("^%s%s") ~= nil
+    local slotTxt, st, pb, val, rest = t:match("^This ?(.-)item weighs (%d+) stones? and (%d+) pebbles?, and is valued at ([%d,]+) gold%.?%s*(.*)$")
+    local wpnName = t:match("^Your (.-) will deal %a+ [%a%-]+ damage")
+    local special = t:match("^Special weapon attributes:%s*(.-)%.?$")
+    local gPct, gSkill, gDesc = t:match("^Grants knowledge at (%d+%%):%s*(.-)%s+%-%s+(.-)%.?$")
+    local lvl, attrs = t:match("^This level (%d+) item has the attributes:%s*(.-)%.?$")
+    local arv = t:match("^Armor resistance is (%-?%d+)%.?$")
+    local rep = t:match("^%*?This item may be repaired (%d+) times?%.?$")
+    local afW, afN = t:match("^Affects (.-) by (%-?%d+)%.?$")
+    local x = M.itemExtra(t)
+    if t == "" then
+      inBonus = false
+      unknown[#unknown + 1] = { i, "" }
+    elseif t:match("^%+%+%+") then
+      it.bonus[#it.bonus + 1] = { (t:gsub("^%+%+%+%s*", "")) }; inBonus = true
+    elseif inBonus then
+      local b = it.bonus[#it.bonus]; b[#b + 1] = t
+    elseif inRelics and indented then
+      it.relics[#it.relics + 1] = l; lastKnown = i
+      local rw, rn = t:match("^Affects (.-) by (%-?%d+)%.?$")
+      if rw then it.relicAffects[#it.relicAffects + 1] = { rw, rn } end
+    elseif wpnName then
+      it.weapon = parseWeaponSummary(t); it.weapon.name = wpnName; inRelics = false; lastKnown = i
+    elseif it.weapon and parseWeaponStat(t) then
+      it.weapon.stats[#it.weapon.stats + 1] = parseWeaponStat(t); lastKnown = i
+    elseif special then it.special = special; inRelics = false; lastKnown = i
+    elseif gPct then
+      it.grants[#it.grants + 1] = { gSkill, gPct, gDesc }; inRelics = false; lastKnown = i
+    elseif t:match("^Relics:") then
+      inRelics = true; lastKnown = i
+    elseif st then
+      inRelics = false
+      it.weight = { st, pb }; it.value = val
+      it.slots = slotTxt:match("(%d+)%-slot")
+      it.cat = rest:match("{Cat%.?%s*(%w+)}")
+      local left = trim(rest:gsub("{Cat%.?%s*%w+}", ""))
+      if left ~= "" then unknown[#unknown + 1] = { i, left } end
+      lastKnown = i
+    elseif lvl then it.level, it.attrs = lvl, attrs; inRelics = false; lastKnown = i
+    elseif arv then it.ar = arv; inRelics = false; lastKnown = i
+    elseif rep then it.repairs = rep; inRelics = false; lastKnown = i
+    elseif afW and not indented then
+      it.affects[#it.affects + 1] = { afW, afN }; inRelics = false; lastKnown = i
+    elseif x then
+      if x[1] == "@level" then it.level, it.attrs = x[2], "none"
+      else it.extra[#it.extra + 1] = x end
+      inRelics = false; lastKnown = i
+    elseif t:match("^%*") then
+      it.notes[#it.notes + 1] = t:gsub("^%*%s*", ""); inRelics = false; lastKnown = i
+    else
+      inRelics = false
+      unknown[#unknown + 1] = { i, l }
+    end
+    i = i + 1
+  end
+  -- unknown lines after the last recognised line are the description
+  for _, u in ipairs(unknown) do
+    if u[1] > lastKnown then it.desc[#it.desc + 1] = trim(u[2])
+    elseif u[2] ~= "" then it.other[#it.other + 1] = u[2] end
+  end
+  return it
+end
+
+function M.formatMob(raw, width)
+  local desc, slots, after, who = {}, {}, {}, nil
+  local phase = "desc"
+  for _, l in ipairs(raw) do
+    local t = trim(l)
+    local slot, item = parseSlot(l)
+    local w = t:match("^(.-) is using:$")
+    if w then who = w; phase = "eq"
+    elseif slot then slots[#slots + 1] = { slot, item }; phase = "eq"
+    elseif phase == "desc" then desc[#desc + 1] = t
+    elseif t ~= "" then after[#after + 1] = t end
+  end
+  if #slots == 0 then return nil end
+  local out = {}
+  paragraphs(out, desc, width)
+  subhead(out, (who or "Equipment") .. " is using")
+  renderSlots(out, slots, width)
+  if #after > 0 then blank(out); for _, o in ipairs(after) do prose(out, { o }, width) end end
+  return out, who and (who:gsub("^%l", string.upper))
+end
+
+function M.formatters.item(raw, width)
+  local it = M.parseItem(raw)
+  if not it or not it.name then
+    local out, title = M.formatMob(raw, width)
+    if out then return out, title end
+    return M.formatters.generic(raw, width)
+  end
+  local out = {}
+  local cells = {}
+  local function add(k, segs) if segs then cells[#cells + 1] = { k, segs } end end
+  add("Type", it.type and { { C.item, it.type } })
+  add("Level", it.level and { { C.num, it.level } })
+  add("Material", it.material and { { C.item, it.material } })
+  add("Condition", it.cond and condSegs({ it.cond }))
+  if cells[#cells] and cells[#cells][1] == "Condition" then cells[#cells][2][1][2] = it.cond end
+  add("Worn", it.worn and { { C.item, it.worn } })
+  add("Align", it.align and numSegs(it.align))
+  add("Weight", it.weight and { { C.num, it.weight[1] }, { C.text, " st " }, { C.num, it.weight[2] }, { C.text, " pb" } })
+  add("Value", it.value and { { C.num, it.value }, { C.text, " gold" } })
+  add("Armor", it.ar and numSegs(it.ar))
+  add("Repairs", it.repairs and { { C.num, it.repairs }, { C.text, " left" } })
+  add("Category", it.cat and { { C.num, it.cat } })
+  add("Slots", it.slots and { { C.num, it.slots } })
+  grid(out, cells, width)
+
+  local kw = 9
+  if it.keywords then kvLine(out, "Keywords", kw, { { C.slot, it.keywords } }, width) end
+  if #it.flags > 0 then kvLine(out, "Flags", kw, { { C.flag, table.concat(it.flags, " · ") } }, width) end
+  if it.attrs and it.attrs ~= "" then
+    kvLine(out, "Attribs", kw, { { it.attrs == "none" and C.dim or C.flag, it.attrs } }, width)
+  end
+  if #it.affects > 0 then
+    local segs = {}
+    for n, a in ipairs(it.affects) do
+      if n > 1 then segs[#segs + 1] = { C.dim, ", " } end
+      for _, s in ipairs(affectSegs(a[1], a[2])) do segs[#segs + 1] = s end
+    end
+    kvLine(out, "Affects", kw, segs, width)
+  end
+  if #it.relics > 0 then
+    local first = true
+    for _, r in ipairs(it.relics) do
+      local depth = #(r:match("^(%s*)")) - 2
+      local t = trim(r):gsub("%s+", " ")
+      local segs
+      local afW, afN = t:match("^Affects (.-) by (%-?%d+)%.?$")
+      if afW then
+        segs = affectSegs(afW, afN)
+      else
+        local name, van = t:match("^(.-)%s*%[Vanishes (.-)%]$")
+        if name then
+          segs = itemSegs(name)
+          segs[#segs + 1] = { C.dim, "  vanishes " .. van }
+        else
+          segs = { { C.item, t } }
+        end
+      end
+      table.insert(segs, 1, { C.text, string.rep(" ", math.max(0, depth)) })
+      kvLine(out, first and "Relics" or "", kw, segs, width)
+      first = false
+    end
+  end
+  for _, x in ipairs(it.extra) do kvLine(out, x[1], kw, x[2], width) end
+  if it.special then kvLine(out, "Special", kw, { { C.flag, it.special } }, width) end
+  for n, g in ipairs(it.grants) do
+    kvLine(out, n == 1 and "Grants" or "", kw,
+      { { C.slot, g[1] }, { C.num, " " .. g[2] }, { C.dim, "  " .. g[3] } }, width)
+  end
+  if it.weapon then
+    subhead(out, "Weapon")
+    renderWeapon(out, it.weapon, width)
+    blank(out)
+  end
+  for n, note in ipairs(it.notes) do
+    kvLine(out, n == 1 and "Notes" or "", kw, { { C.text, note } }, width)
+  end
+  if #it.other > 0 then
+    blank(out)
+    for _, o in ipairs(it.other) do prose(out, { o }, width) end
+  end
+  paragraphs(out, it.desc, width)
+  for _, b in ipairs(it.bonus) do
+    blank(out)
+    local text = table.concat(b, " "):gsub("%s+", " ")
+    addAll(out, wrapWords(trim(text), width, 4, C.text, { { C.flag, "+++ " } }, 4))
+  end
+  return out, it.name
+end
+
+---------------------------------------------------------------- containers / inventory
+function M.formatters.contents(raw, width)
+  local title, rows, footer, other = nil, {}, nil, {}
+  for _, l in ipairs(raw) do
+    local t = trim(l)
+    local n, items, w, maxW = t:match("^A total of (%d+) %((%d+) max%) items weighing (.-) %((.-) max%)%.?$")
+    local invN, invW, invGold = t:match("^A total of (%d+) items weighing (.-)%s*%((.-) gold weight%)%.?$")
+    if not invN then invN, invW = t:match("^A total of (%d+) items weighing (.-)%.?$") end
+    local capN, capW = t:match("^You may carry a maximum of (%d+) items weighing up to (.-)%.?$")
+    if t == "" or t == "Search inventory" then
+    elseif invN then
+      footer = footer or {}
+      footer[1], footer[3], footer.gold = invN, invW, invGold
+    elseif capN then
+      footer = footer or {}
+      footer[2], footer[4] = capN, capW
+    elseif not title and #rows == 0 and t:match(":$") then
+      title = t:gsub(":$", ""):gsub("%s+contains$", "")
+    elseif n then
+      footer = { n, items, w, maxW }
+    else
+      local cnt, rest = t:match("^%(%s*(%d+)%)%s*(.+)$")
+      rows[#rows + 1] = { tonumber(cnt) or 1, rest or t }
+    end
+  end
+  if #rows == 0 then return M.formatters.generic(raw, width) end
+  local out = {}
+  for _, r in ipairs(rows) do
+    local row = { { C.num, r[1] > 1 and string.format("%3d× ", r[1]) or "     " } }
+    local segs = itemSegs(r[2])
+    if 5 + segLen(segs) <= width then
+      for _, s in ipairs(segs) do row[#row + 1] = s end
+      out[#out + 1] = row
+    else
+      addAll(out, wrapWords(r[2], width, 5, C.item, row, 5))
+    end
+  end
+  if footer then
+    blank(out)
+    local function wt(s)
+      return (s:gsub(" stones?", " st"):gsub(" sts", " st"):gsub(" pebbles?", " pb"):gsub(" pbs", " pb"))
+    end
+    local row = { { C.key, "Items " }, { C.num, footer[1] or "?" } }
+    if footer[2] then row[#row + 1] = { C.dim, "/" .. footer[2] } end
+    if footer[3] then
+      row[#row + 1] = { C.key, "    Weight " }; row[#row + 1] = { C.num, wt(footer[3]) }
+      if footer[4] then row[#row + 1] = { C.dim, " / " .. wt(footer[4]) } end
+    end
+    if footer.gold then row[#row + 1] = { C.dim, "  (gold " .. footer.gold .. ")" } end
+    out[#out + 1] = row
+  end
+  return out, title and ((title:gsub("^%l", string.upper)))
+end
+
+---------------------------------------------------------------- score
+-- text gauge: ███████░░░
+local function gauge(cur, max, n, col)
+  cur, max = tonumber(cur) or 0, tonumber(max) or 0
+  local k = max > 0 and math.floor(n * math.min(cur, max) / max + 0.5) or 0
+  local pct = max > 0 and cur / max or 0
+  col = col or (pct >= 0.66 and C.plus or pct >= 0.33 and "gold" or C.minus)
+  return { { col, string.rep("█", k) }, { C.dim, string.rep("░", n - k) } }
+end
+M.gauge = gauge
+
+M.maxNames = { ["Hit Points"] = "hp", ["Spell Points"] = "sp", ["Stamina"] = "st" }
+local function commaNum(n)
+  n = tonumber((tostring(n):gsub(",", "")))
+  if not n then return "?" end
+  local int = tostring(math.floor(math.abs(n))):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+  return (n < 0 and "-" or "") .. int
+end
+M.commaNum = commaNum
+
+-- pull everything out of `score` into one table
+function M.parseScore(raw)
+  local sc = { info = {}, pools = {}, attrs = {}, ratings = {}, other = {} }
+  for _, l in ipairs(raw) do
+    local t = trim(l)
+    local who = t:match("^Player Information for:%s*(.+)$")
+    if t == "" then
+    elseif who then sc.title = who
+    elseif t:match("^%*%s*%u%u%u:") then
+      for k, v in t:gmatch("(%u%u%u):%s*(%-?%d+)") do sc.ratings[#sc.ratings + 1] = { k, v } end
+    elseif t:match("^%*%s*Class Path:") then
+      sc.path = {}
+      for n, c in t:gmatch("(%d%a%a):%s*(%S+)") do if c ~= "(n/a)" then sc.path[#sc.path + 1] = c end end
+    elseif t:match("^%*") then
+      local s2 = trim(t:gsub("^%*%s*", ""))
+      local e, need = s2:match("^You have ([%d,]+) experience points and need ([%d,]+) to advance")
+      local mk, md = s2:match("^You have killed ([%d,]+) and been killed by ([%d,]+) creatures")
+      local pk, pd = s2:match("^You have killed ([%d,]+) and been killed by ([%d,]+) players")
+      local hoard = s2:match("^If CPKed, your hoard would be valued at ([%d,]+) gp")
+      local ci, cw = s2:match("^You are carrying (%d+) items weighing (.-)%.?$")
+      local marks, rel = s2:match("^You have attained (%d+) marks and (%d+) relationships")
+      if e then sc.exp, sc.tnl = e, need
+      elseif mk then sc.mobKills, sc.mobDeaths = mk, md
+      elseif pk then sc.pkKills, sc.pkDeaths = pk, pd
+      elseif hoard then sc.hoard = hoard
+      elseif ci then sc.carry = { ci, cw }
+      elseif marks then sc.marks, sc.rel = marks, rel
+      else sc.other[#sc.other + 1] = s2 end
+    else
+      local k1, v1, k2, v2 = t:match("^([%a][%a ]-):%s+(.-)%s%s+([%a][%a ]-):%s+(.-)$")
+      if not k1 then k1, v1 = t:match("^([%a][%a ]-):%s+(.-)$") end
+      if not k1 then sc.other[#sc.other + 1] = t
+      else
+        for _, kv in ipairs({ { k1, v1 }, { k2, v2 } }) do
+          if kv[1] then
+            local k, v = trim(kv[1]), trim(kv[2])
+            local cur, max = v:match("^(%-?%d+)/(%d+)$")
+            if M.maxNames[k] and cur then sc.pools[#sc.pools + 1] = { k, cur, max }
+            elseif cur then sc.attrs[#sc.attrs + 1] = { k, cur, max }
+            else sc.info[k] = v end
+          end
+        end
+      end
+    end
+  end
+  return sc
+end
+
+local poolLabel = { ["Hit Points"] = "HP", ["Spell Points"] = "SP", ["Stamina"] = "ST" }
+local poolColor = { ["Hit Points"] = "tomato", ["Spell Points"] = "light_sky_blue", ["Stamina"] = "gold" }
+
+function M.formatters.score(raw, width)
+  local sc = M.parseScore(raw)
+  local I = sc.info
+  if not (I["Class Level"] or #sc.pools > 0) then return M.formatters.generic(raw, width) end
+  local out = {}
+
+  -- headline: what matters while playing
+  local lvl = I["Class Level"]
+  local head = { { C.title, "Level " }, { C.num, lvl or "?" } }
+  if I["Class"] then head[#head + 1] = { C.item, " " .. I["Class"] } end
+  if I["Race"] then head[#head + 1] = { C.dim, " · " }; head[#head + 1] = { C.item, I["Race"] } end
+  if I["Total Level"] and I["Total Level"] ~= lvl then
+    head[#head + 1] = { C.dim, "   total level " }; head[#head + 1] = { C.num, I["Total Level"] }
+  end
+  out[#out + 1] = head
+  if sc.tnl then
+    local nxt = tonumber(lvl or "") and (" to level " .. (tonumber(lvl) + 1)) or " to next level"
+    out[#out + 1] = { { C.plus, commaNum(sc.tnl) }, { C.text, " exp" .. nxt },
+                      { C.dim, "   (" .. commaNum(sc.exp) .. " total)" } }
+  end
+  if sc.path and #sc.path > 1 then
+    out[#out + 1] = { { C.dim, "Class path: " }, { C.item, table.concat(sc.path, " → ") } }
+  end
+
+  if #sc.pools > 0 then
+    blank(out)
+    local gw = math.max(10, math.min(30, width - 20))
+    for _, v in ipairs(sc.pools) do
+      local row = { { poolColor[v[1]] or C.key, pad(poolLabel[v[1]] or v[1], 4) },
+                    { C.num, string.format("%9s ", v[2] .. "/" .. v[3]) } }
+      addAll(row, gauge(v[2], v[3], gw))
+      out[#out + 1] = row
+    end
+  end
+
+  if #sc.attrs > 0 then
+    subhead(out, "Attributes  (current/max)")
+    local cells = {}
+    for _, a in ipairs(sc.attrs) do
+      local segs = { { C.num, string.format("%5s ", a[2] .. "/" .. a[3]) } }
+      addAll(segs, gauge(a[2], a[3], 8, C.slot))
+      cells[#cells + 1] = { a[1], segs }
+    end
+    grid(out, cells, width)
+  end
+
+  if #sc.ratings > 0 then
+    subhead(out, "Ratings")
+    local row = {}
+    for n, r in ipairs(sc.ratings) do
+      row[#row + 1] = { C.key, r[1] .. " " }; row[#row + 1] = { C.num, string.format("%3s", r[2]) }
+      if n % 3 == 0 or n == #sc.ratings then out[#out + 1] = row; row = {} else row[#row + 1] = { C.dim, "    " } end
+    end
+  end
+
+  -- spendables and standing
+  local cells = {}
+  if I["Practices"] then cells[#cells + 1] = { "Practices", { { C.num, I["Practices"] } } } end
+  if I["Quest Points"] then
+    local qp, qn = I["Quest Points"]:match("^(%d+)%s*%((%d+) quests?%)")
+    cells[#cells + 1] = { "Quest points", qp and { { C.num, qp }, { C.dim, "  " .. qn .. " quests done" } }
+                                              or { { C.num, I["Quest Points"] } } }
+  end
+  if I["Alignment"] then
+    local n, word = I["Alignment"]:match("^(%-?%d+)%s*%(%+?(.-)%)")
+    cells[#cells + 1] = { "Alignment", n and { { C.num, n }, { C.dim, "  " .. word } } or { { C.item, I["Alignment"] } } }
+  end
+  if I["Reputation"] then
+    local n, word = I["Reputation"]:match("^(%-?%d+)%s*%((.-)%)")
+    cells[#cells + 1] = { "Reputation", n and { { C.num, n }, { C.dim, "  " .. word } } or { { C.item, I["Reputation"] } } }
+  end
+  if #cells > 0 then subhead(out, "Standing"); grid(out, cells, width) end
+
+  -- kill record, spelled out
+  if sc.mobKills or sc.pkKills or sc.marks then
+    subhead(out, "Record")
+    local function kd(label, k, d)
+      out[#out + 1] = { { C.key, pad(label, 12) }, { C.text, "you killed " }, { C.plus, pad(k, 5) },
+                        { C.text, "killed you " }, { C.minus, d } }
+    end
+    if sc.mobKills then kd("Creatures", sc.mobKills, sc.mobDeaths) end
+    if sc.pkKills then kd("Players", sc.pkKills, sc.pkDeaths) end
+    if sc.marks then
+      out[#out + 1] = { { C.key, pad("Marks", 12) }, { C.num, pad(sc.marks, 16) },
+                        { C.key, "Relationships " }, { C.num, sc.rel } }
+    end
+  end
+
+  -- trivia, dimmed
+  local misc = {}
+  if I["Hours Played"] then misc[#misc + 1] = I["Hours Played"] .. " hours played" end
+  if I["Age"] then misc[#misc + 1] = "age " .. I["Age"]:gsub("%s*%[.-%]", "") end
+  if I["Gender"] then misc[#misc + 1] = I["Gender"] end
+  if sc.hoard then misc[#misc + 1] = "CPK hoard " .. sc.hoard .. " gp" end
+  if sc.carry then misc[#misc + 1] = "carrying " .. sc.carry[1] .. " items (" .. sc.carry[2]:gsub(" stones", " st"):gsub(" pebbles", " pb") .. ")" end
+  for k, v in pairs(I) do
+    local known = { ["Class Level"] = 1, ["Total Level"] = 1, Race = 1, Class = 1, Practices = 1, ["Quest Points"] = 1,
+                    Alignment = 1, Reputation = 1, ["Hours Played"] = 1, Age = 1, Gender = 1 }
+    if not known[k] then misc[#misc + 1] = k:lower() .. " " .. v end
+  end
+  for _, o in ipairs(sc.other) do misc[#misc + 1] = o end
+  if #misc > 0 then
+    blank(out)
+    addAll(out, wrapWords(table.concat(misc, "  ·  "), width, 0, C.dim))
+  end
+  return out, sc.title
+end
+
+---------------------------------------------------------------- affects
+function M.formatters.affects(raw, width)
+  local rows, top, other, total = {}, {}, {}, nil
+  for _, l in ipairs(raw) do
+    local t = trim(l)
+    local src, name, lvl, what, by, rest =
+      t:match("^(%a[%a ]-):%s+(.-)%s+%-%s+Level%s+(%d+),%s+modifies%s+(%S+)%s+by%s+(%-?%d+)%.?%s*(.*)$")
+    if t == "" or t:match("^You are affected by the following") or t:match("^%[.*%]$") then
+    elseif src then
+      local last = rows[#rows]
+      if last and last.src == src and last.name == name and last.lvl == lvl then
+        last.mods[#last.mods + 1] = { what, by, rest }
+      else
+        rows[#rows + 1] = { src = src, name = name, lvl = lvl, mods = { { what, by, rest } } }
+      end
+    elseif t:match("^Total of") then total = t
+    else
+      local res = t:match("^%*%s*You are resistant to:%s*(.-)%.?$")
+      local vul = t:match("^%*%s*You are vulnerable to:%s*(.-)%.?$")
+      local k, v = t:match("^(%a[%a ]-):%s+(.+)$")
+      if res then top[#top + 1] = { "Resistant", { { C.plus, res } } }
+      elseif vul then top[#top + 1] = { "Vulnerable", { { C.minus, vul } } }
+      elseif k and ulen(k) <= 14 then top[#top + 1] = { k, { { C.item, v } } }
+      else other[#other + 1] = (t:gsub("^%*%s*", "")) end
+    end
+  end
+  if #rows == 0 and #top == 0 then return M.formatters.generic(raw, width) end
+  local out = {}
+  for _, tkv in ipairs(top) do kvLine(out, tkv[1], 10, tkv[2], width) end
+  if #rows > 0 then
+    blank(out)
+    local sw, nw = 0, 0
+    for _, r in ipairs(rows) do sw = math.max(sw, ulen(r.src)); nw = math.max(nw, ulen(r.name)) end
+    nw = math.min(nw, 24)
+    local ind = sw + 2 + nw + 2 + 5
+    for _, r in ipairs(rows) do
+      for n, m in ipairs(r.mods) do
+        local row
+        if n == 1 then
+          row = { { r.src == "Spell" and C.slot or C.key, pad(r.src, sw + 2) },
+                  { C.item, pad(r.name, nw + 2) }, { C.dim, pad("L" .. r.lvl, 5) } }
+        else
+          row = { { C.text, string.rep(" ", ind) } }
+        end
+        if m[1] == "none" and tonumber(m[2]) == 0 then
+          row[#row + 1] = { C.dim, "—" }
+        else
+          addAll(row, affectSegs(m[1], m[2]))
+        end
+        if m[3] and m[3] ~= "" then row[#row + 1] = { C.dim, "  " .. m[3] } end
+        out[#out + 1] = row
+      end
+    end
+  end
+  if #other > 0 then blank(out); for _, o in ipairs(other) do prose(out, { o }, width) end end
+  if total then blank(out); out[#out + 1] = { { C.dim, total } } end
+  return out, "Affects"
+end
+
+---------------------------------------------------------------------------
+-- Output
+---------------------------------------------------------------------------
+local titles = { eq = "Equipment", item = "Look", contents = "Contents" }
+M.titles = titles
+
+local function header(kind, target, width, title)
+  local t = " " .. (title or ((titles[kind] or kind) .. (target ~= "" and (": " .. target) or ""))) .. " "
+  local time = " " .. os.date("%H:%M") .. " "
+  local fill = math.max(2, width - ulen(t) - ulen(time) - 2)
+  return { { C.rule, "──" }, { C.title, t }, { C.rule, string.rep("─", fill) }, { C.dim, time } }
+end
+
+local function render(win, lines)
+  for _, segs in ipairs(lines) do
+    for _, s in ipairs(segs) do
+      local col = s[1]
+      if color_table and not color_table[col] then col = "white" end
+      fg(win, col)
+      echo(win, s[2])
+    end
+    resetFormat(win)
+    echo(win, "\n")
+  end
+  resetFormat(win)
+end
+
+local function columns(win)
+  local ok, n
+  if win == "main" then ok, n = pcall(getWindowWrap, "main")
+  else ok, n = pcall(getColumnCount, win) end
+  n = (ok and tonumber(n)) or 80
+  if n < 30 then n = 80 end
+  return math.min(n - 1, 110)
+end
+
+function M.format(kind, target, raw, width)
+  local f = M.formatters[kind] or M.formatters.generic
+  local ok, res, title = pcall(f, raw, width)
+  if not ok then
+    debugc("Oven formatter error: " .. tostring(res))
+    return nil
+  end
+  local lines = { header(kind, target, width, title) }
+  addAll(lines, res)
+  return lines
+end
+
+---------------------------------------------------------------------------
+-- oven window window
+---------------------------------------------------------------------------
+function M.createWindow()
+  if M.container then return end
+  M.container = Adjustable.Container:new({
+    name = "ovenViewer",
+    titleText = "Soft Bun's Oven",
+    x = "-62%", y = "4%", width = "36%", height = "50%",
+    adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+    titleTxtColor = "#e6c35c",
+  })
+  M.console = Geyser.MiniConsole:new({
+    name = "ovenViewerConsole",
+    x = 0, y = 0, width = "100%", height = "100%",
+    autoWrap = false, scrollBar = true,
+    fontSize = M.cfg.fontSize, color = "black",
+  }, M.container)
+end
+
+function M.showWindow(on)
+  if on then
+    M.createWindow()
+    M.container:show()
+  elseif M.container then
+    M.container:hide()
+  end
+end
+
+---------------------------------------------------------------------------
+-- Item memory + comparison
+---------------------------------------------------------------------------
+M.itemsFile = getMudletHomeDir() .. "/oven_items.lua"
+M.items = M.items or {}      -- name -> parsed item
+M.recent = M.recent or {}    -- names, most recent last
+M.eqNames = M.eqNames or {}  -- names of what you wore at the last `eq`
+
+function M.loadItems()
+  migrate(M.itemsFile, "softbunsos_items.lua")
+  migrate(M.itemsFile, "mmformat_items.lua")
+  local t = {}
+  if io.exists(M.itemsFile) then pcall(table.load, M.itemsFile, t) end
+  M.items, M.recent, M.eqNames = t.items or {}, t.recent or {}, t.eq or {}
+  M.pinned = t.pinned
+end
+function M.saveItems()
+  table.save(M.itemsFile, { items = M.items, recent = M.recent, eq = M.eqNames, pinned = M.pinned })
+end
+
+function M.remember(it)
+  local copy = {}
+  for k, v in pairs(it) do
+    if k ~= "desc" and k ~= "other" and k ~= "header" and k ~= "relics" then copy[k] = v end
+  end
+  copy.seen = os.time()
+  M.items[it.name] = copy
+  for i = #M.recent, 1, -1 do if M.recent[i] == it.name then table.remove(M.recent, i) end end
+  M.recent[#M.recent + 1] = it.name
+  while #M.recent > 40 do table.remove(M.recent, 1) end
+  M.saveItems()
+end
+
+function M.updateEqNames(raw)
+  local names = {}
+  for _, l in ipairs(raw) do
+    local _, item = parseSlot(l)
+    if item then names[#names + 1] = (stripConds(item)) end
+  end
+  if #names > 0 then M.eqNames = names; M.saveItems() end
+end
+
+-- find a remembered item by (part of) its name; most recently seen wins
+function M.findItem(q)
+  q = trim(q or ""):lower()
+  if q == "" then return nil end
+  if M.items[q] then return M.items[q] end
+  for i = #M.recent, 1, -1 do
+    local n = M.recent[i]
+    if M.items[n] and n:lower():find(q, 1, true) then return M.items[n] end
+  end
+  for n, it in pairs(M.items) do if n:lower():find(q, 1, true) then return it end end
+end
+
+local rank = { min = 1, minimal = 1, low = 2, med = 3, medium = 3, moderate = 3, high = 4, max = 5, maximum = 5 }
+local function num(v)
+  if v == nil then return nil end
+  return tonumber((tostring(v):gsub(",", ""):gsub("%%$", "")))
+end
+local function pebbles(it) return it.weight and (num(it.weight[1]) or 0) * 1000 + (num(it.weight[2]) or 0) end
+
+-- rows: {label, aText, bText, deltaText, better}  better: 1 = B better, -1 = A better, 0 = same / n.a.
+function M.compareRows(a, b)
+  local rows = {}
+  local function numRow(label, av, bv, mode, always)
+    if av == nil and bv == nil then return end
+    local an, bn = num(av) or (av == nil and 0 or nil), num(bv) or (bv == nil and 0 or nil)
+    local d = (an and bn) and (bn - an) or nil
+    if d == 0 and not always then
+      rows[#rows + 1] = { label, tostring(av or "—"), tostring(bv or "—"), "=", 0 }; return
+    end
+    local better = 0
+    if d and mode == "high" then better = d > 0 and 1 or (d < 0 and -1 or 0)
+    elseif d and mode == "low" then better = d < 0 and 1 or (d > 0 and -1 or 0) end
+    local function commas(n)
+      local str = tostring(math.abs(n)):gsub("%.0+$", "")
+      local int, frac = str:match("^(%d+)(.*)$")
+      int = int:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+      return (n < 0 and "-" or "+") .. int .. frac
+    end
+    local dt = d and (d == 0 and "=" or commas(d)) or ""
+    rows[#rows + 1] = { label, tostring(av or "—"), tostring(bv or "—"), dt, better }
+  end
+  local function rankRow(label, av, bv)
+    if av == nil and bv == nil then return end
+    local ar, br = rank[(av or ""):lower()], rank[(bv or ""):lower()]
+    local better = (ar and br) and ((br > ar) and 1 or (br < ar and -1 or 0)) or 0
+    rows[#rows + 1] = { label, av or "—", bv or "—", better == 0 and (av == bv and "=" or "") or (better > 0 and "better" or "worse"), better }
+  end
+  local function textRow(label, av, bv, always)
+    if av == nil and bv == nil then return end
+    if av == bv and not always then return end
+    rows[#rows + 1] = { label, av or "—", bv or "—", av == bv and "=" or "", 0 }
+  end
+  textRow("Type", a.type, b.type, true)
+  textRow("Worn", a.worn, b.worn, true)
+  numRow("Level", a.level, b.level)
+  numRow("Armor", a.ar, b.ar, "high")
+  if a.weight or b.weight then
+    local aw, bw = pebbles(a), pebbles(b)
+    local fmt = function(it) return it.weight and (it.weight[1] .. "st " .. it.weight[2] .. "pb") or "—" end
+    local better = (aw and bw) and ((bw < aw) and 1 or (bw > aw and -1 or 0)) or 0
+    rows[#rows + 1] = { "Weight", fmt(a), fmt(b), better == 0 and "=" or (better > 0 and "lighter" or "heavier"), better }
+  end
+  numRow("Value", a.value, b.value)
+  numRow("Repairs", a.repairs, b.repairs, "high")
+  numRow("Slots", a.slots, b.slots, "low")
+  -- extras such as Max level / Spell
+  local ex = {}
+  for _, it in ipairs({ a, b }) do
+    for _, x in ipairs(it.extra or {}) do
+      local txt = "" for _, sg in ipairs(x[2]) do txt = txt .. sg[2] end
+      ex[x[1]] = ex[x[1]] or {}
+      ex[x[1]][it == a and 1 or 2] = trim(txt)
+    end
+  end
+  for k, v in pairs(ex) do
+    if k == "Max level" or k == "Min level" then numRow(k, v[1], v[2]) else textRow(k, v[1], v[2]) end
+  end
+  textRow("Attribs", a.attrs, b.attrs)
+  textRow("Special", a.special, b.special)
+  -- affects (main + relics)
+  local function affs(it, list, suffix, into)
+    for _, af in ipairs(it[list] or {}) do
+      local k = af[1] .. suffix
+      into[k] = (into[k] or 0) + (num(af[2]) or 0)
+    end
+  end
+  for _, spec in ipairs({ { "affects", "" }, { "relicAffects", " (relic)" } }) do
+    local A, B, keys = {}, {}, {}
+    affs(a, spec[1], spec[2], A); affs(b, spec[1], spec[2], B)
+    for k in pairs(A) do keys[k] = true end
+    for k in pairs(B) do keys[k] = true end
+    local sorted = {}
+    for k in pairs(keys) do sorted[#sorted + 1] = k end
+    table.sort(sorted)
+    for _, k in ipairs(sorted) do
+      local function sg(v) return v and ((v > 0 and "+" or "") .. v) or nil end
+      numRow(k, sg(A[k]), sg(B[k]), "high", true)
+    end
+  end
+  -- weapons
+  local wa, wb = a.weapon, b.weapon
+  if wa or wb then
+    wa, wb = wa or {}, wb or {}
+    rankRow("Dmg level", wa.dmgLevel, wb.dmgLevel)
+    textRow("Dmg type", wa.dmgType, wb.dmgType, true)
+    rankRow("Accuracy", wa.accuracy, wb.accuracy)
+    rankRow("Range", wa.range, wb.range)
+    rankRow("Crit", wa.critChance, wb.critChance)
+    local sa, sb, order = {}, {}, {}
+    for _, st in ipairs(wa.stats or {}) do sa[st[1]] = st[2]; order[#order + 1] = st[1] end
+    for _, st in ipairs(wb.stats or {}) do
+      sb[st[1]] = st[2]
+      if not sa[st[1]] then order[#order + 1] = st[1] end
+    end
+    for _, k in ipairs(order) do numRow(k, sa[k], sb[k], "high", true) end
+  end
+  return rows
+end
+
+function M.compareLines(a, b, width)
+  local out = {}
+  local cw = math.max(8, math.min(20, math.floor((width - 16 - 10) / 2)))
+  local function cut(s, n) s = tostring(s); n = n or cw; return ulen(s) > n and (s:sub(1, n - 1) .. "…") or s end
+  out[#out + 1] = { { C.rule, "── " }, { C.title, "Compare " }, { C.rule, string.rep("─", math.max(2, width - 12)) } }
+  out[#out + 1] = { { C.dim, " A  " }, { C.item, a.name } }
+  out[#out + 1] = { { C.dim, " B  " }, { C.item, b.name } }
+  out[#out + 1] = { { C.dim, pad("", 16) .. pad("A", cw + 2) .. pad("B", cw + 2) .. "B vs A" } }
+  for _, r in ipairs(M.compareRows(a, b)) do
+    local dcol = r[5] > 0 and C.plus or (r[5] < 0 and C.minus or C.dim)
+    local acol = r[5] < 0 and C.plus or C.item
+    local bcol = r[5] > 0 and C.plus or C.item
+    out[#out + 1] = { { C.key, pad(cut(r[1], 15), 16) }, { acol, pad(cut(r[2]), cw + 2) },
+                      { bcol, pad(cut(r[3]), cw + 2) }, { dcol, r[4] } }
+  end
+  return out
+end
+
+local function viewerOrMain()
+  if M.cfg.window then M.showWindow(true); return "ovenViewerConsole" end
+  return "main"
+end
+
+function M.compare(a, b)
+  if not a or not b then return false end
+  local win = viewerOrMain()
+  render(win, M.compareLines(a, b, columns(win)))
+  echo(win, "\n")
+  return true
+end
+
+-- clickable actions under an item in the viewer
+local function itemLinks(win, it)
+  local q = string.format("%q", it.name)
+  fg(win, C.dim); echo(win, "  ")
+  echoLink(win, "[pin for comparing]", "sbo.pin(" .. q .. ")", "compare the next items you look at against this one", true)
+  echo(win, "  ")
+  local prev = M.recent[#M.recent - 1]
+  if prev then
+    echoLink(win, "[compare with " .. prev .. "]", "sbo.compareNames(" .. string.format("%q", prev) .. "," .. q .. ")",
+      "compare with the item you looked at before this one", true)
+  end
+  resetFormat(win); echo(win, "\n\n")
+end
+
+function M.pin(name)
+  local it = M.findItem(name or M.recent[#M.recent])
+  if not it then return cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches that\n") end
+  M.pinned = it.name; M.saveItems()
+  cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> pinned: " .. it.name .. " - items you look at next are compared against it (sbo unpin to stop)\n")
+end
+
+function M.compareNames(qa, qb)
+  local a, b = M.findItem(qa), M.findItem(qb)
+  if not a then return cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches: " .. tostring(qa) .. "\n") end
+  if not b then return cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches: " .. tostring(qb) .. "\n") end
+  M.compare(a, b)
+end
+
+-- after an item look: remember it, offer links, auto-compare
+function M.afterItem(raw)
+  local ok, it = pcall(M.parseItem, raw)
+  if not ok or not it or not it.name then return end
+  M.remember(it)
+  it = M.items[it.name]
+  if M.cfg.window then itemLinks("ovenViewerConsole", it) end
+  local done = {}
+  if M.pinned and M.pinned ~= it.name and M.items[M.pinned] then
+    M.compare(M.items[M.pinned], it); done[M.pinned] = true
+  end
+  if M.cfg.autocompare and it.worn then
+    local worn = {}
+    for _, n in ipairs(M.eqNames) do worn[n] = true end
+    if not worn[it.name] then
+      for n in pairs(worn) do
+        local e = M.items[n]
+        if e and not done[n] and e.worn == it.worn then M.compare(e, it); done[n] = true end
+      end
+    end
+  end
+end
+
+---------------------------------------------------------------------------
+-- Prompt bar: the game's prompt shown in a fixed bar under the main window
+---------------------------------------------------------------------------
+function M.barFontSize()
+  if (M.cfg.barFont or 0) > 0 then return M.cfg.barFont end
+  local ok, sz = pcall(getFontSize, "main")
+  return (ok and tonumber(sz)) or 12
+end
+
+function M.barHeight()
+  local ok, _, h = pcall(calcFontSize, M.barFontSize())
+  h = (ok and tonumber(h)) or 16
+  return h * M.cfg.barLines + 8
+end
+
+function M.layoutBar()
+  if not M.bar or not M.cfg.bar then return end
+  local W, H = getMainWindowSize()
+  local left, right = 0, 0
+  local ok, b = pcall(getBorderSizes)
+  if ok and type(b) == "table" then left, right = b.left or 0, b.right or 0
+  else
+    local okR, r = pcall(getBorderRight); if okR and r then right = r end
+    local okL, l = pcall(getBorderLeft); if okL and l then left = l end
+  end
+  local h = M.barHeight()
+  setBorderBottom(h)
+  M.bar:move(left, H - h)
+  M.bar:resize(W - left - right, h)
+  M.barRight = right
+end
+
+function M.showBar(on)
+  if on then
+    if not M.bar then
+      M.bar = Geyser.MiniConsole:new({
+        name = "ovenPromptBar", x = 0, y = 0, width = 200, height = 20,
+        autoWrap = false, scrollBar = false, fontSize = M.barFontSize(), color = "black",
+      })
+    end
+    M.bar:show()
+    M.layoutBar()
+    -- same font as the main window so the text lines up
+    pcall(setFont, "ovenPromptBar", getFont())
+    M.drawBar()
+  else
+    if M.bar then M.bar:hide() end
+    setBorderBottom(0)
+  end
+end
+
+local promptLogged = false
+-- "[Library][SAFE]<180hp 325sp 296st>" -> {tags={...}, vals={{"hp",180},...}, rest="..."}
+function M.parsePrompt(t)
+  local p = { tags = {}, vals = {} }
+  for tag in t:gmatch("%[([^%]]+)%]") do p.tags[#p.tags + 1] = tag end
+  local inner = t:match("<(.-)>")
+  if inner then
+    for n, k in inner:gmatch("(%-?%d+)(%a+)") do p.vals[#p.vals + 1] = { k:lower(), tonumber(n) } end
+  end
+  p.rest = trim(t:gsub("%[[^%]]*%]", ""):gsub("<.->", ""))
+  return p
+end
+
+-- maxima, level and exp-to-level come from `score` (and live from MSDP when the game sends it)
+function M.updateMaxes(raw)
+  M.cfg.maxes = M.cfg.maxes or {}
+  local ok, sc = pcall(M.parseScore, raw)
+  if ok and sc then
+    M.cfg.char = M.cfg.char or {}
+    local c = M.cfg.char
+    if sc.info["Class Level"] then c.level = tonumber(sc.info["Class Level"]) end
+    if sc.info["Class"] then c.class = sc.info["Class"] end
+    if sc.tnl then c.tnl = tonumber((sc.tnl:gsub(",", ""))); c.exp = tonumber((sc.exp:gsub(",", ""))) end
+  end
+  for _, l in ipairs(raw) do
+    for key, _, mx in l:gmatch("([%a][%a ]-):%s+(%-?%d+)/(%d+)") do
+      local k = trim(key)
+      if M.maxNames[k] then M.cfg.maxes[M.maxNames[k]] = tonumber(mx) end
+    end
+  end
+  M.saveSettings()
+end
+
+local barColors = { hp = "tomato", sp = "light_sky_blue", st = "gold" }
+function M.drawBar()
+  if not M.bar or not M.lastPromptText then return end
+  local win = "ovenPromptBar"
+  clearWindow(win)
+  if M.cfg.barMode == "raw" or #M.parsePrompt(M.lastPromptText).vals == 0 then
+    decho(win, M.lastPromptDecho or M.lastPromptText)
+    return
+  end
+  local p = M.parsePrompt(M.lastPromptText)
+  M.cfg.maxes = M.cfg.maxes or {}
+  local segs = {}
+  for _, tag in ipairs(p.tags) do
+    segs[#segs + 1] = { tag == "SAFE" and C.plus or C.key, tag }
+    segs[#segs + 1] = { C.dim, " · " }
+  end
+  if #segs > 0 then segs[#segs] = { C.dim, "   " } end
+  -- level and exp to level: prompt > MSDP > last `score`
+  local pools, lvl, tnl = {}, nil, nil
+  for _, v in ipairs(p.vals) do
+    if v[1] == "tnl" or v[1] == "tnx" then tnl = v[2]
+    elseif v[1] == "lvl" or v[1] == "lv" or v[1] == "level" then lvl = v[2]
+    else pools[#pools + 1] = v end
+  end
+  local c, live = M.cfg.char or {}, M.live or {}
+  lvl = lvl or live.level or c.level
+  tnl = tnl or live.tnl or c.tnl
+  if lvl then segs[#segs + 1] = { C.title, "L" .. lvl } end
+  if tnl then
+    segs[#segs + 1] = { C.dim, "  tnl " }; segs[#segs + 1] = { C.plus, commaNum(tnl) }
+  end
+  if lvl or tnl then segs[#segs + 1] = { C.dim, "   " } end
+  p.vals = pools
+  local fixed = segLen(segs) + ulen(p.rest) + 2
+  for _, v in ipairs(p.vals) do
+    local mx = M.cfg.maxes[v[1]]
+    fixed = fixed + #v[1] + 2 + #(tostring(v[2]) .. "/" .. tostring(mx or v[2])) + 4
+  end
+  local okC, cols = pcall(getColumnCount, win)
+  cols = (okC and tonumber(cols)) or 100
+  local gw = math.max(5, math.min(20, math.floor((cols - fixed) / math.max(1, #p.vals))))
+  for _, v in ipairs(p.vals) do
+    local k, cur = v[1], v[2]
+    local mx = M.cfg.maxes[k]
+    if not mx or cur > mx then mx = cur; M.cfg.maxes[k] = cur end
+    segs[#segs + 1] = { barColors[k] or C.key, k:upper() .. " " }
+    addAll(segs, M.gauge(cur, mx, gw))
+    segs[#segs + 1] = { C.num, " " .. cur }
+    segs[#segs + 1] = { C.dim, "/" .. mx .. "    " }
+  end
+  if p.rest ~= "" then segs[#segs + 1] = { C.text, p.rest } end
+  for _, sg in ipairs(segs) do
+    local col = sg[1]
+    if color_table and not color_table[col] then col = "white" end
+    fg(win, col); echo(win, sg[2])
+  end
+  resetFormat(win)
+end
+
+-- live level / exp from MSDP, if the game reports them
+M.live = M.live or {}
+function M.onMsdp(event)
+  if type(msdp) ~= "table" then return end
+  local L = M.live
+  L.level = tonumber(msdp.LEVEL) or L.level
+  local tnl = tonumber(msdp.EXPERIENCE_TNL) or tonumber(msdp.EXPERIENCE_TO_LEVEL)
+  if not tnl and tonumber(msdp.EXPERIENCE_MAX) and tonumber(msdp.EXPERIENCE) then
+    tnl = tonumber(msdp.EXPERIENCE_MAX) - tonumber(msdp.EXPERIENCE)
+  end
+  L.tnl = tnl or L.tnl
+  M.drawBar()
+end
+
+function M.barUpdate(d)
+  if not M.bar then M.showBar(true) end
+  -- re-layout if something else (e.g. the base UI dock) changed the side borders
+  local ok, r = pcall(getBorderRight)
+  if ok and r and r ~= M.barRight then M.layoutBar() end
+  M.lastPromptDecho, M.lastPromptText = d, line
+  M.drawBar()
+end
+
+---------------------------------------------------------------------------
+-- Capture engine
+---------------------------------------------------------------------------
+M.queue = {}
+M.cap = nil          -- active capture
+M.history = M.history or {}
+
+local function selectionDecho()
+  selectCurrentLine()
+  local ok, d = pcall(copy2decho)
+  deselect()
+  return ok and d or nil
+end
+
+function M.start(kind, target, cmd)
+  M.cap = { kind = kind, target = target, cmd = cmd, plain = {}, decho = {},
+            hasLayout = M.formatters[kind] ~= nil }
+  M.cap.gag = M.cfg.main == "replace" and M.cap.hasLayout
+  M.cap.maxTimer = tempTimer(M.cfg.maxTime, function() M.finish("maxtime") end)
+end
+
+function M.onSend(_, cmd)
+  if not M.cfg.enabled then return end
+  local kind, target = M.classify(cmd)
+  if not kind then return end
+  if M.cap then
+    M.queue[#M.queue + 1] = { kind, target, cmd }
+  else
+    M.start(kind, target, cmd)
+  end
+end
+
+local function isPromptLine()
+  local ok, p = pcall(isPrompt)
+  if ok and p then return true end
+  return M.cfg.promptPattern ~= "" and line:match(M.cfg.promptPattern) ~= nil
+end
+
+function M.onLine()
+  local cap = M.cap
+  if not cap and not M.cfg.bar then return end
+  if isPromptLine() then
+    if cap and #cap.plain > 0 then M.finish("prompt") end
+    if M.cfg.bar then
+      local d = selectionDecho() or line
+      if not promptLogged then
+        promptLogged = true
+        if M.cfg.samples then
+          local f = io.open(M.samplesFile, "a")
+          if f then f:write("===== " .. os.date("%Y-%m-%d %H:%M:%S") .. " | kind=prompt | cmd=\n" .. line .. "\n===== end\n\n"); f:close() end
+        end
+      end
+      M.barUpdate(d)
+      deleteLine()
+    end
+    return
+  end
+  if not cap then return end
+  if #cap.plain == 0 and trim(line) == "" then
+    if cap.gag then deleteLine() end
+    return
+  end
+  cap.plain[#cap.plain + 1] = line
+  if cap.gag then
+    cap.decho[#cap.decho + 1] = selectionDecho() or line
+    deleteLine()
+  end
+  if cap.idleTimer then killTimer(cap.idleTimer) end
+  cap.idleTimer = tempTimer(M.cfg.idle, function() M.finish("idle") end)
+  if #cap.plain >= M.cfg.maxLines then M.finish("maxlines") end
+end
+
+local function writeSample(cap)
+  local f = io.open(M.samplesFile, "a")
+  if not f then return end
+  f:write(string.format("===== %s | kind=%s | cmd=%s\n", os.date("%Y-%m-%d %H:%M:%S"), cap.kind, cap.cmd))
+  for _, l in ipairs(cap.plain) do f:write(l, "\n") end
+  f:write("===== end\n\n")
+  f:close()
+end
+
+function M.finish(reason)
+  local cap = M.cap
+  if not cap then return end
+  M.cap = nil
+  if cap.idleTimer then killTimer(cap.idleTimer) end
+  if cap.maxTimer then killTimer(cap.maxTimer) end
+
+  -- trim trailing blank lines
+  while #cap.plain > 0 and trim(cap.plain[#cap.plain]) == "" do
+    table.remove(cap.plain); table.remove(cap.decho)
+  end
+
+  -- no telnet GA / pattern match: the last line may be an unrecognised prompt
+  local heldPrompt
+  if reason ~= "prompt" and #cap.plain > 1 then
+    local last = cap.plain[#cap.plain]
+    if ulen(last) < 90 and last:match(">%s*$") and not parseSlot(last) then
+      table.remove(cap.plain)
+      heldPrompt = table.remove(cap.decho) or last
+    end
+  end
+
+  if #cap.plain == 0 and not heldPrompt then
+    local nxt = table.remove(M.queue, 1)
+    if nxt then M.start(nxt[1], nxt[2], nxt[3]) end
+    return
+  end
+
+  local replace = cap.gag
+  if not replace then heldPrompt = nil end
+  local promptDecho
+  if reason == "prompt" and replace and #cap.plain > 0 and not M.cfg.bar then
+    -- hold the prompt back so the formatted text appears above it
+    promptDecho = selectionDecho()
+    if promptDecho then deleteLine() end
+  end
+
+  if #cap.plain > 0 then
+    M.history[#M.history + 1] = cap
+    if #M.history > 20 then table.remove(M.history, 1) end
+    if M.cfg.samples then writeSample(cap) end
+  end
+
+  local nonBlank = 0
+  for _, l in ipairs(cap.plain) do if trim(l) ~= "" then nonBlank = nonBlank + 1 end end
+  local worth = cap.hasLayout and (nonBlank >= 2 or (nonBlank == 1 and ulen(cap.plain[1]) > 100))
+
+  -- draw after the game's text for this packet has been processed
+  tempTimer(0, function()
+    if replace then
+      moveCursorEnd("main")
+      if getCurrentLine("main") ~= "" then echo("main", "\n") end
+      local lines = worth and M.format(cap.kind, cap.target, cap.plain, columns("main"))
+      if lines then
+        render("main", lines)
+      else
+        for _, d in ipairs(cap.decho) do decho("main", d .. "\n") end
+      end
+      if promptDecho then decho("main", promptDecho) end
+      if heldPrompt then decho("main", heldPrompt) end
+    end
+    if worth and M.cfg.window then
+      M.showWindow(true)
+      local lines = M.format(cap.kind, cap.target, cap.plain, columns("ovenViewerConsole"))
+      if lines then render("ovenViewerConsole", lines); echo("ovenViewerConsole", "\n") end
+    end
+    if cap.kind == "eq" then M.updateEqNames(cap.plain) end
+    if cap.kind == "score" then M.updateMaxes(cap.plain); M.drawBar() end
+    if cap.kind == "item" then M.afterItem(cap.plain) end
+  end)
+
+  local nxt = table.remove(M.queue, 1)
+  if nxt then M.start(nxt[1], nxt[2], nxt[3]) end
+end
+
+---------------------------------------------------------------------------
+-- `sbo` command
+---------------------------------------------------------------------------
+local function say(msg) cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg .. "\n") end
+
+function M.help()
+  cecho("\n<orange>Soft Bun's Oven<reset> <dim_grey>v" .. M.version .. " by softbuns :: bakes raw game output into something edible<reset>\n")
+  cecho([[
+  <khaki>sbo on|off<reset>                enable / disable capturing
+  <khaki>sbo main replace|keep<reset>     replace = show formatted text in main window instead of the raw text
+                            keep    = leave the main window untouched
+  <khaki>sbo window on|off<reset>         floating oven window (drag/resize it; position is remembered)
+  <khaki>sbo clear<reset>                 clear the oven window
+  <khaki>sbo raw<reset>                   reprint the last capture exactly as the game sent it
+  <khaki>sbo samples on|off<reset>        log raw captures to oven_samples.txt (helps tune the layout)
+  <khaki>sbo prompt [lua pattern]<reset>  set your prompt pattern (blank = telnet GA only)
+  <khaki>sbo font [size]<reset>           oven window font size
+  <khaki>sbo test<reset>                  show a demo
+  <khaki>sbo compare<reset>               compare the last two items you looked at
+  <khaki>sbo compare [a] vs [b]<reset>    compare two remembered items by (part of) their names
+  <khaki>sbo pin [name]<reset> / <khaki>unpin<reset>    compare every item you look at against this one
+  <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
+  <khaki>sbo items<reset>                 list remembered items
+  <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
+  <khaki>sbo bar gauges|raw<reset>        prompt bar as gauges, or the prompt exactly as the game sends it
+  <khaki>sbo bar lines [n]<reset> / <khaki>font [n]<reset>  prompt bar height / font size
+  <khaki>sbo update<reset>                get the latest version from GitHub (settings are kept)
+  <khaki>sbo update force<reset>          reinstall the latest version even if you already have it
+  <khaki>sbo update [file]<reset>         install a local .mpackage file instead
+]])
+  say(string.format("enabled=%s main=%s window=%s samples=%s prompt=%q",
+    tostring(M.cfg.enabled), M.cfg.main, tostring(M.cfg.window), tostring(M.cfg.samples), M.cfg.promptPattern))
+end
+
+M.demo = {
+  eq = {
+    "You are using:",
+    "<worn on finger>     the wedding ring of the caretaker's wife (new)",
+    "<worn on finger>     a bronze ring (new)",
+    "<worn around neck>   a nefarious crab-shaped amulet (new)",
+    "<worn around neck>   an artifact from a galeb duhr (new)",
+    "<worn on torso>      a platinum breastplate (new)",
+    "<worn on head>       a well-used inhaler (new)",
+    "<worn on legs>       a pair of platinum thighguards (new)",
+    "<worn on hands>      a pair of gloves (new)",
+    "<worn on arms>       copper armbands (new)",
+    "<worn as shield>     a tarnished copper shield (new)",
+    "<over shoulders>     a vampire's cape (new)",
+    "<worn around waist>  a dwarven girdle (new)",
+    "<held on hip>        a magical belt pouch (new)",
+    "<worn around wrist>  a bracer of the Beltan knights (new)",
+    "<worn around wrist>  a fine opal bracelet (new)",
+    "<left hand>          a swirling crimson orb (new)",
+    "",
+    "Current Armor Resistance (AR):",
+    "(Head    )  4   (Reduces damage taken by 3.000%)",
+    "(Torso   )  3   (Reduces damage taken by 2.250%)",
+    "(Arms    )  3   (Reduces damage taken by 2.250%)",
+    "(Legs    )  6   (Reduces damage taken by 4.500%)",
+    "(Tail    )  1   (Reduces damage taken by 0.750%)",
+    "Your value if CPKed would be 25,900gp. You have a 34% chance to resist a critical hit.",
+    "You have a 1% chance to reduce spell damage taken by 35%.",
+    "",
+    "Equipped weapon damage:",
+    "With hand to hand, you will deal Low water damage with Max accuracy, at Min range, with a High chance to crit for 2x damage.",
+    "19 Damage: (+17 from weapon) (+2 from skill & strength) ",
+    "98 Accuracy: (+22 from level) (+25 from weapon skill) (+45 from fists) (+5 from agility) (+1 from personality) (+18 when martial arts activates) ",
+    "2 Range:  (+2 from hand to hand)",
+    "22% Critical Hit chance:  (+22 from hand to hand)",
+  },
+  item = {
+    "You focus your powers of observation on a crystal necklace:",
+    "Item 'a crystal necklace' is type armor, alignment 0, made of crystal (in (new) condition),[Study][LTB]",
+    "has keywords 'crystal necklace wisehart', equipped around the neck.",
+    "This item weighs 0 stones and 17 pebbles, and is valued at 6,000 gold. {Cat. 2}",
+    "This level 8 item has the attributes: none",
+    "Armor resistance is 1.",
+    "Relics: ",
+    "  Small (1/1):",
+    "    a tattooed bit of dwarven flesh (new) [Vanishes Sat May  8 01:11:33 2027]",
+    "      Affects saving-spell by 1.",
+    "Affects agility by 1.",
+    "*This item may be repaired 6 times.",
+    "This beautiful necklace made of glinting crystal once belonged to Saint",
+    "Wisehart, a champion of good.  The necklace, composed of a silver chain with",
+    "a downward pointing, triangular pattern of crystals, shines gloriously,",
+    "untouched by time, symbolizing the persistence of clarity.  ",
+  },
+  contents = {
+    "A cute little pixie bag contains:",
+    "     a rugged wooden lance (new)",
+    "     a purple cloak (new)",
+    "     a practice staff (new)",
+    "     a trophy that looks like the boss, Atrascus the King Crab [2026 Edition] (new)",
+    "(  2) a green mushroom (fresh)",
+    "     a torch (new) (unlit)",
+    "( 10) a scroll of 'cure light' (new)",
+    "     a trophy that looks like the boss, the Forest Guardian [2026 Edition] (new)",
+    "A total of 18 (30 max) items weighing 2 sts, 84 pbs (5 sts, 0 pbs max).",
+  },
+}
+
+function M.test()
+  for _, k in ipairs({ "eq", "item", "contents" }) do
+    local cap = { kind = k, target = "", plain = M.demo[k] }
+    local w = columns("main")
+    if M.cfg.main == "replace" then render("main", M.format(cap.kind, cap.target, cap.plain, w)) end
+    if M.cfg.window then
+      M.showWindow(true)
+      render("ovenViewerConsole", M.format(cap.kind, cap.target, cap.plain, columns("ovenViewerConsole")))
+    end
+  end
+end
+
+function M.command(args)
+  args = trim(args or "")
+  local a, b = args:match("^(%S*)%s*(.-)$")
+  a = a:lower()
+  local onoff = (b == "on" and true) or (b == "off" and false) or nil
+  if a == "" or a == "help" then return M.help()
+  elseif a == "on" or a == "off" then M.cfg.enabled = (a == "on"); say("capturing " .. a)
+  elseif a == "main" and (b == "replace" or b == "keep" or b == "off") then
+    M.cfg.main = (b == "off") and "keep" or b; say("main window: " .. M.cfg.main)
+  elseif a == "window" and onoff ~= nil then
+    M.cfg.window = onoff; M.showWindow(onoff); say("oven window " .. b)
+  elseif a == "samples" and onoff ~= nil then
+    M.cfg.samples = onoff; say("sample logging " .. b .. " (" .. M.samplesFile .. ")")
+  elseif a == "prompt" then
+    M.cfg.promptPattern = b; say("prompt pattern set to " .. string.format("%q", b))
+  elseif a == "font" and tonumber(b) then
+    M.cfg.fontSize = tonumber(b)
+    if M.console then M.console:setFontSize(M.cfg.fontSize) end
+    say("font size " .. b)
+  elseif a == "clear" then if M.console then M.console:clear() end
+  elseif a == "raw" then
+    local last = M.history[#M.history]
+    if not last then return say("nothing captured yet") end
+    for i, l in ipairs(last.plain) do
+      if last.decho[i] then decho(last.decho[i] .. "\n") else echo(l .. "\n") end
+    end
+  elseif a == "test" then M.test()
+  elseif a == "update" then return M.update(b)
+  elseif a == "compare" then
+    if b == "" then
+      local n = #M.recent
+      if n < 2 then return say("look at two items first") end
+      M.compareNames(M.recent[n - 1], M.recent[n])
+    else
+      local qa, qb = b:match("^(.-)%s+vs%.?%s+(.+)$")
+      if not qa then qa, qb = b:match("^(.-)%s*|%s*(.+)$") end
+      if not qa then return say("usage: sbo compare <item> vs <item>") end
+      M.compareNames(qa, qb)
+    end
+    return
+  elseif a == "pin" then return M.pin(b ~= "" and b or nil)
+  elseif a == "unpin" then M.pinned = nil; M.saveItems(); say("unpinned"); return
+  elseif a == "autocompare" and onoff ~= nil then M.cfg.autocompare = onoff; say("auto-compare " .. b)
+  elseif a == "items" then
+    say(#M.recent .. " remembered items (most recent last):")
+    for _, n in ipairs(M.recent) do
+      local it = M.items[n]
+      cecho(string.format("  <white>%s<reset>  <dim_grey>%s%s<reset>\n", n, it and it.type or "?",
+        (it and it.worn) and (", " .. it.worn) or ""))
+    end
+    return
+  elseif a == "bar" then
+    local sub, val = b:match("^(%S*)%s*(.-)$")
+    if sub == "on" or sub == "off" then M.cfg.bar = (sub == "on"); M.showBar(M.cfg.bar); say("prompt bar " .. sub)
+    elseif sub == "raw" or sub == "gauges" then M.cfg.barMode = sub; M.drawBar(); say("prompt bar mode " .. sub)
+    elseif sub == "lines" and tonumber(val) then M.cfg.barLines = tonumber(val); M.layoutBar(); say("prompt bar lines " .. val)
+    elseif sub == "font" and tonumber(val) then
+      M.cfg.barFont = tonumber(val); if M.bar then M.bar:setFontSize(M.cfg.barFont) end; M.layoutBar(); say("prompt bar font " .. val)
+    else return M.help() end
+  else return M.help() end
+  M.saveSettings()
+end
+
+-- Updates come from GitHub: VERSION says what's current, Oven.mpackage is the package.
+M.REPO = "@@REPO@@"
+M.BRANCH = "main"
+function M.rawUrl(file) return "https://raw.githubusercontent.com/" .. M.REPO .. "/" .. M.BRANCH .. "/" .. file end
+M.dl = { version = getMudletHomeDir() .. "/oven_latest_version.txt", pkg = getMudletHomeDir() .. "/oven_latest.mpackage" }
+
+local function newer(a, b)  -- is version a newer than b?
+  local function parts(v) local t = {} for n in tostring(v):gmatch("%d+") do t[#t + 1] = tonumber(n) end return t end
+  local x, y = parts(a), parts(b)
+  for i = 1, math.max(#x, #y) do
+    if (x[i] or 0) ~= (y[i] or 0) then return (x[i] or 0) > (y[i] or 0) end
+  end
+  return false
+end
+M.newer = newer
+
+function M.installFrom(path)
+  say("installing " .. path)
+  local old = M.version
+  for _, pkg in ipairs({ "MMFormat", "SoftbunsOS", "Oven" }) do  -- old names too
+    if table.contains(getPackages(), pkg) then uninstallPackage(pkg) end
+  end
+  tempTimer(1, function()
+    installPackage(path)
+    tempTimer(1, function()
+      if sbo and sbo.version then
+        cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> updated: v" .. old .. " -> v" .. sbo.version .. "\n")
+      end
+    end)
+  end)
+end
+
+-- mode: "check" (quiet, just tell me), "update", "force"
+function M.update(arg)
+  arg = trim(arg or "")
+  if arg ~= "" and arg ~= "force" then
+    -- a local .mpackage file, for testing your own builds
+    if not io.exists(arg) then return say("package file not found: " .. arg) end
+    return M.installFrom(arg)
+  end
+  if M.REPO:find("@@", 1, true) then return say("no GitHub repository configured in this build") end
+  M.pending = (arg == "force") and "force" or "update"
+  say("checking github.com/" .. M.REPO .. " for updates…")
+  downloadFile(M.dl.version, M.rawUrl("VERSION"))
+end
+
+function M.checkForUpdate()
+  if M.REPO:find("@@", 1, true) or not M.cfg.updateCheck then return end
+  M.pending = "check"
+  downloadFile(M.dl.version, M.rawUrl("VERSION"))
+end
+
+function M.onDownload(event, file, err)
+  if file ~= M.dl.version and file ~= M.dl.pkg then return end
+  local mode = M.pending
+  if not mode then return end  -- nothing of ours in flight
+  if event == "sysDownloadError" then
+    M.pending = nil
+    if mode ~= "check" then say("download failed: " .. tostring(err or file)) end
+    return
+  end
+  if file == M.dl.version then
+    local f = io.open(file); local latest = f and trim(f:read("*a") or ""); if f then f:close() end
+    if not latest or latest == "" then M.pending = nil; return end
+    if mode == "check" then
+      M.pending = nil
+      if newer(latest, M.version) then
+        say("v" .. latest .. " is available (you have v" .. M.version .. ") - type <khaki>sbo update<reset>")
+      end
+    elseif newer(latest, M.version) or mode == "force" then
+      say("downloading v" .. latest .. "…")
+      downloadFile(M.dl.pkg, M.rawUrl("Oven.mpackage"))
+    else
+      M.pending = nil
+      say("you already have the latest version (v" .. M.version .. ")")
+    end
+  elseif file == M.dl.pkg then
+    M.pending = nil
+    M.installFrom(file)
+  end
+end
+
+---------------------------------------------------------------------------
+-- Setup (safe to re-run)
+---------------------------------------------------------------------------
+function M.teardown()
+  if M.handlers then for _, h in ipairs(M.handlers) do killAnonymousEventHandler(h) end end
+  if M.lineTrigger then killTrigger(M.lineTrigger) end
+  if M.alias then killAlias(M.alias) end
+  M.handlers, M.lineTrigger, M.alias = nil, nil, nil
+end
+
+function M.init()
+  M.teardown()
+  M.loadSettings()
+  M.handlers = {
+    registerAnonymousEventHandler("sysDataSendRequest", M.onSend),
+    registerAnonymousEventHandler("sysUninstallPackage", function(_, pkg)
+      if pkg == "Oven" then
+        M.teardown()
+        if M.container then M.container:hide() end
+        if M.bar then M.bar:hide(); setBorderBottom(0) end
+      end
+    end),
+  }
+  M.loadItems()
+  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysWindowResizeEvent", function() M.layoutBar() end)
+  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadDone", M.onDownload)
+  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadError", M.onDownload)
+  for _, v in ipairs({ "LEVEL", "EXPERIENCE", "EXPERIENCE_MAX", "EXPERIENCE_TNL", "EXPERIENCE_TO_LEVEL" }) do
+    M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("msdp." .. v, M.onMsdp)
+  end
+  M.lineTrigger = tempRegexTrigger("^", function() M.onLine() end)
+  M.alias = tempAlias("^(?:sbo|oven)(?:\\s+(.*))?$", function() M.command(matches[2]) end)
+  if M.cfg.window and M.container then M.container:show() end
+  if M.cfg.bar then M.showBar(true) end
+  if not M.booted then
+    M.booted = true
+    tempTimer(8, function() M.checkForUpdate() end)
+    cecho("\n<dim_grey>[<orange>Soft Bun's Oven<dim_grey>] v" .. M.version ..
+      " by softbuns :: preheated :: raw stream in, baked output out :: type <khaki>sbo<dim_grey> for commands<reset>\n")
+  end
+end
+
+M.init()

@@ -1,0 +1,3 @@
+# raw game captures: contain character and other players' names
+samples/
+__pycache__/
