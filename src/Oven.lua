@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.2"
+M.version = "0.9.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1352,31 +1352,74 @@ function M.createWindow()
 end
 
 -- help window: game help pages exactly as sent (colours and layout kept)
+-- Help window: help pages don't change once shown, so they go in a plain scrollable
+-- panel (ScrollBox + Label) rather than a console, which has a live split-screen view.
 function M.createHelpWindow()
-  if M.helpContainer then return end
-  M.helpContainer = Adjustable.Container:new({
-    name = "ovenHelp",
-    titleText = "help",
-    x = "2%", y = "4%", width = "45%", height = "70%",
-    adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
-    titleTxtColor = "#e6c35c",
-  })
-  M.helpConsole = Geyser.MiniConsole:new({
-    name = "ovenHelpConsole",
-    x = 0, y = 0, width = "100%", height = "100%",
-    autoWrap = true, scrollBar = true,
-    fontSize = M.cfg.fontSize, color = "black",
-  }, M.helpContainer)
+  if not M.helpContainer then
+    M.helpContainer = Adjustable.Container:new({
+      name = "ovenHelp",
+      titleText = "help",
+      x = "2%", y = "4%", width = "45%", height = "70%",
+      adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+      titleTxtColor = "#e6c35c",
+    })
+  end
+  if M.helpConsole then M.helpConsole:hide() end   -- console used by versions before 0.9.3
+  if not M.helpLabel then
+    M.helpScroll = Geyser.ScrollBox:new({
+      name = "ovenHelpScroll", x = 0, y = 0, width = "100%", height = "100%",
+    }, M.helpContainer)
+    M.helpLabel = Geyser.Label:new({
+      name = "ovenHelpLabel", x = 0, y = 0, width = "100%", height = 40,
+    }, M.helpScroll)
+    M.helpLabel:setStyleSheet("background-color: black; padding: 6px;")
+  end
+end
+
+-- segments -> decho text
+local function segsToDecho(lines)
+  local outl = {}
+  for _, segs in ipairs(lines) do
+    local t = {}
+    for _, sg in ipairs(segs) do
+      local c = color_table and color_table[sg[1]]
+      t[#t + 1] = (c and string.format("<%d,%d,%d>", c[1], c[2], c[3]) or "") .. sg[2]
+    end
+    outl[#outl + 1] = table.concat(t)
+  end
+  return outl
+end
+
+-- show a page: title + lines in decho ("decho") or cecho ("cecho") format
+function M.helpPage(title, lines, fmt)
+  M.createHelpWindow()
+  M.helpContainer:show()
+  local font = (pcall(getFont) and getFont()) or "monospace"
+  local size = M.cfg.fontSize
+  local okF, cw, ch = pcall(calcFontSize, size, font)
+  if not okF or not cw then cw, ch = 8, 16 end
+  local okW, boxW = pcall(function() return M.helpScroll:get_width() end)
+  local cols = math.max(30, math.floor(((okW and boxW) or 600) - 40) / cw)
+  cols = math.floor(cols)
+  local all = segsToDecho({ header("help", "", math.min(cols, 100), title) })
+  local plainCount = { (all[1]:gsub("<%d+,%d+,%d+>", "")) }
+  local html = { decho2html(all[1]) }
+  for _, l in ipairs(lines) do
+    html[#html + 1] = (l == "") and "" or (fmt == "cecho" and cecho2html(l) or decho2html(l))
+    plainCount[#plainCount + 1] = fmt == "cecho" and l:gsub("<[%w_:,]+>", "") or l:gsub("<[%d,:]*>", ""):gsub("<r>", "")
+  end
+  local doc = string.format(
+    "<div style=\"white-space: pre-wrap; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
+    font, size, table.concat(html, "\n"))
+  M.helpLabel:resize(nil, 1)   -- collapse first so the panel scrolls back to the top
+  M.helpLabel:rawEcho(doc)
+  local rows = 0
+  for _, p in ipairs(plainCount) do rows = rows + math.max(1, math.ceil(ulen(p) / cols)) end
+  M.helpLabel:resize(nil, rows * ch + 24)
 end
 
 function M.showHelp(topic, dechoLines)
-  M.createHelpWindow()
-  M.helpContainer:show()
-  local win = "ovenHelpConsole"
-  clearWindow(win)
-  render(win, { header("help", topic or "", columns(win), "Help" .. ((topic and topic ~= "") and (": " .. topic) or "")) })
-  for _, d in ipairs(dechoLines) do decho(win, d .. "\n") end
-  pcall(scrollTo, win, 0)   -- start at the top of the page
+  M.helpPage("Help" .. ((topic and topic ~= "") and (": " .. topic) or ""), dechoLines, "decho")
 end
 
 function M.showWindow(on)
@@ -1980,12 +2023,9 @@ end
 local function say(msg) cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg .. "\n") end
 
 function M.help()
-  local win = "main"
-  if M.cfg.helpWindow then
-    M.createHelpWindow(); M.helpContainer:show()
-    win = "ovenHelpConsole"; clearWindow(win)
-  end
-  local function cecho(a, b) if b then return _G.cecho(win, b) end return _G.cecho(win, a) end
+  -- collect the text, then show it in the help window (or the main window)
+  local buf = {}
+  local function cecho(a) buf[#buf + 1] = a end
   cecho("\n<orange>Soft Bun's Oven<reset> <dim_grey>v" .. M.version .. " by softbuns :: bakes raw game output into something edible<reset>\n")
   cecho([[
   <khaki>sbo on|off<reset>                enable / disable capturing
@@ -2019,7 +2059,15 @@ function M.help()
   cecho(string.format("\n<dim_grey>settings: enabled=%s main=%s window=%s helpwindow=%s bar=%s samples=%s<reset>\n",
     tostring(M.cfg.enabled), M.cfg.main, tostring(M.cfg.window), tostring(M.cfg.helpWindow),
     tostring(M.cfg.bar), tostring(M.cfg.samples)))
-  if win ~= "main" then pcall(scrollTo, win, 0); _G.cecho("main", "<dim_grey>[sbo] command list → help window<reset>\n") end
+  local text = table.concat(buf)
+  if M.cfg.helpWindow then
+    local lines = {}
+    for l in (text:gsub("^\n", "") .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
+    M.helpPage("Soft Bun's Oven", lines, "cecho")
+    _G.cecho("main", "<dim_grey>[sbo] command list → help window<reset>\n")
+  else
+    _G.cecho("main", text)
+  end
 end
 
 M.demo = {
