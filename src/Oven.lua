@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.8.2"
+M.version = "0.8.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -39,8 +39,9 @@ M.defaults = {
   bar          = false,      -- move the prompt into a fixed bar at the bottom
   barMode      = "gauges",   -- gauges | raw
   barWidth     = 10,         -- length of each gauge in the prompt bar
-  helpWindow   = true,
-  slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)       -- game `help` (and `sbo`) output goes to its own window
+  helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
+  slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
+  showEmpty    = true,       -- list empty equipment slots in eq
   barLines     = 1,
   barFont      = 0,          -- 0 = same size as the main window
 }
@@ -445,32 +446,31 @@ end
 -- Equipment slots (from HELP EQUIPMENT SLOTS plus what eq actually prints).
 -- names: every spelling the game uses for the slot; n: how many; only: race/donation notes
 M.slotTable = {
+  { key = "spellbook", names = { "studying spellbook" }, extra = true },  -- seen on creatures
+  { key = "tome",      names = { "studying tome" }, extra = true },
   { key = "light",     names = { "used as light" } },
-  { key = "head",      names = { "worn on head" } },
-  { key = "face",      names = { "worn over face" }, only = "donation" },
+  { key = "finger",    names = { "worn on finger" }, n = 2 },
   { key = "neck",      names = { "worn around neck" }, n = 2 },
   { key = "amulet",    names = { "amulet around neck" }, n = 2, only = "donation" },
   { key = "torso",     names = { "worn on body", "worn on torso" } },
-  { key = "cloak",     names = { "worn about body", "over shoulders" } },
-  { key = "aura",      names = { "worn around body", "encompassing" }, only = "donation" },
-  { key = "arms",      names = { "worn on arms" } },
-  { key = "wrist",     names = { "worn around wrist" }, n = 2 },
-  { key = "hands",     names = { "worn on hands" } },
-  { key = "finger",    names = { "worn on finger" }, n = 2 },
-  { key = "shield",    names = { "worn as shield" } },
-  { key = "waist",     names = { "worn about waist", "worn around waist" } },
-  { key = "hip",       names = { "worn on hip", "held on hip" } },
+  { key = "head",      names = { "worn on head" } },
+  { key = "face",      names = { "worn over face" }, only = "donation" },
   { key = "legs",      names = { "worn on legs" } },
   { key = "feet",      names = { "worn on feet" } },
+  { key = "hands",     names = { "worn on hands" } },
+  { key = "arms",      names = { "worn on arms" } },
+  { key = "shield",    names = { "worn as shield" } },
+  { key = "quiver",    names = { "slung quiver" }, extra = true },
   { key = "wing (L)",  names = { "worn on left wing" }, only = "wings" },
   { key = "wing (R)",  names = { "worn on right wing" }, only = "wings" },
+  { key = "cloak",     names = { "worn about body", "over shoulders" } },
+  { key = "aura",      names = { "worn around body", "encompassing" }, only = "donation" },
+  { key = "waist",     names = { "worn about waist", "worn around waist" } },
+  { key = "hip",       names = { "worn on hip", "held on hip" } },
   { key = "tail",      names = { "worn on tail" }, only = "tail" },
+  { key = "wrist",     names = { "worn around wrist" }, n = 2 },
   { key = "hand (R)",  names = { "right hand", "wielded" } },
   { key = "hand (L)",  names = { "left hand", "held" } },
-  -- seen on creatures / special items, not in the help page
-  { key = "spellbook", names = { "studying spellbook" }, extra = true },
-  { key = "tome",      names = { "studying tome" }, extra = true },
-  { key = "quiver",    names = { "slung quiver" }, extra = true },
 }
 M.slotByName = {}
 for _, sl in ipairs(M.slotTable) do
@@ -488,16 +488,23 @@ local function renderSlots(out, slots, width)
   slotW = math.min(slotW, 22)
   local prev
   for _, r in ipairs(slots) do
-    local label = (r[1] == prev) and "" or slotLabel(r[1])
-    prev = r[1]
-    local pre = { { C.slot, pad(label, slotW) }, { C.dim, " │ " } }
-    local segs = itemSegs(r[2])
+    local sl = M.slotByName[r[1]:lower()]
+    local group = sl and sl.key or r[1]
+    local label = (group == prev) and "" or slotLabel(r[1])
+    prev = group
+    local pre = { { r.empty and C.dim or C.slot, pad(label, slotW) }, { C.dim, " │ " } }
+    local segs
+    if r.empty then
+      segs = r.donation and { { C.dim, "empty  (donation)" } } or { { C.flag, "empty" } }
+    else
+      segs = itemSegs(r[2])
+    end
     local row = { unpack(pre) }
     if slotW + 3 + segLen(segs) <= width then
       for _, sg in ipairs(segs) do row[#row + 1] = sg end
       out[#out + 1] = row
     else
-      addAll(out, wrapWords(r[2], width, slotW + 3, C.item, pre, slotW + 3))
+      addAll(out, wrapWords(r[2] or "", width, slotW + 3, C.item, pre, slotW + 3))
     end
   end
 end
@@ -558,36 +565,33 @@ function M.formatters.eq(raw, width)
   if #slots == 0 then return M.formatters.generic(raw, width) end
 
   local out = {}
-  renderSlots(out, slots, width)
-
-  -- empty slots (what CHECK EQUIPMENT MISSING would tell you)
-  local used = {}
+  -- worn items and empty slots in one list, in the game's slot order
+  -- (empty rows are what CHECK EQUIPMENT MISSING would tell you)
+  local bySlot, unknown = {}, {}
   for _, r in ipairs(slots) do
     local sl = M.slotByName[r[1]:lower()]
-    if sl then used[sl.key] = (used[sl.key] or 0) + 1 end
+    if sl then bySlot[sl.key] = bySlot[sl.key] or {}; table.insert(bySlot[sl.key], r)
+    else unknown[#unknown + 1] = r end
   end
-  local hasTail, hasWings = used["tail"], used["wing (L)"] or used["wing (R)"]
+  local hasTail, hasWings = bySlot["tail"], bySlot["wing (L)"] or bySlot["wing (R)"]
   for _, a in ipairs(ar) do
     if a[1]:lower():match("tail") then hasTail = true end
     if a[1]:lower():match("wing") then hasWings = true end
   end
-  local empty = {}
+  local rows = {}
   for _, sl in ipairs(M.slotTable) do
-    local free = (sl.n or 1) - (used[sl.key] or 0)
-    local applies = not sl.extra and (sl.only ~= "tail" or hasTail) and (sl.only ~= "wings" or hasWings)
-    if applies and free > 0 then
-      empty[#empty + 1] = { sl.key .. (free > 1 and (" ×" .. free) or ""), sl.only == "donation" }
+    local worn = bySlot[sl.key] or {}
+    for _, r in ipairs(worn) do rows[#rows + 1] = r end
+    local applies = M.cfg.showEmpty and not sl.extra
+      and (sl.only ~= "tail" or hasTail) and (sl.only ~= "wings" or hasWings)
+    if applies then
+      for _ = #worn + 1, (sl.n or 1) do
+        rows[#rows + 1] = { sl.names[1], nil, empty = true, donation = sl.only == "donation" }
+      end
     end
   end
-  if #empty > 0 then
-    blank(out)
-    local segs = {}
-    for n, e in ipairs(empty) do
-      if n > 1 then segs[#segs + 1] = { C.dim, " · " } end
-      segs[#segs + 1] = { e[2] and C.dim or C.flag, e[1] .. (e[2] and " (donation)" or "") }
-    end
-    kvLine(out, "Empty", 6, segs, width)
-  end
+  for _, r in ipairs(unknown) do rows[#rows + 1] = r end   -- slots we don't know: still shown
+  renderSlots(out, rows, width)
 
   if #ar > 0 then
     local total = 0
@@ -1903,6 +1907,7 @@ function M.help()
   <khaki>sbo pin [name]<reset> / <khaki>unpin<reset>    compare every item you look at against this one
   <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
   <khaki>sbo items<reset>                 list remembered items
+  <khaki>sbo empty on|off<reset>          show empty equipment slots in eq
   <khaki>sbo slots short|full<reset>      short slot names in eq tables (finger, neck…) or the game's full ones
   <khaki>sbo helpwindow on|off<reset>     game help pages (and this list) in their own window
   <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
@@ -2047,6 +2052,8 @@ function M.command(args)
     say("help window " .. b)
   elseif a == "slots" and (b == "short" or b == "full") then
     M.cfg.slotNames = b; say("slot names: " .. b)
+  elseif a == "empty" and onoff ~= nil then
+    M.cfg.showEmpty = onoff; say("empty slots in eq: " .. b)
   elseif a == "autocompare" and onoff ~= nil then M.cfg.autocompare = onoff; say("auto-compare " .. b)
   elseif a == "items" then
     say(#M.recent .. " remembered items (most recent last):")
