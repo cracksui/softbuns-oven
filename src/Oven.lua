@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.13.0"
+M.version = "0.13.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -109,6 +109,8 @@ M.commands = {
   { word = "skill",     min = 3, kind = "skills" },
   { word = "practice",  min = 3, kind = "skills" },
   { word = "train",     min = 3, kind = "skills" },
+  -- recorded only (shown as the game sends it) until a layout exists
+  { word = "quest",     min = 3, kind = "quest" },
 }
 
 function M.classify(cmd)
