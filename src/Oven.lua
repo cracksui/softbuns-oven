@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.12.3"
+M.version = "0.12.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1581,8 +1581,9 @@ function M.parseSkillTable(raw)
           rows[#rows + 1] = { name = name, group = grp, sp = sp, cmplx = tonumber(cm), lrnd = tonumber(lr),
                               rec = star and star:find("%*") ~= nil, idx = idx }
         end
-      elseif t:match("^You have the ability to learn") then footer.can = t:match("%[(%d+)%]")
-      elseif t:match("^You have %[%d+%] practice") then footer.prac = t:match("%[(%d+)%]") end
+      elseif t:match("^You have the ability to learn") then footer.can = t; footer.canIdx = idx
+      elseif t:match("^You have %[%d+%] practice") then footer.prac = t:match("%[(%d+)%]")
+      elseif t ~= "" then footer.other = footer.other or {}; footer.other[#footer.other + 1] = { t, idx } end
     end
   end
   return kind and #rows > 0 and { kind = kind, rows = rows, footer = footer } or nil
@@ -1591,6 +1592,7 @@ end
 -- `practice` at a trainer: "Name   [ 1%] No limit  Name2   [15%] No limit"
 function M.parsePractice(raw)
   local trainer, list, prac
+  local other = {}
   for idx, l in ipairs(raw) do
     local t = trim(l)
     local who = t:match("^(.-) can train you in the following skills") or t:match("^(.-) offers training in the following skills")
@@ -1614,9 +1616,10 @@ function M.parsePractice(raw)
         pos = b + 1
       end
       if list[#list] then list[#list].avail = trim(s:sub(pos)) end
-    elseif t:match("^You have %[%d+%] practice") then prac = t:match("%[(%d+)%]") end
+    elseif t:match("^You have %[%d+%] practice") then prac = t:match("%[(%d+)%]")
+    elseif t ~= "" and not t:match("^Skill Name%s+Lrnd") then other[#other + 1] = l end
   end
-  return trainer and { trainer = trainer, list = list or {}, prac = prac } or nil
+  return trainer and { trainer = trainer, list = list or {}, prac = prac, other = other } or nil
 end
 
 local function learnedSegs(pct, width)
@@ -1697,6 +1700,11 @@ function M.formatters.skills(raw, width)
       out[#out + 1] = row
     end
     blank(out)
+    -- the game's own footer lines (colour key etc.), in its colours
+    for _, o in ipairs(tbl.footer.other or {}) do
+      out[#out + 1] = M.runsExact(o[2], o[1]) or { { C.dim, o[1] } }
+    end
+    if tbl.footer.can then out[#out + 1] = M.runsExact(tbl.footer.canIdx, tbl.footer.can) or { { C.text, tbl.footer.can } } end
     local f = { { C.dim, "★ recommended for your class" } }
     if tbl.footer.prac then f[#f + 1] = { C.dim, "  ·  practices: " }; f[#f + 1] = { C.num, tbl.footer.prac } end
     out[#out + 1] = f
@@ -1725,7 +1733,10 @@ function M.formatters.skills(raw, width)
       r[#r + 1] = { C.text, string.rep(" ", nameW + 1 - ulen(s.name)) }
       addAll(r, learnedSegs(s.lrnd, gw))
       if info and info.cmplx then r[#r + 1] = { C.dim, string.format("   cmplx %d%%", info.cmplx) } end
-      if s.avail and s.avail ~= "" and s.avail:lower() ~= "no limit" then r[#r + 1] = { C.flag, "   limit " .. s.avail } end
+      if s.avail and s.avail ~= "" then
+        local nolimit = s.avail:lower() == "no limit"
+        r[#r + 1] = { nolimit and C.dim or C.flag, "   " .. (nolimit and "no limit" or ("limit " .. s.avail)) }
+      end
       return r
     end
     if #recHere > 0 then
@@ -1739,30 +1750,49 @@ function M.formatters.skills(raw, width)
     end
     if #new > 0 then
       blank(out)
-      -- alphabetical columns, read top to bottom
-      local names, w = {}, 0
-      for _, s in ipairs(new) do names[#names + 1] = s.name:lower(); w = math.max(w, ulen(s.name)) end
-      table.sort(names)
-      -- as many columns as fit, each as wide as its own longest name
+      -- alphabetical columns, read top to bottom; names keep the game's colours, and each
+      -- entry keeps its learned % and availability (stated once in the header when all equal)
+      table.sort(new, function(x, y) return x.name:lower() < y.name:lower() end)
+      local sameL, sameA = new[1].lrnd, new[1].avail
+      for _, s2 in ipairs(new) do
+        if s2.lrnd ~= sameL then sameL = nil end
+        if s2.avail ~= sameA then sameA = nil end
+      end
+      local function entrySegs(s2)
+        local segs = M.runsExact(s2.idx, s2.name) or { { C.text, s2.name } }
+        if not sameL then segs[#segs + 1] = { C.num, string.format(" %d%%", s2.lrnd) } end
+        if not sameA and s2.avail and s2.avail ~= "" then segs[#segs + 1] = { C.dim, " " .. s2.avail:lower() } end
+        return segs
+      end
+      local entries = {}
+      for i, s2 in ipairs(new) do entries[i] = entrySegs(s2) end
       local gap = 3
-      local ncols, nrows, widths = 1, #names, { w }
-      for try = math.min(#names, math.floor((width + gap) / 4)), 1, -1 do
-        local rows = math.ceil(#names / try)
+      local ncols, nrows, widths = 1, #entries, { 0 }
+      for try = math.min(#entries, math.floor((width + gap) / 4)), 1, -1 do
+        local rows = math.ceil(#entries / try)
         local ws, total = {}, 0
         for c = 0, try - 1 do
           local cw = 0
-          for r = 1, rows do local n = names[c * rows + r]; if n then cw = math.max(cw, ulen(n)) end end
+          for r = 1, rows do local e = entries[c * rows + r]; if e then cw = math.max(cw, segLen(e)) end end
           ws[c + 1] = cw; total = total + cw
         end
         total = total + gap * (try - 1)
         if total <= width then ncols, nrows, widths = try, rows, ws; break end
       end
-      out[#out + 1] = { { C.title, "New to you (" .. #new .. ")" } }
+      local hdr = { { C.title, "New to you (" .. #new .. ")" } }
+      local same = {}
+      if sameL then same[#same + 1] = sameL .. "%" end
+      if sameA and sameA ~= "" then same[#same + 1] = sameA:lower() end
+      if #same > 0 then hdr[#hdr + 1] = { C.dim, "  all " .. table.concat(same, " · ") } end
+      out[#out + 1] = hdr
       for r = 1, nrows do
         local row = {}
         for c = 0, ncols - 1 do
-          local n = names[c * nrows + r]
-          if n then row[#row + 1] = { C.text, c < ncols - 1 and pad(n, widths[c + 1] + gap) or n } end
+          local e = entries[c * nrows + r]
+          if e then
+            addAll(row, e)
+            if c < ncols - 1 then row[#row + 1] = { C.text, string.rep(" ", widths[c + 1] - segLen(e) + gap) } end
+          end
         end
         out[#out + 1] = row
       end
@@ -1772,6 +1802,10 @@ function M.formatters.skills(raw, width)
       out[#out + 1] = { { C.dim, "(type skills spells and skills prof once so Oven can mark recommended skills and complexity)" } }
     end
     if pr.prac then blank(out); out[#out + 1] = { { C.key, "Practices available: " }, { C.num, pr.prac } } end
+    if #pr.other > 0 then
+      blank(out)
+      for _, o in ipairs(pr.other) do addAll(out, wrapWords(trim(o), width, 7, C.dim)) end
+    end
     return out, pr.trainer .. " can train you"
   end
   return M.formatters.generic(raw, width)
