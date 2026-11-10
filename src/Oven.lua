@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.15.1"
+M.version = "0.15.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -762,7 +762,15 @@ local function paragraphs(out, lines, width)
     if #cur == 0 then return end
     blank(out)
     if looksWrapped(cur) then prose(out, cur, width)
-    else for _, l in ipairs(cur) do prose(out, { l }, width) end end
+    else
+      for _, l in ipairs(cur) do
+        if (l:match("%S%s%s%s+%S") or l:match("^%s%s%s%s+%S")) and ulen(l) <= width then
+          out[#out + 1] = { { C.text, l } }   -- columns / indented continuation: keep the game's spacing
+        else
+          prose(out, { l }, width)
+        end
+      end
+    end
     cur = {}
   end
   for _, l in ipairs(lines) do
@@ -1817,16 +1825,23 @@ function M.parseQuests(raw)
     if id then
       list[#list + 1] = { id = id, name = name, done = tonumber(done), total = tonumber(total), idx = idx }
     else
-      local qid, qname = t:match("^This quest %[(%d+)%] is called '(.*)',?$")
+      -- "is called 'Part-ay!'," or "is called 'Training in the Forest'." (ends with , or .)
+      local qid, qname = t:match("^This quest %[(%d+)%] is called '(.*)'[,%.]?%s*$")
       if qid then
-        detail = { id = qid, name = qname:gsub("',?$", ""), desc = {}, phases = {}, rewards = {} }
+        detail = { id = qid, name = qname, desc = {}, phases = {}, rewards = {} }
       elseif detail then
         local lo, hi = t:match("^for %a+ levels (%d+) to (%d+)")
         local master = t:match("^(.-) is the master in charge of this quest")
         local pn, ptext = t:match("^Phase (%d+):%s*(.+)$")
         if lo then detail.levels = lo .. "–" .. hi; detail.who = t:match("^for (%a+)")
         elseif master then detail.master = master
-        elseif t:match("^Upon successful completion") then detail.inRewards = true
+        elseif t:match("^Upon successful completion") then
+          detail.inRewards = true
+          local rest = t:match("^Upon successful completion of this quest%s*(.*)$") or ""
+          if not rest:match("you can receive:?$") and rest ~= "" then detail.rewardNote = rest end
+        elseif detail.inRewards and detail.rewardNote and not t:match("time limit") and not t:match(" consists of:$") then
+          detail.rewardNote = detail.rewardNote .. " " .. t
+          if t:match("%.$") then detail.inRewards = false end
         elseif detail.inRewards and (t:match("^%*?Up to") or t:match("^[%d,]+ %a")) then
           detail.rewardText = (detail.rewardText and (detail.rewardText .. " ") or "") .. t:gsub("^%*", "")
           if t:match("%.$") then detail.inRewards = false end
@@ -1838,7 +1853,7 @@ function M.parseQuests(raw)
           local text, area = ptext:match("^(.-)%s*%[(.-)%]$")
           detail.phases[#detail.phases + 1] = { n = tonumber(pn), text = text or ptext, area = area, done = isDone }
         elseif t ~= "" and not inPhases then
-          detail.desc[#detail.desc + 1] = t
+          detail.desc[#detail.desc + 1] = rtrim(l)   -- keep indentation (lists, continuation lines)
         elseif t ~= "" then
           other[#other + 1] = t
         end
@@ -1956,6 +1971,9 @@ function M.formatters.quest(raw, width)
     end
     cells[#cells + 1] = { "Progress", questGauge(d.done, d.total, 10) }
     grid(out, cells, width)
+    if #d.rewards == 0 and d.rewardNote then
+      kvLine(out, "Rewards", 8, { { C.text, d.rewardNote } }, width)
+    end
     if #d.rewards > 0 then
       local segs = {}
       if d.upTo then segs[#segs + 1] = { C.dim, "up to " } end
