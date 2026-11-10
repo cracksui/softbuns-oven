@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.12.6"
+M.version = "0.12.7"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1622,6 +1622,29 @@ function M.parsePractice(raw)
   return trainer and { trainer = trainer, list = list or {}, prac = prac, other = other } or nil
 end
 
+-- recommended skills: turquoise name and star. A name the game coloured differently from the
+-- rest keeps the game's colour (it signals a status: inactive, altered…) and just gets the star.
+local REC = { 64, 224, 208 }
+local function usualColour(rows)
+  local count, best, bestN = {}, nil, 0
+  for _, r in ipairs(rows) do
+    local segs = M.runsExact(r.idx, r.name)
+    local c = segs and type(segs[1][1]) == "table" and table.concat(segs[1][1], ",") or "plain"
+    count[c] = (count[c] or 0) + 1
+    if count[c] > bestN then best, bestN = c, count[c] end
+  end
+  return best
+end
+local function nameSegs(r, rec, usual)
+  local segs = M.runsExact(r.idx, r.name)
+  if rec then
+    local c = segs and type(segs[1][1]) == "table" and table.concat(segs[1][1], ",") or "plain"
+    if c == usual then return { { REC, r.name } } end
+  end
+  return segs or { { C.item, r.name } }
+end
+local function starSeg(rec) return rec and { REC, "★ " } or { C.text, "  " } end
+
 local function learnedSegs(pct, width)
   local segs = {}
   addAll(segs, M.gauge(pct, 100, width))
@@ -1688,10 +1711,10 @@ function M.formatters.skills(raw, width)
     out[#out + 1] = { { C.key, pad("", 2) .. pad(tbl.kind == "spells" and "spell" or "proficiency", nameW + 1)
       .. pad(tbl.kind == "spells" and "school" or "type", 7) .. (tbl.kind == "spells" and "   SP " or "")
       .. " cmplx  learned" } }
+    local usual = usualColour(tbl.rows)
     for _, r in ipairs(tbl.rows) do
-      local row = { { C.title, r.rec and "★ " or "  " } }
-      local nameSegs = M.runsExact(r.idx, r.name) or { { C.item, r.name } }
-      addAll(row, nameSegs)
+      local row = { starSeg(r.rec) }
+      addAll(row, nameSegs(r, r.rec, usual))
       row[#row + 1] = { C.text, string.rep(" ", nameW + 1 - ulen(r.name)) }
       row[#row + 1] = { C.slot, pad(r.group, 7) }
       if r.sp then row[#row + 1] = { C.num, string.format("%5s ", r.sp) } end
@@ -1705,7 +1728,7 @@ function M.formatters.skills(raw, width)
       out[#out + 1] = M.runsExact(o[2], o[1]) or { { C.dim, o[1] } }
     end
     if tbl.footer.can then out[#out + 1] = M.runsExact(tbl.footer.canIdx, tbl.footer.can) or { { C.text, tbl.footer.can } } end
-    local f = { { C.dim, "★ recommended for your class" } }
+    local f = { { REC, "★ recommended for your class" } }
     if tbl.footer.prac then f[#f + 1] = { C.dim, "  ·  practices: " }; f[#f + 1] = { C.num, tbl.footer.prac } end
     out[#out + 1] = f
     return out, (tbl.kind == "spells" and "Spells" or "Proficiencies") .. " (" .. #tbl.rows .. ")"
@@ -1728,11 +1751,12 @@ function M.formatters.skills(raw, width)
     -- availability: stated once when it's the same for everyone, else per row where it differs
     local sameA = list[1] and list[1].avail
     for _, s2 in ipairs(list) do if s2.avail ~= sameA then sameA = nil end end
+    local usual = usualColour(list)
     if #rec > 0 then
-      local row = { { C.title, "★ recommended, trainable here: " } }
+      local row = { { REC, "★ recommended, trainable here: " } }
       for i, s2 in ipairs(rec) do
         if i > 1 then row[#row + 1] = { C.dim, ", " } end
-        row[#row + 1] = { C.item, s2.name }; row[#row + 1] = { C.num, " " .. s2.lrnd .. "%" }
+        row[#row + 1] = { REC, s2.name }; row[#row + 1] = { C.num, " " .. s2.lrnd .. "%" }
       end
       out[#out + 1] = row
       blank(out)
@@ -1745,8 +1769,9 @@ function M.formatters.skills(raw, width)
     local gw = width >= 80 and 10 or 6
     for _, s2 in ipairs(list) do
       local info = mine[skillKey(s2.name)]
-      local r = { { C.title, (info and info.rec) and "★ " or "  " } }
-      addAll(r, M.runsExact(s2.idx, s2.name) or { { C.item, s2.name } })
+      local isRec = info and info.rec
+      local r = { starSeg(isRec) }
+      addAll(r, nameSegs(s2, isRec, usual))
       r[#r + 1] = { C.text, string.rep(" ", nameW + 1 - ulen(s2.name)) }
       addAll(r, learnedSegs(s2.lrnd, gw))
       if not sameA and s2.avail and s2.avail ~= "" then r[#r + 1] = { C.dim, "   " .. s2.avail:lower() } end
