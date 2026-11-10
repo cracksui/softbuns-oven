@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.14.2"
+M.version = "0.14.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2030,6 +2030,7 @@ function M.drawQuestTracker()
     M.questHud:setMoveCallback(function(ev) M.hudMove(ev) end)
     M.questHud:setReleaseCallback(function(ev) M.hudRelease(ev) end)
     pcall(function() M.questHud:setToolTip("drag to move · click to refresh your pinned quests") end)
+    pcall(function() M.questHud:setCursor("OpenHand") end)
   end
   M.questHud:setStyleSheet([[
     background-color: rgba(8, 8, 12, 170); border: 1px solid rgba(255,255,255,30);
@@ -2071,33 +2072,32 @@ function M.drawQuestTracker()
   M.questHud:show()
 end
 
--- dragging the HUD
-local function evXY(ev)
-  if type(ev) ~= "table" then return nil end
-  return tonumber(ev.x), tonumber(ev.y)
-end
+-- dragging the HUD: like Mudlet's own Adjustable.Container, measure the drag with
+-- getMousePosition() (window coordinates) from where the button went down
 function M.hudPress(ev)
-  local x, y = evXY(ev)
-  if not x then M.questRefresh("all"); return end
-  M.hudDrag = { offX = x, offY = y, moved = 0 }
+  if type(ev) == "table" and ev.button and ev.button ~= "LeftButton" then return end
+  local ok, mx, my = pcall(getMousePosition)
+  if not ok or not mx then M.questRefresh("all"); return end
+  M.hudDrag = { mx = mx, my = my, x = M.questHud:get_x(), y = M.questHud:get_y(), moved = 0 }
+  pcall(function() M.questHud:setCursor("ClosedHand") end)
 end
 function M.hudMove(ev)
   local d = M.hudDrag
-  local x, y = evXY(ev)
-  if not d or not x then return end
-  local dx, dy = x - d.offX, y - d.offY
-  if dx == 0 and dy == 0 then return end
-  d.moved = d.moved + math.abs(dx) + math.abs(dy)
-  local cx, cy = M.questHud:get_x(), M.questHud:get_y()
-  M.cfg.questHudPos = { cx + dx, cy + dy }
+  if not d then return end
+  local ok, mx, my = pcall(getMousePosition)
+  if not ok or not mx then return end
+  local dx, dy = mx - d.mx, my - d.my
+  d.moved = math.max(d.moved, math.abs(dx) + math.abs(dy))
+  if d.moved < 4 then return end   -- not a drag yet
+  M.cfg.questHudPos = { d.x + dx, d.y + dy }
   M.layoutQuestHud()
 end
 function M.hudRelease(ev)
   local d = M.hudDrag
   M.hudDrag = nil
+  pcall(function() M.questHud:setCursor("OpenHand") end)
   if not d then return end
   if d.moved < 4 then
-    if M.cfg.questHudPos and d.moved > 0 then M.cfg.questHudPos = nil end
     M.questRefresh("all")       -- a click, not a drag
   else
     M.saveSettings()            -- remember where it was dropped
