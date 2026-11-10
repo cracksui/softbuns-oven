@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.7"
+M.version = "0.10.8"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -395,6 +395,28 @@ function M.runsFor(idx, text)
     pos = pos + n
   end
   return coloured and out or nil
+end
+
+-- the game's colours for `text` on capture line `idx`, exactly as sent
+function M.runsExact(idx, text)
+  if not M.cfg.gameColors or not M.curDecho or not idx or not M.curDecho[idx] or not text or text == "" then return nil end
+  local plainLine = M.curPlain and M.curPlain[idx]
+  local at = plainLine and plainLine:find(text, 1, true)
+  if not at then return nil end
+  local from = ulen(plainLine:sub(1, at - 1))
+  local to = from + ulen(text)
+  local out, pos = {}, 0
+  for _, run in ipairs(M.dechoRuns(M.curDecho[idx])) do
+    local n = ulen(run[2])
+    local a, b = math.max(pos, from), math.min(pos + n, to)
+    if a < b then
+      local c = run[1]
+      local plain = not c or (c[1] == 192 and c[2] == 192 and c[3] == 192)
+      out[#out + 1] = { plain and C.text or c, M.usub(run[2], a - pos + 1, b - pos) }
+    end
+    pos = pos + n
+  end
+  return #out > 0 and out or nil
 end
 
 local function itemSegs(text, runs)
@@ -821,10 +843,16 @@ M.itemExtras = {
     function(l, sp) return "Spell", { { C.slot, sp }, { C.dim, "  level " }, { C.num, l } } end },
   { "^Contains knowledge of the spell of (.-), scribed at level (%d+)%.?$",
     function(sp, l) return "Spell", { { C.slot, sp }, { C.dim, "  scribed at level " }, { C.num, l } } end },
-  { "^%*Your level must be less than or equal to (%d+) to use this item%.?$",
-    function(l) return "Max level", { { C.num, l } } end },
-  { "^%*Your level must be at least (%d+) to use this item%.?$",
-    function(l) return "Min level", { { C.num, l } } end },
+  { "^%*Your level must be less than or equal to (%d+) to use this item%.?%s*(.-)$",
+    function(l, e) return "Max level", { { C.num, l }, { C.dim, (e ~= "" and ("  " .. e) or "") } } end },
+  { "^%*Your level must be at least (%d+) to use this item%.?%s*(.-)$",
+    function(l, e) return "Min level", { { C.num, l }, { C.dim, (e ~= "" and ("  " .. e) or "") } } end },
+  { "^%*Your (.-) must be (.-) to use this item%.?%s*(.-)$",
+    function(what, cond, e) return "Requires", { { C.item, what .. " " .. cond }, { C.dim, (e ~= "" and ("  " .. e) or "") } } end },
+  { "^This %a+ alters (.-)%s+with a success rate of (%d+%%)%.?$",
+    function(what, pct) return "Alters", { { C.slot, what }, { C.dim, "  success " }, { C.num, pct } } end },
+  { "^%*?This item may be repaired (%d+) times? and renewed (%d+) times?%.?$",
+    function(r, n) return "@repairs", r, n end },
   { "^%*.- will last approximately ([%d,]+) more (.-)%.?$",
     function(n, u) return "Lasts", { { C.num, "~" .. n }, { C.text, " " .. u } } end },
   { "^This item, when USEd, will (.-)%.?$",
@@ -846,8 +874,8 @@ function M.itemExtra(t)
   for _, e in ipairs(M.itemExtras) do
     local a, b, c, d = t:match(e[1])
     if a then
-      local k, v = e[2](a, b, c, d)
-      return { k, v }
+      local k, v, w = e[2](a, b, c, d)
+      return { k, v, w }
     end
   end
 end
@@ -904,7 +932,7 @@ function M.parseItem(raw)
     elseif inBonus then
       local b = it.bonus[#it.bonus]; b[#b + 1] = t
     elseif inRelics and indented then
-      it.relics[#it.relics + 1] = l; lastKnown = i
+      it.relics[#it.relics + 1] = { text = l, idx = i }; lastKnown = i
       local rw, rn = t:match("^Affects (.-) by (%-?%d+)%.?$")
       if rw then it.relicAffects[#it.relicAffects + 1] = { rw, rn } end
     elseif wpnName then
@@ -931,6 +959,9 @@ function M.parseItem(raw)
       it.affects[#it.affects + 1] = { afW, afN }; inRelics = false; lastKnown = i
     elseif x then
       if x[1] == "@level" then it.level, it.attrs = x[2], "none"
+      elseif x[1] == "@repairs" then
+        it.repairs = x[2]
+        it.extra[#it.extra + 1] = { "Renewals", { { C.num, x[3] } } }
       else it.extra[#it.extra + 1] = x end
       inRelics = false; lastKnown = i
     elseif t:match("^%*") then
@@ -1044,12 +1075,16 @@ function M.formatters.item(raw, width)
   end
   if #it.relics > 0 then
     local first = true
-    for _, r in ipairs(it.relics) do
+    for _, rel in ipairs(it.relics) do
+      local r = type(rel) == "table" and rel.text or rel
       local depth = #(r:match("^(%s*)")) - 2
+      local exact = type(rel) == "table" and M.runsExact(rel.idx, trim(r)) or nil
       local t = trim(r):gsub("%s+", " ")
-      local segs
+      local segs = exact   -- the game's own wording and colours
       local afW, afN = t:match("^Affects (.-) by (%-?%d+)%.?$")
-      if afW then
+      if segs then
+        -- keep as sent
+      elseif afW then
         segs = affectSegs(afW, afN)
       else
         local name, van = t:match("^(.-)%s*%[Vanishes (.-)%]$")
