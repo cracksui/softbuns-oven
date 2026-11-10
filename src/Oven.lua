@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.5"
+M.version = "0.10.6"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1620,8 +1620,9 @@ function M.pageShow(pg, lines, fmt, links)
     local rowsOf = M.wrapDecho(string.rep(" ", hang) .. ln[1], math.max(20, cols - 2))
     local htmlRows = {}
     for r, w in ipairs(rowsOf) do
+      w = w:gsub("<%d+,%d+,%d+>", "")                       -- plain text (link colour comes from the style)
       if r == 1 then w = M.usub(w, hang + 1, ulen(w)) end   -- the first row isn't indented
-      local esc = w:gsub("<%d+,%d+,%d+>", ""):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(" ", "&nbsp;")
+      local esc = w:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(" ", "&nbsp;")
       htmlRows[r] = esc
     end
     lab:echo(table.concat(htmlRows, "<br>"))
