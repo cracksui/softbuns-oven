@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.15.7"
+M.version = "0.15.8"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3914,8 +3914,17 @@ local mapButtonStyle = [[
            qproperty-alignment: 'AlignCenter'; }
   QLabel::hover { background-color: rgba(64,224,208,60); color: white; }]]
 
+-- bump when the panel's contents change, so a panel built by an older version (in the same
+-- Mudlet session) is rebuilt after an update instead of keeping its old layout
+local MAP_PANEL_LAYOUT = 2
+
 function M.createMapPanel()
-  if M.mapPanel then return end
+  if M.mapPanel and M.mapPanelLayout == MAP_PANEL_LAYOUT then return end
+  if M.mapPanel then
+    pcall(function() M.mapPanel:hide() end)
+    M.mapPanel, M.mapRoomLabel, M.mapSearchBox, M.mapWidget = nil, nil, nil, nil
+  end
+  M.mapPanelLayout = MAP_PANEL_LAYOUT
   M.mapPanel = Adjustable.Container:new({
     name = "ovenMapPanel",
     titleText = "Map",
