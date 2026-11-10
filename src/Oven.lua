@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.9"
+M.version = "0.11.10"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3219,12 +3219,13 @@ M.REPO = "@@REPO@@"
 M.BRANCH = "main"
 -- Files are fetched from the exact latest commit (raw.githubusercontent.com/<repo>/<sha>/...):
 -- the branch address is cached by GitHub for up to 5 minutes, a commit address is always
--- current. The latest commit comes from the GitHub API; if that's unavailable (it allows
--- 60 requests an hour), the branch address is used instead.
+-- current. The latest commit comes from git's own ref list (what `git pull` reads), which
+-- is never cached - the REST API can lag a minute behind a push. If that fails, the branch
+-- address is used instead.
 function M.rawUrl(file)
   return "https://raw.githubusercontent.com/" .. M.REPO .. "/" .. (M.updSha or M.BRANCH) .. "/" .. file
 end
-function M.apiUrl() return "https://api.github.com/repos/" .. M.REPO .. "/commits/" .. M.BRANCH end
+function M.apiUrl() return "https://github.com/" .. M.REPO .. ".git/info/refs?service=git-upload-pack" end
 
 -- step 1 of every check: find the latest commit, then fetch VERSION from it
 function M.fetchVersion()
@@ -3232,7 +3233,7 @@ function M.fetchVersion()
   downloadFile(M.dl.api, M.apiUrl())
 end
 M.dl = { version = getMudletHomeDir() .. "/oven_latest_version.txt", pkg = getMudletHomeDir() .. "/oven_latest.mpackage",
-         api = getMudletHomeDir() .. "/oven_latest_commit.json" }
+         api = getMudletHomeDir() .. "/oven_latest_refs.txt" }
 
 local function newer(a, b)  -- is version a newer than b?
   local function parts(v) local t = {} for n in tostring(v):gmatch("%d+") do t[#t + 1] = tonumber(n) end return t end
@@ -3353,8 +3354,10 @@ function M.onDownload(event, file, err)
   if file == M.dl.api then
     -- latest commit id; on any problem fall back to the branch address
     if event ~= "sysDownloadError" then
-      local f = io.open(file); local body = f and f:read("*a") or ""; if f then f:close() end
-      M.updSha = body:match('"sha"%s*:%s*"(%x+)"')
+      local f = io.open(file, "rb"); local body = f and f:read("*a") or ""; if f then f:close() end
+      -- pkt-line: "<4 hex length><40 hex sha> refs/heads/main"
+      local hex = body:match("(%x+) refs/heads/" .. M.BRANCH .. "%f[%z%s]") or body:match("(%x+) refs/heads/" .. M.BRANCH)
+      M.updSha = (hex and #hex >= 40) and hex:sub(-40) or nil
     end
     downloadFile(M.dl.version, M.rawUrl("VERSION"))
     return
