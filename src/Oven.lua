@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.14.9"
+M.version = "0.14.10"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1889,6 +1889,7 @@ function M.rememberQuests(q)
     local d = q.detail
     local Q = M.quests[d.id] or {}
     for k, v in pairs(d) do Q[k] = v end
+    if d.total and d.done < d.total then Q.complete = nil end
     Q.seen = now
     M.quests[d.id] = Q
   end
@@ -2014,74 +2015,102 @@ local function rgb(c)
 end
 local function span(col, txt) return string.format("<span style=\"color:%s\">%s</span>", rgb(col), hudEsc(txt)) end
 
+local function questFinished(Q)
+  return Q.complete or (Q.total and Q.total > 0 and (Q.done or 0) >= Q.total)
+end
+M.questFinished = questFinished
+
+-- one quest's lines (html) and their widest width in characters
+local function questCardHtml(id, Q)
+  local html, widest = {}, 0
+  local name = Q.name or ("#" .. id)
+  local finished = questFinished(Q)
+  local bar = ""
+  if Q.total then
+    local n = 8
+    local done = finished and Q.total or (Q.done or 0)
+    local k = math.floor(n * math.min(done, Q.total) / math.max(1, Q.total) + 0.5)
+    local col = finished and C.plus or (M.REC or C.slot)
+    bar = span(col, string.rep("█", k)) .. span(C.dim, string.rep("░", n - k)) .. span(C.num, string.format(" %d/%d", done, Q.total))
+  end
+  html[#html + 1] = (finished and span(C.plus, "✓ ") or "") .. span(C.dim, "#" .. id .. " ")
+    .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar
+  widest = ulen(name) + ulen(id) + 4 + (Q.total and 13 or 0) + (finished and 2 or 0)
+  local np
+  for _, ph in ipairs(Q.phases or {}) do if not ph.done then np = ph; break end end
+  if finished then
+    html[#html + 1] = span(C.plus, " complete") .. span(C.dim, " · click to clear")
+    widest = math.max(widest, 28)
+  elseif np then
+    local line = " ▶ " .. np.text .. (np.area and (" · " .. np.area) or "")
+    html[#html + 1] = span(M.REC or C.title, " ▶ ") .. span(C.text, np.text) .. (np.area and span(C.dim, " · " .. np.area) or "")
+    widest = math.max(widest, ulen(line))
+  elseif not Q.phases then
+    html[#html + 1] = span(C.dim, " (click to load its steps)")
+    widest = math.max(widest, 27)
+  end
+  return html, widest
+end
+
+local function hudCallbacks(label, id)
+  label:setClickCallback(function(ev) M.hudPress(ev, id) end)
+  label:setMoveCallback(function(ev) M.hudMove(ev) end)
+  label:setReleaseCallback(function(ev) M.hudRelease(ev) end)
+  pcall(function() label:setCursor("OpenHand") end)
+end
+
+-- the HUD: a frame, with one card per pinned quest inside it (each its own click area)
 function M.drawQuestTracker()
   if M.questContainer then M.questContainer:hide() end   -- the framed window of 0.14.0
   local pins = M.cfg.questPins or {}
   local ids = {}
   for id in pairs(pins) do ids[#ids + 1] = id end
+  M.questCards = M.questCards or {}
   if #ids == 0 then
     if M.questHud then M.questHud:hide() end
+    for _, c in ipairs(M.questCards) do c:hide() end
     return
   end
   table.sort(ids, function(a, b2) return tonumber(a) < tonumber(b2) end)
   if not M.questHud then
     M.questHud = Geyser.Label:new({ name = "ovenQuestHud", x = 0, y = 0, width = 300, height = 60 })
-    -- drag with the left button to move it; a click without moving refreshes the quests
-    M.questHud:setClickCallback(function(ev) M.hudPress(ev) end)
-    M.questHud:setMoveCallback(function(ev) M.hudMove(ev) end)
-    M.questHud:setReleaseCallback(function(ev) M.hudRelease(ev) end)
+    hudCallbacks(M.questHud, nil)
     pcall(function() M.questHud:setToolTip("drag to move · click a quest to refresh it · click a finished quest to clear it") end)
-    pcall(function() M.questHud:setCursor("OpenHand") end)
   end
   local alpha = math.floor(255 * math.max(0, math.min(100, tonumber(M.cfg.questHudOpacity) or 100)) / 100 + 0.5)
   M.questHud:setStyleSheet(string.format([[
-    background-color: rgba(8, 8, 12, %d); border: 1px solid rgba(255,255,255,30);
-    border-radius: 6px; padding: 6px 8px; qproperty-alignment: 'AlignTop | AlignLeft';]], alpha))
+    background-color: rgba(8, 8, 12, %d); border: 1px solid rgba(255,255,255,30); border-radius: 6px;]], alpha))
+  M.questHud:echo("")
   local font = (pcall(getFont) and getFont()) or "monospace"
   local size = math.max(8, (M.cfg.fontSize or 10) - 1)
-  local html, rows, widest = {}, 0, 0
-  M.questHudRows = {}     -- row number -> quest id, for clicks
-  for _, id in ipairs(ids) do
-    local Q = M.quests[id] or {}
-    local name = Q.name or ("#" .. id)
-    local finished = Q.total and Q.total > 0 and (Q.done or 0) >= Q.total
-    local firstRow = rows + 1
-    local bar = ""
-    if Q.total then
-      local n = 8
-      local k = math.floor(n * math.min(Q.done or 0, Q.total) / math.max(1, Q.total) + 0.5)
-      local col = ((Q.done or 0) >= Q.total) and C.plus or (M.REC or C.slot)
-      bar = span(col, string.rep("█", k)) .. span(C.dim, string.rep("░", n - k)) .. span(C.num, string.format(" %d/%d", Q.done or 0, Q.total))
-    end
-    html[#html + 1] = (finished and span(C.plus, "✓ ") or "") .. span(C.dim, "#" .. id .. " ")
-      .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar
-    widest = math.max(widest, ulen(name) + ulen(id) + 4 + (Q.total and 13 or 0) + (finished and 2 or 0))
-    rows = rows + 1
-    local np
-    for _, ph in ipairs(Q.phases or {}) do if not ph.done then np = ph; break end end
-    if finished then
-      html[#html + 1] = span(C.plus, " complete") .. span(C.dim, " · click to clear")
-      widest = math.max(widest, 28)
-      rows = rows + 1
-    elseif np then
-      local line = " ▶ " .. np.text .. (np.area and (" · " .. np.area) or "")
-      html[#html + 1] = span(M.REC or C.title, " ▶ ") .. span(C.text, np.text) .. (np.area and span(C.dim, " · " .. np.area) or "")
-      widest = math.max(widest, ulen(line))
-      rows = rows + 1
-    elseif not Q.phases then
-      html[#html + 1] = span(C.dim, " (click to load its steps)")
-      rows = rows + 1
-    end
-    for r = firstRow, rows do M.questHudRows[r] = id end
-  end
-  M.questHud:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt;\">%s</div>",
-    font, size, table.concat(html, "<br>")))
   local okF, cw, ch = pcall(calcFontSize, size, font)
   if not okF or not cw then cw, ch = 7, 14 end
-  M.questHudSize = { w = math.min(600, widest * cw + 24), h = math.ceil(rows * ch * 1.3) + 16 }
-  M.questHudLineH = ch * 1.3
+  local lineH = ch * 1.35
+  local layout, widest, total = {}, 0, 2
+  for i, id in ipairs(ids) do
+    local card = M.questCards[i]
+    if not card then
+      card = Geyser.Label:new({ name = "ovenQuestCard" .. i, x = 0, y = 0, width = 100, height = 20 })
+      M.questCards[i] = card
+    end
+    hudCallbacks(card, id)
+    local html, w = questCardHtml(id, M.quests[id] or {})
+    widest = math.max(widest, w)
+    card:setStyleSheet(string.format([[
+      background-color: transparent; padding: 4px 8px; qproperty-alignment: 'AlignTop | AlignLeft';
+      border-bottom: %s;]], (i < #ids) and "1px solid rgba(255,255,255,28)" or "0px"))
+    card:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt;\">%s</div>",
+      font, size, table.concat(html, "<br>")))
+    local h = math.ceil(#html * lineH) + 9
+    layout[i] = { off = total - 1, h = h }
+    total = total + h
+  end
+  for i = #ids + 1, #M.questCards do M.questCards[i]:hide() end
+  M.questCardLayout = layout
+  M.questHudSize = { w = math.min(600, widest * cw + 24), h = total }
   M.layoutQuestHud()
   M.questHud:show()
+  for i = 1, #ids do M.questCards[i]:show() end
   M.raiseQuestHud()
 end
 
@@ -2089,17 +2118,21 @@ end
 function M.raiseQuestHud()
   if M.questHud and next(M.cfg.questPins or {}) then
     pcall(function() M.questHud:raise() end)
+    for i = 1, #(M.questCardLayout or {}) do
+      local c = M.questCards and M.questCards[i]
+      if c then pcall(function() c:raise() end) end
+    end
   end
 end
 
 -- dragging the HUD: like Mudlet's own Adjustable.Container, measure the drag with
 -- getMousePosition() (window coordinates) from where the button went down
-function M.hudPress(ev)
+function M.hudPress(ev, id)
   if type(ev) == "table" and ev.button and ev.button ~= "LeftButton" then return end
   local ok, mx, my = pcall(getMousePosition)
   if not ok or not mx then M.questRefresh("all"); return end
   M.hudDrag = { mx = mx, my = my, x = M.questHud:get_x(), y = M.questHud:get_y(), moved = 0, started = os.time(),
-                at = type(ev) == "table" and tonumber(ev.y) or nil }
+                at = type(ev) == "table" and tonumber(ev.y) or nil, id = id }
   pcall(function() M.questHud:setCursor("ClosedHand") end)
   -- some setups (e.g. Linux under WSL) don't deliver mouse-move events while the button is
   -- held, so also follow the cursor with a short timer until the button is released
@@ -2131,26 +2164,40 @@ function M.hudRelease(ev)
   pcall(function() M.questHud:setCursor("OpenHand") end)
   if not d then return end
   if d.moved < 4 then
-    M.questHudClick(d.at)       -- a click, not a drag
+    M.questHudClick(d.id)       -- a click, not a drag
   else
     M.saveSettings()            -- remember where it was dropped
   end
 end
 
--- a click on the HUD: a finished quest is cleared, any other quest is refreshed
-function M.questHudClick(y)
-  local id
-  if y and M.questHudLineH and M.questHudRows then
-    local row = math.floor((y - 7) / M.questHudLineH) + 1   -- 6px padding + 1px border
-    id = M.questHudRows[math.max(1, row)]
-  end
+-- a click on a quest card: a finished quest is cleared, any other quest is refreshed;
+-- a click on the frame (between cards) refreshes them all
+function M.questHudClick(id)
   if not id then return M.questRefresh("all") end
   local Q = M.quests[id] or {}
-  if Q.total and Q.total > 0 and (Q.done or 0) >= Q.total then
+  if questFinished(Q) then
     M.questPin(id, false)
     M.notifyQuest((Q.name or ("#" .. id)) .. " cleared from the quest HUD")
   else
     M.questRefresh(id)
+  end
+end
+
+-- "All parts of your quest 'Runic Race' are complete."
+function M.questMarkComplete(name)
+  for id, Q in pairs(M.quests) do
+    if Q.name and Q.name:lower() == name:lower() then
+      Q.complete = true
+      if Q.total then Q.done = Q.total end
+      for _, ph in ipairs(Q.phases or {}) do ph.done = true end
+      M.cfg.quests = M.quests
+      M.saveSettings()
+      M.drawQuestTracker()
+      if M.cfg.questPins and M.cfg.questPins[id] then
+        M.notifyQuest(name .. " complete - turn it in, then click it to clear")
+      end
+      return id
+    end
   end
 end
 
@@ -2178,6 +2225,10 @@ function M.layoutQuestHud()
   end
   M.questHud:move(x, y)
   M.questHud:resize(w, h)
+  for i, l in ipairs(M.questCardLayout or {}) do
+    local c = M.questCards and M.questCards[i]
+    if c then c:move(x + 1, y + 1 + l.off); c:resize(w - 2, l.h) end
+  end
 end
 
 -- quietly ask the game for a quest's details (nothing shown in the main window)
@@ -3492,6 +3543,8 @@ function M.onLine()
   pcall(M.observe, line)
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
   -- It goes on the bar; it's never part of a command's output.
+  local doneQuest = line:match("^%s*All parts of your quest '(.+)' are complete%.?%s*$")
+  if doneQuest then pcall(M.questMarkComplete, doneQuest) end
   local mount = line:match("^%s*%(Mount:%s*(%d+)%s*st%)%s*$")
   if mount then
     M.mountPending = tonumber(mount)
@@ -4004,7 +4057,10 @@ function M.command(args)
     if sub == "pin" and val ~= "" then M.questPin(val, true); return say("pinned " .. val .. " to the quest tracker")
     elseif sub == "unpin" and val ~= "" then M.questPin(val, false); return say("unpinned " .. val)
     elseif sub == "refresh" then M.questRefresh(val ~= "" and val or "all"); return
-    elseif sub == "hide" then if M.questHud then M.questHud:hide() end; return
+    elseif sub == "hide" then
+      if M.questHud then M.questHud:hide() end
+      for _, c in ipairs(M.questCards or {}) do c:hide() end
+      return
     elseif sub == "hud" and (val == "left" or val == "right") then
       M.cfg.questHudSide = val; M.cfg.questHudPos = nil; M.saveSettings(); M.drawQuestTracker(); return say("quest HUD on the " .. val)
     elseif sub == "hud" and val:match("^opacity") then
@@ -4312,6 +4368,7 @@ function M.init()
         if M.helpContainer then M.helpContainer:hide() end
         if M.questContainer then M.questContainer:hide() end
         if M.questHud then M.questHud:hide() end
+        for _, c in ipairs(M.questCards or {}) do c:hide() end
         if M.bar then M.bar:hide(); setBorderBottom(0) end
         if M.sbar then M.sbar:hide() end
         if M.topTaken then setBorderTop(M.baseTop or 0); M.topTaken = nil end
