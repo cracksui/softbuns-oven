@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.12.7"
+M.version = "0.12.9"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1748,9 +1748,14 @@ function M.formatters.skills(raw, width)
       if x.lrnd ~= y.lrnd then return x.lrnd > y.lrnd end
       return x.name:lower() < y.name:lower()
     end)
-    -- availability: stated once when it's the same for everyone, else per row where it differs
-    local sameA = list[1] and list[1].avail
-    for _, s2 in ipairs(list) do if s2.avail ~= sameA then sameA = nil end end
+    -- availability: the most common value is stated once; rows only show it where it differs
+    local countA, commonA, commonN = {}, nil, 0
+    for _, s2 in ipairs(list) do
+      local a = s2.avail or ""
+      countA[a] = (countA[a] or 0) + 1
+      if countA[a] > commonN then commonA, commonN = a, countA[a] end
+    end
+    local allSame = commonN == #list
     local usual = usualColour(list)
     if #rec > 0 then
       local row = { { REC, "★ recommended, trainable here: " } }
@@ -1762,11 +1767,15 @@ function M.formatters.skills(raw, width)
       blank(out)
     end
     local hdr = { { C.title, #list .. " skills" } }
-    if sameA and sameA ~= "" then hdr[#hdr + 1] = { C.dim, "  ·  all " .. sameA:lower() } end
+    if commonA and commonA ~= "" then
+      hdr[#hdr + 1] = { C.dim, "  ·  " .. (allSame and ("all " .. commonA:lower()) or (commonA:lower() .. " unless shown")) }
+    end
     out[#out + 1] = hdr
     local nameW = 0
-    for _, s2 in ipairs(list) do nameW = math.max(nameW, ulen(s2.name)) end
+    for _, s2 in ipairs(list) do nameW = math.max(nameW, ulen("Skill Name"), ulen(s2.name)) end
     local gw = width >= 80 and 10 or 6
+    -- column headers, with the game's own labels
+    out[#out + 1] = { { C.key, "  " .. pad("Skill Name", nameW + 1) .. pad("Lrnd", gw + 5) .. "   Avail." } }
     for _, s2 in ipairs(list) do
       local info = mine[skillKey(s2.name)]
       local isRec = info and info.rec
@@ -1774,7 +1783,7 @@ function M.formatters.skills(raw, width)
       addAll(r, nameSegs(s2, isRec, usual))
       r[#r + 1] = { C.text, string.rep(" ", nameW + 1 - ulen(s2.name)) }
       addAll(r, learnedSegs(s2.lrnd, gw))
-      if not sameA and s2.avail and s2.avail ~= "" then r[#r + 1] = { C.dim, "   " .. s2.avail:lower() } end
+      if s2.avail and s2.avail ~= "" and s2.avail ~= commonA then r[#r + 1] = { C.flag, "   " .. s2.avail:lower() } end
       out[#out + 1] = r
     end
     if pr.prac then blank(out); out[#out + 1] = { { C.key, "Practices available: " }, { C.num, pr.prac } } end
