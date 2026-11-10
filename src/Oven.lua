@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.1"
+M.version = "0.10.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -121,6 +121,7 @@ end
 -- Small helpers
 ---------------------------------------------------------------------------
 local function trim(s) s = s:gsub("^%s+", ""); s = s:gsub("%s+$", ""); return s end
+local function now() return (getEpoch and getEpoch()) or os.clock() end
 local function rtrim(s) return (s:gsub("%s+$", "")) end
 local function ulen(s) return (utf8 and utf8.len(s)) or #s end
 local function pad(s, n) return s .. string.rep(" ", math.max(0, n - ulen(s))) end
@@ -2104,7 +2105,7 @@ local function selectionDecho()
 end
 
 function M.start(kind, target, cmd)
-  M.cap = { kind = kind, target = target, cmd = cmd, plain = {}, decho = {},
+  M.cap = { kind = kind, target = target, cmd = cmd, plain = {}, decho = {}, lastAt = now(),
             hasLayout = M.formatters[kind] ~= nil }
   if kind == "help" then M.cap.gag = M.cfg.helpWindow
   else M.cap.gag = M.cfg.main == "replace" and M.cap.hasLayout end
@@ -2135,6 +2136,60 @@ function M.dropBlankAbove()
     deleteLine()
     moveCursor(0, ln - 1)   -- the prompt has moved up one line
   end
+end
+
+-- Does a line belong to the command's output, or is it someone else's activity that
+-- happened to arrive meanwhile ("Ferdinand drops a ripe pumpkin.")? Lines that don't
+-- belong are left alone in the main window, in the order they arrived.
+M.shapes = {
+  eq = function(t)
+    return t:match("^You are using") or t:match("^<[%a][%a ']*>") or t:match("^%(%a[%a ]-%s*%)%s+%-?%d")
+      or t:match("^Current Armor Resistance") or t:match("^Your value if CPKed") or t:match("^You have a %d+%% chance")
+      or t:match("^Equipped weapon damage") or t:match("^With .-, you will deal") or t:match("^%-?%d+%%? [%a ]-:")
+      or t:match("^You are not using") or t:match("^Nothing")
+  end,
+  contents = function(t, l)
+    return l:match("^%s%s+%S") or t:match("^%(%s*%d+%)") or t == "Search inventory" or t:match(":$")
+      or t:match("^A total of") or t:match("^You may carry") or t:match("^Nothing")
+  end,
+  score = function(t, l)
+    return t:match("^Player Information") or l:match("^%s%s%S") or t:match("^%*")
+  end,
+  affects = function(t)
+    return t:match("^You are affected") or t:match("^You are not affected") or t:match("^%*")
+      or t:match("^%a[%a ]-:%s") or t:match("^Total of") or t:match("^%[AFFECTS")
+  end,
+}
+
+-- free-text output (item / creature looks, help): only lines that look like other
+-- people's activity AND arrive after a pause are treated as not belonging, so a
+-- description that itself contains "X tells you '...'" stays intact
+M.activity = {
+  " says '", " says, '", " asks '", " exclaims '", " tells you '", " tells the group '", " yells '",
+  " shouts '", " whispers ", " gossips", " chats '", " arrives", " has arrived", " leaves ", " left ",
+  " drops ", " puts ", " gets ", " picks up ", " wears ", " wields ", " removes ", " gives ",
+  " eats ", " drinks ", " is DEAD", " dies", "^You hear ", "^%[%a[%w%s]*%] ",
+}
+function M.looksLikeActivity(t)
+  for _, p in ipairs(M.activity) do
+    if t:find(p, 1, p:sub(1, 1) ~= "^") then return true end
+  end
+  return false
+end
+
+function M.belongs(cap, l)
+  local t = trim(l)
+  if t == "" then return true end
+  local shape = M.shapes[cap.kind]
+  local ok
+  if shape then
+    ok = shape(t, l, cap) and true or false
+  else
+    local gap = now() - (cap.lastAt or 0)
+    ok = not (M.looksLikeActivity(t) and (#cap.plain == 0 or gap > 0.15))
+  end
+  if ok then cap.lastAt = now() end
+  return ok
 end
 
 local function isPromptLine()
@@ -2181,6 +2236,7 @@ function M.onLine()
     return
   end
   if not cap then return end
+  if not M.belongs(cap, line) then return end   -- someone else's activity: leave it where it is
   if #cap.plain == 0 and trim(line) == "" then
     if cap.gag then deleteLine() end
     return
