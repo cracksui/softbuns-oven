@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.8"
+M.version = "0.10.9"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -419,6 +419,15 @@ function M.runsExact(idx, text)
   return #out > 0 and out or nil
 end
 
+-- the game's colour of `sub` on capture line `idx` (first visible character), or nil
+function M.colorAt(idx, sub)
+  local runs = M.runsExact(idx, sub)
+  if not runs then return nil end
+  for _, r in ipairs(runs) do
+    if r[2]:find("%S") then return type(r[1]) == "table" and r[1] or nil end
+  end
+end
+
 local function itemSegs(text, runs)
   local name, conds = stripConds(text)
   local segs = runs or { { C.item, name } }
@@ -488,10 +497,10 @@ local function numSegs(n, suffix)
 end
 
 -- "Affects agility by 1." -> {"+1 agility"} segments
-local function affectSegs(what, by)
+local function affectSegs(what, by, nameColor)
   local n = tonumber(by) or 0
   local sign = n >= 0 and "+" or ""
-  return { { n >= 0 and C.plus or C.minus, sign .. by }, { C.item, " " .. what } }
+  return { { n >= 0 and C.plus or C.minus, sign .. by }, { nameColor or C.item, " " .. what } }
 end
 
 local function prose(out, lines, width)
@@ -956,7 +965,7 @@ function M.parseItem(raw)
     elseif arv then it.ar = arv; inRelics = false; lastKnown = i
     elseif rep then it.repairs = rep; inRelics = false; lastKnown = i
     elseif afW and not indented then
-      it.affects[#it.affects + 1] = { afW, afN }; inRelics = false; lastKnown = i
+      it.affects[#it.affects + 1] = { afW, afN, i }; inRelics = false; lastKnown = i
     elseif x then
       if x[1] == "@level" then it.level, it.attrs = x[2], "none"
       elseif x[1] == "@repairs" then
@@ -1069,7 +1078,7 @@ function M.formatters.item(raw, width)
     local segs = {}
     for n, a in ipairs(it.affects) do
       if n > 1 then segs[#segs + 1] = { C.dim, ", " } end
-      for _, s in ipairs(affectSegs(a[1], a[2])) do segs[#segs + 1] = s end
+      for _, s in ipairs(affectSegs(a[1], a[2], a[3] and M.colorAt(a[3], "Affects"))) do segs[#segs + 1] = s end
     end
     kvLine(out, "Affects", kw, segs, width)
   end
@@ -1078,21 +1087,22 @@ function M.formatters.item(raw, width)
     for _, rel in ipairs(it.relics) do
       local r = type(rel) == "table" and rel.text or rel
       local depth = #(r:match("^(%s*)")) - 2
-      local exact = type(rel) == "table" and M.runsExact(rel.idx, trim(r)) or nil
+      local ridx = type(rel) == "table" and rel.idx or nil
       local t = trim(r):gsub("%s+", " ")
-      local segs = exact   -- the game's own wording and colours
+      local segs
       local afW, afN = t:match("^Affects (.-) by (%-?%d+)%.?$")
-      if segs then
-        -- keep as sent
-      elseif afW then
-        segs = affectSegs(afW, afN)
+      if afW then
+        segs = affectSegs(afW, afN, M.colorAt(ridx, "Affects"))
       else
         local name, van = t:match("^(.-)%s*%[Vanishes (.-)%]$")
         if name then
           segs = itemSegs(name)
-          segs[#segs + 1] = { C.dim, "  vanishes " .. van }
+          local rawVan = trim(r):match("%[Vanishes (.-)%]$") or van
+          segs[#segs + 1] = { M.colorAt(ridx, "[Vanishes") or C.dim, "  vanishes " }
+          segs[#segs + 1] = { M.colorAt(ridx, rawVan) or C.dim, van }
         else
-          segs = { { C.item, t } }
+          -- lines Oven doesn't rearrange ("Small (1/1):", "When wielding ...") keep the game's colours
+          segs = M.runsExact(ridx, trim(r)) or { { C.item, t } }
         end
       end
       table.insert(segs, 1, { C.text, string.rep(" ", math.max(0, depth)) })
