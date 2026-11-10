@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.3"
+M.version = "0.16.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3856,7 +3856,7 @@ function M.onRoom()
   local id = M.mapRoomId()
   if not id then return end
   M.mapRoom = id
-  if roomExists(id) then centerview(id) end
+  if roomExists(id) then M.centerOn(id) end
   pcall(M.drawMapHeader)
   -- walking: arrived where the next step should take us?
   local w = M.walk
@@ -3965,7 +3965,7 @@ function M.createMapPanel()
   end)
   button("ovenMapZoomOut", "−", "zoom out", function() M.mapZoom(1.25) end)
   button("ovenMapZoomIn", "+", "zoom in", function() M.mapZoom(0.8) end)
-  button("ovenMapCentre", "◎", "centre on you", function() if M.mapRoom and roomExists(M.mapRoom) then centerview(M.mapRoom) end end)
+  button("ovenMapCentre", "◎", "centre on you", function() M.centerOn(M.mapRoom) end)
   M.mapWidget = Geyser.Mapper:new({ name = "ovenMapper", v_policy = Geyser.Dynamic }, box)
   if M.cfg.mapZoom then pcall(setMapZoom, M.cfg.mapZoom) end
 end
@@ -3991,6 +3991,101 @@ function M.drawMapHeader()
     "<span style=\"font-family:'%s'; color:#ffffff;\">%s</span>"
     .. "<span style=\"font-family:'%s'; color:#808080;\">%s%s</span>",
     font, esc(name), font, area ~= "" and ("  ·  " .. esc(area)) or "", id and ("  ·  #" .. id) or ""))
+end
+
+---------------------------------------------------------------------------
+-- Map hover: the name of the room under the mouse, in a small label by the cursor.
+-- Mudlet's 2D map doesn't report hovering, so the mouse is polled while it's over the
+-- panel and turned into map coordinates: the centred room is in the middle of the map,
+-- and each room is (map height / zoom) pixels apart.
+---------------------------------------------------------------------------
+function M.centerOn(id)
+  if not id or not roomExists(id) then return end
+  M.mapCenter = id
+  centerview(id)
+end
+
+local hoverIndex = { area = nil, at = 0, rooms = {} }
+local function roomAt(area, x, y, z)
+  if hoverIndex.area ~= area or now() - hoverIndex.at > 30 then
+    hoverIndex = { area = area, at = now(), rooms = {} }
+    local ok, ids = pcall(getAreaRooms, area)
+    if ok and type(ids) == "table" then
+      for _, rid in pairs(ids) do
+        local okC, rx, ry, rz = pcall(getRoomCoordinates, rid)
+        if okC and rx then hoverIndex.rooms[rx .. "," .. ry .. "," .. rz] = rid end
+      end
+    end
+  end
+  return hoverIndex.rooms[x .. "," .. y .. "," .. z]
+end
+
+-- the room under window position (mx, my), or nil
+function M.mapRoomUnder(mx, my)
+  local w = M.mapWidget
+  local c = M.mapCenter or M.mapRoom
+  if not w or not c or not roomExists(c) then return end
+  local wx, wy, ww, wh = w:get_x(), w:get_y(), w:get_width(), w:get_height()
+  if mx < wx or my < wy or mx >= wx + ww or my >= wy + wh or wh < 10 then return end
+  local okZ, zoom = pcall(getMapZoom)
+  zoom = (okZ and tonumber(zoom)) or M.cfg.mapZoom or 15
+  local cell = wh / zoom
+  local cx, cy, cz = getRoomCoordinates(c)
+  local x = cx + (mx - wx - ww / 2) / cell
+  local y = cy - (my - wy - wh / 2) / cell
+  local rx, ry = math.floor(x + 0.5), math.floor(y + 0.5)
+  -- only the room itself counts, not the gap between rooms
+  if math.abs(x - rx) > 0.4 or math.abs(y - ry) > 0.4 then return end
+  return roomAt(getRoomArea(c), rx, ry, cz)
+end
+
+function M.mapHoverTick()
+  local tip = M.mapHoverTip
+  local ok, mx, my = pcall(getMousePosition)
+  local id = ok and mx and M.mapPanel and M.cfg.mapPanel and M.cfg.mapHover ~= false and M.mapRoomUnder(mx, my)
+  if not id then
+    if tip and M.mapHoverId then tip:hide() end
+    M.mapHoverId = nil
+    return
+  end
+  if not tip then
+    tip = Geyser.Label:new({ name = "ovenMapHover", x = 0, y = 0, width = 100, height = 20 })
+    tip:setStyleSheet("background-color: rgba(12,12,18,235); border: 1px solid #444; border-radius: 4px; padding: 0 6px;")
+    M.mapHoverTip = tip
+  end
+  local font = (pcall(getFont) and getFont()) or "monospace"
+  local size = M.cfg.fontSize or 10
+  local okF, cw, ch = pcall(calcFontSize, size, font)
+  cw, ch = (okF and cw) or 8, (okF and ch) or 16
+  if id ~= M.mapHoverId then
+    M.mapHoverId = id
+    local name = getRoomName(id) or "?"
+    local text = name .. "  #" .. id
+    local esc = function(s) return (tostring(s):gsub("&", "&amp;"):gsub("<", "&lt;")) end
+    tip:echo(string.format("<span style=\"font-family:'%s'; font-size:%dpt; color:#ffffff;\">%s</span>"
+      .. "<span style=\"font-family:'%s'; font-size:%dpt; color:#808080;\">  #%d</span>",
+      font, size, esc(name), font, size, id))
+    M.mapHoverW = math.min(500, (ulen(text) + 3) * cw)
+    tip:resize(M.mapHoverW, ch + 8)
+  end
+  -- beside the cursor, kept inside the main window
+  local W = getMainWindowSize()
+  local x = mx + 16
+  if x + M.mapHoverW > W then x = mx - M.mapHoverW - 8 end
+  tip:move(x, my + 18)
+  tip:show()
+  pcall(function() tip:raise() end)
+end
+
+function M.startMapHover()
+  if M.mapHoverTimer then killTimer(M.mapHoverTimer) end
+  M.mapHoverTimer = tempTimer(0.2, function() pcall(M.mapHoverTick) end, true)
+end
+
+function M.stopMapHover()
+  if M.mapHoverTimer then killTimer(M.mapHoverTimer); M.mapHoverTimer = nil end
+  if M.mapHoverTip then M.mapHoverTip:hide() end
+  M.mapHoverId = nil
 end
 
 -- Mudlet's own room-info overlay on the map (its "Short"/"Full" map info) repeats what the
@@ -4029,11 +4124,13 @@ function M.showMapPanel(on)
     pcall(M.mapInfoOff)
     M.mapPanel:show()
     M.drawMapHeader()
-    if M.mapRoom and roomExists(M.mapRoom) then centerview(M.mapRoom) end
+    M.centerOn(M.mapRoom)
+    M.startMapHover()
     if M.raiseQuestHud then M.raiseQuestHud() end
   elseif M.mapPanel then
     M.mapPanel:hide()
     pcall(M.mapInfoRestore)
+    M.stopMapHover()
   end
 end
 
@@ -4086,7 +4183,7 @@ function M.mapShow(id)
   pcall(highlightRoom, id, 64, 224, 208, 64, 224, 208, 1.5, 200, 60)
   M.mapHighlight = id
   if M.mapPanel and M.cfg.mapPanel then M.showMapPanel(true) end   -- (this centres on you...)
-  centerview(id)                                                    -- ...so centre on the room after
+  M.centerOn(id)                                                    -- ...so centre on the room after
 end
 
 -- walk to a room the way a double-click on the map does
@@ -4397,6 +4494,7 @@ M.helpSections = {
   { key = "map", title = "Map and walking", rows = {
     { "sbo map on|off", "follow you on the map; double-click a room to walk there" },
     { "sbo map panel on|off", "the map in its own window, with a search box and zoom buttons" },
+    { "sbo map hover on|off", "the name of the room under the mouse, in the map panel" },
     { "sbo map find {text}", "find rooms by name; click a result to show it or walk there" },
     { "sbo map walk {room #}", "walk to a room" },
     { "sbo map show {room #}", "centre the map on a room" },
@@ -4674,6 +4772,9 @@ function M.command(args)
       return M.mapWalkTo(tonumber(b:match("(%d+)$")))
     elseif b:match("^show%s+%d+$") then
       return M.mapShow(tonumber(b:match("(%d+)$")))
+    elseif b == "hover on" or b == "hover off" then
+      M.cfg.mapHover = (b == "hover on"); M.saveSettings()
+      return say("room names on hover " .. (M.cfg.mapHover and "on" or "off"))
     elseif b == "panel on" or b == "panel off" then
       M.cfg.mapPanel = (b == "panel on"); M.saveSettings(); M.showMapPanel(M.cfg.mapPanel)
       if M.cfg.mapPanel and not M.cfg.map then M.cfg.map = true; M.saveSettings(); M.mapStart() end
@@ -4957,6 +5058,7 @@ function M.teardown()
   if M.pollTimer then killTimer(M.pollTimer); M.pollTimer = nil end
   if M.sessTimer then killTimer(M.sessTimer); M.sessTimer = nil end
   if M.mapHandler then killAnonymousEventHandler(M.mapHandler); M.mapHandler = nil end
+  if M.mapHoverTimer then killTimer(M.mapHoverTimer); M.mapHoverTimer = nil end
 end
 
 function M.init()
