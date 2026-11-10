@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.14.0"
+M.version = "0.14.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -36,6 +36,7 @@ M.defaults = {
   promptPattern = "^%s*<[^>]*%d[^>]*>%s*$",
   updateCheck  = true,       -- on login, quietly check GitHub for a newer version
   autoUpdate   = false,      -- check every 2 minutes and install new versions automatically
+  questHudSide = "right",    -- quest HUD corner: right or left (top of the game text area)
   map          = false,      -- follow your room (GMCP) on the map and walk where you double-click
   autocompare  = true,       -- compare looked-at items with what you wear in that slot
   bar          = false,      -- move the prompt into a fixed bar at the bottom
@@ -2002,53 +2003,87 @@ function M.questPin(id, on)
 end
 
 ---------------------------------------------------------------------------
--- Quest tracker window
+-- Quest HUD: a frameless, translucent panel in a corner of the game screen
 ---------------------------------------------------------------------------
-function M.createQuestWindow()
-  if not M.questContainer then
-    M.questContainer = Adjustable.Container:new({
-      name = "ovenQuests",
-      titleText = "Quests",
-      x = "-36%", y = "56%", width = "34%", height = "30%",
-      adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
-      titleTxtColor = "#e6c35c",
-    })
-  end
-  if not M.questPg then M.questPg = M.newPage("ovenQuest", M.questContainer) end
-  M.questPg.container = M.questContainer
+local function hudEsc(x) return (tostring(x):gsub("&", "&amp;"):gsub("<", "&lt;")) end
+local function rgb(c)
+  if type(c) == "table" then return string.format("rgb(%d,%d,%d)", c[1], c[2], c[3]) end
+  local t = color_table and color_table[c]
+  return t and string.format("rgb(%d,%d,%d)", t[1], t[2], t[3]) or "#c0c0c0"
 end
+local function span(col, txt) return string.format("<span style=\"color:%s\">%s</span>", rgb(col), hudEsc(txt)) end
 
 function M.drawQuestTracker()
+  if M.questContainer then M.questContainer:hide() end   -- the framed window of 0.14.0
   local pins = M.cfg.questPins or {}
   local ids = {}
   for id in pairs(pins) do ids[#ids + 1] = id end
   if #ids == 0 then
-    if M.questContainer then M.questContainer:hide() end
+    if M.questHud then M.questHud:hide() end
     return
   end
-  table.sort(ids, function(a, b) return tonumber(a) < tonumber(b) end)
-  M.createQuestWindow()
-  M.questContainer:show()
-  local cols = M.pageCols(M.questPg)
-  local lines, links = {}, {}
-  for _, id in ipairs(ids) do
-    local Q = M.quests[id] or { name = "#" .. id }
-    local row = { { C.item, Q.name or ("#" .. id) }, { C.dim, "  #" .. id .. "  " } }
-    if Q.total then addAll(row, questGauge(Q.done or 0, Q.total, 8)) end
-    lines[#lines + 1] = row
-    local np = nextPhase(Q)
-    if np then
-      local r2 = { { M.REC or C.title, "  ▶ " }, { C.text, np.text } }
-      if np.area then r2[#r2 + 1] = { C.dim, "  [" .. np.area .. "]" } end
-      lines[#lines + 1] = r2
-    elseif not Q.phases then
-      lines[#lines + 1] = { { C.dim, "  (refresh to see its phases)" } }
-    end
-    lines[#lines + 1] = {}
-    links[#links + 1] = { "refresh #" .. id .. " " .. (Q.name or ""), function() M.questRefresh(id) end }
+  table.sort(ids, function(a, b2) return tonumber(a) < tonumber(b2) end)
+  if not M.questHud then
+    M.questHud = Geyser.Label:new({ name = "ovenQuestHud", x = 0, y = 0, width = 300, height = 60 })
+    M.questHud:setClickCallback(function() M.questRefresh("all") end)
+    pcall(function() M.questHud:setToolTip("click to refresh your pinned quests") end)
   end
-  links[#links + 1] = { "refresh all", function() M.questRefresh("all") end }
-  M.pageShow(M.questPg, M.segsToDecho(lines), "decho", links)
+  M.questHud:setStyleSheet([[
+    background-color: rgba(8, 8, 12, 170); border: 1px solid rgba(255,255,255,30);
+    border-radius: 6px; padding: 6px 8px; qproperty-alignment: 'AlignTop | AlignLeft';]])
+  local font = (pcall(getFont) and getFont()) or "monospace"
+  local size = math.max(8, (M.cfg.fontSize or 10) - 1)
+  local html, rows, widest = {}, 0, 0
+  for _, id in ipairs(ids) do
+    local Q = M.quests[id] or {}
+    local name = Q.name or ("#" .. id)
+    local bar = ""
+    if Q.total then
+      local n = 8
+      local k = math.floor(n * math.min(Q.done or 0, Q.total) / math.max(1, Q.total) + 0.5)
+      local col = ((Q.done or 0) >= Q.total) and C.plus or (M.REC or C.slot)
+      bar = span(col, string.rep("█", k)) .. span(C.dim, string.rep("░", n - k)) .. span(C.num, string.format(" %d/%d", Q.done or 0, Q.total))
+    end
+    html[#html + 1] = span(C.item, name) .. "&nbsp;&nbsp;" .. bar
+    widest = math.max(widest, ulen(name) + 2 + (Q.total and 13 or 0))
+    rows = rows + 1
+    local np
+    for _, ph in ipairs(Q.phases or {}) do if not ph.done then np = ph; break end end
+    if np then
+      local line = " ▶ " .. np.text .. (np.area and (" · " .. np.area) or "")
+      html[#html + 1] = span(M.REC or C.title, " ▶ ") .. span(C.text, np.text) .. (np.area and span(C.dim, " · " .. np.area) or "")
+      widest = math.max(widest, ulen(line))
+      rows = rows + 1
+    elseif not Q.phases then
+      html[#html + 1] = span(C.dim, " (click to load its steps)")
+      rows = rows + 1
+    end
+  end
+  M.questHud:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt;\">%s</div>",
+    font, size, table.concat(html, "<br>")))
+  local okF, cw, ch = pcall(calcFontSize, size, font)
+  if not okF or not cw then cw, ch = 7, 14 end
+  M.questHudSize = { w = math.min(600, widest * cw + 24), h = math.ceil(rows * ch * 1.3) + 16 }
+  M.layoutQuestHud()
+  M.questHud:show()
+end
+
+-- keep the HUD in its corner of the game text area (inside the side borders, under any top line)
+function M.layoutQuestHud()
+  if not M.questHud or not M.questHudSize then return end
+  local W = getMainWindowSize()
+  local left, right, top = 0, 0, 0
+  local ok, b = pcall(getBorderSizes)
+  if ok and type(b) == "table" then left, right, top = b.left or 0, b.right or 0, b.top or 0
+  else
+    local okR, r = pcall(getBorderRight); if okR and r then right = r end
+    local okT, t = pcall(getBorderTop); if okT and t then top = t end
+  end
+  local w, h = M.questHudSize.w, M.questHudSize.h
+  local margin = 10
+  local x = (M.cfg.questHudSide == "left") and (left + margin) or (W - right - w - margin - 16)
+  M.questHud:move(x, top + margin)
+  M.questHud:resize(w, h)
 end
 
 -- quietly ask the game for a quest's details (nothing shown in the main window)
@@ -2809,6 +2844,7 @@ function M.layoutBar()
       M.topTaken = true
     end
     setBorderTop(M.baseTop + h)
+    pcall(M.layoutQuestHud)
   elseif M.topTaken then
     setBorderTop(M.baseTop or 0)
     M.topTaken = nil
@@ -3677,7 +3713,8 @@ function M.help()
   <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
   <khaki>sbo items<reset>                 list remembered items
   <khaki>sbo quest pin|unpin [id|all]<reset> keep quests in the quest tracker window
-  <khaki>sbo quest refresh [id]<reset>    quietly re-check pinned quests (sbo quest show|hide)
+  <khaki>sbo quest refresh [id]<reset>    quietly re-check pinned quests (or click the quest HUD)
+  <khaki>sbo quest hud left|right<reset>  which top corner the quest HUD sits in (sbo quest show|hide)
   <khaki>sbo learn<reset>                 look at the worn items Oven doesn't know yet (the ? in eq)
   <khaki>sbo map on|off<reset>            follow you on the map by room number; double-click a room to walk there
   <khaki>sbo map stop<reset> / <khaki>load [file]<reset>  cancel a walk / load a map file (default: map/mm_map.dat)
@@ -3858,7 +3895,9 @@ function M.command(args)
     if sub == "pin" and val ~= "" then M.questPin(val, true); return say("pinned " .. val .. " to the quest tracker")
     elseif sub == "unpin" and val ~= "" then M.questPin(val, false); return say("unpinned " .. val)
     elseif sub == "refresh" then M.questRefresh(val ~= "" and val or "all"); return
-    elseif sub == "hide" then if M.questContainer then M.questContainer:hide() end; return
+    elseif sub == "hide" then if M.questHud then M.questHud:hide() end; return
+    elseif sub == "hud" and (val == "left" or val == "right") then
+      M.cfg.questHudSide = val; M.saveSettings(); M.drawQuestTracker(); return say("quest HUD on the " .. val)
     elseif sub == "show" or sub == "" then M.drawQuestTracker()
       if not next(M.cfg.questPins or {}) then say("no quests pinned: type quest info, then click pin (or sbo quest pin <id|all>)") end
       return
@@ -4155,6 +4194,7 @@ function M.init()
         if M.container then M.container:hide() end
         if M.helpContainer then M.helpContainer:hide() end
         if M.questContainer then M.questContainer:hide() end
+        if M.questHud then M.questHud:hide() end
         if M.bar then M.bar:hide(); setBorderBottom(0) end
         if M.sbar then M.sbar:hide() end
         if M.topTaken then setBorderTop(M.baseTop or 0); M.topTaken = nil end
@@ -4162,7 +4202,7 @@ function M.init()
     end),
   }
   M.loadItems()
-  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysWindowResizeEvent", function() M.layoutBar(); pcall(M.drawBar) end)
+  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysWindowResizeEvent", function() M.layoutBar(); pcall(M.drawBar); pcall(M.layoutQuestHud) end)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadDone", M.onDownload)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadError", M.onDownload)
   for _, v in ipairs({ "LEVEL", "EXPERIENCE", "EXPERIENCE_MAX", "EXPERIENCE_TNL", "EXPERIENCE_TO_LEVEL" }) do
