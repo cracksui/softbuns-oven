@@ -18,7 +18,7 @@ src = src.replace("@@REPO@@", repo)
 config = f'''mpackage = [[Oven]]
 author = [[softbuns]]
 title = [[Soft Bun's Oven (sbo) :: bakes raw Materia Magica output into something edible]]
-description = [[Raw game text goes in, baked output comes out. Soft Bun's Oven rebuilds eq, item looks, containers, inventory, score, affects and mob examines into clean aligned layouts in the main window and a floating oven window. It remembers every item you look at and compares gear (against what you wear, a pinned item, or any two), and can move your prompt into a HUD bar with HP/SP/ST gauges. Type sbo for commands.]]
+description = [[Raw game text goes in, baked output comes out. Soft Bun's Oven rebuilds eq, item looks, containers, inventory, score, affects and mob examines into clean aligned layouts in the main window and a floating Inspector window. It remembers every item you look at and compares gear (against what you wear, a pinned item, or any two), and can move your prompt into a HUD bar with HP/SP/ST gauges. Type sbo for commands.]]
 version = [[{version}]]
 '''
 

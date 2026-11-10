@@ -7,7 +7,7 @@
 --   * Captures the lines the game sends back, until the next prompt
 --     (or a short pause when no prompt is detected).
 --   * Prints a formatted version in the main window and/or a floating
---     "oven window" window.
+--     Inspector window.
 --
 -- Type `sbo` in Mudlet for the list of commands (`oven` works too).
 
@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.11"
+M.version = "0.10.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -25,7 +25,7 @@ M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 M.defaults = {
   enabled      = true,
   main         = "replace",  -- replace | keep | off   (what to do in the main window)
-  window       = true,       -- show the floating oven window
+  window       = true,       -- show the floating Inspector window
   idle         = 0.4,        -- seconds of silence that ends a capture when no prompt is seen
   maxTime      = 4,          -- hard limit on how long a capture can last
   maxLines     = 120,
@@ -35,6 +35,7 @@ M.defaults = {
   -- Default: a line that is just <...> containing a digit, e.g. "<120hp 80sp 90st>".
   promptPattern = "^%s*<[^>]*%d[^>]*>%s*$",
   updateCheck  = true,       -- on login, quietly check GitHub for a newer version
+  autoUpdate   = false,      -- check every 2 minutes and install new versions automatically
   autocompare  = true,       -- compare looked-at items with what you wear in that slot
   bar          = false,      -- move the prompt into a fixed bar at the bottom
   barMode      = "gauges",   -- gauges | raw
@@ -1437,50 +1438,12 @@ function M.format(kind, target, raw, width, dechoLines)
 end
 
 ---------------------------------------------------------------------------
--- oven window window
+-- (window helpers)
 ---------------------------------------------------------------------------
-function M.createWindow()
-  if M.container then return end
-  M.container = Adjustable.Container:new({
-    name = "ovenViewer",
-    titleText = "Soft Bun's Oven",
-    x = "-62%", y = "4%", width = "36%", height = "50%",
-    adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
-    titleTxtColor = "#e6c35c",
-  })
-  M.console = Geyser.MiniConsole:new({
-    name = "ovenViewerConsole",
-    x = 0, y = 0, width = "100%", height = "100%",
-    autoWrap = false, scrollBar = true,
-    fontSize = M.cfg.fontSize, color = "black",
-  }, M.container)
-end
-
--- help window: game help pages exactly as sent (colours and layout kept)
--- Help window: help pages don't change once shown, so they go in a plain scrollable
--- panel (ScrollBox + Label) rather than a console, which has a live split-screen view.
-function M.createHelpWindow()
-  if not M.helpContainer then
-    M.helpContainer = Adjustable.Container:new({
-      name = "ovenHelp",
-      titleText = "help",
-      x = "2%", y = "4%", width = "45%", height = "70%",
-      adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
-      titleTxtColor = "#e6c35c",
-    })
-  end
-  if M.helpConsole then M.helpConsole:hide() end   -- console used by versions before 0.9.3
-  if not M.helpLabel then
-    M.helpScroll = Geyser.ScrollBox:new({
-      name = "ovenHelpScroll", x = 0, y = 0, width = "100%", height = "100%",
-    }, M.helpContainer)
-    M.helpLabel = Geyser.Label:new({
-      name = "ovenHelpLabel", x = 0, y = 0, width = "100%", height = 40,
-    }, M.helpScroll)
-    M.helpLabel:setStyleSheet("background-color: black; padding: 6px;")
-  end
-end
-
+---------------------------------------------------------------------------
+-- Static pages: a ScrollBox holding one Label (the page) plus clickable link
+-- lines. Unlike a console there is no live split-screen when you scroll.
+---------------------------------------------------------------------------
 -- segments -> decho text
 local function segsToDecho(lines)
   local outl = {}
@@ -1494,73 +1457,174 @@ local function segsToDecho(lines)
   end
   return outl
 end
+M.segsToDecho = segsToDecho
 
--- show a page: title + lines in decho ("decho") or cecho ("cecho") format;
--- links: optional { {text, command}, ... } shown as clickable lines under the page
-function M.helpPage(title, lines, fmt, links)
-  M.createHelpWindow()
-  M.helpContainer:show()
+function M.newPage(prefix, container)
+  local pg = { prefix = prefix, links = {} }
+  pg.scroll = Geyser.ScrollBox:new({ name = prefix .. "Scroll", x = 0, y = 0, width = "100%", height = "100%" }, container)
+  pg.label = Geyser.Label:new({ name = prefix .. "Label", x = 0, y = 0, width = "100%", height = 40 }, pg.scroll)
+  pg.label:setStyleSheet("background-color: black; padding: 6px;")
+  return pg
+end
+
+local function pageFont()
   local font = (pcall(getFont) and getFont()) or "monospace"
   local size = M.cfg.fontSize
-  local okF, cw, ch = pcall(calcFontSize, size, font)
-  if not okF or not cw then cw, ch = 8, 16 end
-  local okW, boxW = pcall(function() return M.helpScroll:get_width() end)
-  local cols = math.max(30, math.floor(((okW and boxW) or 600) - 40) / cw)
-  cols = math.floor(cols)
-  local all = segsToDecho({ header("help", "", math.min(cols, 100), title) })
-  local plainCount = { (all[1]:gsub("<%d+,%d+,%d+>", "")) }
-  local html = { decho2html(all[1]) }
+  local ok, cw, ch = pcall(calcFontSize, size, font)
+  if not ok or not cw then cw, ch = 8, 16 end
+  return font, size, cw, ch
+end
+
+-- characters that fit across a page
+function M.pageCols(pg)
+  local _, _, cw = pageFont()
+  local okW, boxW = pcall(function() return pg.scroll:get_width() end)
+  return math.max(30, math.floor((((okW and boxW) or 600) - 40) / cw))
+end
+
+-- lines: decho ("decho") or cecho ("cecho") strings; links: { {text, function}, ... }
+function M.pageShow(pg, lines, fmt, links)
+  local font, size, cw, ch = pageFont()
+  local cols = M.pageCols(pg)
+  local html, plain = {}, {}
   for _, l in ipairs(lines) do
     html[#html + 1] = (l == "") and "" or (fmt == "cecho" and cecho2html(l) or decho2html(l))
-    plainCount[#plainCount + 1] = fmt == "cecho" and l:gsub("<[%w_:,]+>", "") or l:gsub("<[%d,:]*>", ""):gsub("<r>", "")
+    plain[#plain + 1] = fmt == "cecho" and l:gsub("<[%w_:,]+>", "") or l:gsub("<[%d,:]*>", ""):gsub("<r>", "")
   end
   local doc = string.format(
     "<div style=\"white-space: pre-wrap; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
     font, size, table.concat(html, "\n"))
-  M.helpLabel:resize(nil, 1)   -- collapse first so the panel scrolls back to the top
-  M.helpLabel:rawEcho(doc)
-  -- wrapped rows, and the label's real line height (rich text spaces lines wider than the font)
+  pg.label:resize(nil, 1)   -- collapse first so the panel scrolls back to the top
+  pg.label:rawEcho(doc)
+  -- height: wrapped rows times the label's real line height (rich text spaces lines wider than the font)
   local rows = 0
-  for _, p in ipairs(plainCount) do rows = rows + math.max(1, math.ceil(ulen(p) / cols)) end
+  for _, p in ipairs(plain) do rows = rows + math.max(1, math.ceil(ulen(p) / cols)) end
   local lineH = ch * 1.25
-  local okH, _, hintH = pcall(function() return M.helpLabel:getSizeHint() end)
-  if okH and tonumber(hintH) and hintH > 0 then lineH = math.max(lineH, hintH / #plainCount) end
+  local okH, _, hintH = pcall(function() return pg.label:getSizeHint() end)
+  if okH and tonumber(hintH) and hintH > 0 and #plain > 0 then lineH = math.max(lineH, hintH / #plain) end
+  local rowH = math.ceil(lineH)
   local pageH = math.ceil(rows * lineH + 12)
   links = links or {}
-  M.helpLabel:resize(nil, pageH + (#links > 0 and 0 or 3 * lineH))   -- a little spare at the bottom
-  -- clickable SEE ALSO lines (labels can't hold links, so each is its own small label)
-  M.helpLinks = M.helpLinks or {}
+  pg.label:resize(nil, pageH + (#links > 0 and 0 or 3 * rowH))
+  -- clickable lines under the page (labels can't hold links, so each is its own label)
   for i, ln in ipairs(links) do
-    local lab = M.helpLinks[i]
+    local lab = pg.links[i]
     if not lab then
-      lab = Geyser.Label:new({ name = "ovenHelpLink" .. i, x = 0, y = 0, width = "100%", height = 20 }, M.helpScroll)
-      M.helpLinks[i] = lab
+      lab = Geyser.Label:new({ name = pg.prefix .. "Link" .. i, x = 0, y = 0, width = "100%", height = 20 }, pg.scroll)
+      pg.links[i] = lab
     end
     lab:setStyleSheet(string.format([[
       QLabel { background-color: black; color: #87cefa; padding-left: 6px;
                font-family: '%s', monospace; font-size: %dpt; }
       QLabel::hover { color: #ffffff; text-decoration: underline; }]], font, size))
     pcall(function() lab:setCursor("PointingHand") end)
-    lab:echo(ln[1]:gsub("&", "&amp;"):gsub("<", "&lt;"))
-    local cmd = ln[2]
-    lab:setClickCallback(function() send(cmd) end)
-    lab:move(0, pageH + (i - 1) * math.ceil(lineH))
-    lab:resize("100%", math.ceil(lineH))
+    lab:echo((ln[1]:gsub("&", "&amp;"):gsub("<", "&lt;")))
+    local fn = ln[2]
+    lab:setClickCallback(function() fn() end)
+    lab:move(0, pageH + (i - 1) * rowH)
+    lab:resize("100%", rowH)
     lab:show()
   end
-  for i = #links + 1, #M.helpLinks do M.helpLinks[i]:hide() end
-  if #links > 0 then
-    -- spacer so the last link can scroll fully into view
-    M.helpLabel:resize(nil, pageH)
-    M.helpSpacerY = pageH + #links * math.ceil(lineH) + 2 * math.ceil(lineH)
-    if not M.helpSpacer then
-      M.helpSpacer = Geyser.Label:new({ name = "ovenHelpSpacer", x = 0, y = 0, width = "100%", height = 1 }, M.helpScroll)
-      M.helpSpacer:setStyleSheet("background-color: black;")
-    end
-    M.helpSpacer:move(0, M.helpSpacerY - 1); M.helpSpacer:show()
-  elseif M.helpSpacer then
-    M.helpSpacer:hide()
+  for i = #links + 1, #pg.links do pg.links[i]:hide() end
+  -- spacer so the last link line can scroll fully into view
+  if not pg.spacer then
+    pg.spacer = Geyser.Label:new({ name = pg.prefix .. "Spacer", x = 0, y = 0, width = "100%", height = 1 }, pg.scroll)
+    pg.spacer:setStyleSheet("background-color: black;")
   end
+  if #links > 0 then
+    pg.spacer:move(0, pageH + (#links + 2) * rowH - 1); pg.spacer:show()
+  else
+    pg.spacer:hide()
+  end
+end
+
+---------------------------------------------------------------------------
+-- Inspector window: one result at a time (eq, item, score, compare…), with ◀ older / newer ▶
+---------------------------------------------------------------------------
+function M.createWindow()
+  if not M.container then
+    M.container = Adjustable.Container:new({
+      name = "ovenViewer",
+      titleText = "Inspector",
+      x = "-62%", y = "4%", width = "36%", height = "50%",
+      adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+      titleTxtColor = "#e6c35c",
+    })
+  end
+  if M.console then M.console:hide() end   -- console used by versions before 0.10
+  if not M.viewPg then M.viewPg = M.newPage("ovenView", M.container) end
+end
+
+function M.viewCols()
+  M.createWindow()
+  return math.min(M.pageCols(M.viewPg), 110)
+end
+
+M.viewHist = M.viewHist or {}
+function M.viewAdd(entry)
+  local h = M.viewHist
+  h[#h + 1] = entry
+  while #h > 30 do table.remove(h, 1) end
+  M.viewPos = #h
+  M.viewShow()
+end
+
+function M.viewShow()
+  M.createWindow()
+  M.container:show()
+  local h, pos = M.viewHist, M.viewPos or #M.viewHist
+  local e = h[pos]
+  if not e then return M.pageShow(M.viewPg, { "<128,128,128>Nothing baked yet - try eq, i, score or look at an item." }, "decho") end
+  local links = {}
+  for _, l in ipairs(e.links or {}) do links[#links + 1] = l end
+  if pos > 1 then
+    links[#links + 1] = { "◀ older  (" .. (pos - 1) .. " more)", function() M.viewPos = pos - 1; M.viewShow() end }
+  end
+  if pos < #h then
+    links[#links + 1] = { "newer ▶  (" .. (#h - pos) .. " more)", function() M.viewPos = pos + 1; M.viewShow() end }
+  end
+  M.pageShow(M.viewPg, segsToDecho(e.lines), "decho", links)
+end
+
+---------------------------------------------------------------------------
+-- Help window: game help pages exactly as sent (colours and layout kept)
+---------------------------------------------------------------------------
+function M.createHelpWindow()
+  if not M.helpContainer then
+    M.helpContainer = Adjustable.Container:new({
+      name = "ovenHelp",
+      titleText = "help",
+      x = "2%", y = "4%", width = "45%", height = "70%",
+      adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+      titleTxtColor = "#e6c35c",
+    })
+  end
+  if M.helpConsole then M.helpConsole:hide() end   -- console used by versions before 0.9.3
+  if M.helpLabel and not M.helpPg then
+    -- page built by 0.9.3 - 0.9.11: reuse its widgets
+    M.helpPg = { prefix = "ovenHelp", scroll = M.helpScroll, label = M.helpLabel, links = M.helpLinks or {}, spacer = M.helpSpacer }
+  end
+  if not M.helpPg then M.helpPg = M.newPage("ovenHelp", M.helpContainer) end
+end
+
+-- cecho text -> decho text (colour names -> r,g,b)
+function M.cechoToDecho(l)
+  return (l:gsub("<([%w_]+)>", function(n)
+    if n == "reset" then return "<192,192,192>" end
+    local c = color_table and color_table[n]
+    return c and string.format("<%d,%d,%d>", c[1], c[2], c[3]) or nil
+  end))
+end
+
+-- show a page in the help window: title + lines in decho or cecho format;
+-- links: { {text, function}, ... }
+function M.helpPage(title, lines, fmt, links)
+  M.createHelpWindow()
+  M.helpContainer:show()
+  local cols = M.pageCols(M.helpPg)
+  local all = { segsToDecho({ header("help", "", math.min(cols, 100), title) })[1] }
+  for _, l in ipairs(lines) do all[#all + 1] = (fmt == "cecho") and M.cechoToDecho(l) or l end
+  M.pageShow(M.helpPg, all, "decho", links)
 end
 
 -- "[1024] set - toggles ..." -> help 1024 ; " remove - remove an item" -> help remove
@@ -1582,7 +1646,8 @@ function M.showHelp(topic, dechoLines)
     if plain:match("^%s*SEE ALSO:?%s*$") then
       inSeeAlso = true; body[#body + 1] = d
     elseif inSeeAlso and M.helpLinkFor(plain) then
-      links[#links + 1] = { trim(plain), M.helpLinkFor(plain) }
+      local cmd = M.helpLinkFor(plain)
+      links[#links + 1] = { trim(plain), function() send(cmd) end }
     else
       body[#body + 1] = d
     end
@@ -1596,6 +1661,7 @@ function M.showWindow(on)
   if on then
     M.createWindow()
     M.container:show()
+    if not M.viewHist[1] then M.viewShow() end
   elseif M.container then
     M.container:hide()
   end
@@ -1780,31 +1846,31 @@ function M.compareLines(a, b, width)
   return out
 end
 
-local function viewerOrMain()
-  if M.cfg.window then M.showWindow(true); return "ovenViewerConsole" end
-  return "main"
-end
 
-function M.compare(a, b)
+-- entry: when given, the comparison is added to that Inspector page
+function M.compare(a, b, entry)
   if not a or not b then return false end
-  local win = viewerOrMain()
-  render(win, M.compareLines(a, b, columns(win)))
-  echo(win, "\n")
+  if entry then
+    entry.lines[#entry.lines + 1] = {}
+    addAll(entry.lines, M.compareLines(a, b, M.viewCols()))
+  elseif M.cfg.window then
+    M.viewAdd({ lines = M.compareLines(a, b, M.viewCols()), links = {} })
+  else
+    render("main", M.compareLines(a, b, columns("main")))
+  end
   return true
 end
 
 -- clickable actions under an item in the viewer
-local function itemLinks(win, it)
-  local q = string.format("%q", it.name)
-  fg(win, C.dim); echo(win, "  ")
-  echoLink(win, "[pin for comparing]", "sbo.pin(" .. q .. ")", "compare the next items you look at against this one", true)
-  echo(win, "  ")
+-- clickable actions under an item in the Inspector
+local function itemLinks(entry, it)
+  local name = it.name
+  entry.links[#entry.links + 1] = { "pin for comparing  (compare the next items you look at against this one)",
+    function() M.pin(name) end }
   local prev = M.recent[#M.recent - 1]
   if prev then
-    echoLink(win, "[compare with " .. prev .. "]", "sbo.compareNames(" .. string.format("%q", prev) .. "," .. q .. ")",
-      "compare with the item you looked at before this one", true)
+    entry.links[#entry.links + 1] = { "compare with " .. prev, function() M.compareNames(prev, name) end }
   end
-  resetFormat(win); echo(win, "\n\n")
 end
 
 function M.pin(name)
@@ -1822,15 +1888,15 @@ function M.compareNames(qa, qb)
 end
 
 -- after an item look: remember it, offer links, auto-compare
-function M.afterItem(raw)
+function M.afterItem(raw, entry)
   local ok, it = pcall(M.parseItem, raw)
   if not ok or not it or not it.name then return end
   M.remember(it)
   it = M.items[it.name]
-  if M.cfg.window then itemLinks("ovenViewerConsole", it) end
+  if entry then itemLinks(entry, it) end
   local done = {}
   if M.pinned and M.pinned ~= it.name and M.items[M.pinned] then
-    M.compare(M.items[M.pinned], it); done[M.pinned] = true
+    M.compare(M.items[M.pinned], it, entry); done[M.pinned] = true
   end
   if M.cfg.autocompare and it.worn then
     local worn = {}
@@ -1838,7 +1904,7 @@ function M.afterItem(raw)
     if not worn[it.name] then
       for n in pairs(worn) do
         local e = M.items[n]
-        if e and not done[n] and e.worn == it.worn then M.compare(e, it); done[n] = true end
+        if e and not done[n] and e.worn == it.worn then M.compare(e, it, entry); done[n] = true end
       end
     end
   end
@@ -2208,14 +2274,15 @@ function M.finish(reason)
       if promptDecho then decho("main", promptDecho) end
       if heldPrompt then decho("main", heldPrompt) end
     end
+    local entry
     if worth and M.cfg.window then
-      M.showWindow(true)
-      local lines = M.format(cap.kind, cap.target, cap.plain, columns("ovenViewerConsole"), cap.decho)
-      if lines then render("ovenViewerConsole", lines); echo("ovenViewerConsole", "\n") end
+      local lines = M.format(cap.kind, cap.target, cap.plain, M.viewCols(), cap.decho)
+      if lines then entry = { lines = lines, links = {} } end
     end
     if cap.kind == "eq" then M.updateEqNames(cap.plain) end
     if cap.kind == "score" then M.updateMaxes(cap.plain); M.drawBar() end
-    if cap.kind == "item" then M.afterItem(cap.plain) end
+    if cap.kind == "item" then M.afterItem(cap.plain, entry) end
+    if entry then M.viewAdd(entry) end
   end)
 
   local nxt = table.remove(M.queue, 1)
@@ -2236,12 +2303,12 @@ function M.help()
   <khaki>sbo on|off<reset>                enable / disable capturing
   <khaki>sbo main replace|keep<reset>     replace = show formatted text in main window instead of the raw text
                             keep    = leave the main window untouched
-  <khaki>sbo window on|off<reset>         floating oven window (drag/resize it; position is remembered)
-  <khaki>sbo clear<reset>                 clear the oven window
+  <khaki>sbo window on|off<reset>         floating Inspector window (drag/resize it; position is remembered)
+  <khaki>sbo clear<reset>                 clear the Inspector's history
   <khaki>sbo raw<reset>                   reprint the last capture exactly as the game sent it
   <khaki>sbo samples on|off<reset>        log raw captures to oven_samples.txt (helps tune the layout)
   <khaki>sbo prompt [lua pattern]<reset>  set your prompt pattern (blank = telnet GA only)
-  <khaki>sbo font [size]<reset>           oven window font size (no size = default)
+  <khaki>sbo font [size]<reset>           Inspector and help window font size (no size = default)
   <khaki>sbo test<reset>                  show a demo
   <khaki>sbo compare<reset>               compare the last two items you looked at
   <khaki>sbo compare [a] vs [b]<reset>    compare two remembered items by (part of) their names
@@ -2260,6 +2327,7 @@ function M.help()
   <khaki>sbo bar width [n]<reset>         length of each gauge (no number = default, 10)
   <khaki>sbo bar lines [n]<reset> / <khaki>font [n]<reset>  prompt bar height / font size (no number = default)
   <khaki>sbo update<reset>                get the latest version from GitHub (settings are kept)
+  <khaki>sbo update auto on|off<reset>    install new versions automatically (checks every 2 minutes)
   <khaki>sbo update force<reset>          reinstall the latest version even if you already have it
   <khaki>sbo update [file]<reset>         install a local .mpackage file instead
 ]])
@@ -2351,8 +2419,7 @@ function M.test()
     local w = columns("main")
     if M.cfg.main == "replace" then render("main", M.format(cap.kind, cap.target, cap.plain, w)) end
     if M.cfg.window then
-      M.showWindow(true)
-      render("ovenViewerConsole", M.format(cap.kind, cap.target, cap.plain, columns("ovenViewerConsole")))
+      M.viewAdd({ lines = M.format(cap.kind, cap.target, cap.plain, M.viewCols()), links = {} })
     end
   end
 end
@@ -2376,16 +2443,16 @@ function M.command(args)
   elseif a == "main" and (b == "replace" or b == "keep" or b == "off") then
     M.cfg.main = (b == "off") and "keep" or b; say("main window: " .. M.cfg.main)
   elseif a == "window" and onoff ~= nil then
-    M.cfg.window = onoff; M.showWindow(onoff); say("oven window " .. b)
+    M.cfg.window = onoff; M.showWindow(onoff); say("Inspector window " .. b)
   elseif a == "samples" and onoff ~= nil then
     M.cfg.samples = onoff; say("sample logging " .. b .. " (" .. M.samplesFile .. ")")
   elseif a == "prompt" then
     M.cfg.promptPattern = b; say("prompt pattern set to " .. string.format("%q", b))
   elseif a == "font" and M.numArg(b, "fontSize") then
     M.cfg.fontSize = M.numArg(b, "fontSize")
-    if M.console then M.console:setFontSize(M.cfg.fontSize) end
-    say("oven window font size " .. M.cfg.fontSize .. (b == "" and " (default)" or ""))
-  elseif a == "clear" then if M.console then M.console:clear() end
+    if M.viewPg and M.container then M.viewShow() end
+    say("Inspector and help window font size " .. M.cfg.fontSize .. (b == "" and " (default)" or ""))
+  elseif a == "clear" then M.viewHist = {}; M.viewPos = nil; if M.container then M.viewShow() end
   elseif a == "raw" then
     local last = M.history[#M.history]
     if not last then return say("nothing captured yet") end
@@ -2459,7 +2526,10 @@ end
 -- Updates come from GitHub: VERSION says what's current, Oven.mpackage is the package.
 M.REPO = "@@REPO@@"
 M.BRANCH = "main"
-function M.rawUrl(file) return "https://raw.githubusercontent.com/" .. M.REPO .. "/" .. M.BRANCH .. "/" .. file end
+-- (the ?t= query skips GitHub's ~5 minute cache so new releases show up right away)
+function M.rawUrl(file)
+  return "https://raw.githubusercontent.com/" .. M.REPO .. "/" .. M.BRANCH .. "/" .. file .. "?t=" .. os.time()
+end
 M.dl = { version = getMudletHomeDir() .. "/oven_latest_version.txt", pkg = getMudletHomeDir() .. "/oven_latest.mpackage" }
 
 local function newer(a, b)  -- is version a newer than b?
@@ -2473,6 +2543,9 @@ end
 M.newer = newer
 
 function M.installFrom(path)
+  if M.cap then   -- don't reinstall in the middle of capturing something
+    return tempTimer(2, function() M.installFrom(path) end)
+  end
   say("installing " .. path)
   local old = M.version
   for _, pkg in ipairs({ "MMFormat", "SoftbunsOS", "Oven" }) do  -- old names too
@@ -2491,6 +2564,14 @@ end
 -- mode: "check" (quiet, just tell me), "update", "force"
 function M.update(arg)
   arg = trim(arg or "")
+  local auto = arg:match("^auto%s*(%a*)$")
+  if auto then
+    if auto == "on" or auto == "off" then
+      M.cfg.autoUpdate = (auto == "on"); M.saveSettings(); M.startUpdatePoll()
+    end
+    return say("automatic updates " .. (M.cfg.autoUpdate and "on: new versions install themselves within a few minutes"
+      or "off: you're told when a new version is out (sbo update auto on to install them automatically)"))
+  end
   if arg ~= "" and arg ~= "force" then
     -- a local .mpackage file, for testing your own builds
     if not io.exists(arg) then return say("package file not found: " .. arg) end
@@ -2503,9 +2584,17 @@ function M.update(arg)
 end
 
 function M.checkForUpdate()
-  if M.REPO:find("@@", 1, true) or not M.cfg.updateCheck then return end
-  M.pending = "check"
+  if M.REPO:find("@@", 1, true) or not M.cfg.updateCheck or M.pending then return end
+  M.pending = M.cfg.autoUpdate and "auto" or "check"
   downloadFile(M.dl.version, M.rawUrl("VERSION"))
+end
+
+-- with automatic updates on, look for a new version every couple of minutes
+function M.startUpdatePoll()
+  if M.pollTimer then killTimer(M.pollTimer); M.pollTimer = nil end
+  if M.cfg.autoUpdate and not M.REPO:find("@@", 1, true) then
+    M.pollTimer = tempTimer(120, function() M.checkForUpdate() end, true)
+  end
 end
 
 function M.onDownload(event, file, err)
@@ -2514,7 +2603,7 @@ function M.onDownload(event, file, err)
   if not mode then return end  -- nothing of ours in flight
   if event == "sysDownloadError" then
     M.pending = nil
-    if mode ~= "check" then say("download failed: " .. tostring(err or file)) end
+    if mode ~= "check" and mode ~= "auto" then say("download failed: " .. tostring(err or file)) end
     return
   end
   if file == M.dl.version then
@@ -2522,11 +2611,14 @@ function M.onDownload(event, file, err)
     if not latest or latest == "" then M.pending = nil; return end
     if mode == "check" then
       M.pending = nil
-      if newer(latest, M.version) then
+      if newer(latest, M.version) and latest ~= M.toldAbout then
+        M.toldAbout = latest
         say("v" .. latest .. " is available (you have v" .. M.version .. ") - type <khaki>sbo update<reset>")
       end
+    elseif mode == "auto" and not newer(latest, M.version) then
+      M.pending = nil
     elseif newer(latest, M.version) or mode == "force" then
-      say("downloading v" .. latest .. "…")
+      say((mode == "auto" and "new version v" .. latest .. " - updating automatically…" or ("downloading v" .. latest .. "…")))
       downloadFile(M.dl.pkg, M.rawUrl("Oven.mpackage"))
     else
       M.pending = nil
@@ -2546,6 +2638,7 @@ function M.teardown()
   if M.lineTrigger then killTrigger(M.lineTrigger) end
   if M.alias then killAlias(M.alias) end
   M.handlers, M.lineTrigger, M.alias = nil, nil, nil
+  if M.pollTimer then killTimer(M.pollTimer); M.pollTimer = nil end
 end
 
 function M.init()
@@ -2573,6 +2666,7 @@ function M.init()
   M.alias = tempAlias("^(?:sbo|oven)(?:\\s+(.*))?$", function() M.command(matches[2]) end)
   if M.cfg.window and M.container then M.container:show() end
   if M.cfg.bar then M.showBar(true) end
+  M.startUpdatePoll()
   if not M.booted then
     M.booted = true
     tempTimer(8, function() M.checkForUpdate() end)

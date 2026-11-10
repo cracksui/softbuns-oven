@@ -73,8 +73,9 @@ separate profiles, install it in each.
 | `sbo bar on` | Moves your prompt into a fixed bar under the text, with gauges, your level and exp to level. |
 | `sbo` | The full list of commands. |
 
-Formatted output appears in the main window **and** in a floating **oven window**. Drag the oven
-window by its title bar and resize it from its edges; it remembers where you put it.
+Formatted output appears in the main window **and** in a floating **Inspector** window, which shows
+the latest result with clickable **◀ older / newer ▶** lines to step back through the last 30.
+Drag it by its title bar and resize it from its edges; it remembers where you put it.
 
 ---
 
@@ -98,8 +99,8 @@ Every item you look at is remembered (it survives logging out).
 
 - **Automatic:** look at an item and it's compared with whatever you wear in that slot
   (run `eq` and look at your worn item once so Oven knows it).
-- **Pin one item:** `sbo pin <name>` (or click **[pin for comparing]** under an item in the oven
-  window) — everything you look at next is compared against it. Handy in shops. `sbo unpin` stops.
+- **Pin one item:** `sbo pin <name>` (or click **pin for comparing** under an item in the
+  Inspector) — everything you look at next is compared against it. Handy in shops. `sbo unpin` stops.
 - **Any two:** `sbo compare` compares the last two items you looked at;
   `sbo compare hook vs dagger` compares any two remembered items by part of their names.
 - `sbo items` lists what Oven remembers.
@@ -113,10 +114,10 @@ sbo                       list of commands
 sbo test                  demo
 sbo on|off                turn formatting on / off
 sbo main replace|keep     replace the raw text in the main window, or leave it alone
-                          (keep = formatted output only in the oven window)
-sbo window on|off         show / hide the oven window
-sbo clear                 clear the oven window
-sbo font [size]           oven window font size (leave the number off for the default)
+                          (keep = formatted output only in the Inspector)
+sbo window on|off         show / hide the Inspector window
+sbo clear                 clear the Inspector's history
+sbo font [size]           Inspector / help window font size (leave the number off for the default)
 sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
 sbo gamecolors on|off     keep the game's own colours on item names
@@ -132,6 +133,7 @@ sbo bar width [n]         length of each gauge (default 10)
 sbo bar lines [n]         prompt bar height
 sbo bar font [n]          prompt bar font size (0 or no number = same as the main window)
 sbo update                get the newest version
+sbo update auto on|off    install new versions automatically
 ```
 
 Any number setting goes back to its default if you leave the number off (e.g. `sbo bar width`).
@@ -144,6 +146,9 @@ Type **`sbo update`**. Oven checks this page for a newer version and installs it
 settings and remembered items. You'll also get a one-line notice when you log in if an update
 is out. `sbo update force` reinstalls even if you're current.
 
+Want it hands-free? **`sbo update auto on`** checks every couple of minutes and installs new
+versions by itself.
+
 ## Troubleshooting
 
 - **Nothing is formatted.** Check you installed into the profile you're playing (Toolbox →
@@ -151,7 +156,7 @@ is out. `sbo update force` reinstalls even if you're current.
   settings.
 - **A layout looks wrong or something is missing.** Type `sbo raw` to see exactly what the game
   sent. Very short replies (one line) are left untouched on purpose.
-- **The oven window disappeared.** `sbo window on`. If it's off-screen, drag it back by its title
+- **The Inspector window disappeared.** `sbo window on`. If it's off-screen, drag it back by its title
   bar or resize the Mudlet window.
 - **The prompt bar overlaps something or looks off.** `sbo bar off` puts the prompt back in the
   text. `sbo bar raw` shows the prompt as the game sends it instead of gauges.
