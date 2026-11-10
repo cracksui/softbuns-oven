@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.4"
+M.version = "0.11.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2274,14 +2274,17 @@ function M.layoutBar()
     local okL, l = pcall(getBorderLeft); if okL and l then left = l end
   end
   local h = M.barHeight()
-  local sessionOn = M.cfg.barSession and M.sbar
+  local sessionOn = M.cfg.barSession and M.sbar and not M.barCollapsed
   local total = sessionOn and (h * 2) or h
   setBorderBottom(total)
   M.bar:move(left, H - total)
   M.bar:resize(W - left - right, h)
   if sessionOn then
+    M.sbar:show()
     M.sbar:move(left, H - h)
     M.sbar:resize(W - left - right, h)
+  elseif M.sbar then
+    M.sbar:hide()
   end
   M.barRight = right
 end
@@ -2295,13 +2298,13 @@ function M.showSessionBar(on)
     M.sbar:show()
     M.applyBarBg()
     if M.sessTimer then killTimer(M.sessTimer) end
-    M.sessTimer = tempTimer(30, function() M.drawSessionBar() end, true)   -- keep the clock moving
+    M.sessTimer = tempTimer(30, function() pcall(M.drawBar) end, true)   -- keep the clock moving
   else
     if M.sbar then M.sbar:hide() end
     if M.sessTimer then killTimer(M.sessTimer); M.sessTimer = nil end
   end
   M.layoutBar()
-  M.drawSessionBar()
+  pcall(M.drawBar)
 end
 
 function M.showBar(on)
@@ -2496,8 +2499,7 @@ local function barEcho(d, label)
     font, M.barFontSize(), html))
 end
 
-function M.drawSessionBar()
-  if not M.sbar or not M.cfg.barSession or not M.cfg.bar then return end
+function M.sessionSegs()
   local S, c = M.sess, M.cfg.char or {}
   local dot = { C.dim, "  ·  " }
   local segs = { { C.dim, "session " }, { C.num, M.duration(os.time() - S.start) } }
@@ -2519,7 +2521,12 @@ function M.drawSessionBar()
   if not S.exp0 and gained == 0 then
     segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "type score now and then to measure exp and kills" }
   end
-  barEcho(M.segsToDecho({ segs })[1], M.sbar)
+  return segs
+end
+
+function M.drawSessionBar()
+  if not M.sbar or not M.cfg.barSession or not M.cfg.bar or M.barCollapsed then return end
+  barEcho(M.segsToDecho({ M.sessionSegs() })[1], M.sbar)
 end
 
 function M.drawBar()
@@ -2572,23 +2579,55 @@ function M.drawBar()
   local cols = barCols()
   local room = math.floor((cols - fixed) / math.max(1, #p.vals))
   local gw = math.max(3, math.min(M.cfg.barWidth or 10, room))
-  for _, v in ipairs(p.vals) do
-    local k, cur = v[1], v[2]
-    local mx = M.cfg.maxes[k]
-    if not mx or cur > mx then mx = cur; M.cfg.maxes[k] = cur end
-    segs[#segs + 1] = { barColors[k] or C.key, k:upper() .. " " }
-    addAll(segs, M.gauge(cur, mx, gw))
-    segs[#segs + 1] = { C.num, " " .. cur }
-    segs[#segs + 1] = { C.dim, "/" .. mx .. "   " }
+  local head = segs
+  local function build(gwidth)
+    local out = {}
+    addAll(out, head)
+    for _, v in ipairs(p.vals) do
+      local k, cur = v[1], v[2]
+      local mx = M.cfg.maxes[k]
+      if not mx or cur > mx then mx = cur; M.cfg.maxes[k] = cur end
+      out[#out + 1] = { barColors[k] or C.key, k:upper() .. " " }
+      addAll(out, M.gauge(cur, mx, gwidth))
+      out[#out + 1] = { C.num, " " .. cur }
+      out[#out + 1] = { C.dim, "/" .. mx .. "   " }
+    end
+    addAll(out, tail)
+    if p.rest ~= "" then out[#out + 1] = { C.text, "   " .. p.rest } end
+    return out
   end
-  addAll(segs, tail)
-  if p.rest ~= "" then segs[#segs + 1] = { C.text, "   " .. p.rest } end
+  local main = build(gw)
+  -- the session details join this line when they fit (shorter gauges are tried first);
+  -- otherwise they get their own line underneath
+  local collapsed = false
+  if M.cfg.barSession then
+    local sess = M.sessionSegs()
+    local sep = { C.dim, "   │  " }
+    local need = segLen(main) + ulen(sep[2]) + segLen(sess) - cols
+    if need > 0 and #p.vals > 0 then
+      local smaller = gw - math.ceil(need / #p.vals)
+      if smaller >= 4 then
+        main = build(smaller)
+        need = segLen(main) + ulen(sep[2]) + segLen(sess) - cols
+      end
+    end
+    if need <= 0 then
+      collapsed = true
+      main[#main + 1] = sep
+      addAll(main, sess)
+    end
+  end
   if M.barNote and os.time() <= (M.barNoteUntil or 0) then
-    segs[#segs + 1] = { C.dim, "   [sbo] " }; segs[#segs + 1] = { C.slot, M.barNote }
+    main[#main + 1] = { C.dim, "   [sbo] " }; main[#main + 1] = { C.slot, M.barNote }
   elseif M.updateAvailable and M.newer and M.newer(M.updateAvailable, M.version) then
-    segs[#segs + 1] = { C.dim, "   " }; segs[#segs + 1] = { C.flag, "↑ " .. M.updateAvailable }
+    main[#main + 1] = { C.dim, "   " }; main[#main + 1] = { C.flag, "↑ " .. M.updateAvailable }
   end
-  barEcho(M.segsToDecho({ segs })[1])
+  if collapsed ~= (M.barCollapsed or false) then
+    M.barCollapsed = collapsed
+    M.layoutBar()
+  end
+  barEcho(M.segsToDecho({ main })[1])
+  if M.cfg.barSession and not collapsed then pcall(M.drawSessionBar) end
 end
 
 -- live level / exp from MSDP, if the game reports them
@@ -2606,7 +2645,6 @@ function M.onMsdp(event)
 end
 
 function M.barUpdate(d)
-  if M.cfg.barSession then pcall(M.drawSessionBar) end
   if not M.bar or not M.bar.rawEcho then M.showBar(true) end
   -- re-layout if something else (e.g. the base UI dock) changed the side borders
   local ok, r = pcall(getBorderRight)
@@ -3306,7 +3344,7 @@ function M.init()
     end),
   }
   M.loadItems()
-  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysWindowResizeEvent", function() M.layoutBar() end)
+  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysWindowResizeEvent", function() M.layoutBar(); pcall(M.drawBar) end)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadDone", M.onDownload)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadError", M.onDownload)
   for _, v in ipairs({ "LEVEL", "EXPERIENCE", "EXPERIENCE_MAX", "EXPERIENCE_TNL", "EXPERIENCE_TO_LEVEL" }) do
