@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.7"
+M.version = "0.11.8"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -43,6 +43,7 @@ M.defaults = {
   barBg        = { 12, 12, 16 },  -- prompt bar background (r, g, b): a faint tint
   barSession   = false,      -- session stats: on the bar when they fit, else their own line
   barSessionPos = "top",     -- where that line goes: top of the screen, or bottom (under the bar)
+  barSessionStyle = "full",  -- full: time · k/d · xp/hr   short: just xp/hr
   barBlank     = true,       -- with the bar on, also drop the blank line before each prompt
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
@@ -2536,29 +2537,30 @@ function M.shortDur(sec)
   return string.format("%dm", math.max(1, fl(sec / 60)))
 end
 
+-- full:  "1h 18m · k/d: 25/1 · 25000 xp/hr"      short: "25000 xp/hr"
 function M.sessionSegs()
-  local S, c = M.sess, M.cfg.char or {}
-  local gap = { C.dim, "  " }
-  local segs = { { C.dim, "session " }, { C.num, M.shortDur(os.time() - S.start) } }
-  local gained = (S.exp0 and S.expNow) and (S.expNow - S.exp0 + (S.gainedAfterScore or 0)) or S.gained or 0
-  local rate = M.expRate()
-  if gained > 0 then segs[#segs + 1] = gap; segs[#segs + 1] = { C.plus, "+" .. M.shortNum(gained) .. " xp" } end
-  if rate and rate > 0 then
-    segs[#segs + 1] = gap; segs[#segs + 1] = { C.num, M.shortNum(rate) .. "/h" }
-    if c.tnl then
-      segs[#segs + 1] = gap
-      segs[#segs + 1] = { C.dim, (c.level and ("L" .. (c.level + 1)) or "level") .. " in " }
-      segs[#segs + 1] = { C.title, M.shortDur(c.tnl * 3600 / rate) }
-    end
+  local S = M.sess
+  local dot = { C.dim, " · " }
+  local fl = math.floor
+  if M.cfg.barSessionStyle == "short" then
+    local rate = M.expRate()
+    return { { C.num, rate and tostring(fl(rate)) or "-" }, { C.dim, " xp/hr" } }
   end
+  local sec = os.time() - S.start
+  local t = sec >= 3600 and string.format("%dh %02dm", fl(sec / 3600), fl((sec % 3600) / 60)) or string.format("%dm", math.max(1, fl(sec / 60)))
+  local segs = { { C.num, t } }
+  segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "k/d: " }
   if S.kills0 and S.killsNow then
-    segs[#segs + 1] = gap; segs[#segs + 1] = { C.plus, tostring(S.killsNow - S.kills0) }; segs[#segs + 1] = { C.dim, " kills" }
-    segs[#segs + 1] = gap; segs[#segs + 1] = { C.minus, tostring((S.deathsNow or 0) - (S.deaths0 or 0)) }
-    segs[#segs + 1] = { C.dim, " deaths" }
+    segs[#segs + 1] = { C.plus, tostring(S.killsNow - S.kills0) }
+    segs[#segs + 1] = { C.dim, "/" }
+    segs[#segs + 1] = { C.minus, tostring((S.deathsNow or 0) - (S.deaths0 or 0)) }
+  else
+    segs[#segs + 1] = { C.dim, "-" }
   end
-  if not S.exp0 and gained == 0 then
-    segs[#segs + 1] = gap; segs[#segs + 1] = { C.dim, "(type score to start measuring)" }
-  end
+  local rate = M.expRate()
+  segs[#segs + 1] = dot
+  segs[#segs + 1] = { C.num, rate and tostring(fl(rate)) or "-" }
+  segs[#segs + 1] = { C.dim, " xp/hr" }
   return segs
 end
 
@@ -2605,7 +2607,7 @@ function M.drawBar()
     local info = M.levelInfo()
     if info then tail[#tail + 1] = { C.dim, string.format(" %d%%", math.floor(info.frac * 100)) } end
     local rate = M.expRate()
-    if rate and rate > 0 and not M.cfg.barSession then tail[#tail + 1] = { C.dim, " ≈" .. M.duration(tnl * 3600 / rate) } end
+    if rate and rate > 0 then tail[#tail + 1] = { C.dim, " ≈" .. M.shortDur(tnl * 3600 / rate) } end
   end
   p.vals = pools
   -- gauges are a fixed width (sbo bar width), shrunk only if the bar is too narrow
@@ -2640,7 +2642,7 @@ function M.drawBar()
   local collapsed = false
   if M.cfg.barSession then
     local sess = M.sessionSegs()
-    local sep = { C.dim, "   │  " }
+    local sep = { C.dim, "   │ " }
     local need = segLen(main) + ulen(sep[2]) + segLen(sess) - cols
     if need > 0 and #p.vals > 0 then
       local smaller = gw - math.ceil(need / #p.vals)
@@ -2993,6 +2995,7 @@ function M.help()
   <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
   <khaki>sbo bar gauges|raw<reset>        prompt bar as gauges, or the prompt exactly as the game sends it
   <khaki>sbo bar session on|off<reset>    session time, exp/hour, level ETA, kills (on the bar when it fits)
+  <khaki>sbo bar session full|short<reset> time, k/d and xp/hr - or just xp/hr
   <khaki>sbo bar session top|bottom<reset> where they go when they don't fit: top of the screen or under the bar
   <khaki>sbo bar bg [r g b]<reset>        prompt bar background colour (no numbers = default)
   <khaki>sbo bar blanks on|off<reset>     keep (on) or remove (off) the blank line the game puts before each prompt
@@ -3183,6 +3186,9 @@ function M.command(args)
     elseif sub == "session" and (val == "on" or val == "off") then
       M.cfg.barSession = (val == "on"); M.showSessionBar(M.cfg.barSession); M.drawBar()
       say("session details " .. val .. (M.cfg.bar and "" or " (they show when the bar is on: sbo bar on)"))
+    elseif sub == "session" and (val == "full" or val == "short") then
+      M.cfg.barSessionStyle = val; M.drawBar()
+      say("session details: " .. (val == "short" and "just exp per hour" or "time, kills/deaths and exp per hour"))
     elseif sub == "session" and (val == "top" or val == "bottom") then
       M.cfg.barSessionPos = val; M.layoutBar(); M.drawBar()
       say("when they don't fit on the bar, session details go at the " .. val .. (val == "top" and " of the screen" or ", under the bar"))
