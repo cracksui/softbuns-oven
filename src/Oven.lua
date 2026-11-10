@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.6"
+M.version = "0.10.7"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2097,6 +2097,7 @@ function M.updateMaxes(raw)
     M.cfg.char = M.cfg.char or {}
     local c = M.cfg.char
     if sc.info["Class Level"] then c.level = tonumber(sc.info["Class Level"]) end
+    if sc.info["Total Level"] then c.total = tonumber(sc.info["Total Level"]) end
     if sc.info["Class"] then c.class = sc.info["Class"] end
     if sc.tnl then c.tnl = tonumber((sc.tnl:gsub(",", ""))); c.exp = tonumber((sc.exp:gsub(",", ""))) end
   end
@@ -2138,7 +2139,11 @@ function M.drawBar()
   tnl = tnl or live.tnl or c.tnl
   -- level / tnl go last: HP/SP/ST matter more
   local tail = {}
-  if lvl then tail[#tail + 1] = { C.title, "L" .. lvl } end
+  if lvl then
+    tail[#tail + 1] = { C.title, "L" .. lvl }
+    local total = (M.live or {}).total or c.total
+    if total then tail[#tail + 1] = { C.dim, " (" .. total .. ")" } end
+  end
   if tnl then
     tail[#tail + 1] = { C.dim, (lvl and "  " or "") .. "tnl " }; tail[#tail + 1] = { C.plus, commaNum(tnl) }
   end
