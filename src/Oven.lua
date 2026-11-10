@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.22.0"
+M.version = "0.23.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -159,6 +159,10 @@ local SCHEMA = {
   "CREATE TABLE IF NOT EXISTS marks (name TEXT PRIMARY KEY, room INTEGER, t INTEGER)",
 }
 
+local SCHEMA_ADD = {
+  "ALTER TABLE room_npcs ADD COLUMN src TEXT",   -- 0.23.0: which kind of block it was read from
+}
+
 function M.dbOpen()
   if M.dbConn then return M.dbConn end
   if not luasql or not luasql.sqlite3 then return nil end
@@ -169,6 +173,8 @@ function M.dbOpen()
   conn:execute("PRAGMA journal_mode=WAL")
   conn:execute("PRAGMA synchronous=NORMAL")
   for _, s in ipairs(SCHEMA) do conn:execute(s) end
+  -- columns added later (an error just means the column is already there)
+  for _, s in ipairs(SCHEMA_ADD) do pcall(function() conn:execute(s) end) end
   return conn
 end
 
@@ -4493,9 +4499,9 @@ function M.gmcpPackages(tops)
     if type(v) == "table" and (not tops or tops[top]) then
       local leaf = true
       for k, x in pairs(v) do
-        if type(x) == "table" then leaf = false; out[top .. "." .. tostring(k)] = ser(x) end
+        if type(x) == "table" then leaf = false; out[top .. "." .. tostring(k)] = (ser(x):gsub("\\\n", "\\n")) end
       end
-      if leaf then out[top] = ser(v) end
+      if leaf then out[top] = (ser(v):gsub("\\\n", "\\n")) end
     end
   end
   return out
@@ -4540,6 +4546,18 @@ local function blockText(b)
   local out = { "===== " .. os.date("%Y-%m-%d %H:%M:%S", b.t) .. " | cmd=" .. table.concat(b.cmds, " ; ")
     .. " | room=" .. tostring(b.room or "") .. "\n" }
   for _, g in ipairs(b.gmcp) do out[#out + 1] = "@gmcp " .. g[1] .. " = " .. g[2] .. "\n" end
+  -- line colours as runs: "@fg 1-3=192,192,192 5=0,255,255"
+  if b.fg then
+    local runs, i, n = {}, 1, #b.lines
+    while i <= n do
+      local c = b.fg[i]
+      local j = i
+      while j < n and b.fg[j + 1] == c do j = j + 1 end
+      if c then runs[#runs + 1] = (i == j and tostring(i) or (i .. "-" .. j)) .. "=" .. c end
+      i = j + 1
+    end
+    if #runs > 0 then out[#out + 1] = "@fg " .. table.concat(runs, " ") .. "\n" end
+  end
   for _, x in ipairs(b.lines) do out[#out + 1] = x .. "\n" end
   out[#out + 1] = "\n"
   return table.concat(out)
@@ -4567,8 +4585,9 @@ function M.windowSave(reason)
   local from = (cur.savedLines or 0) + 1
   if #cur.lines >= from then
     local part = {}
-    for i = from, #cur.lines do part[#part + 1] = cur.lines[i] end
-    out[#out + 1] = blockText({ t = os.time(), cmds = from == 1 and cur.cmds or {}, room = M.currentRoom and M.currentRoom(), gmcp = {}, lines = part })
+    local partFg = {}
+    for i = from, #cur.lines do part[#part + 1] = cur.lines[i]; partFg[#part] = (cur.fg or {})[i] end
+    out[#out + 1] = blockText({ t = os.time(), cmds = from == 1 and cur.cmds or {}, room = M.currentRoom and M.currentRoom(), gmcp = {}, lines = part, fg = partFg })
   end
   if #out == 0 then return 0 end
   local f = recOpen()
@@ -4609,21 +4628,38 @@ function M.recordCommand(cmd)
   if #c < 50 then c[#c + 1] = cmd end
 end
 
+-- the colour of a line's first visible character ("r,g,b"), so blocks can tell a room's
+-- description from the creatures in it; two calls per line, nothing per character
+function M.lineFg(l)
+  local i = l:find("%S")
+  if not i or not selectSection or not getFgColor then return end
+  selectSection(i - 1, 1)
+  local r, g, bl = getFgColor()
+  deselect()
+  if r then return r .. "," .. g .. "," .. bl end
+end
+
 function M.recordLine(l, prompt)
   local cur = M.recCur
   cur.lines[#cur.lines + 1] = l
+  cur.fg = cur.fg or {}
+  local okF, fg = pcall(M.lineFg, l)
+  cur.fg[#cur.lines] = okF and fg or false
   if not prompt and #cur.lines < REC_BLOCK_LINES then return end
   pcall(M.gmcpWatch)
   local W = M.win
   W.seq = W.seq + 1
   if cur.savedLines then
     local rest = {}
-    for i = cur.savedLines + 1, #cur.lines do rest[#rest + 1] = cur.lines[i] end
-    cur.lines, cur.cmds = rest, {}
+    local restFg = {}
+    for i = cur.savedLines + 1, #cur.lines do rest[#rest + 1] = cur.lines[i]; restFg[#rest] = (cur.fg or {})[i] end
+    cur.lines, cur.cmds, cur.fg = rest, {}, restFg
   end
-  local b = { seq = W.seq, t = os.time(), cmds = cur.cmds, lines = cur.lines,
+  local b = { seq = W.seq, t = os.time(), cmds = cur.cmds, lines = cur.lines, fg = cur.fg or {},
               room = M.currentRoom and M.currentRoom(), gmcp = gmcpChanges() }
   M.recCur = { lines = {}, cmds = {} }
+  b.prompt = prompt
+  pcall(M.onBlock, b)
   local max = tonumber(M.cfg.recWindow) or 300
   if max > 0 then
     W.blocks[#W.blocks + 1] = b
@@ -4641,6 +4677,112 @@ function M.recordLine(l, prompt)
     end
   end
 end
+
+-- Blocks. Each finished block is recognised once - "room", "help"... - by the recognisers in
+-- M.blockKinds, then handed to the readers that asked for that kind. A reader only ever sees the
+-- part of the output it understands; adding one is one M.addBlockReader call.
+M.blockKinds, M.blockReaders = {}, {}
+function M.addBlockKind(name, find) M.blockKinds[#M.blockKinds + 1] = { name = name, find = find } end
+function M.addBlockReader(name, kind, read) M.blockReaders[#M.blockReaders + 1] = { name = name, kind = kind, read = read } end
+
+function M.onBlock(b)
+  b.kinds = {}
+  for _, k in ipairs(M.blockKinds) do
+    local ok, seg = pcall(k.find, b)
+    if ok and seg then b.kinds[k.name] = seg end
+  end
+  for _, r in ipairs(M.blockReaders) do
+    local seg = b.kinds[r.kind]
+    if seg then
+      local ok, err = pcall(r.read, b, seg)
+      if not ok and M.cfg.samples then M.log("<dim_grey>[sbo] " .. r.name .. ": " .. tostring(err) .. "<reset>") end
+    end
+  end
+  return b.kinds
+end
+
+-- Materia Magica's room view:
+--    Magical Training                                       -      -      -      <- name, then a minimap
+--   (-------------------------------------------------)     # <---(M)---> -      <- the ruler
+--                                                           -      -      -
+--     A spacious area below the Guildhall...                                     <- description
+--        A bright orange piece of bubble gum has been abandoned on the ground.   <- items: indented
+--   [Trainer] A well-muscled woman dressed in a sleeveless tunic stands here.    <- who's here
+-- It counts only when the name matches GMCP's room.info, so the room number is certain.
+local ROOM_RULER = "^%(%-%-%-%-+%)"
+function M.findRoomView(b)
+  local L = b.lines
+  local at
+  for i = #L, 2, -1 do if L[i]:match(ROOM_RULER) then at = i; break end end
+  if not at then return end
+  local title = trim((L[at - 1]:gsub("%s%s%s+.*$", "")))
+  local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info or {}
+  local id = tonumber(info.num)
+  if not id or title == "" or title:lower() ~= trim(tostring(info.name or "")):lower() then return end
+  local seg = { room = id, title = title, items = {}, here = {} }
+  local last = #L
+  if b.prompt then last = last - 1 end
+  -- description: from the first line indented two spaces to the line ending in two spaces
+  -- (or filling the width); then items (indented) and who's here, up to the prompt
+  local i = at + 2
+  while i <= last and not L[i]:match("^  %S") do i = i + 1 end
+  local desc = {}
+  local fg = b.fg or {}
+  local descFg = fg[i]
+  while i <= last do
+    local x = L[i]
+    if #desc > 0 then
+      if x:match("^     %S") or x:match("^%*") or x:match("^%[") or not x:match("%S") then break end
+      -- with colours: the description is one colour, and whatever follows isn't
+      if descFg and fg[i] and fg[i] ~= descFg then break end
+    end
+    desc[#desc + 1] = x
+    i = i + 1
+    -- without colours: its last line ends in two spaces (unless it filled the width)
+    if not descFg and x:match("%S  $") then break end
+  end
+  seg.desc = desc
+  for k = i, last do
+    local x = L[k]
+    if x:match("^     %S") then seg.items[#seg.items + 1] = trim(x)
+    elseif x:match("%S") then seg.here[#seg.here + 1] = x end
+  end
+  return seg
+end
+M.addBlockKind("room", M.findRoomView)
+
+-- a help page: "[1090 ] FEEDING", or the reply to a help command
+M.addBlockKind("help", function(b)
+  for _, x in ipairs(b.lines) do
+    if x:match("%S") then
+      if x:match("^%[%s*%d+%s*%] %u") then return { topic = trim(x:gsub("^%[%s*%d+%s*%]", "")) } end
+      break
+    end
+  end
+  for _, c in ipairs(b.cmds) do if c:lower():match("^%s*help%s") then return { topic = c } end end
+end)
+
+-- who's here, tagged: saved to the room
+M.addBlockReader("room_npcs", "room", function(b, seg)
+  local seen = {}
+  for _, x in ipairs(seg.here) do
+    local tags, text = M.npcTags(x)
+    if tags and not seen[text:lower()] then
+      local key = text:lower()
+      seen[key] = true
+      local tg = table.concat(tags, ",")
+      local have = M.dbRow("SELECT seen FROM room_npcs WHERE room = %s AND key = %s", seg.room, key)
+      if have then
+        M.dbx("UPDATE room_npcs SET tags = %s, seen = seen + 1, last = %s, src = 'room' WHERE room = %s AND key = %s", tg, os.time(), seg.room, key)
+      else
+        local c = M.dbRow("SELECT COUNT(*) AS c FROM room_npcs WHERE room = %s", seg.room)
+        if tonumber(c and c.c or 0) < 20 then
+          M.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last, src) VALUES (%s, %s, %s, %s, 1, %s, 'room')", seg.room, key, text, tg, os.time())
+        end
+      end
+    end
+  end
+end)
 
 -- what the game sends over GMCP right now, written in full to oven_gmcp.txt
 function M.gmcpDump()
@@ -5218,35 +5360,38 @@ function M.stopMapSelect()
   M.hideRoomCard()
 end
 
--- Notable NPCs: room lines carrying all-caps tags like [QUEST] [SHOP] [TRAINER], kept per room.
--- Lines are gathered until the prompt and filed under the room you're in at the prompt
--- (the room number may arrive just before or just after the room's text).
+-- Notable NPCs: occupants of a room view carrying tags like [Quest] [Shop] [Trainer] [Boss], kept per
+-- room. Only lines inside a room view are read (see the "room" block kind), so help pages, chat
+-- and item descriptions can't be mistaken for them.
 local NOT_TAGS = { CRIT = true }
-M.roomLineBuf = M.roomLineBuf or {}
-M.npcCtxLogged = M.npcCtxLogged or 0
+-- tags that mark players, not NPCs ("[Clan 37] [Duelist] *Bing is here.")
+local PLAYER_TAGS = { duelist = true, guide = true, building = true, hunting = true, a = true, outlaw = true, afk = true }
 
 -- "*[Shop] A hunched-over senior citizen sits on a blanket, peddling his wares."
--- tags open the line (after an optional "*"), each a capitalised word or words
+-- tags open the line (after an optional "*")
 local function npcTags(l)
   local rest = l:gsub("^%s*%*?%s*", "")
   local tags = {}
   while true do
-    local t, after = rest:match("^%[(%u[%a %-]*%a)%]%s*(.*)$")
+    local t, after = rest:match("^%[([^%]]+)%]%s*(.*)$")
     if not t then break end
-    if not NOT_TAGS[t:upper()] and ulen(t) >= 3 then tags[#tags + 1] = t end
+    t = trim(t)
+    local low = t:lower()
+    if PLAYER_TAGS[low] or low:match("^clan%s*%d") then return end
+    if not NOT_TAGS[t:upper()] and ulen(t) >= 3 and t:match("^%u[%a %-]*%a$") then tags[#tags + 1] = t end
     rest = after
   end
   local text = trim((rest:gsub("%s+", " "):gsub("^%*+%s*", "")))
   if text:match("^Item '") then return end
-  -- help pages explain tags as "[Hunting] - The character is hunting...": room occupants start with a word
   if not text:match("^[%a%d\"']") then return end
   if #tags == 0 or text == "" or ulen(text) > 160 then return end
-  -- channels and speech aren't room occupants
+  -- speech isn't an occupant
   for _, v in ipairs({ " tells ", " says", " asks", " exclaims", " yells", " shouts", " whispers", " chats", " replies", "%a: " }) do
     if text:find(v) then return end
   end
   return tags, text
 end
+M.npcTags = npcTags
 
 -- the prompt's tags describe the room ([SHOP] [SAFE] [Library]...), except [Mail], which is you
 local NOT_ROOM_FLAGS = { mail = true }
@@ -5294,38 +5439,10 @@ function M.cleanRoomNpcs(roomNpcs)
 end
 
 function M.noteRoomLine(l)
-  if isPromptLine() then
-    local id = M.currentRoom()
-    pcall(M.noteRoomFlags, id, l)
-    local buf = M.roomLineBuf
-    M.roomLineBuf = {}
-    if id and #buf > 0 then
-      for _, e in ipairs(buf) do
-        local key, tags = e.text:lower(), table.concat(e.tags, ",")
-        local have = M.dbRow("SELECT seen FROM room_npcs WHERE room = %s AND key = %s", id, key)
-        if have then
-          M.dbx("UPDATE room_npcs SET tags = %s, seen = seen + 1, last = %s WHERE room = %s AND key = %s", tags, os.time(), id, key)
-        else
-          local c = M.dbRow("SELECT COUNT(*) AS c FROM room_npcs WHERE room = %s", id)
-          if tonumber(c and c.c or 0) < 20 then
-            M.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (%s, %s, %s, %s, 1, %s)", id, key, e.text, tags, os.time())
-          end
-        end
-      end
-    end
-    pcall(M.checkEnter, id)
-    return
-  end
-  local tags, text
-  if not (M.cap and M.cap.kind == "help") then tags, text = npcTags(l) end
-  if tags then
-    M.roomLineBuf[#M.roomLineBuf + 1] = { tags = tags, text = text }
-    if M.cfg.samples and M.npcCtxLogged < 15 then
-      M.npcCtxLogged = M.npcCtxLogged + 1
-      local f = io.open(M.samplesFile, "a")
-      if f then f:write("===== " .. os.date("%Y-%m-%d %H:%M:%S") .. " | kind=npcctx | cmd=\n" .. l .. "\n===== end\n\n"); f:close() end
-    end
-  end
+  if not isPromptLine() then return end
+  local id = M.currentRoom()
+  pcall(M.noteRoomFlags, id, l)
+  pcall(M.checkEnter, id)
 end
 
 -- "enter <something>": when it takes you to another room, remember it for the room you left,

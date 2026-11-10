@@ -232,6 +232,11 @@ too if you want a completely clean slate.
 
 ## Development
 
+Source is `src/Oven.lua`. Game output is read in **blocks** (everything up to a prompt, with the commands that
+caused it, the GMCP that changed and each line's colour). Recognisers registered with `M.addBlockKind` decide what a
+block is (`room`, `help`...); readers registered with `M.addBlockReader(name, kind, fn)` only see blocks of their
+kind - e.g. room NPCs are read only from room views whose name matches GMCP's `room.info`.
+
 Source is `src/Oven.lua`. To release: bump `M.version` in it, run `python3 build.py` (writes
 `Oven.mpackage` and `VERSION`), and commit all three. Players get it with `sbo update`.
 
