@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.1"
+M.version = "0.11.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -955,12 +955,14 @@ function M.parseItem(raw)
   it.align = h:match("alignment (%-?%d+)")
   it.material, it.cond = h:match("made of (.-) %(in %((.-)%) condition%)")
   if not it.material then it.material = h:match("made of ([^,%(]+)") end
-  for f in h:gmatch("%[([^%]]+)%]") do it.flags[#it.flags + 1] = f end
+  -- flags like [Study][LTB] come after the name; names can contain brackets too ("[2026 Edition]")
+  local afterName = h:match("^Item '.-' is type (.*)$") or h
+  for f in afterName:gmatch("%[([^%]]+)%]") do it.flags[#it.flags + 1] = f end
   it.keywords = h:match("keywords '(.-)'")
   it.worn = h:match("equipped ([^,%.]+)")
 
   local lastKnown = i - 1
-  local inRelics, inBonus = false, false
+  local inRelics, inBonus, inContents = false, false, false
   local unknown = {}   -- {index, text}
   while i <= #L do
     local l = L[i]; local t = trim(l)
@@ -974,7 +976,24 @@ function M.parseItem(raw)
     local rep = t:match("^%*?This item may be repaired (%d+) times?%.?$")
     local afW, afN = t:match("^Affects (.-) by (%-?%d+)%.?$")
     local x = M.itemExtra(t)
-    if t == "" then
+    if inContents then
+      -- container contents: rows until the "A total of ..." line
+      local n2, w2 = t:match("^A total of (%d+) items? weighing (.-)%.?$")
+      if n2 then
+        it.contentsTotal = { n2, w2 }; inContents = false
+      elseif t ~= "" then
+        local cnt, rest = t:match("^%(%s*(%d+)%)%s*(.+)$")
+        it.contents[#it.contents + 1] = { tonumber(cnt) or 1, rest or t, idx = i }
+      end
+      lastKnown = i
+    elseif t:match("^When you look inside, you see:?$") or t:match("^Inside you see:?$") then
+      inContents = true; it.contents = it.contents or {}; lastKnown = i
+    elseif t:match("^Capacity:") then
+      it.capacity = t:match("^Capacity:%s*(%d+) items?")
+      it.maxWeight = t:match("Maximum weight:%s*([^%.]+)")
+      it.containerFlags = t:match("Flags:%s*(.-)%.?$")
+      lastKnown = i
+    elseif t == "" then
       inBonus = false
       unknown[#unknown + 1] = { i, "" }
     elseif t:match("^%+%+%+") then
@@ -1115,6 +1134,9 @@ function M.formatters.item(raw, width)
   add("Repairs", it.repairs and { { C.num, it.repairs }, { C.text, " left" } })
   add("Category", it.cat and { { C.num, it.cat } })
   add("Slots", it.slots and { { C.num, it.slots } })
+  add("Capacity", it.capacity and { { C.num, it.capacity }, { C.text, " items" } })
+  add("Max weight", it.maxWeight and { { C.num, it.maxWeight } })
+  add("Container", it.containerFlags and it.containerFlags ~= "" and { { C.item, it.containerFlags } } or nil)
   grid(out, cells, width)
 
   local kw = 9
@@ -1164,6 +1186,27 @@ function M.formatters.item(raw, width)
   for n, g in ipairs(it.grants) do
     kvLine(out, n == 1 and "Grants" or "", kw,
       { { C.slot, g[1] }, { C.num, " " .. g[2] }, { C.dim, "  " .. g[3] } }, width)
+  end
+  if it.contents then
+    subhead(out, "Contents")
+    if #it.contents == 0 then out[#out + 1] = { { C.dim, "     (empty)" } } end
+    for _, r in ipairs(it.contents) do
+      local row = { { C.num, r[1] > 1 and string.format("%3d× ", r[1]) or "     " } }
+      local segs = itemSegs(r[2], M.runsFor(r.idx, (stripConds(r[2]))))
+      if 5 + segLen(segs) <= width then
+        addAll(row, segs); out[#out + 1] = row
+      else
+        addAll(out, wrapWords(r[2], width, 5, C.item, row, 5))
+      end
+    end
+    if it.contentsTotal then
+      local function wt(x) return (x:gsub(" stones?", " st"):gsub(" sts", " st"):gsub(" pebbles?", " pb"):gsub(" pbs", " pb")) end
+      local row = { { C.key, "Items " }, { C.num, it.contentsTotal[1] } }
+      if it.capacity then row[#row + 1] = { C.dim, "/" .. it.capacity } end
+      row[#row + 1] = { C.key, "    Weight " }; row[#row + 1] = { C.num, wt(it.contentsTotal[2]) }
+      if it.maxWeight then row[#row + 1] = { C.dim, " / " .. wt(it.maxWeight) } end
+      blank(out); out[#out + 1] = row
+    end
   end
   if it.weapon then
     subhead(out, "Weapon")
