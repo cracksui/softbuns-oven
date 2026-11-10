@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.19.2"
+M.version = "0.20.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3304,6 +3304,229 @@ function M.compareRows(a, b)
   return rows
 end
 
+---------------------------------------------------------------------------
+-- Gear score: each stat times your build's weight for it, added up. Builds start from your
+-- class; any weight can be changed, and you can keep several builds and switch between them.
+-- Weights are per point: +1 strength counts 3 in a monk build, +1 hp counts 0.2.
+-- A key ending in * covers a family (damage-* = every damage-... stat).
+---------------------------------------------------------------------------
+M.buildPresets = {
+  monk     = { strength = 3, agility = 3, vitality = 1.5, ar = 3, hp = 0.2, ["hp-regen"] = 0.5, wisdom = 0.5,
+               ["spell-points"] = 0.05, ["sp-regen"] = 0.2, ["damage-*"] = 0.3, ["weapon-damage"] = 0, ["weapon-accuracy"] = 0, ["weapon-crit"] = 0 },
+  melee    = { strength = 3, agility = 2.5, vitality = 1.5, ar = 3, hp = 0.2, ["hp-regen"] = 0.5, ["damage-*"] = 0.3,
+               ["weapon-damage"] = 4, ["weapon-accuracy"] = 2, ["weapon-crit"] = 2, wisdom = 0.3, knowledge = 0.3 },
+  caster   = { wisdom = 3, knowledge = 3, intelligence = 3, ["spell-points"] = 0.2, ["sp-regen"] = 1, ar = 2, hp = 0.1,
+               vitality = 1, sanity = 1, ["damage-*"] = 0.2 },
+  tank     = { ar = 5, hp = 0.3, vitality = 3, ["hp-regen"] = 1, strength = 1.5, agility = 1, ["damage-*"] = 0.1, ["weapon-damage"] = 1 },
+  balanced = { ["*"] = 1, ar = 2, hp = 0.1, ["spell-points"] = 0.1, ["damage-*"] = 0.2 },
+}
+local CLASS_BUILD = {
+  monk = "monk",
+  warrior = "melee", fighter = "melee", barbarian = "melee", knight = "melee", paladin = "melee", ranger = "melee",
+  thief = "melee", rogue = "melee", assassin = "melee", berserker = "melee", samurai = "melee",
+  mage = "caster", wizard = "caster", sorcerer = "caster", necromancer = "caster", cleric = "caster", priest = "caster",
+  druid = "caster", shaman = "caster", psionicist = "caster", bard = "caster", warlock = "caster",
+}
+local RANK = { min = 1, minimal = 1, low = 2, med = 3, medium = 3, moderate = 3, high = 4, max = 5, maximum = 5 }
+
+function M.activeBuild()
+  local name = M.cfg.build
+  if not name then
+    local cls = ((M.cfg.char or {}).class or ""):lower()
+    name = CLASS_BUILD[cls] or "balanced"
+  end
+  local w = (M.cfg.builds or {})[name] or M.buildPresets[name] or M.buildPresets.balanced
+  return name, w
+end
+
+local function weightOf(w, stat)
+  if w[stat] then return w[stat] end
+  local best, bestLen
+  for k, v in pairs(w) do
+    if k:sub(-1) == "*" and stat:sub(1, #k - 1) == k:sub(1, -2) and (not bestLen or #k > bestLen) then best, bestLen = v, #k end
+  end
+  return best or 0
+end
+
+-- an item's stats as { stat = value }: affects, relic affects, AR, and a weapon's ratings
+function M.itemStats(it)
+  local s = {}
+  for _, list in ipairs({ it.affects or {}, it.relicAffects or {} }) do
+    for _, a in ipairs(list) do
+      local v = tonumber((tostring(a[2] or ""):gsub(",", "")))
+      if a[1] and v then s[a[1]] = (s[a[1]] or 0) + v end
+    end
+  end
+  if tonumber(it.ar) then s.ar = (s.ar or 0) + tonumber(it.ar) end
+  local wp = it.weapon
+  if wp then
+    local function r(x) return RANK[tostring(x or ""):lower()] end
+    if r(wp.dmgLevel) then s["weapon-damage"] = r(wp.dmgLevel) end
+    if r(wp.accuracy) then s["weapon-accuracy"] = r(wp.accuracy) end
+    if r(wp.critChance) then s["weapon-crit"] = r(wp.critChance) end
+  end
+  return s
+end
+
+function M.gearScore(it, w)
+  if not it then return nil end
+  if not w then local _; _, w = M.activeBuild() end
+  local total = 0
+  for stat, v in pairs(M.itemStats(it)) do total = total + v * weightOf(w, stat) end
+  return math.floor(total * 10 + 0.5) / 10
+end
+
+-- what you wear in the same place as `it` (by its "worn" text); with two of a kind (rings,
+-- wrists, necks) the weaker one, since that's the one a new item would replace
+function M.wornLike(it, w)
+  if not it or not it.worn then return nil end
+  local worst, ws
+  for _, n in ipairs(M.eqNames or {}) do
+    local e = M.items[n]
+    if e and e.worn == it.worn and e.name ~= it.name then
+      local s = M.gearScore(e, w) or 0
+      if not ws or s < ws then worst, ws = e, s end
+    end
+  end
+  return worst
+end
+
+-- "Gear score 23.5 (monk) · you wear a dwarven girdle: 18.0 → +5.5 (+31%)"
+function M.scoreLine(it)
+  local bname, w = M.activeBuild()
+  local sc = M.gearScore(it, w)
+  if not sc then return nil end
+  local segs = { { C.key, "Gear score " }, { C.num, tostring(sc) }, { C.dim, "  (" .. bname .. " build)" } }
+  local worn = M.wornLike(it, w)
+  local wearing = false
+  for _, n in ipairs(M.eqNames or {}) do if n == it.name then wearing = true end end
+  if wearing then
+    segs[#segs + 1] = { C.dim, "  ·  you're wearing it" }
+  elseif worn then
+    local ws = M.gearScore(worn, w)
+    local d = math.floor((sc - ws) * 10 + 0.5) / 10
+    local pct = ws ~= 0 and string.format(" (%+d%%)", math.floor((sc - ws) / math.abs(ws) * 100 + 0.5)) or ""
+    segs[#segs + 1] = { C.dim, "  ·  you wear " .. worn.name .. ": " .. ws .. " → " }
+    segs[#segs + 1] = { d > 0 and C.plus or (d < 0 and C.minus or C.dim),
+                        (d > 0 and "+" or "") .. d .. pct .. (d > 0 and " upgrade" or (d < 0 and " worse" or " same")) }
+  end
+  return segs
+end
+
+-- sbo upgrades: for each place you wear something, the best item Oven knows for it
+function M.upgradeLines(width)
+  local bname, w = M.activeBuild()
+  local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
+  local out = { header("gear", "", width, "Upgrades  (" .. bname .. " build)") }
+  local byWorn = {}
+  for _, r in ipairs(M.dbRows("SELECT name, worn, level FROM items WHERE worn IS NOT NULL AND worn != ''")) do
+    byWorn[r.worn] = byWorn[r.worn] or {}
+    table.insert(byWorn[r.worn], r)
+  end
+  local wearing, isWorn = {}, {}
+  for _, n in ipairs(M.eqNames or {}) do
+    isWorn[n] = true
+    local it = M.items[n]
+    if it and it.worn then wearing[#wearing + 1] = it end
+  end
+  -- two of a kind: only the weaker one is up for replacing
+  local weakest = {}
+  for _, it in ipairs(wearing) do
+    local s = M.gearScore(it, w) or 0
+    if not weakest[it.worn] or s < weakest[it.worn].s then weakest[it.worn] = { it = it, s = s } end
+  end
+  if #wearing == 0 then out[#out + 1] = { { C.dim, "type eq and look at your gear first (sbo learn does it in one go)" } }; return out end
+  local shown = 0
+  for _, cur in ipairs(wearing) do
+   if weakest[cur.worn] and weakest[cur.worn].it == cur then
+    local cs = M.gearScore(cur, w)
+    local best, bs
+    for _, r in ipairs(byWorn[cur.worn] or {}) do
+      local tooHigh = lvl and tonumber(r.level) and tonumber(r.level) > lvl
+      if not isWorn[r.name] and not tooHigh then
+        local s = M.gearScore(M.items[r.name], w)
+        if s and s > cs and (not bs or s > bs) then best, bs = r.name, s end
+      end
+    end
+    if best then
+      shown = shown + 1
+      out[#out + 1] = { { C.slot, pad(cur.worn, 24) }, { C.item, cur.name }, { C.dim, "  " .. cs } }
+      out[#out + 1] = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
+    end
+   end
+  end
+  if shown == 0 then out[#out + 1] = { { C.dim, "nothing Oven has seen beats what you wear (for this build, at your level)" } } end
+  out[#out + 1] = {}
+  out[#out + 1] = { { C.dim, "only items you've looked at count · sbo build to see or change the weights" } }
+  return out
+end
+
+function M.buildLines(width)
+  local bname, w = M.activeBuild()
+  local c = M.cfg.char or {}
+  local out = { header("gear", "", width, "Build: " .. bname) }
+  out[#out + 1] = { { C.dim, "character: " .. (c.race or "?") .. " " .. (c.class or "?") .. (c.total and (", total level " .. c.total) or "")
+    .. (M.cfg.build and "" or "  ·  build picked from your class") } }
+  out[#out + 1] = {}
+  local keys = {}
+  for k in pairs(w) do keys[#keys + 1] = k end
+  table.sort(keys, function(a, b) if w[a] ~= w[b] then return w[a] > w[b] end return a < b end)
+  for _, k in ipairs(keys) do
+    out[#out + 1] = { { C.key, "  " .. pad(k, 20) }, { w[k] > 0 and C.num or C.dim, tostring(w[k]) } }
+  end
+  out[#out + 1] = {}
+  local names = {}
+  for n in pairs(M.buildPresets) do names[n] = true end
+  for n in pairs(M.cfg.builds or {}) do names[n] = true end
+  local list = {}
+  for n in pairs(names) do list[#list + 1] = n end
+  table.sort(list)
+  out[#out + 1] = { { C.dim, "builds: " .. table.concat(list, ", ") } }
+  out[#out + 1] = { { C.dim, "sbo build NAME switches (or makes a new one) · sbo build set STAT WEIGHT · sbo build reset" } }
+  return out
+end
+
+function M.buildCommand(b)
+  b = trim(b or "")
+  local w = M.cfg.window and M.viewCols() or columns("main")
+  local function show(lines) if M.cfg.window then M.viewAdd({ lines = lines, links = {} }) else render("main", lines) end end
+  if b == "" then return show(M.buildLines(w)) end
+  local stat, val = b:match("^set%s+(%S+)%s+(%-?[%d%.]+)$")
+  if stat then
+    local name, cur = M.activeBuild()
+    local copy = {}
+    for k, v in pairs(cur) do copy[k] = v end
+    copy[stat:lower()] = tonumber(val)
+    M.cfg.builds = M.cfg.builds or {}
+    M.cfg.builds[name] = copy
+    M.cfg.build = name
+    M.saveSettings()
+    return M.say(string.format("%s build: %s now counts %s per point", name, stat:lower(), val))
+  end
+  if b == "reset" then
+    local name = M.activeBuild()
+    if M.cfg.builds then M.cfg.builds[name] = nil end
+    if not M.buildPresets[name] then M.cfg.build = nil end
+    M.saveSettings()
+    return M.say("build " .. name .. (M.buildPresets[name] and " back to its starting weights" or " removed"))
+  end
+  if b == "auto" then M.cfg.build = nil; M.saveSettings(); return M.say("build follows your class again: " .. (M.activeBuild())) end
+  local name = b:lower()
+  if not M.buildPresets[name] and not (M.cfg.builds or {})[name] then
+    -- a new build, starting from the current one
+    local _, cur = M.activeBuild()
+    local copy = {}
+    for k, v in pairs(cur) do copy[k] = v end
+    M.cfg.builds = M.cfg.builds or {}
+    M.cfg.builds[name] = copy
+    M.say("new build '" .. name .. "', starting from your current weights - sbo build set STAT WEIGHT to shape it")
+  else
+    M.say("using the " .. name .. " build")
+  end
+  M.cfg.build = name
+  M.saveSettings()
+end
+
 function M.compareLines(a, b, width)
   local out = {}
   local cw = math.max(8, math.min(20, math.floor((width - 16 - 10) / 2)))
@@ -3312,7 +3535,14 @@ function M.compareLines(a, b, width)
   out[#out + 1] = { { C.dim, " A  " }, { C.item, a.name } }
   out[#out + 1] = { { C.dim, " B  " }, { C.item, b.name } }
   out[#out + 1] = { { C.dim, pad("", 16) .. pad("A", cw + 2) .. pad("B", cw + 2) .. "B vs A" } }
-  for _, r in ipairs(M.compareRows(a, b)) do
+  local rows = M.compareRows(a, b)
+  local okS, sa = pcall(M.gearScore, a)
+  local okB, sb = pcall(M.gearScore, b)
+  if okS and okB and sa and sb then
+    local d = math.floor((sb - sa) * 10 + 0.5) / 10
+    table.insert(rows, 1, { "Gear score", tostring(sa), tostring(sb), d == 0 and "=" or ((d > 0 and "+" or "") .. d), d })
+  end
+  for _, r in ipairs(rows) do
     local dcol = r[5] > 0 and C.plus or (r[5] < 0 and C.minus or C.dim)
     local acol = r[5] < 0 and C.plus or C.item
     local bcol = r[5] > 0 and C.plus or C.item
@@ -3369,6 +3599,10 @@ function M.afterItem(raw, entry)
   if not ok or not it or not it.name then return end
   M.remember(it)
   it = M.items[it.name]
+  if entry and it.worn then
+    local okS, segs = pcall(M.scoreLine, it)
+    if okS and segs then entry.lines[#entry.lines + 1] = {}; entry.lines[#entry.lines + 1] = segs end
+  end
   if entry then itemLinks(entry, it) end
   local done = {}
   if M.pinned and M.pinned ~= it.name and M.items[M.pinned] then
@@ -3614,6 +3848,7 @@ function M.updateMaxes(raw)
     if sc.info["Class Level"] then c.level = tonumber(sc.info["Class Level"]) end
     if sc.info["Total Level"] then c.total = tonumber(sc.info["Total Level"]) end
     if sc.info["Class"] then c.class = sc.info["Class"] end
+    if sc.info["Race"] then c.race = sc.info["Race"] end
     if sc.tnl then c.tnl = tonumber((sc.tnl:gsub(",", ""))); c.exp = tonumber((sc.exp:gsub(",", ""))) end
   end
   for _, l in ipairs(raw) do
@@ -5336,6 +5571,8 @@ M.helpSections = {
     { "sbo pin {name}  /  unpin", "compare everything you look at against one item (handy in shops)" },
     { "sbo autocompare on|off", "compare each looked-at item with what you wear in that slot" },
     { "sbo items", "list the items Oven remembers" },
+    { "sbo upgrades", "for each slot, the best item you've seen that beats what you wear" },
+    { "sbo build [name]", "the weights behind the gear score; switch or make builds (set STAT WEIGHT, reset, auto)" },
     { "", "" },
     { "sbo eqstats on|off", "AR and affects column in eq" },
     { "sbo empty on|off", "show empty slots in eq" },
@@ -5584,6 +5821,11 @@ function M.command(args)
     M.cfg.slotNames = b; say("slot names: " .. b)
   elseif a == "learn" then return M.learn()
   elseif a == "run" then return M.mapRun(b)
+  elseif a == "build" then return M.buildCommand(b)
+  elseif a == "upgrades" or a == "upgrade" then
+    local lines = M.upgradeLines(M.cfg.window and M.viewCols() or columns("main"))
+    if M.cfg.window then M.viewAdd({ lines = lines, links = {} }) else render("main", lines) end
+    return
   elseif a == "mark" then if b == "" then return M.listMarks() end return M.markRoom(b)
   elseif a == "marks" then return M.listMarks()
   elseif a == "unmark" then return M.unmarkRoom(b)
