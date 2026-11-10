@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.14.6"
+M.version = "0.14.7"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2079,6 +2079,14 @@ function M.drawQuestTracker()
   M.questHudLineH = ch * 1.3
   M.layoutQuestHud()
   M.questHud:show()
+  M.raiseQuestHud()
+end
+
+-- keep the quest HUD above every other window
+function M.raiseQuestHud()
+  if M.questHud and next(M.cfg.questPins or {}) then
+    pcall(function() M.questHud:raise() end)
+  end
 end
 
 -- dragging the HUD: like Mudlet's own Adjustable.Container, measure the drag with
@@ -2542,6 +2550,7 @@ function M.viewShow()
     links[#links + 1] = { "newer ▶  (" .. (#h - pos) .. " more)", function() M.viewPos = pos + 1; M.viewShow() end }
   end
   M.pageShow(M.viewPg, segsToDecho(e.lines), "decho", links)
+  if M.raiseQuestHud then M.raiseQuestHud() end
 end
 
 ---------------------------------------------------------------------------
@@ -2584,6 +2593,7 @@ function M.helpPage(title, lines, fmt, links)
   local all = { segsToDecho({ header("help", "", math.min(cols, 100), title) })[1] }
   for _, l in ipairs(lines) do all[#all + 1] = (fmt == "cecho") and M.cechoToDecho(l) or l end
   M.pageShow(M.helpPg, all, "decho", links)
+  if M.raiseQuestHud then M.raiseQuestHud() end
 end
 
 -- "[1024] set - toggles ..." -> help 1024 ; " remove - remove an item" -> help remove
@@ -3333,6 +3343,7 @@ function M.onMsdp(event)
 end
 
 function M.barUpdate(d)
+  M.raiseQuestHud()
   -- the mount line comes right before the prompt; none this time = not riding
   M.mount, M.mountPending = M.mountPending, nil
   if not M.bar or not M.bar.rawEcho then M.showBar(true) end
