@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.14.7"
+M.version = "0.14.8"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2051,8 +2051,9 @@ function M.drawQuestTracker()
       local col = ((Q.done or 0) >= Q.total) and C.plus or (M.REC or C.slot)
       bar = span(col, string.rep("█", k)) .. span(C.dim, string.rep("░", n - k)) .. span(C.num, string.format(" %d/%d", Q.done or 0, Q.total))
     end
-    html[#html + 1] = (finished and span(C.plus, "✓ ") or "") .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar
-    widest = math.max(widest, ulen(name) + 2 + (Q.total and 13 or 0) + (finished and 2 or 0))
+    html[#html + 1] = (finished and span(C.plus, "✓ ") or "") .. span(C.dim, "#" .. id .. " ")
+      .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar
+    widest = math.max(widest, ulen(name) + ulen(id) + 4 + (Q.total and 13 or 0) + (finished and 2 or 0))
     rows = rows + 1
     local np
     for _, ph in ipairs(Q.phases or {}) do if not ph.done then np = ph; break end end
