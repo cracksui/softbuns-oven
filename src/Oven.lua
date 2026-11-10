@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.11"
+M.version = "0.11.12"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -858,14 +858,28 @@ function M.formatters.eq(raw, width)
       end
       out[#out + 1] = { { C.dim, pad("total", 10) }, { C.num, string.format("%3s", total) } }
     end
-    -- weakest location(s), and what one more point is worth
+    -- weakest location(s) you have gear on (an empty slot being weakest is obvious), and
+    -- what one more point is worth
+    local wearsAt = { head = bySlot["head"], torso = bySlot["torso"], arms = bySlot["arms"],
+                      legs = bySlot["legs"], tail = bySlot["tail"] }
     local low
-    for _, a in ipairs(ar) do if tonumber(a[2]) and (not low or tonumber(a[2]) < low) then low = tonumber(a[2]) end end
+    for _, a in ipairs(ar) do
+      local n, loc = tonumber(a[2]), a[1]:lower()
+      if n and wearsAt[loc] and (not low or n < low) then low = n end
+    end
     local weak = {}
-    for _, a in ipairs(ar) do if tonumber(a[2]) == low then weak[#weak + 1] = a[1]:lower() end end
-    if #weak > 0 and M.cfg.arRate then
-      out[#out + 1] = { { C.dim, pad("", 10) }, { C.dim, "weakest: " }, { C.flag, table.concat(weak, ", ") },
-        { C.dim, string.format("  ·  each AR point = %.2f%% less damage there", M.cfg.arRate) } }
+    for _, a in ipairs(ar) do
+      local loc = a[1]:lower()
+      if tonumber(a[2]) == low and wearsAt[loc] then weak[#weak + 1] = loc end
+    end
+    if M.cfg.arRate then
+      local row = { { C.dim, pad("", 10) } }
+      if #weak > 0 then
+        row[#row + 1] = { C.dim, "weakest: " }; row[#row + 1] = { C.flag, table.concat(weak, ", ") }
+        row[#row + 1] = { C.dim, "  ·  " }
+      end
+      row[#row + 1] = { C.dim, string.format("each AR point = %.2f%% less damage there", M.cfg.arRate) }
+      out[#out + 1] = row
     end
   end
 
