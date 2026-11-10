@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.21.0"
+M.version = "0.22.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -30,6 +30,7 @@ M.defaults = {
   maxTime      = 4,          -- hard limit on how long a capture can last
   maxLines     = 120,
   samples      = true,       -- write raw captures to oven_samples.txt (for tuning the parsers)
+  recWindow    = 300,        -- blocks of recent game output kept in memory (0 = off); saved on demand / on death
   fontSize     = 10,
   -- Lua pattern for your prompt, used in addition to telnet GA/EOR detection.
   -- Default: a line that is just <...> containing a digit, e.g. "<120hp 80sp 90st>".
@@ -4469,20 +4470,27 @@ function M.noteKillContext(l)
   if #R > 30 then table.remove(R, 1) end
 end
 
--- Recorder: whole blocks of game output (everything up to each prompt) with the commands that
--- caused them and the GMCP that changed, written to oven_record.txt. It's the raw material for
--- recognising what each block is (room, help, combat...) and the test corpus for parsers.
+-- Recorder. Game output is cut into blocks - everything up to each prompt - and each block keeps
+-- the commands that caused it and the GMCP that changed with it. The last cfg.recWindow blocks stay
+-- in memory (a sliding window); they're written to oven_record.txt only when there's a reason:
+-- `sbo record save`, a death, or (later) a block Oven can't make sense of. `sbo record [minutes]`
+-- writes every block as it happens instead. The file is rotated to oven_record.old.txt at 4 MB.
 M.recordFile = getMudletHomeDir() .. "/oven_record.txt"
-M.rec = M.rec or nil
-local REC_MAX = 8 * 1024 * 1024
-local SECRET_CMD = { "^%s*passw", "^%s*password", "^%s*pass%s" }
+local REC_ROTATE = 4 * 1024 * 1024
+local REC_BLOCK_LINES = 400
+local SECRET_CMD = { "^%s*passw", "^%s*pass%s" }
+M.win = M.win or { seq = 0, savedSeq = 0, blocks = {} }
+M.recCur = M.recCur or { lines = {}, cmds = {} }
+M.gmcpSeen = M.gmcpSeen or {}      -- package -> its last Lua source, to spot what changed
+M.gmcpDirty = M.gmcpDirty or {}    -- top-level GMCP names updated since the last block
 
--- every GMCP package two levels down (gmcp.room.info, gmcp.char.vitals...) as Lua source
-function M.gmcpPackages()
+-- every GMCP package two levels down (gmcp.room.info, gmcp.char.vitals...) as Lua source;
+-- `tops` limits it to some top-level names
+function M.gmcpPackages(tops)
   local out = {}
   if type(gmcp) ~= "table" then return out end
   for top, v in pairs(gmcp) do
-    if type(v) == "table" then
+    if type(v) == "table" and (not tops or tops[top]) then
       local leaf = true
       for k, x in pairs(v) do
         if type(x) == "table" then leaf = false; out[top .. "." .. tostring(k)] = ser(x) end
@@ -4493,15 +4501,97 @@ function M.gmcpPackages()
   return out
 end
 
+-- Mudlet raises "gmcp.<package>" events as messages arrive; listen on each top-level name we've
+-- seen so a prompt only has to look at what actually changed
+M.gmcpHandlers = M.gmcpHandlers or {}
+function M.gmcpWatch()
+  if type(gmcp) ~= "table" then return end
+  local H = M.gmcpHandlers
+  local function watch(ev, top)
+    if H[ev] then return end
+    H[ev] = registerAnonymousEventHandler(ev, function() M.gmcpDirty[top] = true end)
+    M.gmcpDirty[top] = true
+  end
+  for top, v in pairs(gmcp) do
+    if type(v) == "table" then
+      watch("gmcp." .. top, top)
+      for k, x in pairs(v) do if type(x) == "table" then watch("gmcp." .. top .. "." .. tostring(k), top) end end
+    end
+  end
+end
+function M.gmcpUnwatch()
+  for _, h in pairs(M.gmcpHandlers or {}) do pcall(killAnonymousEventHandler, h) end
+  M.gmcpHandlers = {}
+end
+
+local function gmcpChanges()
+  local tops = M.gmcpDirty
+  M.gmcpDirty = {}
+  if not next(tops) then return {} end
+  local now_, changed = M.gmcpPackages(tops), {}
+  for name, v in pairs(now_) do
+    if M.gmcpSeen[name] ~= v then changed[#changed + 1] = { name, v }; M.gmcpSeen[name] = v end
+  end
+  table.sort(changed, function(a, b) return a[1] < b[1] end)
+  return changed
+end
+
+local function blockText(b)
+  local out = { "===== " .. os.date("%Y-%m-%d %H:%M:%S", b.t) .. " | cmd=" .. table.concat(b.cmds, " ; ")
+    .. " | room=" .. tostring(b.room or "") .. "\n" }
+  for _, g in ipairs(b.gmcp) do out[#out + 1] = "@gmcp " .. g[1] .. " = " .. g[2] .. "\n" end
+  for _, x in ipairs(b.lines) do out[#out + 1] = x .. "\n" end
+  out[#out + 1] = "\n"
+  return table.concat(out)
+end
+
+local function recOpen()
+  local f = io.open(M.recordFile, "r")
+  if f then
+    local size = f:seek("end"); f:close()
+    if size and size > REC_ROTATE then
+      local old = M.recordFile:gsub("%.txt$", ".old.txt")
+      os.remove(old); os.rename(M.recordFile, old)
+    end
+  end
+  return io.open(M.recordFile, "a")
+end
+
+-- write the window's blocks not saved yet; returns how many
+function M.windowSave(reason)
+  local W, cur, out = M.win, M.recCur, {}
+  for _, b in ipairs(W.blocks) do
+    if b.seq > W.savedSeq then out[#out + 1] = blockText(b) end
+  end
+  -- and what's arrived since the last prompt
+  local from = (cur.savedLines or 0) + 1
+  if #cur.lines >= from then
+    local part = {}
+    for i = from, #cur.lines do part[#part + 1] = cur.lines[i] end
+    out[#out + 1] = blockText({ t = os.time(), cmds = from == 1 and cur.cmds or {}, room = M.currentRoom and M.currentRoom(), gmcp = {}, lines = part })
+  end
+  if #out == 0 then return 0 end
+  local f = recOpen()
+  if not f then return 0 end
+  f:write("##### saved " .. os.date("%Y-%m-%d %H:%M:%S") .. " (" .. (reason or "sbo record save") .. ") | Oven " .. M.version .. "\n")
+  f:write(table.concat(out))
+  f:write("##### end\n\n")
+  f:close()
+  W.savedSeq = W.seq
+  cur.savedLines = #cur.lines
+  return #out
+end
+
 function M.recordStart(minutes)
   minutes = tonumber(minutes) or 30
-  M.rec = { untilT = os.time() + minutes * 60, block = {}, cmds = {}, gmcp = M.gmcpPackages(), n = 0 }
-  local f = io.open(M.recordFile, "a")
+  M.rec = { untilT = os.time() + minutes * 60, n = 0 }
+  local f = recOpen()
   if f then
     f:write("##### recording started " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Oven " .. M.version .. "\n")
-    for name, v in pairs(M.rec.gmcp) do f:write("@gmcp " .. name .. " = " .. v .. "\n") end
+    for name, v in pairs(M.gmcpPackages()) do f:write("@gmcp " .. name .. " = " .. v .. "\n") end
     f:write("\n"); f:close()
   end
+  M.win.savedSeq = M.win.seq
 end
 
 function M.recordStop(why)
@@ -4514,36 +4604,41 @@ function M.recordStop(why)
 end
 
 function M.recordCommand(cmd)
-  local R = M.rec
-  if not R then return end
   for _, p in ipairs(SECRET_CMD) do if cmd:lower():match(p) then cmd = "(hidden)" end end
-  R.cmds[#R.cmds + 1] = cmd
+  local c = M.recCur.cmds
+  if #c < 50 then c[#c + 1] = cmd end
 end
 
 function M.recordLine(l, prompt)
-  local R = M.rec
-  if not R then return end
-  R.block[#R.block + 1] = l
-  if not prompt and #R.block < 400 then return end
-  local now_ = M.gmcpPackages()
-  local changed = {}
-  for name, v in pairs(now_) do if R.gmcp[name] ~= v then changed[#changed + 1] = name end end
-  table.sort(changed)
-  local f = io.open(M.recordFile, "a")
-  if f then
-    f:write("===== " .. os.date("%H:%M:%S") .. " | cmd=" .. table.concat(R.cmds, " ; ")
-      .. " | room=" .. tostring(M.currentRoom and M.currentRoom() or "") .. "\n")
-    for _, name in ipairs(changed) do f:write("@gmcp " .. name .. " = " .. now_[name] .. "\n") end
-    for _, x in ipairs(R.block) do f:write(x, "\n") end
-    f:write("\n")
-    local size = f:seek("end")
-    f:close()
-    if size and size > REC_MAX then M.recordStop("file is full - 8 MB"); M.say("recording stopped: oven_record.txt is full") return end
+  local cur = M.recCur
+  cur.lines[#cur.lines + 1] = l
+  if not prompt and #cur.lines < REC_BLOCK_LINES then return end
+  pcall(M.gmcpWatch)
+  local W = M.win
+  W.seq = W.seq + 1
+  if cur.savedLines then
+    local rest = {}
+    for i = cur.savedLines + 1, #cur.lines do rest[#rest + 1] = cur.lines[i] end
+    cur.lines, cur.cmds = rest, {}
   end
-  R.gmcp, R.block, R.cmds, R.n = now_, {}, {}, R.n + 1
-  if os.time() > R.untilT then
-    local n = M.recordStop("time's up")
-    M.say("recording finished: " .. n .. " blocks saved to oven_record.txt")
+  local b = { seq = W.seq, t = os.time(), cmds = cur.cmds, lines = cur.lines,
+              room = M.currentRoom and M.currentRoom(), gmcp = gmcpChanges() }
+  M.recCur = { lines = {}, cmds = {} }
+  local max = tonumber(M.cfg.recWindow) or 300
+  if max > 0 then
+    W.blocks[#W.blocks + 1] = b
+    while #W.blocks > max do table.remove(W.blocks, 1) end
+  end
+  local R = M.rec
+  if R then
+    local f = recOpen()
+    if f then f:write(blockText(b)); f:close() end
+    W.savedSeq = W.seq
+    R.n = R.n + 1
+    if os.time() > R.untilT then
+      local n = M.recordStop("time's up")
+      M.say("recording finished: " .. n .. " blocks saved to oven_record.txt")
+    end
   end
 end
 
@@ -4565,7 +4660,7 @@ end
 function M.onLine()
   local cap = M.cap
   pcall(M.observe, line)
-  if M.rec then pcall(M.recordLine, line, isPromptLine()) end
+  pcall(M.recordLine, line, isPromptLine())
   pcall(M.noteRoomLine, line)
   pcall(M.noteClassHelp, line)
   pcall(M.noteRaceHelp, line)
@@ -5314,6 +5409,7 @@ function M.noteRoomDeath()
   local c = M.cfg.char or {}
   M.dbx("INSERT INTO deaths (t, room, level, total, recap) VALUES (%s, %s, %s, %s, %s)",
     os.time(), id, tonumber(c.level), tonumber(c.total), M.ser(M.deathRecapLines()))
+  if not M.rec then pcall(M.windowSave, "you died in room " .. tostring(id)) end
   -- the lines before it, so the game's own death message can be learned
   if M.cfg.samples and (M.deathCtxLogged or 0) < 10 then
     M.deathCtxLogged = (M.deathCtxLogged or 0) + 1
@@ -5963,7 +6059,9 @@ M.helpSections = {
     { "sbo update force", "reinstall even if you're current" },
     { "sbo update {file}", "install a local .mpackage file" },
     { "sbo samples on|off", "log raw game output to oven_samples.txt (helps fix layouts)" },
-    { "sbo record [minutes|off]", "record everything the game sends, with your commands and GMCP (30 min)" },
+    { "sbo record save [note]", "save the last few hundred blocks of game output to oven_record.txt (just saw something odd? do this)" },
+    { "sbo record [minutes|off]", "write everything the game sends to oven_record.txt as it happens (30 min)" },
+    { "sbo record window {n}|off", "how many blocks of recent output to keep in memory (300)" },
     { "sbo gmcp", "list what the game sends over GMCP, written in full to oven_gmcp.txt" },
     { "sbo prompt [pattern]", "set your prompt pattern (blank = detect it automatically)" },
   } },
@@ -6160,14 +6258,31 @@ function M.command(args)
   elseif a == "marks" then return M.listMarks()
   elseif a == "unmark" then return M.unmarkRoom(b)
   elseif a == "record" then
+    local W = M.win
     if b == "off" or b == "stop" then
       local n = M.recordStop("off")
       return say(n and ("recording stopped: " .. n .. " blocks saved to oven_record.txt") or "not recording")
+    elseif b:match("^save") then
+      local note = trim(b:gsub("^save", ""))
+      local n = M.windowSave(note ~= "" and ("sbo record save: " .. note) or "sbo record save")
+      if n == 0 then return say("nothing new since the last save - it's all in oven_record.txt") end
+      return say("saved the last " .. n .. " blocks of game output to oven_record.txt")
+    elseif b:match("^window") then
+      local v = b:match("^window%s+(%S+)")
+      if v then
+        M.cfg.recWindow = (v == "off") and 0 or (tonumber(v) or M.defaults.recWindow)
+        while #W.blocks > M.cfg.recWindow do table.remove(W.blocks, 1) end
+        M.saveSettings()
+      end
+      return say("keeping the last " .. M.cfg.recWindow .. " blocks of game output in memory (now " .. #W.blocks
+        .. ") - sbo record save writes them out, and they're saved when you die (sbo record window N|off)")
+    elseif b == "" or tonumber(b) then
+      local mins = tonumber(b) or 30
+      M.recordStart(mins)
+      return say("recording every block as it happens, with your commands and GMCP, for " .. mins
+        .. " minutes to oven_record.txt (sbo record off stops it). Passwords aren't saved.")
     end
-    local mins = tonumber(b) or 30
-    M.recordStart(mins)
-    return say("recording everything the game sends, with your commands and GMCP, for " .. mins
-      .. " minutes to oven_record.txt (sbo record off stops it). Passwords aren't saved.")
+    return say("sbo record save [note] | sbo record [minutes] | sbo record off | sbo record window N|off")
   elseif a == "gmcp" then
     local names = M.gmcpDump()
     if #names == 0 then return say("the game hasn't sent any GMCP yet") end
@@ -6524,6 +6639,7 @@ function M.teardown()
   if M.mapHoverTimer then killTimer(M.mapHoverTimer); M.mapHoverTimer = nil end   -- (0.16.4's hover)
   if M.mapHoverTip then pcall(function() M.mapHoverTip:hide() end) end
   if M.mapSelTimer then killTimer(M.mapSelTimer); M.mapSelTimer = nil end
+  pcall(M.gmcpUnwatch)
 end
 
 function M.init()
