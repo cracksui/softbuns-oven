@@ -105,7 +105,7 @@ screen - drag it anywhere (`sbo quest hud reset` puts it back, `sbo quest hud le
 corner): click **pin** under `quest info`
 (or `sbo quest pin <id>` / `sbo quest pin all`). Each pinned quest shows its progress and the next
 phase to do, updates whenever the game shows that quest, and re-checks quietly when you click it
-(or `sbo quest refresh`). Finished or abandoned quests unpin themselves.
+(or `sbo quest refresh`). A finished quest shows ✓ complete - click it to clear it from the HUD. Finished or abandoned quests unpin themselves.
 
 ## Comparing gear
 

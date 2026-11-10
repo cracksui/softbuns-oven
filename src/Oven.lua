@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.14.5"
+M.version = "0.14.6"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2029,7 +2029,7 @@ function M.drawQuestTracker()
     M.questHud:setClickCallback(function(ev) M.hudPress(ev) end)
     M.questHud:setMoveCallback(function(ev) M.hudMove(ev) end)
     M.questHud:setReleaseCallback(function(ev) M.hudRelease(ev) end)
-    pcall(function() M.questHud:setToolTip("drag to move · click to refresh your pinned quests") end)
+    pcall(function() M.questHud:setToolTip("drag to move · click a quest to refresh it · click a finished quest to clear it") end)
     pcall(function() M.questHud:setCursor("OpenHand") end)
   end
   M.questHud:setStyleSheet([[
@@ -2038,9 +2038,12 @@ function M.drawQuestTracker()
   local font = (pcall(getFont) and getFont()) or "monospace"
   local size = math.max(8, (M.cfg.fontSize or 10) - 1)
   local html, rows, widest = {}, 0, 0
+  M.questHudRows = {}     -- row number -> quest id, for clicks
   for _, id in ipairs(ids) do
     local Q = M.quests[id] or {}
     local name = Q.name or ("#" .. id)
+    local finished = Q.total and Q.total > 0 and (Q.done or 0) >= Q.total
+    local firstRow = rows + 1
     local bar = ""
     if Q.total then
       local n = 8
@@ -2048,12 +2051,16 @@ function M.drawQuestTracker()
       local col = ((Q.done or 0) >= Q.total) and C.plus or (M.REC or C.slot)
       bar = span(col, string.rep("█", k)) .. span(C.dim, string.rep("░", n - k)) .. span(C.num, string.format(" %d/%d", Q.done or 0, Q.total))
     end
-    html[#html + 1] = span(C.item, name) .. "&nbsp;&nbsp;" .. bar
-    widest = math.max(widest, ulen(name) + 2 + (Q.total and 13 or 0))
+    html[#html + 1] = (finished and span(C.plus, "✓ ") or "") .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar
+    widest = math.max(widest, ulen(name) + 2 + (Q.total and 13 or 0) + (finished and 2 or 0))
     rows = rows + 1
     local np
     for _, ph in ipairs(Q.phases or {}) do if not ph.done then np = ph; break end end
-    if np then
+    if finished then
+      html[#html + 1] = span(C.plus, " complete") .. span(C.dim, " · click to clear")
+      widest = math.max(widest, 28)
+      rows = rows + 1
+    elseif np then
       local line = " ▶ " .. np.text .. (np.area and (" · " .. np.area) or "")
       html[#html + 1] = span(M.REC or C.title, " ▶ ") .. span(C.text, np.text) .. (np.area and span(C.dim, " · " .. np.area) or "")
       widest = math.max(widest, ulen(line))
@@ -2062,12 +2069,14 @@ function M.drawQuestTracker()
       html[#html + 1] = span(C.dim, " (click to load its steps)")
       rows = rows + 1
     end
+    for r = firstRow, rows do M.questHudRows[r] = id end
   end
   M.questHud:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt;\">%s</div>",
     font, size, table.concat(html, "<br>")))
   local okF, cw, ch = pcall(calcFontSize, size, font)
   if not okF or not cw then cw, ch = 7, 14 end
   M.questHudSize = { w = math.min(600, widest * cw + 24), h = math.ceil(rows * ch * 1.3) + 16 }
+  M.questHudLineH = ch * 1.3
   M.layoutQuestHud()
   M.questHud:show()
 end
@@ -2078,7 +2087,8 @@ function M.hudPress(ev)
   if type(ev) == "table" and ev.button and ev.button ~= "LeftButton" then return end
   local ok, mx, my = pcall(getMousePosition)
   if not ok or not mx then M.questRefresh("all"); return end
-  M.hudDrag = { mx = mx, my = my, x = M.questHud:get_x(), y = M.questHud:get_y(), moved = 0, started = os.time() }
+  M.hudDrag = { mx = mx, my = my, x = M.questHud:get_x(), y = M.questHud:get_y(), moved = 0, started = os.time(),
+                at = type(ev) == "table" and tonumber(ev.y) or nil }
   pcall(function() M.questHud:setCursor("ClosedHand") end)
   -- some setups (e.g. Linux under WSL) don't deliver mouse-move events while the button is
   -- held, so also follow the cursor with a short timer until the button is released
@@ -2110,9 +2120,26 @@ function M.hudRelease(ev)
   pcall(function() M.questHud:setCursor("OpenHand") end)
   if not d then return end
   if d.moved < 4 then
-    M.questRefresh("all")       -- a click, not a drag
+    M.questHudClick(d.at)       -- a click, not a drag
   else
     M.saveSettings()            -- remember where it was dropped
+  end
+end
+
+-- a click on the HUD: a finished quest is cleared, any other quest is refreshed
+function M.questHudClick(y)
+  local id
+  if y and M.questHudLineH and M.questHudRows then
+    local row = math.floor((y - 7) / M.questHudLineH) + 1   -- 6px padding + 1px border
+    id = M.questHudRows[math.max(1, row)]
+  end
+  if not id then return M.questRefresh("all") end
+  local Q = M.quests[id] or {}
+  if Q.total and Q.total > 0 and (Q.done or 0) >= Q.total then
+    M.questPin(id, false)
+    M.notifyQuest((Q.name or ("#" .. id)) .. " cleared from the quest HUD")
+  else
+    M.questRefresh(id)
   end
 end
 
