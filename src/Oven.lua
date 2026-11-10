@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.14.8"
+M.version = "0.14.9"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -37,6 +37,7 @@ M.defaults = {
   updateCheck  = true,       -- on login, quietly check GitHub for a newer version
   autoUpdate   = false,      -- check every 2 minutes and install new versions automatically
   questHudSide = "right",    -- quest HUD corner: right or left (top of the game text area)
+  questHudOpacity = 100,     -- quest HUD background opacity, 0-100
   map          = false,      -- follow your room (GMCP) on the map and walk where you double-click
   autocompare  = true,       -- compare looked-at items with what you wear in that slot
   bar          = false,      -- move the prompt into a fixed bar at the bottom
@@ -2032,9 +2033,10 @@ function M.drawQuestTracker()
     pcall(function() M.questHud:setToolTip("drag to move · click a quest to refresh it · click a finished quest to clear it") end)
     pcall(function() M.questHud:setCursor("OpenHand") end)
   end
-  M.questHud:setStyleSheet([[
-    background-color: rgba(8, 8, 12, 170); border: 1px solid rgba(255,255,255,30);
-    border-radius: 6px; padding: 6px 8px; qproperty-alignment: 'AlignTop | AlignLeft';]])
+  local alpha = math.floor(255 * math.max(0, math.min(100, tonumber(M.cfg.questHudOpacity) or 100)) / 100 + 0.5)
+  M.questHud:setStyleSheet(string.format([[
+    background-color: rgba(8, 8, 12, %d); border: 1px solid rgba(255,255,255,30);
+    border-radius: 6px; padding: 6px 8px; qproperty-alignment: 'AlignTop | AlignLeft';]], alpha))
   local font = (pcall(getFont) and getFont()) or "monospace"
   local size = math.max(8, (M.cfg.fontSize or 10) - 1)
   local html, rows, widest = {}, 0, 0
@@ -3820,6 +3822,7 @@ function M.help()
   <khaki>sbo items<reset>                 list remembered items
   <khaki>sbo quest pin|unpin [id|all]<reset> keep quests in the quest tracker window
   <khaki>sbo quest refresh [id]<reset>    quietly re-check pinned quests (or click the quest HUD)
+  <khaki>sbo quest hud opacity [0-100]<reset> how see-through the quest HUD is (no number = opaque)
   <khaki>sbo quest hud left|right|reset<reset> quest HUD corner, or back to it after dragging (sbo quest show|hide)
   <khaki>sbo learn<reset>                 look at the worn items Oven doesn't know yet (the ? in eq)
   <khaki>sbo map on|off<reset>            follow you on the map by room number; double-click a room to walk there
@@ -4004,6 +4007,12 @@ function M.command(args)
     elseif sub == "hide" then if M.questHud then M.questHud:hide() end; return
     elseif sub == "hud" and (val == "left" or val == "right") then
       M.cfg.questHudSide = val; M.cfg.questHudPos = nil; M.saveSettings(); M.drawQuestTracker(); return say("quest HUD on the " .. val)
+    elseif sub == "hud" and val:match("^opacity") then
+      local n = val:match("^opacity%s*(%d*)%%?$")
+      if n == nil then return say("usage: sbo quest hud opacity <0-100>  (nothing = opaque)") end
+      M.cfg.questHudOpacity = (n == "") and 100 or math.max(0, math.min(100, tonumber(n)))
+      M.saveSettings(); M.drawQuestTracker()
+      return say("quest HUD opacity " .. M.cfg.questHudOpacity .. "%" .. (n == "" and " (default)" or ""))
     elseif sub == "hud" and val == "reset" then
       M.cfg.questHudPos = nil; M.saveSettings(); M.drawQuestTracker(); return say("quest HUD back in its corner")
     elseif sub == "show" or sub == "" then M.drawQuestTracker()
