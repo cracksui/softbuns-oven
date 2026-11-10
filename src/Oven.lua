@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.11"
+M.version = "0.10.12"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -40,7 +40,7 @@ M.defaults = {
   bar          = false,      -- move the prompt into a fixed bar at the bottom
   barMode      = "gauges",   -- gauges | raw
   barWidth     = 10,         -- length of each gauge in the prompt bar
-  barBg        = { 28, 30, 42 },  -- prompt bar background (r, g, b)
+  barBg        = { 18, 19, 26 },  -- prompt bar background (r, g, b): a faint tint
   barBlank     = true,       -- with the bar on, also drop the blank line before each prompt
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
@@ -67,6 +67,9 @@ function M.loadSettings()
   local t = {}
   if io.exists(M.settingsFile) then pcall(table.load, M.settingsFile, t) end
   t.updatePath = nil  -- old local-file updater setting
+  if type(t.barBg) == "table" and t.barBg[1] == 28 and t.barBg[2] == 30 and t.barBg[3] == 42 then
+    t.barBg = nil      -- the 0.10.10 default was too strong: use the new default
+  end
   for k, v in pairs(M.defaults) do
     if t[k] == nil then t[k] = v end
   end
@@ -2083,7 +2086,7 @@ end
 function M.barHeight()
   local ok, _, h = pcall(calcFontSize, M.barFontSize())
   h = (ok and tonumber(h)) or 16
-  return h * M.cfg.barLines + 8
+  return math.ceil(h * 1.2) * M.cfg.barLines + 6
 end
 
 function M.layoutBar()
@@ -2105,16 +2108,16 @@ end
 
 function M.showBar(on)
   if on then
+    if M.bar and not M.bar.rawEcho then
+      -- the console-based bar of versions before 0.10.12
+      pcall(function() M.bar:hide() end); M.bar = nil
+    end
     if not M.bar then
-      M.bar = Geyser.MiniConsole:new({
-        name = "ovenPromptBar", x = 0, y = 0, width = 200, height = 20,
-        autoWrap = false, scrollBar = false, fontSize = M.barFontSize(), color = "black",
-      })
+      -- a label: unlike a console it can centre its text vertically
+      M.bar = Geyser.Label:new({ name = "ovenPromptBarLabel", x = 0, y = 0, width = 200, height = 20 })
     end
     M.bar:show()
     M.layoutBar()
-    -- same font as the main window so the text lines up
-    pcall(setFont, "ovenPromptBar", getFont())
     M.applyBarBg()
     M.drawBar()
   else
@@ -2167,19 +2170,31 @@ end
 function M.applyBarBg()
   if not M.bar then return end
   local r, g, b = M.barBg()
-  pcall(setBackgroundColor, "ovenPromptBar", r, g, b, 255)
+  M.bar:setStyleSheet(string.format(
+    "background-color: rgb(%d,%d,%d); padding-left: 4px; qproperty-alignment: 'AlignVCenter | AlignLeft';", r, g, b))
+end
+
+-- characters across the bar
+local function barCols()
+  local okF, cw = pcall(calcFontSize, M.barFontSize(), (pcall(getFont) and getFont()) or nil)
+  cw = (okF and tonumber(cw)) or 8
+  local okW, w = pcall(function() return M.bar:get_width() end)
+  return math.max(40, math.floor((((okW and tonumber(w)) or 800) - 10) / cw))
+end
+
+-- put decho text in the bar, in the main window's font
+local function barEcho(d)
+  local font = (pcall(getFont) and getFont()) or "monospace"
+  M.bar:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
+    font, M.barFontSize(), decho2html(d)))
 end
 
 function M.drawBar()
-  if not M.bar or not M.lastPromptText then return end
-  local win = "ovenPromptBar"
-  clearWindow(win)
-  local bgR, bgG, bgB = M.barBg()
-  pcall(setBgColor, win, bgR, bgG, bgB)   -- text cells use the bar's tint too
+  if not M.bar or not M.bar.rawEcho or not M.lastPromptText then return end
   if M.cfg.barMode == "raw" or #M.parsePrompt(M.lastPromptText).vals == 0 then
     -- drop the game's (black) text background so the bar's tint shows through
     local d = (M.lastPromptDecho or M.lastPromptText):gsub("<(%d+,%d+,%d+):[%d,]+>", "<%1>")
-    decho(win, d)
+    barEcho(d)
     return
   end
   local p = M.parsePrompt(M.lastPromptText)
@@ -2217,8 +2232,7 @@ function M.drawBar()
     local mx = M.cfg.maxes[v[1]]
     fixed = fixed + #v[1] + 2 + #(tostring(v[2]) .. "/" .. tostring(mx or v[2])) + 3
   end
-  local okC, cols = pcall(getColumnCount, win)
-  cols = (okC and tonumber(cols)) or 100
+  local cols = barCols()
   local room = math.floor((cols - fixed) / math.max(1, #p.vals))
   local gw = math.max(3, math.min(M.cfg.barWidth or 10, room))
   for _, v in ipairs(p.vals) do
@@ -2232,12 +2246,7 @@ function M.drawBar()
   end
   addAll(segs, tail)
   if p.rest ~= "" then segs[#segs + 1] = { C.text, "   " .. p.rest } end
-  for _, sg in ipairs(segs) do
-    local col = sg[1]
-    if color_table and not color_table[col] then col = "white" end
-    fg(win, col); setBgColor(win, bgR, bgG, bgB); echo(win, sg[2])
-  end
-  resetFormat(win)
+  barEcho(M.segsToDecho({ segs })[1])
 end
 
 -- live level / exp from MSDP, if the game reports them
@@ -2255,7 +2264,7 @@ function M.onMsdp(event)
 end
 
 function M.barUpdate(d)
-  if not M.bar then M.showBar(true) end
+  if not M.bar or not M.bar.rawEcho then M.showBar(true) end
   -- re-layout if something else (e.g. the base UI dock) changed the side borders
   local ok, r = pcall(getBorderRight)
   if ok and r and r ~= M.barRight then M.layoutBar() end
@@ -2760,7 +2769,6 @@ function M.command(args)
       say("prompt bar lines " .. M.cfg.barLines .. (val == "" and " (default)" or ""))
     elseif sub == "font" and M.numArg(val, "barFont") then
       M.cfg.barFont = M.numArg(val, "barFont")
-      if M.bar then M.bar:setFontSize(M.barFontSize()) end
       M.layoutBar(); M.drawBar()
       say("prompt bar font " .. (M.cfg.barFont > 0 and M.cfg.barFont or ("same as main window (" .. M.barFontSize() .. ")"))
         .. (val == "" and " (default)" or ""))
