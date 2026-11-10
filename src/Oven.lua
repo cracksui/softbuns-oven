@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.7"
+M.version = "0.16.8"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4026,7 +4026,13 @@ function M.roomCardLines(id)
   local name = getRoomName(id) or "?"
   local area = getRoomArea(id)
   local areaName = area and getRoomAreaName(area) or ""
-  row({ C.item, name }, { C.dim, "  #" .. id })
+  local title = { { C.item, name }, { C.dim, "  #" .. id } }
+  local fl = (M.cfg.roomFlags or {})[tostring(id)]
+  if fl and fl.tags and #fl.tags > 0 then
+    title[#title + 1] = { C.dim, "  " }
+    for _, t in ipairs(fl.tags) do title[#title + 1] = { C.flag, "[" .. t .. "]" } end
+  end
+  out[#out + 1] = title
   local exits = {}
   local okE, ex = pcall(getRoomExits, id)
   local short = { north = "n", south = "s", east = "e", west = "w", up = "u", down = "d",
@@ -4221,9 +4227,28 @@ local function npcTags(l)
   return tags, text
 end
 
+-- the prompt's tags describe the room ([SHOP] [SAFE] [Library]...), except [Mail], which is you
+local NOT_ROOM_FLAGS = { mail = true }
+function M.noteRoomFlags(id, l)
+  if not id then return end
+  local before = l:match("^(.-)<") or l
+  local flags = {}
+  for t in before:gmatch("%[([^%]]+)%]") do
+    if not NOT_ROOM_FLAGS[t:lower()] then flags[#flags + 1] = t end
+  end
+  M.cfg.roomFlags = M.cfg.roomFlags or {}
+  local key, old = tostring(id), M.cfg.roomFlags[tostring(id)]
+  local was = old and table.concat(old.tags or {}, ",") or nil
+  if was == table.concat(flags, ",") then return end
+  if #flags == 0 and not old then return end
+  M.cfg.roomFlags[key] = #flags > 0 and { tags = flags, last = os.time() } or nil
+  M.saveSettings()
+end
+
 function M.noteRoomLine(l)
   if isPromptLine() then
     local id = M.currentRoom()
+    pcall(M.noteRoomFlags, id, l)
     local buf = M.roomLineBuf
     M.roomLineBuf = {}
     if id and #buf > 0 then
