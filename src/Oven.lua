@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.2"
+M.version = "0.16.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3993,15 +3993,47 @@ function M.drawMapHeader()
     font, esc(name), font, area ~= "" and ("  ·  " .. esc(area)) or "", id and ("  ·  #" .. id) or ""))
 end
 
+-- Mudlet's own room-info overlay on the map (its "Short"/"Full" map info) repeats what the
+-- panel's header shows, so it's switched off while the panel is up and restored afterwards
+local function mapInfoOn()
+  local ok, info = pcall(getMapInfo)
+  local on = {}
+  if ok and type(info) == "table" then
+    for k, v in pairs(info) do
+      if type(v) == "boolean" and v then on[#on + 1] = k
+      elseif type(v) == "table" and v.enabled and (v.name or type(k) == "string") then on[#on + 1] = v.name or k end
+    end
+  end
+  return on
+end
+
+function M.mapInfoOff()
+  if M.cfg.mapInfoWas then return end   -- already done (and remembered what to restore)
+  local on = mapInfoOn()
+  for _, name in ipairs(on) do pcall(disableMapInfo, name) end
+  M.cfg.mapInfoWas = on
+  M.saveSettings()
+end
+
+function M.mapInfoRestore()
+  local was = M.cfg.mapInfoWas
+  if not was then return end
+  for _, name in ipairs(was) do pcall(enableMapInfo, name) end
+  M.cfg.mapInfoWas = nil
+  M.saveSettings()
+end
+
 function M.showMapPanel(on)
   if on then
     M.createMapPanel()
+    pcall(M.mapInfoOff)
     M.mapPanel:show()
     M.drawMapHeader()
     if M.mapRoom and roomExists(M.mapRoom) then centerview(M.mapRoom) end
     if M.raiseQuestHud then M.raiseQuestHud() end
   elseif M.mapPanel then
     M.mapPanel:hide()
+    pcall(M.mapInfoRestore)
   end
 end
 
