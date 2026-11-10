@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.8"
+M.version = "0.9.9"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -181,9 +181,10 @@ local function addAll(dst, src) for _, l in ipairs(src) do dst[#dst + 1] = l end
 M.formatters = {}
 
 -- "<worn on head>   a battered helm"  /  "[head]  a helm"
+-- "<worn on head>   a battered helm" -> "worn on head", "a battered helm"
+-- (Materia Magica always uses <...>; the slot name must be words, so "<1hp 1sp 1st>" isn't one)
 local function parseSlot(l)
-  local slot, item = l:match("^%s*<([^>]+)>%s*(.-)%s*$")
-  if not slot then slot, item = l:match("^%s*%[([^%]]+)%]%s*(.-)%s*$") end
+  local slot, item = l:match("^%s*<([%a][%a ']*)>%s*(.-)%s*$")
   if slot and item ~= "" then return trim(slot), item end
 end
 
@@ -535,7 +536,7 @@ end
 M.slotTable = {
   { key = "spellbook", names = { "studying spellbook" }, extra = true },  -- seen on creatures
   { key = "tome",      names = { "studying tome" }, extra = true },
-  { key = "light",     names = { "used as light" } },
+  { key = "light",     names = { "used as light", "illuminating" } },
   { key = "finger",    names = { "worn on finger" }, n = 2 },
   { key = "neck",      names = { "worn around neck" }, n = 2 },
   { key = "amulet",    names = { "amulet around neck" }, n = 2, only = "donation" },
@@ -671,11 +672,16 @@ local function renderSlots(out, slots, width, withStats)
   end
 end
 
--- prose with paragraph breaks ("" entries split paragraphs)
+-- prose with paragraph breaks ("" entries split paragraphs). Lines are only joined
+-- when they look like text the game wrapped; otherwise each line stays its own line.
 local function paragraphs(out, lines, width)
   local cur = {}
   local function flush()
-    if #cur > 0 then blank(out); prose(out, cur, width); cur = {} end
+    if #cur == 0 then return end
+    blank(out)
+    if looksWrapped(cur) then prose(out, cur, width)
+    else for _, l in ipairs(cur) do prose(out, { l }, width) end end
+    cur = {}
   end
   for _, l in ipairs(lines) do
     if trim(l) == "" then flush() else cur[#cur + 1] = l end
@@ -948,9 +954,17 @@ function M.formatMob(raw, width)
   local desc, slots, after, facts = {}, {}, {}, {}
   local name
   local seenSlot = false
+  -- equipment comes after the health / distance lines; anything slot-like before
+  -- them is part of the description (descriptions can contain anything)
+  local factsAt
+  for i, l in ipairs(raw) do
+    local t = trim(l)
+    if t:match(" is in .- health%.?$") or t:match("^You are %d+ distance away from ") then factsAt = i; break end
+  end
   for idx, l in ipairs(raw) do
     local t = trim(l)
     local slot, item = parseSlot(l)
+    if factsAt and idx < factsAt then slot = nil end
     local hn, health = t:match("^(.-) is in (.-) health%.?$")
     local dist, dn, range = t:match("^You are (%d+) distance away from (.-) and your attack range is (%d+)%.?$")
     local race, height = t:match("^%S+ is an? (.-) approximately (.-) tall%.?$")
