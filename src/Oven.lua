@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.15.5"
+M.version = "0.15.6"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3188,7 +3188,8 @@ function M.observe(l)
     if n and not t:find("need", 1, true) then
       n = tonumber((n:gsub(",", "")))
       if n and n > 0 then
-        if t:match("^You gain") then pcall(M.creditKillExp, n) end
+        -- kills give "You receive 2,704 experience points."; other exp says "You gain ..."
+        if t:match("^You receive") or t:match("^You gain") then pcall(M.creditKillExp, n) end
         M.sess.gained = (M.sess.gained or 0) + n
         if M.sess.exp0 then M.sess.gainedAfterScore = (M.sess.gainedAfterScore or 0) + n end
         local c = M.cfg.char or {}
@@ -3618,7 +3619,8 @@ function M.noteKillContext(l)
   -- remember the last 8 lines; when exp is gained (not from a quest reward), log them once
   -- so the game's wording for a kill can be learned
   local R = M.recentLines
-  if l:match("^%s*You gain [%d,]+ experience") and M.cfg.samples and M.killCtxLogged < 30 then
+  if (l:match("^%s*You gain [%d,]+ experience") or l:match("^%s*You receive [%d,]+ experience"))
+     and M.cfg.samples and M.killCtxLogged < 30 then
     M.killCtxLogged = M.killCtxLogged + 1
     local f = io.open(M.samplesFile, "a")
     if f then
