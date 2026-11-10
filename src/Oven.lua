@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.14.4"
+M.version = "0.14.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3091,7 +3091,7 @@ function M.updateMaxes(raw)
   M.saveSettings()
 end
 
-local barColors = { hp = "tomato", sp = "light_sky_blue", st = "gold" }
+local barColors = { hp = "tomato", sp = "light_sky_blue", st = "gold", mt = "sandy_brown" }
 -- the bar's background (a slight tint so it stands apart from the game text)
 function M.barBg()
   local c = M.cfg.barBg
@@ -3214,6 +3214,7 @@ function M.drawBar()
     elseif v[1] == "lvl" or v[1] == "lv" or v[1] == "level" then lvl = v[2]
     else pools[#pools + 1] = v end
   end
+  if M.mount then pools[#pools + 1] = { "mt", M.mount } end   -- mount stamina, after yours
   local c, live = M.cfg.char or {}, M.live or {}
   lvl = lvl or live.level or c.level
   tnl = tnl or live.tnl or c.tnl
@@ -3305,6 +3306,8 @@ function M.onMsdp(event)
 end
 
 function M.barUpdate(d)
+  -- the mount line comes right before the prompt; none this time = not riding
+  M.mount, M.mountPending = M.mountPending, nil
   if not M.bar or not M.bar.rawEcho then M.showBar(true) end
   -- re-layout if something else (e.g. the base UI dock) changed the side borders
   local ok, r = pcall(getBorderRight)
@@ -3446,6 +3449,14 @@ end
 function M.onLine()
   local cap = M.cap
   pcall(M.observe, line)
+  -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
+  -- It goes on the bar; it's never part of a command's output.
+  local mount = line:match("^%s*%(Mount:%s*(%d+)%s*st%)%s*$")
+  if mount then
+    M.mountPending = tonumber(mount)
+    if M.cfg.bar then deleteLine() end
+    return
+  end
   if not cap and not M.cfg.bar then return end
   -- the game's pager: "[C]ontinue [R]edraw [B]ack [E]xit:"
   if line:match("^%s*%[C%]ontinue") then
