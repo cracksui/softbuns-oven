@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.6"
+M.version = "0.16.7"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4208,7 +4208,7 @@ M.npcCtxLogged = M.npcCtxLogged or 0
 
 local function npcTags(l)
   -- channels and speech aren't room occupants
-  for _, v in ipairs({ " tells ", " says", " asks", " exclaims", " yells", " shouts", " whispers", " chats", " replies", "%]: " }) do
+  for _, v in ipairs({ " tells ", " says", " asks", " exclaims", " yells", " shouts", " whispers", " chats", " replies", "%]: ", "%a: " }) do
     if l:find(v) then return end
   end
   local tags = {}
