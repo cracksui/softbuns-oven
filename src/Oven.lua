@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.15.0"
+M.version = "0.15.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3076,6 +3076,7 @@ function M.sessionScore(sc)
   end
   if kills and not S.kills0 then S.kills0, S.deaths0 = kills, deaths end
   S.killsNow, S.deathsNow = kills or S.killsNow, deaths or S.deathsNow
+  if deaths then S.deathsLive = 0 end   -- score's total now includes them
 end
 
 -- exp per hour this session, or nil if there isn't enough to go on yet
@@ -3102,6 +3103,7 @@ M.duration = duration
 -- live exp gains: the exact message isn't known yet, so lines mentioning experience are
 -- logged (kind=observe) for tuning, and a few likely wordings are recognised
 M.expGain = { "^You receive ([%d,]+) experience", "^You gain ([%d,]+) experience", "^You have gained ([%d,]+) experience",
+              "awarding you .-([%d,]+) experience points",   -- quest rewards: "...awarding you 19 quest points, 6,640 experience points, ..."
               "([%d,]+) experience points?[%.!]" }
 local observed = {}
 function M.observe(l)
@@ -3264,13 +3266,14 @@ function M.sessionSegs()
   local t = sec >= 3600 and string.format("%dh %02dm", fl(sec / 3600), fl((sec % 3600) / 60)) or string.format("%dm", math.max(1, fl(sec / 60)))
   local segs = { { C.num, t } }
   segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "k/d: " }
+  local deaths = ((S.deathsNow or 0) - (S.deaths0 or 0)) + (S.deathsLive or 0)
   if S.kills0 and S.killsNow then
     segs[#segs + 1] = { C.plus, tostring(S.killsNow - S.kills0) }
-    segs[#segs + 1] = { C.dim, "/" }
-    segs[#segs + 1] = { C.minus, tostring((S.deathsNow or 0) - (S.deaths0 or 0)) }
   else
     segs[#segs + 1] = { C.dim, "-" }
   end
+  segs[#segs + 1] = { C.dim, "/" }
+  segs[#segs + 1] = { deaths > 0 and C.minus or C.dim, (S.kills0 or deaths > 0) and tostring(deaths) or "-" }
   local rate = M.expRate()
   segs[#segs + 1] = dot
   segs[#segs + 1] = { C.num, rate and tostring(fl(rate)) or "-" }
@@ -3544,6 +3547,10 @@ function M.onLine()
   pcall(M.observe, line)
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
   -- It goes on the bar; it's never part of a command's output.
+  if line:find("^%s*The Powers take pity on you and restore your soul to your body") then
+    M.sess.deathsLive = (M.sess.deathsLive or 0) + 1
+    pcall(M.drawBar)
+  end
   local doneQuest = line:match("^%s*All parts of your quest '(.+)' are complete%.?%s*$")
   if doneQuest then pcall(M.questMarkComplete, doneQuest) end
   local mount = line:match("^%s*%(Mount:%s*(%d+)%s*st%)%s*$")
