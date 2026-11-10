@@ -142,6 +142,7 @@ sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see 
 sbo learn                 look at worn items Oven doesn't know yet (the ? in eq)
 sbo loot [text|all]       what you and your group picked up, from where, and the exact room (sbo loot lance = search)
 sbo kills [all]           what you've killed, with counts and exp - this session and all time
+sbo deaths                your last deaths: where, at what level, and the lines leading up to each
 sbo session [reset]       exp gained, exp/hour, time and kills to next level
 sbo map on|off            follow you on the map (GMCP room number); double-click a room to walk there
 sbo map stop              cancel a walk in progress
@@ -151,6 +152,8 @@ sbo map card on|off       click a room on the map panel: its [QUEST]/[SHOP]/[TRA
 sbo map find <text>       find rooms by name - click a result to show it or walk there
 sbo run <what>            run to the nearest trainer / shop / quest / boss / NPC / room name seen
                           (sbo run all <what> lists every match, nearest first)
+sbo mark <name>           bookmark the room you're in; sbo run <name> takes you back (sbo mark = list,
+                          sbo unmark <name> removes one)
 sbo map walk <room #>     walk to a room (sbo map show <#> just centres the map on it)
 sbo map load [file]       load a map file (default: map/mm_map.dat)
 sbo gamecolors on|off     keep the game's own colours on item names

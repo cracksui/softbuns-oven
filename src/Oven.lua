@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.19.0"
+M.version = "0.19.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4292,6 +4292,8 @@ function M.roomCardLines(id)
     table.sort(exits)
   end
   row({ C.dim, (areaName ~= "" and (areaName .. "  ·  ") or "") .. (#exits > 0 and ("exits " .. table.concat(exits, " ")) or "no exits mapped") })
+  local marks = M.marksOf(id)
+  if #marks > 0 then row({ C.slot, "★ " .. table.concat(marks, ", ") }, { C.dim, "  (sbo run " .. marks[1] .. ")" }) end
   local any = false
   local MAX = 8
   -- notable NPCs ([QUEST] [SHOP] [TRAINER] ...)
@@ -4352,6 +4354,7 @@ function M.roomCardLines(id)
       row({ C.text, "  " .. (d.level and ("at level " .. d.level) or "level unknown") .. (d.total and (" (total " .. d.total .. ")") or "") },
           { C.dim, "  " .. ago(d.t) })
     end
+    row({ C.dim, "  what happened: sbo deaths" })
   end
   if not any then row(); row({ C.dim, "nothing recorded here yet" }) end
   row(); row({ C.dim, "double-click the room to walk there · click this card to close" })
@@ -4753,6 +4756,71 @@ end
 
 -- sbo run <what>: run to the nearest room that has it - an NPC tag or name ([Trainer], [Shop],
 -- "cleric"), a room tag ([Library]), or failing those a room name; or a room number
+-- Bookmarks: name the room you're in, then `sbo run <name>` takes you back
+function M.markRoom(name)
+  name = trim(name or ""):lower()
+  local id = M.currentRoom()
+  if not id then return say("Oven doesn't know which room you're in yet - move one room first") end
+  M.dbx("INSERT OR REPLACE INTO marks (name, room, t) VALUES (%s, %s, %s)", name, id, os.time())
+  say(string.format("bookmarked %s #%d as '%s' - sbo run %s", (roomExists(id) and getRoomName(id)) or "this room", id, name, name))
+end
+
+function M.unmarkRoom(name)
+  name = trim(name or ""):lower()
+  if not M.dbRow("SELECT room FROM marks WHERE name = %s", name) then return say("no bookmark called '" .. name .. "'") end
+  M.dbx("DELETE FROM marks WHERE name = %s", name)
+  say("bookmark '" .. name .. "' removed")
+end
+
+function M.marksOf(id)
+  local out = {}
+  for _, r in ipairs(M.dbRows("SELECT name FROM marks WHERE room = %s ORDER BY name", id)) do out[#out + 1] = r.name end
+  return out
+end
+
+function M.listMarks()
+  local rows = M.dbRows("SELECT name, room FROM marks ORDER BY name")
+  if #rows == 0 then return say("no bookmarks yet - stand somewhere and type sbo mark <name>") end
+  local width = M.cfg.window and M.viewCols() or 80
+  local out = { header("map", "", width, string.format("Bookmarks  (%d)", #rows)) }
+  local links = {}
+  local w = 0
+  for _, r in ipairs(rows) do w = math.max(w, ulen(r.name)) end
+  for _, r in ipairs(rows) do
+    local id = tonumber(r.room)
+    local nm = (id and roomExists(id) and getRoomName(id)) or "?"
+    out[#out + 1] = { { C.slot, pad(r.name, w + 2) }, { C.item, nm }, { C.dim, "  #" .. tostring(id) } }
+    links[#links + 1] = { "run to " .. r.name, function() M.mapRun(r.name) end }
+  end
+  out[#out + 1] = {}
+  out[#out + 1] = { { C.dim, "sbo run <name> to go there · sbo unmark <name> to remove one" } }
+  if M.cfg.window then M.viewAdd({ lines = out, links = links }) else render("main", out) end
+end
+
+-- Deaths: where, at what level, and the lines that led up to it
+function M.deathLines(width)
+  local rows = M.dbRows("SELECT t, room, level, total, recap FROM deaths ORDER BY t DESC LIMIT 10")
+  local total = M.dbRow("SELECT COUNT(*) AS c FROM deaths")
+  local out = { header("deaths", "", width, string.format("Deaths  (%s in all)", tostring(total and total.c or 0))) }
+  local links = {}
+  if #rows == 0 then out[#out + 1] = { { C.dim, "no deaths recorded - long may it last" } } end
+  for _, r in ipairs(rows) do
+    local id = tonumber(r.room)
+    local nm = (id and roomExists(id) and getRoomName(id)) or "?"
+    out[#out + 1] = {}
+    out[#out + 1] = { { C.minus, "▸ " .. os.date("%Y-%m-%d %H:%M", tonumber(r.t)) }, { C.item, "  " .. nm }, { C.dim, "  #" .. tostring(id) },
+                      { C.text, r.level and ("  · level " .. r.level) or "" } }
+    local recap = M.deser(r.recap)
+    if recap and #recap > 0 then
+      for i = math.max(1, #recap - 14), #recap do out[#out + 1] = { { C.dim, "    " .. recap[i] } } end
+    else
+      out[#out + 1] = { { C.dim, "    (no recap: recorded before 0.19)" } }
+    end
+    if id then links[#links + 1] = { "map: " .. nm .. " #" .. id, function() M.mapShow(id) end } end
+  end
+  return out, links
+end
+
 function M.runTargets(q)
   q = trim(q or ""):lower()
   local single = q:gsub("s$", "")          -- "trainers" finds [Trainer]
@@ -4763,6 +4831,9 @@ function M.runTargets(q)
     local f = found[id]
     if not f then f = { id = id, why = why, rank = rank }; found[id] = f; order[#order + 1] = f
     elseif rank < f.rank then f.why, f.rank = why, rank end
+  end
+  for _, r in ipairs(M.dbRows("SELECT name, room FROM marks WHERE name = %s OR instr(name, %s) = 1", q, q)) do
+    add(r.room, "bookmark '" .. r.name .. "'", r.name == q and 0 or 0.5)
   end
   local npcRooms = {}
   for _, r in ipairs(M.dbRows("SELECT room, text, tags FROM room_npcs WHERE instr(lower(tags), %s) > 0 OR instr(lower(text), %s) > 0", single, q)) do
@@ -5165,6 +5236,8 @@ M.helpSections = {
     { "sbo map find {text}", "find rooms by name; click a result to show it or walk there" },
     { "sbo run {what}", "run to the nearest trainer, shop, quest, boss, NPC name, or room name" },
     { "sbo run all {what}", "every match, nearest first, to pick from" },
+    { "sbo mark {name}", "bookmark the room you're in (sbo run name goes back; sbo mark lists them)" },
+    { "sbo unmark {name}", "remove a bookmark" },
     { "sbo map walk {room #}", "walk to a room" },
     { "sbo map show {room #}", "centre the map on a room" },
     { "sbo map stop", "cancel a walk" },
@@ -5174,6 +5247,7 @@ M.helpSections = {
     { "sbo kills [all]", "what you've killed, with counts and exp (reset: this session, clear: all)" },
     { "sbo loot [text]", "what was picked up and the exact room; text searches it (all, clear)" },
     { "sbo session [reset]", "exp gained, exp/hour, time and kills to next level" },
+    { "sbo deaths", "your last deaths: where, at what level, and the lines leading up to each" },
   } },
   { key = "bar", title = "Prompt bar", rows = {
     { "sbo bar on|off", "your prompt as a bar of HP / SP / ST gauges under the text" },
@@ -5386,6 +5460,14 @@ function M.command(args)
     M.cfg.slotNames = b; say("slot names: " .. b)
   elseif a == "learn" then return M.learn()
   elseif a == "run" then return M.mapRun(b)
+  elseif a == "mark" then if b == "" then return M.listMarks() end return M.markRoom(b)
+  elseif a == "marks" then return M.listMarks()
+  elseif a == "unmark" then return M.unmarkRoom(b)
+  elseif a == "deaths" then
+    local w = M.cfg.window and M.viewCols() or columns("main")
+    local lines, links = M.deathLines(w)
+    if M.cfg.window then M.viewAdd({ lines = lines, links = links }) else render("main", lines) end
+    return
   elseif a == "loot" then
     if b == "clear" then M.dbx("DELETE FROM loot"); return say("loot log cleared") end
     local all = b == "all" or b:match("^all%s") ~= nil
