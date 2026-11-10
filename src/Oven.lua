@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.7"
+M.version = "0.9.8"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -356,8 +356,29 @@ function M.runsFor(idx, text)
   local from = (utf8 and utf8.len(plainLine:sub(1, at - 1))) or (at - 1)
   local to = from + ((utf8 and utf8.len(text)) or #text)
   local runs = M.dechoRuns(M.curDecho[idx])
-  -- the colour of plain text on this line = colour of its first character
-  local base = runs[1] and runs[1][1]
+  -- "plain" colour: the first visible (non-space) text before the item on this line,
+  -- else the first visible text of the capture's first line (e.g. "You are carrying:").
+  -- Leading spaces don't count: the game may start an item's colour before them.
+  local function firstVisible(rs, limit)
+    local p = 0
+    for _, run in ipairs(rs) do
+      local n = (utf8 and utf8.len(run[2])) or #run[2]
+      local upto = limit and math.min(n, limit - p) or n
+      if upto > 0 and M.usub(run[2], 1, upto):find("%S") then return run[1], true end
+      p = p + n
+      if limit and p >= limit then break end
+    end
+    return nil, false
+  end
+  local base, found = firstVisible(runs, from)
+  if not found then
+    for j = 1, #M.curDecho do
+      if j ~= idx then
+        local b2, f2 = firstVisible(M.dechoRuns(M.curDecho[j]))
+        if f2 then base = b2; break end
+      end
+    end
+  end
   local out, pos, coloured = {}, 0, false
   for _, run in ipairs(runs) do
     local n = (utf8 and utf8.len(run[2])) or #run[2]
@@ -2023,6 +2044,10 @@ local function writeSample(cap)
   if not f then return end
   f:write(string.format("===== %s | kind=%s | cmd=%s\n", os.date("%Y-%m-%d %H:%M:%S"), cap.kind, cap.cmd))
   for _, l in ipairs(cap.plain) do f:write(l, "\n") end
+  if cap.decho and #cap.decho > 0 then
+    f:write("----- with colour codes\n")
+    for _, d in ipairs(cap.decho) do f:write(d, "\n") end
+  end
   f:write("===== end\n\n")
   f:close()
 end
