@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.0"
+M.version = "0.10.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1459,11 +1459,26 @@ local function segsToDecho(lines)
 end
 M.segsToDecho = segsToDecho
 
+local pageStyle = "background-color: black; padding: 6px; qproperty-alignment: 'AlignTop | AlignLeft';"
+
+-- (re)build a page's widgets. Each page shown gets a fresh ScrollBox: it starts at
+-- the top, and no stale (unstyled, white) area is left over from a longer page.
+local function buildPage(pg)
+  if pg.scroll then pcall(function() pg.scroll:delete() end) end
+  pg.flip = (pg.flip == "A") and "B" or "A"
+  local base = pg.prefix .. pg.flip
+  pg.scroll = Geyser.ScrollBox:new({ name = base .. "Scroll", x = 0, y = 0, width = "100%", height = "100%" }, pg.container)
+  -- black backdrop under everything (the ScrollBox itself can't be styled)
+  pg.backdrop = Geyser.Label:new({ name = base .. "Back", x = 0, y = 0, width = "100%", height = 100 }, pg.scroll)
+  pg.backdrop:setStyleSheet("background-color: black;")
+  pg.label = Geyser.Label:new({ name = base .. "Label", x = 0, y = 0, width = "100%", height = 40 }, pg.scroll)
+  pg.label:setStyleSheet(pageStyle)
+  pg.links = {}
+end
+
 function M.newPage(prefix, container)
-  local pg = { prefix = prefix, links = {} }
-  pg.scroll = Geyser.ScrollBox:new({ name = prefix .. "Scroll", x = 0, y = 0, width = "100%", height = "100%" }, container)
-  pg.label = Geyser.Label:new({ name = prefix .. "Label", x = 0, y = 0, width = "100%", height = 40 }, pg.scroll)
-  pg.label:setStyleSheet("background-color: black; padding: 6px;")
+  local pg = { prefix = prefix, container = container, links = {} }
+  buildPage(pg)
   return pg
 end
 
@@ -1494,7 +1509,7 @@ function M.pageShow(pg, lines, fmt, links)
   local doc = string.format(
     "<div style=\"white-space: pre-wrap; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
     font, size, table.concat(html, "\n"))
-  pg.label:resize(nil, 1)   -- collapse first so the panel scrolls back to the top
+  buildPage(pg)
   pg.label:rawEcho(doc)
   -- height: wrapped rows times the label's real line height (rich text spaces lines wider than the font)
   local rows = 0
@@ -1505,12 +1520,12 @@ function M.pageShow(pg, lines, fmt, links)
   local rowH = math.ceil(lineH)
   local pageH = math.ceil(rows * lineH + 12)
   links = links or {}
-  pg.label:resize(nil, pageH + (#links > 0 and 0 or 3 * rowH))
+  pg.label:resize(nil, pageH)
   -- clickable lines under the page (labels can't hold links, so each is its own label)
   for i, ln in ipairs(links) do
     local lab = pg.links[i]
     if not lab then
-      lab = Geyser.Label:new({ name = pg.prefix .. "Link" .. i, x = 0, y = 0, width = "100%", height = 20 }, pg.scroll)
+      lab = Geyser.Label:new({ name = pg.prefix .. pg.flip .. "Link" .. i, x = 0, y = 0, width = "100%", height = 20 }, pg.scroll)
       pg.links[i] = lab
     end
     lab:setStyleSheet(string.format([[
@@ -1526,16 +1541,10 @@ function M.pageShow(pg, lines, fmt, links)
     lab:show()
   end
   for i = #links + 1, #pg.links do pg.links[i]:hide() end
-  -- spacer so the last link line can scroll fully into view
-  if not pg.spacer then
-    pg.spacer = Geyser.Label:new({ name = pg.prefix .. "Spacer", x = 0, y = 0, width = "100%", height = 1 }, pg.scroll)
-    pg.spacer:setStyleSheet("background-color: black;")
-  end
-  if #links > 0 then
-    pg.spacer:move(0, pageH + (#links + 2) * rowH - 1); pg.spacer:show()
-  else
-    pg.spacer:hide()
-  end
+  -- backdrop: as tall as the content (plus a little room) and at least the visible area
+  local okV, visH = pcall(function() return pg.scroll:get_height() end)
+  local contentH = pageH + #links * rowH + 2 * rowH
+  pg.backdrop:resize("100%", math.max(contentH, (okV and tonumber(visH)) or 0))
 end
 
 ---------------------------------------------------------------------------
@@ -1602,7 +1611,7 @@ function M.createHelpWindow()
   if M.helpConsole then M.helpConsole:hide() end   -- console used by versions before 0.9.3
   if M.helpLabel and not M.helpPg then
     -- page built by 0.9.3 - 0.9.11: reuse its widgets
-    M.helpPg = { prefix = "ovenHelp", scroll = M.helpScroll, label = M.helpLabel, links = M.helpLinks or {}, spacer = M.helpSpacer }
+    M.helpPg = { prefix = "ovenHelp", container = M.helpContainer, scroll = M.helpScroll, label = M.helpLabel, links = M.helpLinks or {} }
   end
   if not M.helpPg then M.helpPg = M.newPage("ovenHelp", M.helpContainer) end
 end
