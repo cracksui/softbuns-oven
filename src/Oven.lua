@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.10"
+M.version = "0.9.11"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1495,8 +1495,9 @@ local function segsToDecho(lines)
   return outl
 end
 
--- show a page: title + lines in decho ("decho") or cecho ("cecho") format
-function M.helpPage(title, lines, fmt)
+-- show a page: title + lines in decho ("decho") or cecho ("cecho") format;
+-- links: optional { {text, command}, ... } shown as clickable lines under the page
+function M.helpPage(title, lines, fmt, links)
   M.createHelpWindow()
   M.helpContainer:show()
   local font = (pcall(getFont) and getFont()) or "monospace"
@@ -1524,11 +1525,71 @@ function M.helpPage(title, lines, fmt)
   local lineH = ch * 1.25
   local okH, _, hintH = pcall(function() return M.helpLabel:getSizeHint() end)
   if okH and tonumber(hintH) and hintH > 0 then lineH = math.max(lineH, hintH / #plainCount) end
-  M.helpLabel:resize(nil, math.ceil(rows * lineH + 3 * lineH + 12))   -- a little spare at the bottom
+  local pageH = math.ceil(rows * lineH + 12)
+  links = links or {}
+  M.helpLabel:resize(nil, pageH + (#links > 0 and 0 or 3 * lineH))   -- a little spare at the bottom
+  -- clickable SEE ALSO lines (labels can't hold links, so each is its own small label)
+  M.helpLinks = M.helpLinks or {}
+  for i, ln in ipairs(links) do
+    local lab = M.helpLinks[i]
+    if not lab then
+      lab = Geyser.Label:new({ name = "ovenHelpLink" .. i, x = 0, y = 0, width = "100%", height = 20 }, M.helpScroll)
+      M.helpLinks[i] = lab
+    end
+    lab:setStyleSheet(string.format([[
+      QLabel { background-color: black; color: #87cefa; padding-left: 6px;
+               font-family: '%s', monospace; font-size: %dpt; }
+      QLabel::hover { color: #ffffff; text-decoration: underline; }]], font, size))
+    pcall(function() lab:setCursor("PointingHand") end)
+    lab:echo(ln[1]:gsub("&", "&amp;"):gsub("<", "&lt;"))
+    local cmd = ln[2]
+    lab:setClickCallback(function() send(cmd) end)
+    lab:move(0, pageH + (i - 1) * math.ceil(lineH))
+    lab:resize("100%", math.ceil(lineH))
+    lab:show()
+  end
+  for i = #links + 1, #M.helpLinks do M.helpLinks[i]:hide() end
+  if #links > 0 then
+    -- spacer so the last link can scroll fully into view
+    M.helpLabel:resize(nil, pageH)
+    M.helpSpacerY = pageH + #links * math.ceil(lineH) + 2 * math.ceil(lineH)
+    if not M.helpSpacer then
+      M.helpSpacer = Geyser.Label:new({ name = "ovenHelpSpacer", x = 0, y = 0, width = "100%", height = 1 }, M.helpScroll)
+      M.helpSpacer:setStyleSheet("background-color: black;")
+    end
+    M.helpSpacer:move(0, M.helpSpacerY - 1); M.helpSpacer:show()
+  elseif M.helpSpacer then
+    M.helpSpacer:hide()
+  end
+end
+
+-- "[1024] set - toggles ..." -> help 1024 ; " remove - remove an item" -> help remove
+function M.helpLinkFor(plain)
+  local id = plain:match("^%s*%[%s*(%d+)%s*%]")
+  if id then return "help " .. id end
+  local topic = plain:match("^%s+([%a][%w%s,'%-]-)%s+%-%s")
+  if topic then
+    topic = trim(topic:match("^([^,]+)") or topic)   -- "hold, wield, equip - ..." -> hold
+    return "help " .. topic
+  end
 end
 
 function M.showHelp(topic, dechoLines)
-  M.helpPage("Help" .. ((topic and topic ~= "") and (": " .. topic) or ""), dechoLines, "decho")
+  local body, links, inSeeAlso = {}, {}, false
+  for _, d in ipairs(dechoLines) do
+    local plain = ""
+    for _, run in ipairs(M.dechoRuns(d)) do plain = plain .. run[2] end
+    if plain:match("^%s*SEE ALSO:?%s*$") then
+      inSeeAlso = true; body[#body + 1] = d
+    elseif inSeeAlso and M.helpLinkFor(plain) then
+      links[#links + 1] = { trim(plain), M.helpLinkFor(plain) }
+    else
+      body[#body + 1] = d
+    end
+  end
+  -- drop trailing blank lines before the links
+  while #links > 0 and #body > 0 and trim(body[#body]:gsub("<[^<>]*>", "")) == "" do table.remove(body) end
+  M.helpPage("Help" .. ((topic and topic ~= "") and (": " .. topic) or ""), body, "decho", links)
 end
 
 function M.showWindow(on)
