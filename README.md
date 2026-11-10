@@ -148,6 +148,8 @@ sbo map panel on|off      the map in its own window: room name, search box, zoom
 sbo map card on|off       click a room on the map panel: its [QUEST]/[SHOP]/[TRAINER] NPCs,
                           working enter commands, kills, loot and your deaths there (on)
 sbo map find <text>       find rooms by name - click a result to show it or walk there
+sbo run <what>            run to the nearest trainer / shop / quest / boss / NPC / room name seen
+                          (sbo run all <what> lists every match, nearest first)
 sbo map walk <room #>     walk to a room (sbo map show <#> just centres the map on it)
 sbo map load [file]       load a map file (default: map/mm_map.dat)
 sbo gamecolors on|off     keep the game's own colours on item names

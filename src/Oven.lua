@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.11"
+M.version = "0.17.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4484,6 +4484,96 @@ function M.mapWalkTo(id)
   M.walkStep()
 end
 
+-- sbo run <what>: run to the nearest room that has it - an NPC tag or name ([Trainer], [Shop],
+-- "cleric"), a room tag ([Library]), or failing those a room name; or a room number
+function M.runTargets(q)
+  q = trim(q or ""):lower()
+  local single = q:gsub("s$", "")          -- "trainers" finds [Trainer]
+  local found, order = {}, {}
+  local function add(id, why, rank)
+    id = tonumber(id)
+    if not id or not roomExists(id) then return end
+    local f = found[id]
+    if not f then f = { id = id, why = why, rank = rank }; found[id] = f; order[#order + 1] = f
+    elseif rank < f.rank then f.why, f.rank = why, rank end
+  end
+  for id, book in pairs(M.cfg.roomNpcs or {}) do
+    for _, n in pairs(book) do
+      local tagHit
+      for _, t in ipairs(n.tags or {}) do
+        local tl = t:lower()
+        if tl == q or tl == single or tl:sub(1, #q) == q then tagHit = true end
+      end
+      local label = ""
+      for _, t in ipairs(n.tags or {}) do label = label .. "[" .. t .. "] " end
+      label = label .. (n.text or "")
+      if tagHit then add(id, label, 1)
+      elseif (n.text or ""):lower():find(q, 1, true) then add(id, label, 2) end
+    end
+  end
+  for id, fl in pairs(M.cfg.roomFlags or {}) do
+    for _, t in ipairs(fl.tags or {}) do
+      local tl = t:lower()
+      if tl == q or tl == single then add(id, "[" .. t .. "]", 3) end
+    end
+  end
+  local fromNotes = #order > 0
+  if not fromNotes then
+    local ok, rooms = pcall(searchRoom, q)
+    if ok and type(rooms) == "table" then
+      for key, name in pairs(rooms) do add(key, name, 4) end
+    end
+  end
+  return order, fromNotes
+end
+
+function M.mapRun(arg)
+  arg = trim(arg or "")
+  local all = arg:match("^all%s+(.+)$")
+  local q = all or arg
+  if q == "" then return say("usage: sbo run <trainer|shop|quest|… or part of a name or room # >  (sbo run all <what> lists them)") end
+  if q == "stop" then return M.command("map stop") end
+  if tonumber(q) then return M.mapWalkTo(tonumber(q)) end
+  if not M.cfg.map then return say("map following is off - sbo map on first") end
+  local here = M.mapRoom or M.currentRoom()
+  if not here or not roomExists(here) then return say("Oven doesn't know where you are on the map yet - move one room first") end
+  local targets = M.runTargets(q)
+  if #targets == 0 then return say("nothing called '" .. q .. "' that Oven has seen, and no room on the map by that name") end
+  -- walking distance to each (the nearest 60 candidates are plenty)
+  local reach = {}
+  for i, t in ipairs(targets) do
+    if i > 60 then break end
+    if t.id == here then t.steps = 0; reach[#reach + 1] = t
+    elseif getPath(here, t.id) then t.steps = #speedWalkDir; reach[#reach + 1] = t end
+  end
+  if #reach == 0 then return say("found " .. #targets .. " match" .. (#targets == 1 and "" or "es") .. " for '" .. q .. "', but no route on the map from here") end
+  table.sort(reach, function(a, b) if a.rank ~= b.rank then return a.rank < b.rank end return a.steps < b.steps end)
+  -- best kind of match first, then the nearest of that kind
+  local best = reach[1]
+  for _, t in ipairs(reach) do if t.rank == best.rank and t.steps < best.steps then best = t end end
+  if all then
+    table.sort(reach, function(a, b) return a.steps < b.steps end)
+    local width = M.cfg.window and M.viewCols() or 80
+    local out = { header("map", "", width, string.format("Run: %s  (%d reachable)", q, #reach)) }
+    local links = {}
+    for i, t in ipairs(reach) do
+      if i > 25 then out[#out + 1] = { { C.dim, "… and " .. (#reach - 25) .. " more" } }; break end
+      out[#out + 1] = { { C.num, string.format("%4d steps  ", t.steps) }, { C.item, getRoomName(t.id) or "?" }, { C.dim, "  #" .. t.id } }
+      if t.why ~= getRoomName(t.id) then out[#out + 1] = { { C.dim, "            " .. t.why } } end
+      local id = t.id
+      links[#links + 1] = { "run to #" .. id .. " " .. (getRoomName(id) or ""), function() M.mapWalkTo(id) end }
+    end
+    if M.cfg.window then M.viewAdd({ lines = out, links = links }) else render("main", out) end
+    return
+  end
+  local others = #reach - 1
+  say(string.format("running to %s · %s #%d · %d step%s%s", best.why, getRoomName(best.id) or "?", best.id,
+    best.steps, best.steps == 1 and "" or "s",
+    others > 0 and string.format("  (%d other%s: sbo run all %s)", others, others == 1 and "" or "s", q) or ""))
+  if best.steps == 0 then return say("you're already there") end
+  M.mapWalkTo(best.id)
+end
+
 function M.mapStart()
   if M.mapHandler then killAnonymousEventHandler(M.mapHandler) end
   M.mapHandler = registerAnonymousEventHandler("gmcp.room.info", function() M.onRoom() end)
@@ -4780,6 +4870,8 @@ M.helpSections = {
     { "sbo map panel on|off", "the map in its own window, with a search box and zoom buttons" },
     { "sbo map card on|off", "click a room: its [QUEST]/[SHOP] NPCs, enter commands, kills, loot, deaths" },
     { "sbo map find {text}", "find rooms by name; click a result to show it or walk there" },
+    { "sbo run {what}", "run to the nearest trainer, shop, quest, boss, NPC name, or room name" },
+    { "sbo run all {what}", "every match, nearest first, to pick from" },
     { "sbo map walk {room #}", "walk to a room" },
     { "sbo map show {room #}", "centre the map on a room" },
     { "sbo map stop", "cancel a walk" },
@@ -5000,6 +5092,7 @@ function M.command(args)
   elseif a == "slots" and (b == "short" or b == "full") then
     M.cfg.slotNames = b; say("slot names: " .. b)
   elseif a == "learn" then return M.learn()
+  elseif a == "run" then return M.mapRun(b)
   elseif a == "loot" then
     if b == "clear" then M.cfg.loot = {}; M.saveSettings(); return say("loot log cleared") end
     local all = b == "all" or b:match("^all%s") ~= nil
