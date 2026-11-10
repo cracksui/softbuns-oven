@@ -93,6 +93,7 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 | `aff` | resistances, spell and racial affects with their modifiers |
 | `level` | exp needed for each upcoming level, what's still to go and how long it'll take at this session's pace |
 | `skills spells`, `skills prof` | one row per skill: ★ class-recommended, school/type, SP, complexity, a learned gauge |
+| `train` | attributes and vitals with current/max gauges, practice cost, and how many times you can afford each |
 | `prac` / `prac all` at a trainer | recommended skills this trainer teaches first, then what you know (by progress, with complexity), then what's new to you |
 | `help <topic>` | the help page opens in its own **help window**, exactly as the game sends it |
 

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.12.0"
+M.version = "0.12.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -240,6 +240,11 @@ end
 
 -- Does a block of lines look like server-wrapped prose (vs. a list)?
 local function looksWrapped(block)
+  -- columns (3+ spaces between words) mean a table, never prose; the game puts two spaces
+  -- after a full stop in prose, so that alone doesn't count
+  local columns = 0
+  for _, l in ipairs(block) do if l:match("%S%s%s%s+%S") then columns = columns + 1 end end
+  if columns > 0 and columns >= #block / 3 then return false end
   if #block < 2 then return ulen(block[1] or "") > 60 end
   local maxL = 0
   for _, l in ipairs(block) do maxL = math.max(maxL, ulen(l)) end
@@ -281,7 +286,11 @@ function M.formatters.generic(raw, width)
       addAll(out, wrapWords(text, width, 0, C.text))
     else
       for _, l in ipairs(block) do
-        addAll(out, wrapWords(l, width, 2, C.text))
+        if l:match("%S%s%s%s+%S") and ulen(l) <= width then
+          out[#out + 1] = { { C.text, l } }   -- columns: keep the game's spacing
+        else
+          addAll(out, wrapWords(l, width, 2, C.text))
+        end
       end
     end
   end
@@ -1617,7 +1626,50 @@ local function learnedSegs(pct, width)
   return segs
 end
 
+-- `train`: "strength   8/20   80"
+function M.parseTrain(raw)
+  local rows, prac, started = {}, nil, false
+  for idx, l in ipairs(raw) do
+    local t = trim(l)
+    local p = t:match("^You have (%d+) practice sessions?")
+    if p then prac = tonumber(p) end
+    if t:match("^Attribute Name") then started = true
+    elseif started then
+      local name, cur, mx, cost = t:match("^(%a[%a ]-)%s+(%d+)/(%d+)%s+(%d+)$")
+      if name then rows[#rows + 1] = { name = name, cur = tonumber(cur), max = tonumber(mx), cost = tonumber(cost) } end
+    end
+  end
+  return #rows > 0 and { rows = rows, prac = prac } or nil
+end
+
 function M.formatters.skills(raw, width)
+  local tr = M.parseTrain(raw)
+  if tr then
+    local out, prac = {}, tr.prac or 0
+    local nameW = 0
+    for _, r in ipairs(tr.rows) do nameW = math.max(nameW, ulen(r.name)) end
+    local gw = width >= 80 and 10 or 6
+    out[#out + 1] = { { C.key, pad("", nameW) .. "     current" .. string.rep(" ", gw + 1) .. "   cost" } }
+    local vitals = { hp = true, sp = true, st = true }
+    for i, r in ipairs(tr.rows) do
+      if vitals[r.name] and i > 1 and not vitals[tr.rows[i - 1].name] then blank(out) end
+      local full = r.cur >= r.max
+      local afford = (not full and r.cost > 0) and math.floor(prac / r.cost) or 0
+      local row = { { full and C.dim or C.item, pad(r.name, nameW) } }
+      row[#row + 1] = { C.num, string.format("%12s ", r.cur .. "/" .. r.max) }
+      addAll(row, M.gauge(r.cur, r.max, gw, vitals[r.name] and C.slot or nil))
+      row[#row + 1] = { afford > 0 and C.plus or C.dim, string.format("%7d", r.cost) }
+      if full then row[#row + 1] = { C.dim, "   maxed" }
+      elseif afford > 0 then row[#row + 1] = { C.plus, "   ×" .. afford }
+      end
+      out[#out + 1] = row
+    end
+    blank(out)
+    out[#out + 1] = { { C.dim, "cost in practices  ·  ×N = how many times you can train it with " }, { C.num, tostring(prac) },
+                      { C.dim, " practices" } }
+    return out, "Train  (" .. prac .. " practices)"
+  end
+
   local tbl = M.parseSkillTable(raw)
   if tbl then
     -- remember them for the practice planner
