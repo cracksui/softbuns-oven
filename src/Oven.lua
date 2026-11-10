@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.10"
+M.version = "0.16.11"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5349,10 +5349,10 @@ end
 
 function M.init()
   M.updating = nil
-  pcall(M.cleanRoomNpcs)
   M.teardown()
   M.dropPages()
   M.loadSettings()
+  if pcall(M.cleanRoomNpcs) then pcall(M.saveSettings) end
   M.quests = M.cfg.quests or M.quests or {}
   M.handlers = {
     registerAnonymousEventHandler("sysDataSendRequest", M.onSend),
