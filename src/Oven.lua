@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.14.10"
+M.version = "0.15.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -39,6 +39,7 @@ M.defaults = {
   questHudSide = "right",    -- quest HUD corner: right or left (top of the game text area)
   questHudOpacity = 100,     -- quest HUD background opacity, 0-100
   map          = false,      -- follow your room (GMCP) on the map and walk where you double-click
+  mapPanel     = false,      -- the map in its own Oven window
   autocompare  = true,       -- compare looked-at items with what you wear in that slot
   bar          = false,      -- move the prompt into a fixed bar at the bottom
   barMode      = "gauges",   -- gauges | raw
@@ -3748,6 +3749,7 @@ function M.onRoom()
   if not id then return end
   M.mapRoom = id
   if roomExists(id) then centerview(id) end
+  pcall(M.drawMapHeader)
   -- walking: arrived where the next step should take us?
   local w = M.walk
   if w then
@@ -3799,6 +3801,79 @@ function M.doSpeedWalk()
   M.walk = { dirs = dirs, path = path, step = 1 }
   M.notifyWalk(string.format("%d step%s…", #dirs, #dirs == 1 and "" or "s"))
   M.walkStep()
+end
+
+---------------------------------------------------------------------------
+-- Map panel: the map in an Oven window, with the current room on top and zoom/centre buttons
+---------------------------------------------------------------------------
+local mapHeaderStyle = "background-color: rgba(18,18,26,255); padding-left: 6px; qproperty-alignment: 'AlignVCenter | AlignLeft';"
+local mapButtonStyle = [[
+  QLabel { background-color: rgba(30,30,42,255); color: #c0c0c0; border-left: 1px solid #333;
+           qproperty-alignment: 'AlignCenter'; }
+  QLabel::hover { background-color: rgba(64,224,208,60); color: white; }]]
+
+function M.createMapPanel()
+  if M.mapPanel then return end
+  M.mapPanel = Adjustable.Container:new({
+    name = "ovenMapPanel",
+    titleText = "Map",
+    x = "-36%", y = "4%", width = "34%", height = "50%",
+    adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+    titleTxtColor = "#e6c35c",
+  })
+  local box = Geyser.VBox:new({ name = "ovenMapBox", x = 0, y = 0, width = "100%", height = "100%" }, M.mapPanel)
+  local header = Geyser.HBox:new({ name = "ovenMapHeader", height = 24, v_policy = Geyser.Fixed }, box)
+  M.mapRoomLabel = Geyser.Label:new({ name = "ovenMapRoom" }, header)
+  M.mapRoomLabel:setStyleSheet(mapHeaderStyle)
+  local function button(name, text, tip, fn)
+    local b = Geyser.Label:new({ name = name, width = 28, h_policy = Geyser.Fixed }, header)
+    b:setStyleSheet(mapButtonStyle)
+    b:echo(text)
+    pcall(function() b:setToolTip(tip) end)
+    pcall(function() b:setCursor("PointingHand") end)
+    b:setClickCallback(function() fn() end)
+    return b
+  end
+  button("ovenMapZoomOut", "−", "zoom out", function() M.mapZoom(1.25) end)
+  button("ovenMapZoomIn", "+", "zoom in", function() M.mapZoom(0.8) end)
+  button("ovenMapCentre", "◎", "centre on you", function() if M.mapRoom and roomExists(M.mapRoom) then centerview(M.mapRoom) end end)
+  M.mapWidget = Geyser.Mapper:new({ name = "ovenMapper", v_policy = Geyser.Dynamic }, box)
+  if M.cfg.mapZoom then pcall(setMapZoom, M.cfg.mapZoom) end
+end
+
+function M.mapZoom(factor)
+  local z = (M.cfg.mapZoom or 15) * factor
+  z = math.max(3, math.min(60, z))
+  M.cfg.mapZoom = z
+  pcall(setMapZoom, z)
+  M.saveSettings()
+end
+
+-- room name · area · #number in the header
+function M.drawMapHeader()
+  if not M.mapRoomLabel then return end
+  local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info or {}
+  local id = tonumber(info.num) or M.mapRoom
+  local name = info.name or (id and roomExists(id) and getRoomName(id)) or "?"
+  local area = info.zone or ""
+  local font = (pcall(getFont) and getFont()) or "monospace"
+  local esc = function(x) return (tostring(x):gsub("&", "&amp;"):gsub("<", "&lt;")) end
+  M.mapRoomLabel:echo(string.format(
+    "<span style=\"font-family:'%s'; color:#ffffff;\">%s</span>"
+    .. "<span style=\"font-family:'%s'; color:#808080;\">%s%s</span>",
+    font, esc(name), font, area ~= "" and ("  ·  " .. esc(area)) or "", id and ("  ·  #" .. id) or ""))
+end
+
+function M.showMapPanel(on)
+  if on then
+    M.createMapPanel()
+    M.mapPanel:show()
+    M.drawMapHeader()
+    if M.mapRoom and roomExists(M.mapRoom) then centerview(M.mapRoom) end
+    if M.raiseQuestHud then M.raiseQuestHud() end
+  elseif M.mapPanel then
+    M.mapPanel:hide()
+  end
 end
 
 function M.mapStart()
@@ -3880,6 +3955,7 @@ function M.help()
   <khaki>sbo learn<reset>                 look at the worn items Oven doesn't know yet (the ? in eq)
   <khaki>sbo map on|off<reset>            follow you on the map by room number; double-click a room to walk there
   <khaki>sbo map stop<reset> / <khaki>load [file]<reset>  cancel a walk / load a map file (default: map/mm_map.dat)
+  <khaki>sbo map panel on|off<reset>      the map in its own window, with the room name and zoom/centre buttons
   <khaki>sbo session [reset]<reset>       exp gained, exp/hour, time and kills to next level
   <khaki>sbo gamecolors on|off<reset>     keep the game's own colours on item names
   <khaki>sbo eqstats on|off<reset>        AR and affects of each worn item in eq (look at an item once to fill it in)
@@ -4085,6 +4161,10 @@ function M.command(args)
     elseif b == "stop" then
       if M.walk then M.walk = nil; return say("walk cancelled") end
       return say("not walking")
+    elseif b == "panel on" or b == "panel off" then
+      M.cfg.mapPanel = (b == "panel on"); M.saveSettings(); M.showMapPanel(M.cfg.mapPanel)
+      if M.cfg.mapPanel and not M.cfg.map then M.cfg.map = true; M.saveSettings(); M.mapStart() end
+      return say("map panel " .. (M.cfg.mapPanel and "on: drag/resize it, or right-click its title for 'attach to border'" or "off"))
     elseif b:match("^load") then
       local file = trim(b:gsub("^load", "")); if file == "" then file = getMudletHomeDir() .. "/map/mm_map.dat" end
       if not io.exists(file) then return say("map file not found: " .. file) end
@@ -4369,6 +4449,7 @@ function M.init()
         if M.questContainer then M.questContainer:hide() end
         if M.questHud then M.questHud:hide() end
         for _, c in ipairs(M.questCards or {}) do c:hide() end
+        if M.mapPanel then M.mapPanel:hide() end
         if M.bar then M.bar:hide(); setBorderBottom(0) end
         if M.sbar then M.sbar:hide() end
         if M.topTaken then setBorderTop(M.baseTop or 0); M.topTaken = nil end
@@ -4387,6 +4468,7 @@ function M.init()
   if M.cfg.window and M.container then M.container:show() end
   if M.cfg.bar then M.showBar(true) end
   if M.cfg.map then M.mapStart() end
+  if M.cfg.mapPanel then pcall(M.showMapPanel, true) end
   if next(M.cfg.questPins or {}) then pcall(M.drawQuestTracker) end
   M.startUpdatePoll()
   if not M.booted then
