@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.9"
+M.version = "0.16.10"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4223,7 +4223,8 @@ local function npcTags(l)
     if not NOT_TAGS[t:upper()] and ulen(t) >= 3 then tags[#tags + 1] = t end
     rest = after
   end
-  local text = trim((rest:gsub("%s+", " ")))
+  local text = trim((rest:gsub("%s+", " "):gsub("^%*+%s*", "")))
+  if text:match("^Item '") then return end
   if #tags == 0 or text == "" or ulen(text) > 160 then return end
   -- channels and speech aren't room occupants
   for _, v in ipairs({ " tells ", " says", " asks", " exclaims", " yells", " shouts", " whispers", " chats", " replies", "%a: " }) do
@@ -4248,6 +4249,26 @@ function M.noteRoomFlags(id, l)
   if #flags == 0 and not old then return end
   M.cfg.roomFlags[key] = #flags > 0 and { tags = flags, last = os.time() } or nil
   M.saveSettings()
+end
+
+-- 0.16.7 took tags from anywhere on a line, so item lines ("Item '...' ... [Study][LTB]")
+-- were saved as NPCs; drop those, and tidy leading "**" off names
+function M.cleanRoomNpcs()
+  for _, book in pairs(M.cfg.roomNpcs or {}) do
+    local drop, rename = {}, {}
+    for key, n in pairs(book) do
+      local t = n.text or ""
+      if t:match("^Item '") or t:find("%[%u") then
+        drop[#drop + 1] = key
+      elseif t:match("^%*") then
+        drop[#drop + 1] = key
+        n.text = t:gsub("^%*+%s*", "")
+        rename[#rename + 1] = n
+      end
+    end
+    for _, key in ipairs(drop) do book[key] = nil end
+    for _, n in ipairs(rename) do book[n.text:lower()] = n end
+  end
 end
 
 function M.noteRoomLine(l)
@@ -5328,6 +5349,7 @@ end
 
 function M.init()
   M.updating = nil
+  pcall(M.cleanRoomNpcs)
   M.teardown()
   M.dropPages()
   M.loadSettings()
