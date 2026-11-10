@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.8"
+M.version = "0.16.9"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4212,18 +4212,23 @@ local NOT_TAGS = { CRIT = true }
 M.roomLineBuf = M.roomLineBuf or {}
 M.npcCtxLogged = M.npcCtxLogged or 0
 
+-- "*[Shop] A hunched-over senior citizen sits on a blanket, peddling his wares."
+-- tags open the line (after an optional "*"), each a capitalised word or words
 local function npcTags(l)
-  -- channels and speech aren't room occupants
-  for _, v in ipairs({ " tells ", " says", " asks", " exclaims", " yells", " shouts", " whispers", " chats", " replies", "%]: ", "%a: " }) do
-    if l:find(v) then return end
-  end
+  local rest = l:gsub("^%s*%*?%s*", "")
   local tags = {}
-  for t in l:gmatch("%[(%u[%u %-]+%u)%]") do
-    if not NOT_TAGS[t] then tags[#tags + 1] = t end
+  while true do
+    local t, after = rest:match("^%[(%u[%a %-]*%a)%]%s*(.*)$")
+    if not t then break end
+    if not NOT_TAGS[t:upper()] and ulen(t) >= 3 then tags[#tags + 1] = t end
+    rest = after
   end
-  if #tags == 0 then return end
-  local text = trim((l:gsub("%[%u[%u %-]+%u%]", ""):gsub("%s+", " ")))
-  if text == "" or ulen(text) > 160 then return end
+  local text = trim((rest:gsub("%s+", " ")))
+  if #tags == 0 or text == "" or ulen(text) > 160 then return end
+  -- channels and speech aren't room occupants
+  for _, v in ipairs({ " tells ", " says", " asks", " exclaims", " yells", " shouts", " whispers", " chats", " replies", "%a: " }) do
+    if text:find(v) then return end
+  end
   return tags, text
 end
 
