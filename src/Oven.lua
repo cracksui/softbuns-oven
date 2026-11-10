@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.12"
+M.version = "0.10.13"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -40,7 +40,7 @@ M.defaults = {
   bar          = false,      -- move the prompt into a fixed bar at the bottom
   barMode      = "gauges",   -- gauges | raw
   barWidth     = 10,         -- length of each gauge in the prompt bar
-  barBg        = { 18, 19, 26 },  -- prompt bar background (r, g, b): a faint tint
+  barBg        = { 12, 12, 16 },  -- prompt bar background (r, g, b): a faint tint
   barBlank     = true,       -- with the bar on, also drop the blank line before each prompt
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
@@ -67,8 +67,10 @@ function M.loadSettings()
   local t = {}
   if io.exists(M.settingsFile) then pcall(table.load, M.settingsFile, t) end
   t.updatePath = nil  -- old local-file updater setting
-  if type(t.barBg) == "table" and t.barBg[1] == 28 and t.barBg[2] == 30 and t.barBg[3] == 42 then
-    t.barBg = nil      -- the 0.10.10 default was too strong: use the new default
+  -- earlier defaults were too strong: move anyone still on one of them to the current default
+  if type(t.barBg) == "table" then
+    local c = table.concat(t.barBg, ",")
+    if c == "28,30,42" or c == "18,19,26" then t.barBg = nil end
   end
   for k, v in pairs(M.defaults) do
     if t[k] == nil then t[k] = v end
@@ -2185,8 +2187,12 @@ end
 -- put decho text in the bar, in the main window's font
 local function barEcho(d)
   local font = (pcall(getFont) and getFont()) or "monospace"
+  -- decho2html gives every piece of text a (black) background; drop it so the bar's tint shows
+  local html = decho2html(d)
+    :gsub("background%-color:%s*rgba?%b();?", "")
+    :gsub("background:%s*rgba?%b();?", "")
   M.bar:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
-    font, M.barFontSize(), decho2html(d)))
+    font, M.barFontSize(), html))
 end
 
 function M.drawBar()
