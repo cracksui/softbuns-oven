@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.10"
+M.version = "0.10.11"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2772,11 +2772,22 @@ end
 -- Updates come from GitHub: VERSION says what's current, Oven.mpackage is the package.
 M.REPO = "@@REPO@@"
 M.BRANCH = "main"
--- (the ?t= query skips GitHub's ~5 minute cache so new releases show up right away)
+-- Files are fetched from the exact latest commit (raw.githubusercontent.com/<repo>/<sha>/...):
+-- the branch address is cached by GitHub for up to 5 minutes, a commit address is always
+-- current. The latest commit comes from the GitHub API; if that's unavailable (it allows
+-- 60 requests an hour), the branch address is used instead.
 function M.rawUrl(file)
-  return "https://raw.githubusercontent.com/" .. M.REPO .. "/" .. M.BRANCH .. "/" .. file .. "?t=" .. os.time()
+  return "https://raw.githubusercontent.com/" .. M.REPO .. "/" .. (M.updSha or M.BRANCH) .. "/" .. file
 end
-M.dl = { version = getMudletHomeDir() .. "/oven_latest_version.txt", pkg = getMudletHomeDir() .. "/oven_latest.mpackage" }
+function M.apiUrl() return "https://api.github.com/repos/" .. M.REPO .. "/commits/" .. M.BRANCH end
+
+-- step 1 of every check: find the latest commit, then fetch VERSION from it
+function M.fetchVersion()
+  M.updSha = nil
+  downloadFile(M.dl.api, M.apiUrl())
+end
+M.dl = { version = getMudletHomeDir() .. "/oven_latest_version.txt", pkg = getMudletHomeDir() .. "/oven_latest.mpackage",
+         api = getMudletHomeDir() .. "/oven_latest_commit.json" }
 
 local function newer(a, b)  -- is version a newer than b?
   local function parts(v) local t = {} for n in tostring(v):gmatch("%d+") do t[#t + 1] = tonumber(n) end return t end
@@ -2826,13 +2837,13 @@ function M.update(arg)
   if M.REPO:find("@@", 1, true) then return say("no GitHub repository configured in this build") end
   M.pending = (arg == "force") and "force" or "update"
   say("checking github.com/" .. M.REPO .. " for updates…")
-  downloadFile(M.dl.version, M.rawUrl("VERSION"))
+  M.fetchVersion()
 end
 
 function M.checkForUpdate()
   if M.REPO:find("@@", 1, true) or not M.cfg.updateCheck or M.pending then return end
   M.pending = M.cfg.autoUpdate and "auto" or "check"
-  downloadFile(M.dl.version, M.rawUrl("VERSION"))
+  M.fetchVersion()
 end
 
 -- with automatic updates on, look for a new version every couple of minutes
@@ -2844,9 +2855,18 @@ function M.startUpdatePoll()
 end
 
 function M.onDownload(event, file, err)
-  if file ~= M.dl.version and file ~= M.dl.pkg then return end
+  if file ~= M.dl.version and file ~= M.dl.pkg and file ~= M.dl.api then return end
   local mode = M.pending
   if not mode then return end  -- nothing of ours in flight
+  if file == M.dl.api then
+    -- latest commit id; on any problem fall back to the branch address
+    if event ~= "sysDownloadError" then
+      local f = io.open(file); local body = f and f:read("*a") or ""; if f then f:close() end
+      M.updSha = body:match('"sha"%s*:%s*"(%x+)"')
+    end
+    downloadFile(M.dl.version, M.rawUrl("VERSION"))
+    return
+  end
   if event == "sysDownloadError" then
     M.pending = nil
     if mode ~= "check" and mode ~= "auto" then say("download failed: " .. tostring(err or file)) end
