@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.0"
+M.version = "0.11.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -99,6 +99,8 @@ M.commands = {
   { word = "affects",   min = 2, kind = "affects" },
   { word = "help",      min = 3, kind = "help" },     -- shown as-is in the help window
   -- recorded (not reformatted yet) so a practice planner can be built from real output
+  { word = "level",     min = 3, kind = "levels" },
+  { word = "levels",    min = 6, kind = "levels" },
   { word = "skills",    min = 3, kind = "skills" },
   { word = "practice",  min = 3, kind = "skills" },
   { word = "train",     min = 3, kind = "skills" },
@@ -1329,6 +1331,17 @@ function M.formatters.score(raw, width)
     local nxt = tonumber(lvl or "") and (" to level " .. (tonumber(lvl) + 1)) or " to next level"
     out[#out + 1] = { { C.plus, commaNum(sc.tnl) }, { C.text, " exp" .. nxt },
                       { C.dim, "   (" .. commaNum(sc.exp) .. " total)" } }
+    local T = M.cfg.levelTable
+    local L = tonumber(I["Class Level"] or "")
+    if type(T) == "table" and L and T[L] and T[L + 1] then
+      local expN = tonumber((sc.exp:gsub(",", "")))
+      local frac = math.max(0, math.min(1, (expN - T[L]) / (T[L + 1] - T[L])))
+      local row = {}
+      addAll(row, gauge(frac * 100, 100, 20, C.plus))
+      row[#row + 1] = { C.num, string.format("  %d%%", math.floor(frac * 100)) }
+      row[#row + 1] = { C.dim, " of the way to " .. (L + 1) }
+      out[#out + 1] = row
+    end
     local rate = M.expRate and M.expRate()
     if rate and rate > 0 then
       local tnlN = tonumber((sc.tnl:gsub(",", "")))
@@ -1422,6 +1435,68 @@ function M.formatters.score(raw, width)
     addAll(out, wrapWords(table.concat(misc, "  ·  "), width, 0, C.dim))
   end
   return out, sc.title
+end
+
+---------------------------------------------------------------- levels
+-- exp needed for each level, from the game's `level` command (saved once seen)
+function M.levelInfo()
+  local T, c = M.cfg.levelTable, M.cfg.char or {}
+  if type(T) ~= "table" or not c.level then return nil end
+  local lvl = c.level
+  local cur, nxt = T[lvl] or T[tostring(lvl)], T[lvl + 1] or T[tostring(lvl + 1)]
+  if not cur or not nxt or nxt <= cur then return nil end
+  local exp = c.exp or (c.tnl and (nxt - c.tnl))
+  if not exp then return nil end
+  local frac = math.max(0, math.min(1, (exp - cur) / (nxt - cur)))
+  return { level = lvl, exp = exp, cur = cur, nxt = nxt, frac = frac }
+end
+
+function M.formatters.levels(raw, width)
+  local T = {}
+  for _, l in ipairs(raw) do
+    local n, x = l:match("%[Level:%s*(%d+)%]%s*Experience Required:%s*([%d,]+)")
+    if n then T[tonumber(n)] = tonumber((x:gsub(",", ""))) end
+  end
+  if not next(T) then return M.formatters.generic(raw, width) end
+  M.cfg.levelTable = T
+  M.saveSettings()
+  local maxL = 0
+  for n in pairs(T) do maxL = math.max(maxL, n) end
+  local c = M.cfg.char or {}
+  local exp = c.exp
+  local rate = M.expRate and M.expRate()
+  local out = {}
+  local info = M.levelInfo()
+  if info then
+    local row = { { C.title, "You: " }, { C.text, "level " }, { C.num, tostring(info.level) }, { C.dim, "  " } }
+    addAll(row, M.gauge(info.frac * 100, 100, 20, C.plus))
+    row[#row + 1] = { C.num, string.format("  %d%%", math.floor(info.frac * 100)) }
+    row[#row + 1] = { C.dim, " of the way to " .. (info.level + 1) }
+    out[#out + 1] = row
+    blank(out)
+  end
+  local first = 1
+  if c.level then
+    out[#out + 1] = { { C.dim, string.format("levels 1-%d reached", c.level) } }
+    first = c.level + 1
+  end
+  out[#out + 1] = { { C.key, string.format("%-6s %12s %10s %12s   %s", "level", "exp needed", "step", "to go", rate and "at this pace" or "") } }
+  for L = first, maxL do
+    local need = T[L]
+    if need then
+      local step = T[L - 1] and (need - T[L - 1]) or need
+      local toGo = exp and math.max(0, need - exp)
+      local eta = (toGo and rate and rate > 0) and ("≈ " .. M.duration(toGo * 3600 / rate)) or ""
+      out[#out + 1] = {
+        { L == first and C.title or C.text, string.format("%-6d ", L) },
+        { C.num, string.format("%12s ", M.commaNum(need)) },
+        { C.dim, string.format("%10s ", "+" .. M.commaNum(step)) },
+        { L == first and C.plus or C.text, string.format("%12s   ", toGo and M.commaNum(toGo) or "") },
+        { C.dim, eta },
+      }
+    end
+  end
+  return out, "Levels"
 end
 
 ---------------------------------------------------------------- affects
@@ -2383,6 +2458,8 @@ function M.drawBar()
   end
   if tnl then
     tail[#tail + 1] = { C.dim, (lvl and "  " or "") .. "tnl " }; tail[#tail + 1] = { C.plus, commaNum(tnl) }
+    local info = M.levelInfo()
+    if info then tail[#tail + 1] = { C.dim, string.format(" %d%%", math.floor(info.frac * 100)) } end
     local rate = M.expRate()
     if rate and rate > 0 then tail[#tail + 1] = { C.dim, " ≈" .. M.duration(tnl * 3600 / rate) } end
   end
@@ -2498,6 +2575,7 @@ M.shapes = {
   score = function(t, l)
     return t:match("^Player Information") or l:match("^%s%s%S") or t:match("^%*")
   end,
+  levels = function(t) return t:match("^%[Level:") end,
   affects = function(t)
     return t:match("^You are affected") or t:match("^You are not affected") or t:match("^%*")
       or t:match("^%a[%a ]-:%s") or t:match("^Total of") or t:match("^%[AFFECTS")

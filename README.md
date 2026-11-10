@@ -91,6 +91,7 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 | `i`, `look in <container>` | one item per row, stack counts, capacity footer |
 | `score` | level, exp to level and how long the next level will take at this session's pace; vitals and attribute gauges, standing, kill record |
 | `aff` | resistances, spell and racial affects with their modifiers |
+| `level` | exp needed for each upcoming level, what's still to go and how long it'll take at this session's pace |
 | `help <topic>` | the help page opens in its own **help window**, exactly as the game sends it |
 
 ## Comparing gear
