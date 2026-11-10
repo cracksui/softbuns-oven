@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.20.5"
+M.version = "0.20.6"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5048,6 +5048,8 @@ local function npcTags(l)
   end
   local text = trim((rest:gsub("%s+", " "):gsub("^%*+%s*", "")))
   if text:match("^Item '") then return end
+  -- help pages explain tags as "[Hunting] - The character is hunting...": room occupants start with a word
+  if not text:match("^[%a%d\"']") then return end
   if #tags == 0 or text == "" or ulen(text) > 160 then return end
   -- channels and speech aren't room occupants
   for _, v in ipairs({ " tells ", " says", " asks", " exclaims", " yells", " shouts", " whispers", " chats", " replies", "%a: " }) do
@@ -5124,7 +5126,8 @@ function M.noteRoomLine(l)
     pcall(M.checkEnter, id)
     return
   end
-  local tags, text = npcTags(l)
+  local tags, text
+  if not (M.cap and M.cap.kind == "help") then tags, text = npcTags(l) end
   if tags then
     M.roomLineBuf[#M.roomLineBuf + 1] = { tags = tags, text = text }
     if M.cfg.samples and M.npcCtxLogged < 15 then
@@ -6424,6 +6427,8 @@ function M.init()
   local okI, errI = pcall(M.importOld)
   if not okI then M.log("<red>[sbo] moving your saved data into the database failed: " .. tostring(errI) .. "<reset>") end
   pcall(M.rotateSamples)
+  -- 0.20.5 and older saved help-page tag legends ("[Guide] - The character is...") as NPCs
+  pcall(M.dbx, "DELETE FROM room_npcs WHERE substr(text, 1, 1) NOT GLOB '[A-Za-z0-9\"'']'")
   M.quests = M.cfg.quests or M.quests or {}
   M.handlers = {
     registerAnonymousEventHandler("sysDataSendRequest", M.onSend),
