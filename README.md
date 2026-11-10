@@ -138,6 +138,7 @@ sbo font [size]           Inspector / help window font size (leave the number of
 sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
 sbo learn                 look at worn items Oven doesn't know yet (the ? in eq)
+sbo kills [all]           what you've killed, with counts and exp - this session and all time
 sbo session [reset]       exp gained, exp/hour, time and kills to next level
 sbo map on|off            follow you on the map (GMCP room number); double-click a room to walk there
 sbo map stop              cancel a walk in progress

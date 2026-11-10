@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.15.4"
+M.version = "0.15.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3144,6 +3144,7 @@ function M.sessionScore(sc)
   if kills and not S.kills0 then S.kills0, S.deaths0 = kills, deaths end
   S.killsNow, S.deathsNow = kills or S.killsNow, deaths or S.deathsNow
   if deaths then S.deathsLive = 0 end   -- score's total now includes them
+  if kills then S.killsLive = 0 end
 end
 
 -- exp per hour this session, or nil if there isn't enough to go on yet
@@ -3187,6 +3188,7 @@ function M.observe(l)
     if n and not t:find("need", 1, true) then
       n = tonumber((n:gsub(",", "")))
       if n and n > 0 then
+        if t:match("^You gain") then pcall(M.creditKillExp, n) end
         M.sess.gained = (M.sess.gained or 0) + n
         if M.sess.exp0 then M.sess.gainedAfterScore = (M.sess.gainedAfterScore or 0) + n end
         local c = M.cfg.char or {}
@@ -3334,13 +3336,14 @@ function M.sessionSegs()
   local segs = { { C.num, t } }
   segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "k/d: " }
   local deaths = ((S.deathsNow or 0) - (S.deaths0 or 0)) + (S.deathsLive or 0)
-  if S.kills0 and S.killsNow then
-    segs[#segs + 1] = { C.plus, tostring(S.killsNow - S.kills0) }
+  local kills = ((S.killsNow or 0) - (S.kills0 or 0)) + (S.killsLive or 0)
+  if S.kills0 or (S.killsLive or 0) > 0 then
+    segs[#segs + 1] = { C.plus, tostring(kills) }
   else
     segs[#segs + 1] = { C.dim, "-" }
   end
   segs[#segs + 1] = { C.dim, "/" }
-  segs[#segs + 1] = { deaths > 0 and C.minus or C.dim, (S.kills0 or deaths > 0) and tostring(deaths) or "-" }
+  segs[#segs + 1] = { deaths > 0 and C.minus or C.dim, (S.kills0 or deaths > 0 or kills > 0) and tostring(deaths) or "-" }
   local rate = M.expRate()
   segs[#segs + 1] = dot
   segs[#segs + 1] = { C.num, rate and tostring(fl(rate)) or "-" }
@@ -3635,6 +3638,8 @@ function M.onLine()
   pcall(M.noteKillContext, line)
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
   -- It goes on the bar; it's never part of a command's output.
+  local slain = line:match("^%s*(.-) has been slain!%s*$")
+  if slain and slain ~= "" then pcall(M.recordKill, slain) end
   if line:find("^%s*The Powers take pity on you and restore your soul to your body") then
     M.sess.deathsLive = (M.sess.deathsLive or 0) + 1
     pcall(M.drawBar)
@@ -3984,6 +3989,78 @@ function M.mapStop()
   M.walk = nil
 end
 
+---------------------------------------------------------------------------
+-- Kill log: "<creature> has been slain!", with the exp that follows it
+---------------------------------------------------------------------------
+local function killBook(book, key, name)
+  local e = book[key]
+  if not e then e = { name = name, count = 0, exp = 0 }; book[key] = e end
+  return e
+end
+
+function M.recordKill(name)
+  name = trim(name)
+  local key = name:lower()
+  M.cfg.kills = M.cfg.kills or {}
+  M.sess.killBook = M.sess.killBook or {}
+  local t = os.time()
+  for _, book in ipairs({ M.cfg.kills, M.sess.killBook }) do
+    local e = killBook(book, key, name)
+    e.count = e.count + 1
+    e.last = t
+  end
+  M.sess.killsLive = (M.sess.killsLive or 0) + 1
+  M.lastKill = { key = key, at = now() }
+  M.saveSettings()
+  pcall(M.drawBar)
+end
+
+-- exp gained within a few seconds of a kill is credited to it
+function M.creditKillExp(n)
+  local k = M.lastKill
+  if not k or now() - k.at > 5 then return end
+  for _, book in ipairs({ M.cfg.kills or {}, M.sess.killBook or {} }) do
+    local e = book[k.key]
+    if e then e.exp = (e.exp or 0) + n end
+  end
+  M.lastKill = nil
+  M.saveSettings()
+end
+
+local function killTable(out, title, book, width, limit)
+  local rows = {}
+  for _, e in pairs(book or {}) do rows[#rows + 1] = e end
+  table.sort(rows, function(a, b)
+    if a.count ~= b.count then return a.count > b.count end
+    return a.name:lower() < b.name:lower()
+  end)
+  local total = 0
+  for _, e in ipairs(rows) do total = total + e.count end
+  subhead(out, string.format("%s  (%d kill%s, %d kind%s)", title, total, total == 1 and "" or "s", #rows, #rows == 1 and "" or "s"))
+  if #rows == 0 then out[#out + 1] = { { C.dim, "  nothing yet" } }; return end
+  local nameW = ulen("Creature")
+  for i, e in ipairs(rows) do if i <= (limit or #rows) then nameW = math.max(nameW, math.min(40, ulen(e.name))) end end
+  out[#out + 1] = { { C.key, "  " .. pad("Creature", nameW + 2) .. string.format("%6s %10s   %s", "Kills", "Exp", "Last") } }
+  for i, e in ipairs(rows) do
+    if limit and i > limit then
+      out[#out + 1] = { { C.dim, string.format("  … and %d more (sbo kills all)", #rows - limit) } }
+      break
+    end
+    local nm = ulen(e.name) > 40 and (M.usub(e.name, 1, 39) .. "…") or e.name
+    local ago = e.last and M.shortDur(os.time() - e.last) .. " ago" or ""
+    out[#out + 1] = { { C.item, "  " .. pad(nm, nameW + 2) }, { C.num, string.format("%6d ", e.count) },
+                      { (e.exp or 0) > 0 and C.plus or C.dim, string.format("%10s", (e.exp or 0) > 0 and M.commaNum(e.exp) or "-") },
+                      { C.dim, "   " .. ago } }
+  end
+end
+
+function M.killLines(width, all)
+  local out = { header("kills", "", width, "Kills") }
+  killTable(out, "This session", M.sess.killBook, width, all and nil or 25)
+  killTable(out, "All time", M.cfg.kills, width, all and nil or 25)
+  return out
+end
+
 -- sbo learn: look at every worn item Oven doesn't know yet (the "?" in eq), quietly
 function M.learn()
   if #M.eqNames == 0 then return say("type eq first, so Oven knows what you're wearing") end
@@ -4052,6 +4129,7 @@ function M.help()
   <khaki>sbo map on|off<reset>            follow you on the map by room number; double-click a room to walk there
   <khaki>sbo map stop<reset> / <khaki>load [file]<reset>  cancel a walk / load a map file (default: map/mm_map.dat)
   <khaki>sbo map panel on|off<reset>      the map in its own window, with the room name and zoom/centre buttons
+  <khaki>sbo kills [all]<reset>            what you've killed: this session and all time (reset / clear)
   <khaki>sbo session [reset]<reset>       exp gained, exp/hour, time and kills to next level
   <khaki>sbo gamecolors on|off<reset>     keep the game's own colours on item names
   <khaki>sbo eqstats on|off<reset>        AR and affects of each worn item in eq (look at an item once to fill it in)
@@ -4224,6 +4302,12 @@ function M.command(args)
   elseif a == "slots" and (b == "short" or b == "full") then
     M.cfg.slotNames = b; say("slot names: " .. b)
   elseif a == "learn" then return M.learn()
+  elseif a == "kills" then
+    if b == "reset" then M.sess.killBook = {}; return say("this session's kill list cleared")
+    elseif b == "clear" then M.cfg.kills = {}; M.saveSettings(); return say("all-time kill list cleared") end
+    local lines = M.killLines(M.cfg.window and M.viewCols() or columns("main"), b == "all")
+    if M.cfg.window then M.viewAdd({ lines = lines, links = {} }) else render("main", lines) end
+    return
   elseif a == "quest" or a == "quests" then
     local sub, val = b:match("^(%S*)%s*(.-)$")
     if sub == "pin" and val ~= "" then M.questPin(val, true); return say("pinned " .. val .. " to the quest tracker")
