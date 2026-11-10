@@ -127,7 +127,8 @@ Green marks the better value in each row.
 ## Commands
 
 ```
-sbo                       list of commands
+sbo                       list of commands, grouped by task
+sbo help <section>        one group: start gear quest map log bar window update
 sbo test                  demo
 sbo on|off                turn formatting on / off
 sbo main replace|keep     replace the raw text in the main window, or leave it alone

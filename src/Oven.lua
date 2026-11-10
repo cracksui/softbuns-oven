@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.0"
+M.version = "0.16.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4329,69 +4329,117 @@ function M.learnNext()
 end
 
 
-function M.help()
-  -- collect the text, then show it in the help window (or the main window)
+-- the command list, grouped by what you want to do; `sbo help <section>` shows one section
+M.helpSections = {
+  { key = "start", title = "Getting started", rows = {
+    { "sbo test", "see a demo of the layouts" },
+    { "score  eq  look {item}", "just play: Oven bakes these (and i, aff, quest, prac, help…) as they arrive" },
+    { "sbo raw", "the last output exactly as the game sent it" },
+    { "sbo help {section}", "just one section: start gear quest map log bar window update" },
+  } },
+  { key = "gear", title = "Gear and items", rows = {
+    { "sbo learn", "look at worn items Oven doesn't know yet (the ? in eq)" },
+    { "sbo compare", "compare the last two items you looked at" },
+    { "sbo compare {a} vs {b}", "compare two remembered items by part of their names" },
+    { "sbo pin {name}  /  unpin", "compare everything you look at against one item (handy in shops)" },
+    { "sbo autocompare on|off", "compare each looked-at item with what you wear in that slot" },
+    { "sbo items", "list the items Oven remembers" },
+    { "", "" },
+    { "sbo eqstats on|off", "AR and affects column in eq" },
+    { "sbo empty on|off", "show empty slots in eq" },
+    { "sbo donation on|off", "show empty donation-only slots (amulet, face, aura)" },
+    { "sbo slots short|full", "short slot names (finger, neck…) or the game's full ones" },
+    { "sbo gamecolors on|off", "keep the game's own colours on item names" },
+  } },
+  { key = "quest", title = "Quests", rows = {
+    { "sbo quest pin {id|all}", "put quests on the quest HUD (or click pin under quest info)" },
+    { "sbo quest unpin {id|all}", "take them off (click a finished quest to clear it)" },
+    { "sbo quest refresh [id]", "quietly re-check pinned quests (or click the HUD)" },
+    { "sbo quest show|hide", "show / hide the quest HUD" },
+    { "sbo quest hud blurb on|off", "add each quest's description, which often holds hints" },
+    { "sbo quest hud left|right", "which top corner it sits in (reset: back there after dragging)" },
+    { "sbo quest hud opacity [0-100]", "how see-through it is (no number = solid)" },
+  } },
+  { key = "map", title = "Map and walking", rows = {
+    { "sbo map on|off", "follow you on the map; double-click a room to walk there" },
+    { "sbo map panel on|off", "the map in its own window, with a search box and zoom buttons" },
+    { "sbo map find {text}", "find rooms by name; click a result to show it or walk there" },
+    { "sbo map walk {room #}", "walk to a room" },
+    { "sbo map show {room #}", "centre the map on a room" },
+    { "sbo map stop", "cancel a walk" },
+    { "sbo map load [file]", "load a map file (default: map/mm_map.dat)" },
+  } },
+  { key = "log", title = "Kills, loot and progress", rows = {
+    { "sbo kills [all]", "what you've killed, with counts and exp (reset: this session, clear: all)" },
+    { "sbo loot [text]", "what was picked up and the exact room; text searches it (all, clear)" },
+    { "sbo session [reset]", "exp gained, exp/hour, time and kills to next level" },
+  } },
+  { key = "bar", title = "Prompt bar", rows = {
+    { "sbo bar on|off", "your prompt as a bar of HP / SP / ST gauges under the text" },
+    { "sbo bar gauges|raw", "gauges, or the prompt exactly as the game sends it" },
+    { "sbo bar session on|off", "session time, kills/deaths and exp per hour on the bar" },
+    { "sbo bar session full|short", "time · k/d · xp/hr, or just xp/hr" },
+    { "sbo bar session top|bottom", "where that goes when it doesn't fit on the bar" },
+    { "sbo bar width [n]", "length of each gauge (default 10)" },
+    { "sbo bar lines [n]  /  font [n]", "bar height / font size" },
+    { "sbo bar bg [r g b]", "background colour, 0-255 each" },
+    { "sbo bar blanks on|off", "keep the blank line the game puts before each prompt" },
+  } },
+  { key = "window", title = "Windows and display", rows = {
+    { "sbo on|off", "turn formatting on / off" },
+    { "sbo main replace|keep", "formatted text in the main window, or leave the main window alone" },
+    { "sbo window on|off", "the Inspector window (drag it by its title, resize from its edges)" },
+    { "sbo helpwindow on|off", "game help pages (and this list) in their own window" },
+    { "sbo font [size]", "Inspector / help window font size" },
+    { "sbo clear", "clear the Inspector's history" },
+  } },
+  { key = "update", title = "Updates and troubleshooting", rows = {
+    { "sbo update", "get the newest version (settings are kept)" },
+    { "sbo update auto on|off", "install new versions by themselves" },
+    { "sbo update force", "reinstall even if you're current" },
+    { "sbo update {file}", "install a local .mpackage file" },
+    { "sbo samples on|off", "log raw game output to oven_samples.txt (helps fix layouts)" },
+    { "sbo prompt [pattern]", "set your prompt pattern (blank = detect it automatically)" },
+  } },
+}
+
+function M.help(section)
+  section = trim(section or ""):lower()
+  local pick
+  for _, s in ipairs(M.helpSections) do
+    if section ~= "" and (s.key == section or s.title:lower():find(section, 1, true)) then pick = s; break end
+  end
+  local cmdW = 0
+  for _, s in ipairs(M.helpSections) do
+    for _, r in ipairs(s.rows) do cmdW = math.max(cmdW, ulen((r[1]:gsub("[{}]", "")))) end
+  end
   local buf = {}
-  local function cecho(a) buf[#buf + 1] = a end
-  cecho("\n<orange>Soft Bun's Oven<reset> <dim_grey>v" .. M.version .. " by softbuns :: bakes raw game output into something edible<reset>\n")
-  cecho([[
-  <khaki>sbo on|off<reset>                enable / disable capturing
-  <khaki>sbo main replace|keep<reset>     replace = show formatted text in main window instead of the raw text
-                            keep    = leave the main window untouched
-  <khaki>sbo window on|off<reset>         floating Inspector window (drag/resize it; position is remembered)
-  <khaki>sbo clear<reset>                 clear the Inspector's history
-  <khaki>sbo raw<reset>                   reprint the last capture exactly as the game sent it
-  <khaki>sbo samples on|off<reset>        log raw captures to oven_samples.txt (helps tune the layout)
-  <khaki>sbo prompt [lua pattern]<reset>  set your prompt pattern (blank = telnet GA only)
-  <khaki>sbo font [size]<reset>           Inspector and help window font size (no size = default)
-  <khaki>sbo test<reset>                  show a demo
-  <khaki>sbo compare<reset>               compare the last two items you looked at
-  <khaki>sbo compare [a] vs [b]<reset>    compare two remembered items by (part of) their names
-  <khaki>sbo pin [name]<reset> / <khaki>unpin<reset>    compare every item you look at against this one
-  <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
-  <khaki>sbo items<reset>                 list remembered items
-  <khaki>sbo quest pin|unpin [id|all]<reset> keep quests in the quest tracker window
-  <khaki>sbo quest refresh [id]<reset>    quietly re-check pinned quests (or click the quest HUD)
-  <khaki>sbo quest hud blurb on|off<reset>  show each quest's description (hints) in the HUD
-  <khaki>sbo quest hud opacity [0-100]<reset> how see-through the quest HUD is (no number = opaque)
-  <khaki>sbo quest hud left|right|reset<reset> quest HUD corner, or back to it after dragging (sbo quest show|hide)
-  <khaki>sbo learn<reset>                 look at the worn items Oven doesn't know yet (the ? in eq)
-  <khaki>sbo map on|off<reset>            follow you on the map by room number; double-click a room to walk there
-  <khaki>sbo map stop<reset> / <khaki>load [file]<reset>  cancel a walk / load a map file (default: map/mm_map.dat)
-  <khaki>sbo map panel on|off<reset>      the map in its own window, with the room name and zoom/centre buttons
-  <khaki>sbo map find [text]<reset>       rooms whose name contains the text (also the map panel's search box)
-  <khaki>sbo map walk|show [room #]<reset> walk to a room, or centre the map on it
-  <khaki>sbo loot [text|all]<reset>       what you and your group picked up, and the room it was in (clear)
-  <khaki>sbo kills [all]<reset>            what you've killed: this session and all time (reset / clear)
-  <khaki>sbo session [reset]<reset>       exp gained, exp/hour, time and kills to next level
-  <khaki>sbo gamecolors on|off<reset>     keep the game's own colours on item names
-  <khaki>sbo eqstats on|off<reset>        AR and affects of each worn item in eq (look at an item once to fill it in)
-  <khaki>sbo empty on|off<reset>          show empty equipment slots in eq
-  <khaki>sbo donation on|off<reset>       show / hide empty donation-only slots (amulet, face, aura)
-  <khaki>sbo slots short|full<reset>      short slot names in eq tables (finger, neck…) or the game's full ones
-  <khaki>sbo helpwindow on|off<reset>     game help pages (and this list) in their own window
-  <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
-  <khaki>sbo bar gauges|raw<reset>        prompt bar as gauges, or the prompt exactly as the game sends it
-  <khaki>sbo bar session on|off<reset>    session time, exp/hour, level ETA, kills (on the bar when it fits)
-  <khaki>sbo bar session full|short<reset> time, k/d and xp/hr - or just xp/hr
-  <khaki>sbo bar session top|bottom<reset> where they go when they don't fit: top of the screen or under the bar
-  <khaki>sbo bar bg [r g b]<reset>        prompt bar background colour (no numbers = default)
-  <khaki>sbo bar blanks on|off<reset>     keep (on) or remove (off) the blank line the game puts before each prompt
-  <khaki>sbo bar width [n]<reset>         length of each gauge (no number = default, 10)
-  <khaki>sbo bar lines [n]<reset> / <khaki>font [n]<reset>  prompt bar height / font size (no number = default)
-  <khaki>sbo update<reset>                get the latest version from GitHub (settings are kept)
-  <khaki>sbo update auto on|off<reset>    install new versions automatically (checks every 2 minutes)
-  <khaki>sbo update force<reset>          reinstall the latest version even if you already have it
-  <khaki>sbo update [file]<reset>         install a local .mpackage file instead
-]])
-  cecho(string.format("\n<dim_grey>settings: enabled=%s main=%s window=%s helpwindow=%s bar=%s samples=%s<reset>\n",
-    tostring(M.cfg.enabled), M.cfg.main, tostring(M.cfg.window), tostring(M.cfg.helpWindow),
-    tostring(M.cfg.bar), tostring(M.cfg.samples)))
+  local function add(a) buf[#buf + 1] = a end
+  add("\n<orange>Soft Bun's Oven<reset> <dim_grey>v" .. M.version .. " by softbuns  ·  `oven` works as well as `sbo`<reset>\n")
+  if section ~= "" and not pick then add("<dim_grey>no section called '" .. section .. "' - here's everything<reset>\n") end
+  for _, s in ipairs(M.helpSections) do
+    if not pick or pick == s then
+      add("\n<turquoise>▸ " .. s.title .. "<reset>  <dim_grey>sbo help " .. s.key .. "<reset>\n")
+      for _, r in ipairs(s.rows) do
+        if r[1] == "" then add("\n")
+        else
+          -- {word} = something you fill in, shown as a grey word
+          local shown = r[1]:gsub("{([^}]*)}", "%1")
+          local cmd = r[1]:gsub("{([^}]*)}", "<light_slate_grey>%1<khaki>")
+          add("  <khaki>" .. cmd .. "<reset>" .. string.rep(" ", cmdW - ulen(shown) + 3) .. r[2] .. "\n")
+        end
+      end
+    end
+  end
+  add("\n<dim_grey>grey words: fill in your own  ·  [in brackets]: optional  ·  a|b: pick one  ·  a number left off = default<reset>\n")
+  add(string.format("<dim_grey>now: formatting %s · main %s · Inspector %s · help window %s · bar %s · map %s<reset>\n",
+    M.cfg.enabled and "on" or "off", M.cfg.main, M.cfg.window and "on" or "off", M.cfg.helpWindow and "on" or "off",
+    M.cfg.bar and "on" or "off", M.cfg.map and "on" or "off"))
   local text = table.concat(buf)
   if M.cfg.helpWindow then
     local lines = {}
     for l in (text:gsub("^\n", "") .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
-    M.helpPage("Soft Bun's Oven", lines, "cecho")
+    M.helpPage(pick and ("Soft Bun's Oven: " .. pick.title) or "Soft Bun's Oven", lines, "cecho")
     M.log("<dim_grey>[sbo] command list → help window<reset>")
   else
     M.log((text:gsub("^\n", ""):gsub("\n$", "")))
@@ -4491,7 +4539,8 @@ function M.command(args)
   a = a:lower()
   local onoff  -- (careful: `x and false or nil` is always nil in Lua)
   if b == "on" then onoff = true elseif b == "off" then onoff = false end
-  if a == "" or a == "help" then return M.help()
+  if a == "" then return M.help()
+  elseif a == "help" then return M.help(b)
   elseif a == "on" or a == "off" then M.cfg.enabled = (a == "on"); say("capturing " .. a)
   elseif a == "main" and (b == "replace" or b == "keep" or b == "off") then
     M.cfg.main = (b == "off") and "keep" or b; say("main window: " .. M.cfg.main)
