@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.15.8"
+M.version = "0.15.9"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3916,7 +3916,7 @@ local mapButtonStyle = [[
 
 -- bump when the panel's contents change, so a panel built by an older version (in the same
 -- Mudlet session) is rebuilt after an update instead of keeping its old layout
-local MAP_PANEL_LAYOUT = 2
+local MAP_PANEL_LAYOUT = 3
 
 function M.createMapPanel()
   if M.mapPanel and M.mapPanelLayout == MAP_PANEL_LAYOUT then return end
@@ -3946,8 +3946,13 @@ function M.createMapPanel()
     return b
   end
   -- search box: type part of a room name, Enter
+  local findLabel = Geyser.Label:new({ name = "ovenMapFindLabel", width = 36, h_policy = Geyser.Fixed }, header)
+  findLabel:setStyleSheet("background-color: rgba(18,18,26,255); color: #808080; qproperty-alignment: 'AlignVCenter | AlignRight'; padding-right: 4px;")
+  findLabel:echo("find")
   M.mapSearchBox = Geyser.CommandLine:new({ name = "ovenMapSearch", width = 150, h_policy = Geyser.Fixed }, header)
-  pcall(function() M.mapSearchBox:setStyleSheet("background-color: rgba(30,30,42,255); color: #c0c0c0; border: 1px solid #333;") end)
+  pcall(function() M.mapSearchBox:setStyleSheet([[
+    background-color: rgba(30,30,42,255); color: #c0c0c0; border: 1px solid #333;
+    qproperty-placeholderText: "room name…";]]) end)
   M.mapSearchBox:setAction(function(text)
     M.mapSearchBox:clear()
     M.mapFind(text)
