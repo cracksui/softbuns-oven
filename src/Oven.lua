@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.13.1"
+M.version = "0.14.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1628,6 +1628,7 @@ end
 -- recommended skills: turquoise name and star. A name the game coloured differently from the
 -- rest keeps the game's colour (it signals a status: inactive, altered…) and just gets the star.
 local REC = { 64, 224, 208 }
+M.REC = REC
 local function usualColour(rows)
   local count, best, bestN = {}, nil, 0
   for _, r in ipairs(rows) do
@@ -1800,6 +1801,268 @@ function M.formatters.skills(raw, width)
   return M.formatters.generic(raw, width)
 end
 
+---------------------------------------------------------------- quests
+-- remembered quests: id -> { name, done, total, phases = {{n, text, area, done}}, levels, master, rewards, limit }
+M.quests = M.quests or {}
+
+function M.parseQuests(raw)
+  local list, detail, other = {}, nil, {}
+  local inPhases = false
+  for idx, l in ipairs(raw) do
+    local t = trim(l)
+    local id, name, done, total = t:match("^Quest #(%d+)%s*:%s*(.-)%s*%(%s*(%d+)/(%d+)%s+complete%)%.?$")
+    if id then
+      list[#list + 1] = { id = id, name = name, done = tonumber(done), total = tonumber(total), idx = idx }
+    else
+      local qid, qname = t:match("^This quest %[(%d+)%] is called '(.*)',?$")
+      if qid then
+        detail = { id = qid, name = qname:gsub("',?$", ""), desc = {}, phases = {}, rewards = {} }
+      elseif detail then
+        local lo, hi = t:match("^for %a+ levels (%d+) to (%d+)")
+        local master = t:match("^(.-) is the master in charge of this quest")
+        local pn, ptext = t:match("^Phase (%d+):%s*(.+)$")
+        if lo then detail.levels = lo .. "–" .. hi; detail.who = t:match("^for (%a+)")
+        elseif master then detail.master = master
+        elseif t:match("^Upon successful completion") then detail.inRewards = true
+        elseif detail.inRewards and (t:match("^%*?Up to") or t:match("^[%d,]+ %a")) then
+          detail.rewardText = (detail.rewardText and (detail.rewardText .. " ") or "") .. t:gsub("^%*", "")
+          if t:match("%.$") then detail.inRewards = false end
+        elseif t:match("time limit") then detail.limit = t:gsub("%.$", "")
+        elseif t:match(" consists of:$") then inPhases = true
+        elseif pn then
+          local isDone = ptext:sub(1, 1) == "*"
+          ptext = ptext:gsub("^%*", ""):gsub("%.$", "")
+          local text, area = ptext:match("^(.-)%s*%[(.-)%]$")
+          detail.phases[#detail.phases + 1] = { n = tonumber(pn), text = text or ptext, area = area, done = isDone }
+        elseif t ~= "" and not inPhases then
+          detail.desc[#detail.desc + 1] = t
+        elseif t ~= "" then
+          other[#other + 1] = t
+        end
+      elseif t:match("^A total of %[%d+%] quests?") or t:match("^Type QUEST STATUS") then
+        other[#other + 1] = { t, idx }
+      elseif t ~= "" then
+        other[#other + 1] = t
+      end
+    end
+  end
+  if detail then
+    detail.total = #detail.phases
+    detail.done = 0
+    for _, p in ipairs(detail.phases) do if p.done then detail.done = detail.done + 1 end end
+    -- rewards "Up to 19 quest points, 2 practice points, 6,640 experience points, 0 build points, ..."
+    if detail.rewardText then
+      local txt = detail.rewardText:gsub("^Up to ", ""):gsub(", and ", ", "):gsub("%.$", "")
+      -- items are separated by ", " - the commas inside numbers (6,640) have no space after them
+      for part in (txt .. ", "):gmatch("(.-),%s+") do
+        local n, what = part:match("^([%d,]+)%s+(.+)$")
+        if n then detail.rewards[#detail.rewards + 1] = { n, what } end
+      end
+      detail.upTo = detail.rewardText:match("^Up to") ~= nil
+    end
+  end
+  return { list = list, detail = detail, other = other }
+end
+
+-- keep what we learn about quests, for the tracker
+function M.rememberQuests(q)
+  local now = os.time()
+  if #q.list > 0 then
+    local active = {}
+    for _, e in ipairs(q.list) do
+      local Q = M.quests[e.id] or {}
+      Q.name, Q.done, Q.total, Q.seen = e.name, e.done, e.total, now
+      M.quests[e.id] = Q
+      active[e.id] = true
+    end
+    -- a pinned quest missing from your active list is finished (or abandoned)
+    for id in pairs(M.cfg.questPins or {}) do
+      if not active[id] then
+        M.cfg.questPins[id] = nil
+        M.notifyQuest((M.quests[id] and M.quests[id].name or ("#" .. id)) .. " is no longer active - unpinned")
+      end
+    end
+  end
+  if q.detail then
+    local d = q.detail
+    local Q = M.quests[d.id] or {}
+    for k, v in pairs(d) do Q[k] = v end
+    Q.seen = now
+    M.quests[d.id] = Q
+  end
+  M.cfg.quests = M.quests     -- kept between sessions
+  M.saveSettings()
+  M.drawQuestTracker()
+end
+
+function M.notifyQuest(msg)
+  if M.cfg.bar and M.bar and M.bar.rawEcho then
+    M.walkNote = msg; pcall(M.drawBar)
+    tempTimer(8, function() if M.walkNote == msg then M.walkNote = nil; pcall(M.drawBar) end end)
+  else
+    M.log("<dim_grey>[sbo] " .. msg .. "<reset>")
+  end
+end
+
+local function questGauge(done, total, width)
+  local segs = M.gauge(done, math.max(1, total), width, (done >= total and total > 0) and C.plus or C.slot)
+  segs[#segs + 1] = { C.num, string.format(" %d/%d", done, total) }
+  return segs
+end
+
+-- the next phase still to do
+local function nextPhase(Q)
+  for _, p in ipairs(Q.phases or {}) do if not p.done then return p end end
+end
+
+function M.formatters.quest(raw, width)
+  local q = M.parseQuests(raw)
+  if #q.list == 0 and not q.detail then return M.formatters.generic(raw, width) end
+  M.rememberQuests(q)
+  local out = {}
+  local links = {}
+  if #q.list > 0 then
+    local nameW = 0
+    for _, e in ipairs(q.list) do nameW = math.max(nameW, ulen(e.name)) end
+    out[#out + 1] = { { C.key, pad("  #", 8) .. pad("Quest", nameW + 2) .. "Progress" } }
+    for _, e in ipairs(q.list) do
+      local pinned = M.cfg.questPins and M.cfg.questPins[e.id]
+      local row = { { M.REC or C.title, pinned and "◆ " or "  " }, { C.dim, pad("#" .. e.id, 6) } }
+      addAll(row, M.runsExact(e.idx, e.name) or { { C.item, e.name } })
+      row[#row + 1] = { C.text, string.rep(" ", nameW + 2 - ulen(e.name)) }
+      addAll(row, questGauge(e.done, e.total, 10))
+      local Q = M.quests[e.id]
+      local np = Q and nextPhase(Q)
+      if np then row[#row + 1] = { C.dim, "   next: " }; row[#row + 1] = { C.text, np.text } end
+      out[#out + 1] = row
+      local id = e.id
+      links[#links + 1] = { "details #" .. id .. " " .. e.name, function() send("quest info " .. id) end }
+      links[#links + 1] = { (pinned and "unpin" or "pin") .. " #" .. id .. " to the quest tracker",
+        function() M.questPin(id, not (M.cfg.questPins and M.cfg.questPins[id])) end }
+    end
+  end
+  if q.detail then
+    local d = q.detail
+    local cells = {}
+    if d.levels then cells[#cells + 1] = { "Levels", { { C.num, d.levels }, { C.dim, d.who and (" (" .. d.who .. ")") or "" } } } end
+    if d.master then cells[#cells + 1] = { "Master", { { C.item, d.master } } } end
+    if d.limit then
+      local lim = d.limit:find("no time limit") and "none" or d.limit:gsub("^This quest ", "")
+      cells[#cells + 1] = { "Time limit", { { C.item, lim } } }
+    end
+    cells[#cells + 1] = { "Progress", questGauge(d.done, d.total, 10) }
+    grid(out, cells, width)
+    if #d.rewards > 0 then
+      local segs = {}
+      if d.upTo then segs[#segs + 1] = { C.dim, "up to " } end
+      for i, r in ipairs(d.rewards) do
+        if i > 1 then segs[#segs + 1] = { C.dim, " · " } end
+        local zero = r[1]:gsub(",", "") == "0"
+        segs[#segs + 1] = { zero and C.dim or C.num, r[1] }
+        segs[#segs + 1] = { zero and C.dim or C.text, " " .. r[2] }
+      end
+      kvLine(out, "Rewards", 8, segs, width)
+    end
+    if #d.desc > 0 then paragraphs(out, d.desc, width) end
+    if #d.phases > 0 then
+      subhead(out, "Phases")
+      local np = nextPhase(d)
+      for _, p in ipairs(d.phases) do
+        local mark = p.done and { C.plus, " ✓ " } or (p == np and { M.REC or C.title, " ▶ " } or { C.dim, "   " })
+        local row = { mark, { C.dim, string.format("%d. ", p.n) },
+                      { p.done and C.dim or (p == np and C.item or C.text), p.text } }
+        if p.area then row[#row + 1] = { C.dim, "  [" .. p.area .. "]" } end
+        out[#out + 1] = row
+      end
+    end
+    local id = d.id
+    local pinned = M.cfg.questPins and M.cfg.questPins[id]
+    links[#links + 1] = { (pinned and "unpin" or "pin") .. " to the quest tracker",
+      function() M.questPin(id, not (M.cfg.questPins and M.cfg.questPins[id])) end }
+  end
+  for _, o in ipairs(q.other) do
+    if type(o) == "table" then out[#out + 1] = M.runsExact(o[2], o[1]) or { { C.dim, o[1] } }
+    else addAll(out, wrapWords(o, width, 0, C.dim)) end
+  end
+  M.pendingLinks = links   -- picked up by the Inspector page
+  local title = q.detail and (q.detail.name .. "  #" .. q.detail.id) or ("Quests (" .. #q.list .. ")")
+  return out, title
+end
+
+function M.questPin(id, on)
+  M.cfg.questPins = M.cfg.questPins or {}
+  if id == "all" then
+    for qid, Q in pairs(M.quests) do if Q.done and Q.total and Q.done < Q.total then M.cfg.questPins[qid] = on or nil end end
+  else
+    M.cfg.questPins[tostring(id)] = on or nil
+  end
+  M.saveSettings()
+  M.drawQuestTracker()
+  if M.viewPos and M.viewHist[M.viewPos] then M.viewShow() end
+end
+
+---------------------------------------------------------------------------
+-- Quest tracker window
+---------------------------------------------------------------------------
+function M.createQuestWindow()
+  if not M.questContainer then
+    M.questContainer = Adjustable.Container:new({
+      name = "ovenQuests",
+      titleText = "Quests",
+      x = "-36%", y = "56%", width = "34%", height = "30%",
+      adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+      titleTxtColor = "#e6c35c",
+    })
+  end
+  if not M.questPg then M.questPg = M.newPage("ovenQuest", M.questContainer) end
+  M.questPg.container = M.questContainer
+end
+
+function M.drawQuestTracker()
+  local pins = M.cfg.questPins or {}
+  local ids = {}
+  for id in pairs(pins) do ids[#ids + 1] = id end
+  if #ids == 0 then
+    if M.questContainer then M.questContainer:hide() end
+    return
+  end
+  table.sort(ids, function(a, b) return tonumber(a) < tonumber(b) end)
+  M.createQuestWindow()
+  M.questContainer:show()
+  local cols = M.pageCols(M.questPg)
+  local lines, links = {}, {}
+  for _, id in ipairs(ids) do
+    local Q = M.quests[id] or { name = "#" .. id }
+    local row = { { C.item, Q.name or ("#" .. id) }, { C.dim, "  #" .. id .. "  " } }
+    if Q.total then addAll(row, questGauge(Q.done or 0, Q.total, 8)) end
+    lines[#lines + 1] = row
+    local np = nextPhase(Q)
+    if np then
+      local r2 = { { M.REC or C.title, "  ▶ " }, { C.text, np.text } }
+      if np.area then r2[#r2 + 1] = { C.dim, "  [" .. np.area .. "]" } end
+      lines[#lines + 1] = r2
+    elseif not Q.phases then
+      lines[#lines + 1] = { { C.dim, "  (refresh to see its phases)" } }
+    end
+    lines[#lines + 1] = {}
+    links[#links + 1] = { "refresh #" .. id .. " " .. (Q.name or ""), function() M.questRefresh(id) end }
+  end
+  links[#links + 1] = { "refresh all", function() M.questRefresh("all") end }
+  M.pageShow(M.questPg, M.segsToDecho(lines), "decho", links)
+end
+
+-- quietly ask the game for a quest's details (nothing shown in the main window)
+function M.questRefresh(id)
+  if id == "all" then
+    local ids = {}
+    for qid in pairs(M.cfg.questPins or {}) do ids[#ids + 1] = qid end
+    for i, qid in ipairs(ids) do tempTimer((i - 1) * 1.5, function() M.questRefresh(qid) end) end
+    return
+  end
+  M.quietQuest = true
+  send("quest info " .. id, false)
+end
+
 ---------------------------------------------------------------- affects
 function M.formatters.affects(raw, width)
   local rows, top, other, total = {}, {}, {}, nil
@@ -1957,7 +2220,7 @@ end
 -- remove page widgets left over from an earlier version in this session
 -- (0.10.0 pages didn't know their window, and 0.10.1-0.10.2 rebuilt them full-screen)
 function M.dropPages()
-  for _, key in ipairs({ "viewPg", "helpPg" }) do
+  for _, key in ipairs({ "viewPg", "helpPg", "questPg" }) do
     local pg = M[key]
     if pg and pg.scroll then pcall(function() pg.scroll:delete() end) end
     M[key] = nil
@@ -2977,6 +3240,10 @@ function M.start(kind, target, cmd)
             hasLayout = M.formatters[kind] ~= nil }
   if kind == "help" then M.cap.gag = M.cfg.helpWindow
   else M.cap.gag = M.cfg.main == "replace" and M.cap.hasLayout end
+  if M.quietQuest and kind == "quest" then
+    M.cap.quiet, M.cap.gag, M.cap.quietKind = true, true, "quest"
+    M.quietQuest = nil
+  end
   if M.learning and kind == "item" then
     -- sbo learn: record the item, show nothing
     M.cap.quiet, M.cap.gag = true, true
@@ -3029,6 +3296,18 @@ M.shapes = {
     return t:match("^Player Information") or l:match("^%s%s%S") or t:match("^%*")
   end,
   levels = function(t) return t:match("^%[Level:") end,
+  quest = function(t, l, cap)
+    if not cap.questStarted then
+      if t:match("^Quest #%d+") or t:match("^This quest %[%d+%]") or t:match("^Usage: quest")
+         or t:match("^You must seek out a quest master") or t:match("^You are not on")
+         or t:match("^You have no") or t:match("^A total of %[") then
+        cap.questStarted = true
+        return true
+      end
+      return false
+    end
+    return not M.looksLikeActivity(t)
+  end,
   affects = function(t)
     return t:match("^You are affected") or t:match("^You are not affected") or t:match("^%*")
       or t:match("^%a[%a ]-:%s") or t:match("^Total of") or t:match("^%[AFFECTS")
@@ -3165,6 +3444,15 @@ function M.finish(reason)
     return
   end
 
+  if cap.quiet and cap.quietKind == "quest" then
+    -- tracker refresh: update the quest, draw nothing
+    if reason == "prompt" and not M.cfg.bar then deleteLine() end
+    pcall(function() M.rememberQuests(M.parseQuests(cap.plain)) end)
+    if M.cfg.samples and #cap.plain > 0 then writeSample(cap) end
+    local nxt = table.remove(M.queue, 1)
+    if nxt then M.start(nxt[1], nxt[2], nxt[3]) end
+    return
+  end
   if cap.quiet then
     -- sbo learn: remember the item, draw nothing, keep the prompt out of the log too
     if reason == "prompt" and not M.cfg.bar then deleteLine() end
@@ -3230,8 +3518,10 @@ function M.finish(reason)
     end
     local entry
     if worth and M.cfg.window then
+      M.pendingLinks = nil
       local lines = M.format(cap.kind, cap.target, cap.plain, M.viewCols(), cap.decho)
-      if lines then entry = { lines = lines, links = {} } end
+      if lines then entry = { lines = lines, links = M.pendingLinks or {} } end
+      M.pendingLinks = nil
     end
     if cap.kind == "eq" then M.updateEqNames(cap.plain) end
     if cap.kind == "score" then M.updateMaxes(cap.plain); M.drawBar() end
@@ -3386,6 +3676,8 @@ function M.help()
   <khaki>sbo pin [name]<reset> / <khaki>unpin<reset>    compare every item you look at against this one
   <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
   <khaki>sbo items<reset>                 list remembered items
+  <khaki>sbo quest pin|unpin [id|all]<reset> keep quests in the quest tracker window
+  <khaki>sbo quest refresh [id]<reset>    quietly re-check pinned quests (sbo quest show|hide)
   <khaki>sbo learn<reset>                 look at the worn items Oven doesn't know yet (the ? in eq)
   <khaki>sbo map on|off<reset>            follow you on the map by room number; double-click a room to walk there
   <khaki>sbo map stop<reset> / <khaki>load [file]<reset>  cancel a walk / load a map file (default: map/mm_map.dat)
@@ -3561,6 +3853,17 @@ function M.command(args)
   elseif a == "slots" and (b == "short" or b == "full") then
     M.cfg.slotNames = b; say("slot names: " .. b)
   elseif a == "learn" then return M.learn()
+  elseif a == "quest" or a == "quests" then
+    local sub, val = b:match("^(%S*)%s*(.-)$")
+    if sub == "pin" and val ~= "" then M.questPin(val, true); return say("pinned " .. val .. " to the quest tracker")
+    elseif sub == "unpin" and val ~= "" then M.questPin(val, false); return say("unpinned " .. val)
+    elseif sub == "refresh" then M.questRefresh(val ~= "" and val or "all"); return
+    elseif sub == "hide" then if M.questContainer then M.questContainer:hide() end; return
+    elseif sub == "show" or sub == "" then M.drawQuestTracker()
+      if not next(M.cfg.questPins or {}) then say("no quests pinned: type quest info, then click pin (or sbo quest pin <id|all>)") end
+      return
+    end
+    return say("usage: sbo quest pin|unpin <id|all>, sbo quest refresh [id], sbo quest show|hide")
   elseif a == "map" then
     if b == "on" then
       M.cfg.map = true; M.saveSettings(); M.mapStart()
@@ -3842,6 +4145,7 @@ function M.init()
   M.teardown()
   M.dropPages()
   M.loadSettings()
+  M.quests = M.cfg.quests or M.quests or {}
   M.handlers = {
     registerAnonymousEventHandler("sysDataSendRequest", M.onSend),
     registerAnonymousEventHandler("sysUninstallPackage", function(_, pkg)
@@ -3850,6 +4154,7 @@ function M.init()
         if M.updating then return end   -- an update: the new version takes the windows over
         if M.container then M.container:hide() end
         if M.helpContainer then M.helpContainer:hide() end
+        if M.questContainer then M.questContainer:hide() end
         if M.bar then M.bar:hide(); setBorderBottom(0) end
         if M.sbar then M.sbar:hide() end
         if M.topTaken then setBorderTop(M.baseTop or 0); M.topTaken = nil end
@@ -3868,6 +4173,7 @@ function M.init()
   if M.cfg.window and M.container then M.container:show() end
   if M.cfg.bar then M.showBar(true) end
   if M.cfg.map then M.mapStart() end
+  if next(M.cfg.questPins or {}) then pcall(M.drawQuestTracker) end
   M.startUpdatePoll()
   if not M.booted then
     M.booted = true

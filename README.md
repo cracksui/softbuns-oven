@@ -93,9 +93,17 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 | `aff` | resistances, spell and racial affects with their modifiers |
 | `level` | exp needed for each upcoming level, what's still to go and how long it'll take at this session's pace |
 | `skills spells`, `skills prof` | one row per skill: ★ class-recommended, school/type, SP, complexity, a learned gauge |
+| `quest info` / `quest status` | your quests with progress gauges and next phase; a quest's page with levels, master, rewards, story and phases (✓ done, ▶ next) |
 | `train` | attributes and vitals with current/max gauges, practice cost, and how many times you can afford each |
 | `prac` / `prac all` at a trainer | every skill the trainer lists, one row each with a learned gauge, sorted by progress; ★ class-recommended skills, called out on top |
 | `help <topic>` | the help page opens in its own **help window**, exactly as the game sends it |
+
+## Quest tracker
+
+Pin quests and keep them in a small floating **Quests** window: click **pin** under `quest info`
+(or `sbo quest pin <id>` / `sbo quest pin all`). Each pinned quest shows its progress and the next
+phase to do, updates whenever the game shows that quest, and can be re-checked quietly with its
+**refresh** link (`sbo quest refresh`). Finished or abandoned quests unpin themselves.
 
 ## Comparing gear
 
