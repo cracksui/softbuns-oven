@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.12.4"
+M.version = "0.12.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1713,98 +1713,29 @@ function M.formatters.skills(raw, width)
 
   local pr = M.parsePractice(raw)
   if pr then
-    local known, new, recHere = {}, {}, {}
-    local mine = M.cfg.skills or {}
-    for _, s in ipairs(pr.list) do
-      local info = mine[skillKey(s.name)]
-      if s.lrnd > 0 then known[#known + 1] = s else new[#new + 1] = s end
-      if info and info.rec then recHere[#recHere + 1] = s end
-    end
-    table.sort(known, function(a, b) return a.lrnd > b.lrnd end)
+    -- the game's list exactly as sent (order, columns, colours, usage lines); Oven only adds
+    -- one line on top: your class-recommended skills this trainer can teach
     local out = {}
-    local nameW = 0
-    for _, s in ipairs(known) do nameW = math.max(nameW, ulen(s.name)) end
-    for _, s in ipairs(recHere) do nameW = math.max(nameW, ulen(s.name)) end
-    local gw = width >= 80 and 10 or 6
-    local function row(s)
-      local info = mine[skillKey(s.name)]
-      local r = { { C.title, (info and info.rec) and "★ " or "  " } }
-      addAll(r, M.runsExact(s.idx, s.name) or { { C.item, s.name } })
-      r[#r + 1] = { C.text, string.rep(" ", nameW + 1 - ulen(s.name)) }
-      addAll(r, learnedSegs(s.lrnd, gw))
-      if info and info.cmplx then r[#r + 1] = { C.dim, string.format("   cmplx %d%%", info.cmplx) } end
-      if s.avail and s.avail ~= "" then
-        local nolimit = s.avail:lower() == "no limit"
-        r[#r + 1] = { nolimit and C.dim or C.flag, "   " .. (nolimit and "no limit" or ("limit " .. s.avail)) }
-      end
-      return r
+    local mine = M.cfg.skills or {}
+    local rec = {}
+    for _, s2 in ipairs(pr.list) do
+      local info = mine[skillKey(s2.name)]
+      if info and info.rec then rec[#rec + 1] = s2 end
     end
-    if #recHere > 0 then
-      out[#out + 1] = { { C.title, "Recommended, trainable here" } }
-      for _, s in ipairs(recHere) do out[#out + 1] = row(s) end
+    if #rec > 0 then
+      local row = { { C.title, "★ recommended, trainable here: " } }
+      for i, s2 in ipairs(rec) do
+        if i > 1 then row[#row + 1] = { C.dim, ", " } end
+        row[#row + 1] = { C.item, s2.name }
+        row[#row + 1] = { C.num, " " .. s2.lrnd .. "%" }
+      end
+      out[#out + 1] = row
       blank(out)
     end
-    if #known > 0 then
-      out[#out + 1] = { { C.title, "You know (" .. #known .. ")" } }
-      for _, s in ipairs(known) do out[#out + 1] = row(s) end
-    end
-    if #new > 0 then
-      blank(out)
-      -- alphabetical columns, read top to bottom; names keep the game's colours, and each
-      -- entry keeps its learned % and availability (stated once in the header when all equal)
-      table.sort(new, function(x, y) return x.name:lower() < y.name:lower() end)
-      local sameL, sameA = new[1].lrnd, new[1].avail
-      for _, s2 in ipairs(new) do
-        if s2.lrnd ~= sameL then sameL = nil end
-        if s2.avail ~= sameA then sameA = nil end
-      end
-      local function entrySegs(s2)
-        local segs = M.runsExact(s2.idx, s2.name) or { { C.text, s2.name } }
-        if not sameL then segs[#segs + 1] = { C.num, string.format(" %d%%", s2.lrnd) } end
-        if not sameA and s2.avail and s2.avail ~= "" then segs[#segs + 1] = { C.dim, " " .. s2.avail:lower() } end
-        return segs
-      end
-      local entries = {}
-      for i, s2 in ipairs(new) do entries[i] = entrySegs(s2) end
-      local gap = 3
-      local ncols, nrows, widths = 1, #entries, { 0 }
-      for try = math.min(#entries, math.floor((width + gap) / 4)), 1, -1 do
-        local rows = math.ceil(#entries / try)
-        local ws, total = {}, 0
-        for c = 0, try - 1 do
-          local cw = 0
-          for r = 1, rows do local e = entries[c * rows + r]; if e then cw = math.max(cw, segLen(e)) end end
-          ws[c + 1] = cw; total = total + cw
-        end
-        total = total + gap * (try - 1)
-        if total <= width then ncols, nrows, widths = try, rows, ws; break end
-      end
-      local hdr = { { C.title, "New to you (" .. #new .. ")" } }
-      local same = {}
-      if sameL then same[#same + 1] = sameL .. "%" end
-      if sameA and sameA ~= "" then same[#same + 1] = sameA:lower() end
-      if #same > 0 then hdr[#hdr + 1] = { C.dim, "  all " .. table.concat(same, " · ") } end
-      out[#out + 1] = hdr
-      for r = 1, nrows do
-        local row = {}
-        for c = 0, ncols - 1 do
-          local e = entries[c * nrows + r]
-          if e then
-            addAll(row, e)
-            if c < ncols - 1 then row[#row + 1] = { C.text, string.rep(" ", widths[c + 1] - segLen(e) + gap) } end
-          end
-        end
-        out[#out + 1] = row
-      end
-    end
-    if not next(mine) then
-      blank(out)
-      out[#out + 1] = { { C.dim, "(type skills spells and skills prof once so Oven can mark recommended skills and complexity)" } }
-    end
-    if pr.prac then blank(out); out[#out + 1] = { { C.key, "Practices available: " }, { C.num, pr.prac } } end
-    if #pr.other > 0 then
-      blank(out)
-      for _, o in ipairs(pr.other) do addAll(out, wrapWords(trim(o), width, 7, C.dim)) end
+    for idx, l in ipairs(raw) do
+      local line = rtrim(l)
+      if line == "" then out[#out + 1] = {}
+      else out[#out + 1] = M.runsExact(idx, line) or { { C.text, line } } end
     end
     return out, pr.trainer .. " can train you"
   end
