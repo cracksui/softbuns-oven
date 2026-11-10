@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.12.10"
+M.version = "0.12.11"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1769,9 +1769,6 @@ function M.formatters.skills(raw, width)
       blank(out)
     end
     local hdr = { { C.title, #list .. " skills" } }
-    if commonA and commonA ~= "" then
-      hdr[#hdr + 1] = { C.dim, "  ·  " .. (allSame and ("all " .. commonA:lower()) or (commonA:lower() .. " unless shown")) }
-    end
     out[#out + 1] = hdr
     local nameW = 0
     for _, s2 in ipairs(list) do nameW = math.max(nameW, ulen("Skill"), ulen(s2.name)) end
@@ -1784,7 +1781,10 @@ function M.formatters.skills(raw, width)
       addAll(r, nameSegs(s2, isRec, usual))
       r[#r + 1] = { C.text, string.rep(" ", nameW + 1 - ulen(s2.name)) }
       addAll(r, learnedSegs(s2.lrnd, gw))
-      if s2.avail and s2.avail ~= "" and s2.avail ~= commonA then r[#r + 1] = { C.flag, "   " .. s2.avail:lower() } end
+      -- availability on every row: ∞ for "No limit", the game's value otherwise
+      local av = s2.avail or ""
+      if av:lower() == "no limit" then r[#r + 1] = { C.dim, "   ∞" }
+      elseif av ~= "" then r[#r + 1] = { C.flag, "   " .. av } end
       out[#out + 1] = r
     end
     if pr.prac then blank(out); out[#out + 1] = { { C.key, "Practices available: " }, { C.num, pr.prac } } end
