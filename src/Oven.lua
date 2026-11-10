@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.15.9"
+M.version = "0.16.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3515,6 +3515,7 @@ function M.start(kind, target, cmd)
 end
 
 function M.onSend(_, cmd)
+  pcall(M.noteLootCommand, cmd)
   if not M.cfg.enabled then return end
   local kind, target = M.classify(cmd)
   if not kind then return end
@@ -3642,6 +3643,9 @@ function M.onLine()
   -- It goes on the bar; it's never part of a command's output.
   local slain = line:match("^%s*(.-) has been slain!%s*$")
   if slain and slain ~= "" then pcall(M.recordKill, slain) end
+  pcall(M.noteLootContext, line)
+  local okL, loot = pcall(M.parseLoot, line)
+  if okL and loot then pcall(M.recordLoot, loot) end
   if line:find("^%s*The Powers take pity on you and restore your soul to your body") then
     M.sess.deathsLive = (M.sess.deathsLive or 0) + 1
     pcall(M.drawBar)
@@ -4151,6 +4155,142 @@ function M.killLines(width, all)
   return out
 end
 
+---------------------------------------------------------------------------
+-- Loot log: what you (or anyone with you) pick up, and the exact room it was in
+---------------------------------------------------------------------------
+local LOOT_KEEP = 500
+-- "You get ..." lines that aren't items
+local NOT_LOOT = { "^the feeling", "^a feeling", "^the sense", "^a sense", "^the impression", "^the idea",
+                   "^nothing", "^hungry", "^thirsty", "^tired", "^up", "^dressed", "^undressed",
+                   "^better", "^worse", "^lost", "^a chance", "^the chance", "^ready", "^experience" }
+
+function M.parseLoot(l)
+  l = trim(l)
+  local who, rest = l:match("^(You) get (.+)$")
+  if not who then who, rest = l:match("^(You) take (.+)$") end
+  if not who then who, rest = l:match("^(You) pick up (.+)$") end
+  if not who then who, rest = l:match("^(%u[%a'%-]+) gets (.+)$") end
+  if not who then who, rest = l:match("^(%u[%a'%-]+) takes (.+)$") end
+  if not who then who, rest = l:match("^(%u[%a'%-]+) picks up (.+)$") end
+  if not rest then return end
+  -- a stack count can come before or after the full stop: "a potion. [x3]", "a potion (x3)."
+  local count = 1
+  local function takeCount()
+    local n = rest:match("%s*%[x?(%d+)%]$") or rest:match("%s*%(x?(%d+)%)$")
+    if n then count = tonumber(n); rest = rest:gsub("%s*[%[%(]x?%d+[%]%)]$", "") end
+  end
+  takeCount()
+  if not rest:match("[%.!]$") then return end
+  rest = rest:gsub("[%.!]+$", "")
+  takeCount()
+  local item, from = rest:match("^(.+) from (.+)$")
+  item = trim(item or rest)
+  local low = item:lower()
+  for _, p in ipairs(NOT_LOOT) do if low:match(p) then return end end
+  if ulen(item) > 90 or item == "" then return end
+  return { who = who == "You" and "you" or who, item = item, from = from and trim(from) or nil, count = count }
+end
+
+local function lootRoom()
+  local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info or {}
+  local id = tonumber(info.num) or M.mapRoom
+  local name = info.name
+  if not name and id and roomExists(id) then name = getRoomName(id) end
+  return id, name, info.zone
+end
+
+function M.recordLoot(e)
+  e.t = os.time()
+  e.room, e.roomName, e.area = lootRoom()
+  local gold = e.item:match("^([%d,]+) gold coins?$") or e.item:match("^([%d,]+) coins?$")
+  if gold then
+    local n = tonumber((gold:gsub(",", ""))) or 0
+    M.sess.lootGold = (M.sess.lootGold or 0) + n
+    return
+  end
+  local log = M.cfg.loot or {}
+  M.cfg.loot = log
+  log[#log + 1] = e
+  while #log > LOOT_KEEP do table.remove(log, 1) end
+  M.saveSettings()
+end
+
+-- learn the game's wording: the replies to your first few get/take commands go to the samples file
+M.lootCtxLogged = M.lootCtxLogged or 0
+function M.noteLootCommand(cmd)
+  if not M.cfg.samples or M.lootCtxLogged >= 20 then return end
+  local c = trim(cmd or ""):lower()
+  if c:match("^get%s") or c:match("^take%s") or c:match("^loot") or c == "get" then
+    M.lootCtx = { cmd = cmd, lines = {} }
+  end
+end
+
+function M.noteLootContext(l)
+  local x = M.lootCtx
+  if not x then return end
+  x.lines[#x.lines + 1] = l
+  if #x.lines >= 8 or isPromptLine() then
+    M.lootCtx = nil
+    M.lootCtxLogged = M.lootCtxLogged + 1
+    local f = io.open(M.samplesFile, "a")
+    if f then
+      f:write("===== " .. os.date("%Y-%m-%d %H:%M:%S") .. " | kind=lootctx | cmd=" .. x.cmd .. "\n")
+      for _, y in ipairs(x.lines) do f:write(y, "\n") end
+      f:write("===== end\n\n")
+      f:close()
+    end
+  end
+end
+
+function M.lootLines(width, q, all)
+  local log = M.cfg.loot or {}
+  local out, links, rooms = {}, {}, {}
+  q = q and trim(q):lower() or ""
+  local sessN = 0
+  for _, e in ipairs(log) do if e.t >= (M.sess.start or 0) then sessN = sessN + 1 end end
+  local title = q ~= "" and ("Loot: " .. q) or "Loot"
+  out[1] = header("loot", "", width, title)
+  local gold = M.sess.lootGold or 0
+  out[#out + 1] = { { C.dim, string.format("%d pickup%s this session, %d logged in all", sessN, sessN == 1 and "" or "s", #log) },
+                    gold > 0 and { C.num, "  ·  " .. M.commaNum(gold) .. " gold picked up" } or { C.dim, "" } }
+  out[#out + 1] = {}
+  local shown, limit = 0, all and LOOT_KEEP or 30
+  local lastDay
+  for i = #log, 1, -1 do
+    local e = log[i]
+    local hay = (e.item .. " " .. (e.who or "") .. " " .. (e.from or "") .. " " .. (e.roomName or "") .. " " .. (e.area or "") .. " #" .. tostring(e.room)):lower()
+    if q == "" or hay:find(q, 1, true) then
+      shown = shown + 1
+      if shown > limit then
+        out[#out + 1] = { { C.dim, "… more: sbo loot all" .. (q ~= "" and (" " .. q) or "") } }
+        break
+      end
+      local day = os.date("%Y-%m-%d", e.t)
+      if day ~= lastDay then
+        if lastDay then out[#out + 1] = {} end
+        subhead(out, day == os.date("%Y-%m-%d") and "Today" or day)
+        lastDay = day
+      end
+      out[#out + 1] = { { C.dim, "  " .. os.date("%H:%M", e.t) .. "  " },
+                        { e.who == "you" and C.slot or C.key, pad(e.who or "?", 10) },
+                        { C.item, e.item }, { C.num, (e.count or 1) > 1 and (" x" .. e.count) or "" } }
+      local where = {}
+      if e.from then where[#where + 1] = "from " .. e.from end
+      if e.roomName then where[#where + 1] = e.roomName end
+      if e.area and e.area ~= "" then where[#where + 1] = e.area end
+      if e.room then where[#where + 1] = "#" .. e.room end
+      out[#out + 1] = { { C.dim, "                 " .. (#where > 0 and table.concat(where, " · ") or "room unknown") } }
+      if e.room and not rooms[e.room] then
+        rooms[e.room] = true
+        local id, nm = e.room, e.roomName or ("#" .. e.room)
+        links[#links + 1] = { "map: " .. nm .. " #" .. id, function() M.mapShow(id) end }
+      end
+    end
+  end
+  if shown == 0 then out[#out + 1] = { { C.dim, q ~= "" and "  nothing logged matches that" or "  nothing picked up yet" } } end
+  return out, links
+end
+
 -- sbo learn: look at every worn item Oven doesn't know yet (the "?" in eq), quietly
 function M.learn()
   if #M.eqNames == 0 then return say("type eq first, so Oven knows what you're wearing") end
@@ -4221,6 +4361,7 @@ function M.help()
   <khaki>sbo map panel on|off<reset>      the map in its own window, with the room name and zoom/centre buttons
   <khaki>sbo map find [text]<reset>       rooms whose name contains the text (also the map panel's search box)
   <khaki>sbo map walk|show [room #]<reset> walk to a room, or centre the map on it
+  <khaki>sbo loot [text|all]<reset>       what you and your group picked up, and the room it was in (clear)
   <khaki>sbo kills [all]<reset>            what you've killed: this session and all time (reset / clear)
   <khaki>sbo session [reset]<reset>       exp gained, exp/hour, time and kills to next level
   <khaki>sbo gamecolors on|off<reset>     keep the game's own colours on item names
@@ -4394,6 +4535,14 @@ function M.command(args)
   elseif a == "slots" and (b == "short" or b == "full") then
     M.cfg.slotNames = b; say("slot names: " .. b)
   elseif a == "learn" then return M.learn()
+  elseif a == "loot" then
+    if b == "clear" then M.cfg.loot = {}; M.saveSettings(); return say("loot log cleared") end
+    local all = b == "all" or b:match("^all%s") ~= nil
+    local q = all and b:gsub("^all%s*", "") or b
+    local w = M.cfg.window and M.viewCols() or columns("main")
+    local lines, links = M.lootLines(w, q, all)
+    if M.cfg.window then M.viewAdd({ lines = lines, links = links }) else render("main", lines) end
+    return
   elseif a == "kills" then
     if b == "reset" then M.sess.killBook = {}; return say("this session's kill list cleared")
     elseif b == "clear" then M.cfg.kills = {}; M.saveSettings(); return say("all-time kill list cleared") end
