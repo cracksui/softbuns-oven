@@ -145,7 +145,7 @@ sbo session [reset]       exp gained, exp/hour, time and kills to next level
 sbo map on|off            follow you on the map (GMCP room number); double-click a room to walk there
 sbo map stop              cancel a walk in progress
 sbo map panel on|off      the map in its own window: room name, search box, zoom/centre buttons
-sbo map hover on|off      show the name of the room under the mouse in the map panel (on by default)
+sbo map card on|off       click a room on the map panel: a card with its kills, loot and your deaths there (on)
 sbo map find <text>       find rooms by name - click a result to show it or walk there
 sbo map walk <room #>     walk to a room (sbo map show <#> just centres the map on it)
 sbo map load [file]       load a map file (default: map/mm_map.dat)

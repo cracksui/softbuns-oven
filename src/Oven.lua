@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.4"
+M.version = "0.16.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3650,6 +3650,7 @@ function M.onLine()
   if okL and loot then pcall(M.recordLoot, loot) end
   if line:find("^%s*The Powers take pity on you and restore your soul to your body") then
     M.sess.deathsLive = (M.sess.deathsLive or 0) + 1
+    pcall(M.noteRoomDeath)
     pcall(M.drawBar)
   end
   local doneQuest = line:match("^%s*All parts of your quest '(.+)' are complete%.?%s*$")
@@ -3994,10 +3995,9 @@ function M.drawMapHeader()
 end
 
 ---------------------------------------------------------------------------
--- Map hover: the name of the room under the mouse, in a small label by the cursor.
--- Mudlet's 2D map doesn't report hovering, so the mouse is polled while it's over the
--- panel and turned into map coordinates: the centred room is in the middle of the map,
--- and each room is (map height / zoom) pixels apart.
+-- Room card: click a room on the map panel and a card shows what's happened there -
+-- kills, loot picked up, your deaths (and your level then). Mudlet itself decides which
+-- room was clicked (its map selection), so it's always the right one.
 ---------------------------------------------------------------------------
 function M.centerOn(id)
   if not id or not roomExists(id) then return end
@@ -4005,87 +4005,205 @@ function M.centerOn(id)
   centerview(id)
 end
 
-local hoverIndex = { area = nil, at = 0, rooms = {} }
-local function roomAt(area, x, y, z)
-  if hoverIndex.area ~= area or now() - hoverIndex.at > 30 then
-    hoverIndex = { area = area, at = now(), rooms = {} }
-    local ok, ids = pcall(getAreaRooms, area)
-    if ok and type(ids) == "table" then
-      for _, rid in pairs(ids) do
-        local okC, rx, ry, rz = pcall(getRoomCoordinates, rid)
-        if okC and rx then hoverIndex.rooms[rx .. "," .. ry .. "," .. rz] = rid end
-      end
+-- the room you're in, for the kill / loot / death records
+function M.currentRoom()
+  local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info or {}
+  return tonumber(info.num) or M.mapRoom
+end
+
+local function ago(t)
+  if not t then return "" end
+  local d = os.time() - t
+  return d < 60 and "just now" or (M.shortDur(d) .. " ago")
+end
+
+-- the card's lines: { {colour, text}, ... } segments
+function M.roomCardLines(id)
+  local out = {}
+  local function row(...) out[#out + 1] = { ... } end
+  local name = getRoomName(id) or "?"
+  local area = getRoomArea(id)
+  local areaName = area and getRoomAreaName(area) or ""
+  row({ C.item, name }, { C.dim, "  #" .. id })
+  local exits = {}
+  local okE, ex = pcall(getRoomExits, id)
+  local short = { north = "n", south = "s", east = "e", west = "w", up = "u", down = "d",
+                  northeast = "ne", northwest = "nw", southeast = "se", southwest = "sw", ["in"] = "in", out = "out" }
+  if okE and type(ex) == "table" then
+    for dir in pairs(ex) do exits[#exits + 1] = short[dir] or dir end
+    table.sort(exits)
+  end
+  row({ C.dim, (areaName ~= "" and (areaName .. "  ·  ") or "") .. (#exits > 0 and ("exits " .. table.concat(exits, " ")) or "no exits mapped") })
+  local any = false
+  local MAX = 8
+  -- kills
+  local kills = {}
+  for _, e in pairs((M.cfg.roomKills or {})[tostring(id)] or {}) do kills[#kills + 1] = e end
+  table.sort(kills, function(a, b) return a.count ~= b.count and a.count > b.count or (a.last or 0) > (b.last or 0) end)
+  if #kills > 0 then
+    any = true
+    local total = 0
+    for _, e in ipairs(kills) do total = total + e.count end
+    row(); row({ M.REC or C.title, "▸ Killed here" }, { C.dim, "  " .. total })
+    for i, e in ipairs(kills) do
+      if i > MAX then row({ C.dim, string.format("  … and %d more", #kills - MAX) }); break end
+      row({ C.num, string.format("  %3d× ", e.count) }, { C.text, e.name }, { C.dim, "  " .. ago(e.last) })
     end
   end
-  return hoverIndex.rooms[x .. "," .. y .. "," .. z]
+  -- loot
+  local found, order = {}, {}
+  for _, e in ipairs(M.cfg.loot or {}) do
+    if e.room == id then
+      local k = e.item:lower()
+      local f = found[k]
+      if not f then f = { item = e.item, count = 0, who = {} }; found[k] = f; order[#order + 1] = f end
+      f.count = f.count + (e.count or 1)
+      f.last = math.max(f.last or 0, e.t or 0)
+      f.who[e.who or "?"] = true
+    end
+  end
+  table.sort(order, function(a, b) return (a.last or 0) > (b.last or 0) end)
+  if #order > 0 then
+    any = true
+    row(); row({ M.REC or C.title, "▸ Picked up here" })
+    for i, f in ipairs(order) do
+      if i > MAX then row({ C.dim, string.format("  … and %d more (sbo loot #%d)", #order - MAX, id) }); break end
+      local who = {}
+      for w in pairs(f.who) do who[#who + 1] = w end
+      table.sort(who)
+      row({ C.num, string.format("  %3d× ", f.count) }, { C.item, f.item },
+          { C.dim, "  " .. table.concat(who, ", ") .. " · " .. ago(f.last) })
+    end
+  end
+  -- deaths
+  local deaths = (M.cfg.roomDeaths or {})[tostring(id)] or {}
+  if #deaths > 0 then
+    any = true
+    row(); row({ C.minus, "▸ You died here" }, { C.dim, "  " .. #deaths })
+    for i = #deaths, math.max(1, #deaths - MAX + 1), -1 do
+      local d = deaths[i]
+      row({ C.text, "  " .. (d.level and ("at level " .. d.level) or "level unknown") .. (d.total and (" (total " .. d.total .. ")") or "") },
+          { C.dim, "  " .. ago(d.t) })
+    end
+  end
+  if not any then row(); row({ C.dim, "nothing killed, picked up or died here yet" }) end
+  row(); row({ C.dim, "double-click the room to walk there · click this card to close" })
+  return out
 end
 
--- the room under window position (mx, my), or nil
-function M.mapRoomUnder(mx, my)
-  local w = M.mapWidget
-  local c = M.mapCenter or M.mapRoom
-  if not w or not c or not roomExists(c) then return end
-  local wx, wy, ww, wh = w:get_x(), w:get_y(), w:get_width(), w:get_height()
-  if mx < wx or my < wy or mx >= wx + ww or my >= wy + wh or wh < 10 then return end
-  local okZ, zoom = pcall(getMapZoom)
-  zoom = (okZ and tonumber(zoom)) or M.cfg.mapZoom or 15
-  local cell = wh / zoom
-  local cx, cy, cz = getRoomCoordinates(c)
-  local x = cx + (mx - wx - ww / 2) / cell
-  local y = cy - (my - wy - wh / 2) / cell
-  local rx, ry = math.floor(x + 0.5), math.floor(y + 0.5)
-  -- only the room itself counts, not the gap between rooms
-  if math.abs(x - rx) > 0.4 or math.abs(y - ry) > 0.4 then return end
-  return roomAt(getRoomArea(c), rx, ry, cz)
-end
-
-function M.mapHoverTick()
-  local tip = M.mapHoverTip
-  local ok, mx, my = pcall(getMousePosition)
-  local id = ok and mx and M.mapPanel and M.cfg.mapPanel and M.cfg.mapHover ~= false and M.mapRoomUnder(mx, my)
-  if not id then
-    if tip and M.mapHoverId then tip:hide() end
-    M.mapHoverId = nil
-    return
+function M.showRoomCard(id, mx, my)
+  local card = M.roomCard
+  if not card then
+    card = Geyser.Label:new({ name = "ovenRoomCard", x = 0, y = 0, width = 300, height = 100 })
+    card:setStyleSheet("background-color: rgba(10,10,16,240); border: 1px solid #555; border-radius: 6px;")
+    card:setClickCallback(function() M.hideRoomCard(true) end)
+    M.roomCard = card
   end
-  if not tip then
-    tip = Geyser.Label:new({ name = "ovenMapHover", x = 0, y = 0, width = 100, height = 20 })
-    tip:setStyleSheet("background-color: rgba(12,12,18,235); border: 1px solid #444; border-radius: 4px; padding: 0 6px;")
-    M.mapHoverTip = tip
-  end
+  local lines = M.roomCardLines(id)
   local font = (pcall(getFont) and getFont()) or "monospace"
   local size = M.cfg.fontSize or 10
   local okF, cw, ch = pcall(calcFontSize, size, font)
   cw, ch = (okF and cw) or 8, (okF and ch) or 16
-  if id ~= M.mapHoverId then
-    M.mapHoverId = id
-    local name = getRoomName(id) or "?"
-    local text = name .. "  #" .. id
-    local esc = function(s) return (tostring(s):gsub("&", "&amp;"):gsub("<", "&lt;")) end
-    tip:echo(string.format("<span style=\"font-family:'%s'; font-size:%dpt; color:#ffffff;\">%s</span>"
-      .. "<span style=\"font-family:'%s'; font-size:%dpt; color:#808080;\">  #%d</span>",
-      font, size, esc(name), font, size, id))
-    M.mapHoverW = math.min(500, (ulen(text) + 3) * cw)
-    tip:resize(M.mapHoverW, ch + 8)
+  local html, widest = {}, 0
+  for _, segs in ipairs(lines) do
+    local h, n = {}, 0
+    for _, s in ipairs(segs) do h[#h + 1] = span(s[1], s[2]); n = n + ulen(s[2]) end
+    html[#html + 1] = #h > 0 and table.concat(h) or "&nbsp;"
+    widest = math.max(widest, n)
   end
-  -- beside the cursor, kept inside the main window
-  local W = getMainWindowSize()
-  local x = mx + 16
-  if x + M.mapHoverW > W then x = mx - M.mapHoverW - 8 end
-  tip:move(x, my + 18)
-  tip:show()
-  pcall(function() tip:raise() end)
+  card:echo(string.format("<div style=\"font-family:'%s'; font-size:%dpt; white-space:pre; padding:6px 10px;\">%s</div>",
+    font, size, table.concat(html, "<br>")))
+  local w = math.min(640, widest * cw + 28)
+  local h = math.ceil(#html * ch * 1.2) + 16
+  card:resize(w, h)
+  -- beside the click, kept inside the main window
+  local W, H = getMainWindowSize()
+  local x, y = (mx or 100) + 18, (my or 100) - 10
+  if x + w > W then x = math.max(0, (mx or W) - w - 18) end
+  if y + h > H then y = math.max(0, H - h) end
+  card:move(x, y)
+  card:show()
+  pcall(function() card:raise() end)
+  M.roomCardId = id
 end
 
-function M.startMapHover()
-  if M.mapHoverTimer then killTimer(M.mapHoverTimer) end
-  M.mapHoverTimer = tempTimer(0.2, function() pcall(M.mapHoverTick) end, true)
+function M.hideRoomCard(clear)
+  if M.roomCard then M.roomCard:hide() end
+  M.roomCardId = nil
+  if clear then pcall(clearMapSelection) end
 end
 
-function M.stopMapHover()
-  if M.mapHoverTimer then killTimer(M.mapHoverTimer); M.mapHoverTimer = nil end
-  if M.mapHoverTip then M.mapHoverTip:hide() end
-  M.mapHoverId = nil
+-- the selected room on the map (one room, clicked), or nil
+local function selectedRoom()
+  local ok, sel = pcall(getMapSelection)
+  if not ok or type(sel) ~= "table" then return end
+  local rooms = sel.rooms or sel
+  local n, only = 0, nil
+  for _, r in pairs(rooms) do
+    if tonumber(r) then n = n + 1; only = tonumber(r) end
+  end
+  if n == 1 then return only end
+  if n == 0 and tonumber(sel.center) then return tonumber(sel.center) end
+end
+
+function M.mapSelectTick()
+  if not (M.mapPanel and M.cfg.mapPanel) or M.cfg.mapCard == false then return M.hideRoomCard() end
+  local id = selectedRoom()
+  if id == M.mapSelected then return end
+  M.mapSelected = id
+  if id and roomExists(id) then
+    local ok, mx, my = pcall(getMousePosition)
+    M.showRoomCard(id, ok and mx, ok and my)
+  else
+    M.hideRoomCard()
+  end
+end
+
+function M.startMapSelect()
+  if M.mapSelTimer then killTimer(M.mapSelTimer) end
+  M.mapSelected = selectedRoom()   -- whatever was selected before doesn't pop a card
+  M.mapSelTimer = tempTimer(0.25, function() pcall(M.mapSelectTick) end, true)
+end
+
+function M.stopMapSelect()
+  if M.mapSelTimer then killTimer(M.mapSelTimer); M.mapSelTimer = nil end
+  M.hideRoomCard()
+end
+
+-- the room's history: who was killed where
+function M.noteRoomKill(key, name)
+  local id = M.currentRoom()
+  if not id then return end
+  M.cfg.roomKills = M.cfg.roomKills or {}
+  local book = M.cfg.roomKills[tostring(id)] or {}
+  M.cfg.roomKills[tostring(id)] = book
+  local e = book[key] or { name = name, count = 0 }
+  book[key] = e
+  e.count = e.count + 1
+  e.last = os.time()
+end
+
+-- you died: "restore your soul to your body" happens where the body is, i.e. where you fell
+function M.noteRoomDeath()
+  local id = M.currentRoom()
+  if not id then return end
+  local c = M.cfg.char or {}
+  M.cfg.roomDeaths = M.cfg.roomDeaths or {}
+  local list = M.cfg.roomDeaths[tostring(id)] or {}
+  M.cfg.roomDeaths[tostring(id)] = list
+  list[#list + 1] = { t = os.time(), level = c.level, total = c.total }
+  M.saveSettings()
+  -- the lines before it, so the game's own death message can be learned
+  if M.cfg.samples and (M.deathCtxLogged or 0) < 10 then
+    M.deathCtxLogged = (M.deathCtxLogged or 0) + 1
+    local f = io.open(M.samplesFile, "a")
+    if f then
+      f:write("===== " .. os.date("%Y-%m-%d %H:%M:%S") .. " | kind=deathctx | cmd=\n")
+      for _, x in ipairs(M.recentLines or {}) do f:write(x, "\n") end
+      f:write("===== end\n\n")
+      f:close()
+    end
+  end
 end
 
 -- Mudlet's own room-info overlay on the map (its "Short"/"Full" map info) repeats what the
@@ -4125,12 +4243,12 @@ function M.showMapPanel(on)
     M.mapPanel:show()
     M.drawMapHeader()
     M.centerOn(M.mapRoom)
-    M.startMapHover()
+    M.startMapSelect()
     if M.raiseQuestHud then M.raiseQuestHud() end
   elseif M.mapPanel then
     M.mapPanel:hide()
     pcall(M.mapInfoRestore)
-    M.stopMapHover()
+    M.stopMapSelect()
   end
 end
 
@@ -4235,6 +4353,7 @@ function M.recordKill(name)
     e.last = t
   end
   M.sess.killsLive = (M.sess.killsLive or 0) + 1
+  pcall(M.noteRoomKill, key, name)
   M.lastKill = { key = key, at = now() }
   M.saveSettings()
   pcall(M.drawBar)
@@ -4494,7 +4613,7 @@ M.helpSections = {
   { key = "map", title = "Map and walking", rows = {
     { "sbo map on|off", "follow you on the map; double-click a room to walk there" },
     { "sbo map panel on|off", "the map in its own window, with a search box and zoom buttons" },
-    { "sbo map hover on|off", "the name of the room under the mouse, in the map panel" },
+    { "sbo map card on|off", "click a room: a card with what was killed, picked up and died there" },
     { "sbo map find {text}", "find rooms by name; click a result to show it or walk there" },
     { "sbo map walk {room #}", "walk to a room" },
     { "sbo map show {room #}", "centre the map on a room" },
@@ -4772,9 +4891,9 @@ function M.command(args)
       return M.mapWalkTo(tonumber(b:match("(%d+)$")))
     elseif b:match("^show%s+%d+$") then
       return M.mapShow(tonumber(b:match("(%d+)$")))
-    elseif b == "hover on" or b == "hover off" then
-      M.cfg.mapHover = (b == "hover on"); M.saveSettings()
-      return say("room names on hover " .. (M.cfg.mapHover and "on" or "off"))
+    elseif b == "card on" or b == "card off" then
+      M.cfg.mapCard = (b == "card on"); M.saveSettings()
+      return say("room card on click " .. (M.cfg.mapCard and "on" or "off"))
     elseif b == "panel on" or b == "panel off" then
       M.cfg.mapPanel = (b == "panel on"); M.saveSettings(); M.showMapPanel(M.cfg.mapPanel)
       if M.cfg.mapPanel and not M.cfg.map then M.cfg.map = true; M.saveSettings(); M.mapStart() end
@@ -5058,7 +5177,9 @@ function M.teardown()
   if M.pollTimer then killTimer(M.pollTimer); M.pollTimer = nil end
   if M.sessTimer then killTimer(M.sessTimer); M.sessTimer = nil end
   if M.mapHandler then killAnonymousEventHandler(M.mapHandler); M.mapHandler = nil end
-  if M.mapHoverTimer then killTimer(M.mapHoverTimer); M.mapHoverTimer = nil end
+  if M.mapHoverTimer then killTimer(M.mapHoverTimer); M.mapHoverTimer = nil end   -- (0.16.4's hover)
+  if M.mapHoverTip then pcall(function() M.mapHoverTip:hide() end) end
+  if M.mapSelTimer then killTimer(M.mapSelTimer); M.mapSelTimer = nil end
 end
 
 function M.init()
