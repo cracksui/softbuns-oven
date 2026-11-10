@@ -101,7 +101,8 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 ## Quest tracker
 
 Pin quests to an MMO-style **quest HUD** - a small translucent panel in the top corner of the game
-screen (`sbo quest hud left|right`): click **pin** under `quest info`
+screen - drag it anywhere (`sbo quest hud reset` puts it back, `sbo quest hud left|right` picks the
+corner): click **pin** under `quest info`
 (or `sbo quest pin <id>` / `sbo quest pin all`). Each pinned quest shows its progress and the next
 phase to do, updates whenever the game shows that quest, and re-checks quietly when you click it
 (or `sbo quest refresh`). Finished or abandoned quests unpin themselves.

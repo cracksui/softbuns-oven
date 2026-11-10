@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.14.1"
+M.version = "0.14.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2025,8 +2025,11 @@ function M.drawQuestTracker()
   table.sort(ids, function(a, b2) return tonumber(a) < tonumber(b2) end)
   if not M.questHud then
     M.questHud = Geyser.Label:new({ name = "ovenQuestHud", x = 0, y = 0, width = 300, height = 60 })
-    M.questHud:setClickCallback(function() M.questRefresh("all") end)
-    pcall(function() M.questHud:setToolTip("click to refresh your pinned quests") end)
+    -- drag with the left button to move it; a click without moving refreshes the quests
+    M.questHud:setClickCallback(function(ev) M.hudPress(ev) end)
+    M.questHud:setMoveCallback(function(ev) M.hudMove(ev) end)
+    M.questHud:setReleaseCallback(function(ev) M.hudRelease(ev) end)
+    pcall(function() M.questHud:setToolTip("drag to move · click to refresh your pinned quests") end)
   end
   M.questHud:setStyleSheet([[
     background-color: rgba(8, 8, 12, 170); border: 1px solid rgba(255,255,255,30);
@@ -2068,7 +2071,41 @@ function M.drawQuestTracker()
   M.questHud:show()
 end
 
--- keep the HUD in its corner of the game text area (inside the side borders, under any top line)
+-- dragging the HUD
+local function evXY(ev)
+  if type(ev) ~= "table" then return nil end
+  return tonumber(ev.x), tonumber(ev.y)
+end
+function M.hudPress(ev)
+  local x, y = evXY(ev)
+  if not x then M.questRefresh("all"); return end
+  M.hudDrag = { offX = x, offY = y, moved = 0 }
+end
+function M.hudMove(ev)
+  local d = M.hudDrag
+  local x, y = evXY(ev)
+  if not d or not x then return end
+  local dx, dy = x - d.offX, y - d.offY
+  if dx == 0 and dy == 0 then return end
+  d.moved = d.moved + math.abs(dx) + math.abs(dy)
+  local cx, cy = M.questHud:get_x(), M.questHud:get_y()
+  M.cfg.questHudPos = { cx + dx, cy + dy }
+  M.layoutQuestHud()
+end
+function M.hudRelease(ev)
+  local d = M.hudDrag
+  M.hudDrag = nil
+  if not d then return end
+  if d.moved < 4 then
+    if M.cfg.questHudPos and d.moved > 0 then M.cfg.questHudPos = nil end
+    M.questRefresh("all")       -- a click, not a drag
+  else
+    M.saveSettings()            -- remember where it was dropped
+  end
+end
+
+-- keep the HUD in its corner of the game text area (inside the side borders, under any top line),
+-- or where you dragged it (kept on screen)
 function M.layoutQuestHud()
   if not M.questHud or not M.questHudSize then return end
   local W = getMainWindowSize()
@@ -2082,7 +2119,14 @@ function M.layoutQuestHud()
   local w, h = M.questHudSize.w, M.questHudSize.h
   local margin = 10
   local x = (M.cfg.questHudSide == "left") and (left + margin) or (W - right - w - margin - 16)
-  M.questHud:move(x, top + margin)
+  local y = top + margin
+  local pos = M.cfg.questHudPos
+  if type(pos) == "table" and tonumber(pos[1]) and tonumber(pos[2]) then
+    local _, H = getMainWindowSize()
+    x = math.max(0, math.min(tonumber(pos[1]), W - w))
+    y = math.max(0, math.min(tonumber(pos[2]), (H or 600) - h))
+  end
+  M.questHud:move(x, y)
   M.questHud:resize(w, h)
 end
 
@@ -3714,7 +3758,7 @@ function M.help()
   <khaki>sbo items<reset>                 list remembered items
   <khaki>sbo quest pin|unpin [id|all]<reset> keep quests in the quest tracker window
   <khaki>sbo quest refresh [id]<reset>    quietly re-check pinned quests (or click the quest HUD)
-  <khaki>sbo quest hud left|right<reset>  which top corner the quest HUD sits in (sbo quest show|hide)
+  <khaki>sbo quest hud left|right|reset<reset> quest HUD corner, or back to it after dragging (sbo quest show|hide)
   <khaki>sbo learn<reset>                 look at the worn items Oven doesn't know yet (the ? in eq)
   <khaki>sbo map on|off<reset>            follow you on the map by room number; double-click a room to walk there
   <khaki>sbo map stop<reset> / <khaki>load [file]<reset>  cancel a walk / load a map file (default: map/mm_map.dat)
@@ -3897,7 +3941,9 @@ function M.command(args)
     elseif sub == "refresh" then M.questRefresh(val ~= "" and val or "all"); return
     elseif sub == "hide" then if M.questHud then M.questHud:hide() end; return
     elseif sub == "hud" and (val == "left" or val == "right") then
-      M.cfg.questHudSide = val; M.saveSettings(); M.drawQuestTracker(); return say("quest HUD on the " .. val)
+      M.cfg.questHudSide = val; M.cfg.questHudPos = nil; M.saveSettings(); M.drawQuestTracker(); return say("quest HUD on the " .. val)
+    elseif sub == "hud" and val == "reset" then
+      M.cfg.questHudPos = nil; M.saveSettings(); M.drawQuestTracker(); return say("quest HUD back in its corner")
     elseif sub == "show" or sub == "" then M.drawQuestTracker()
       if not next(M.cfg.questPins or {}) then say("no quests pinned: type quest info, then click pin (or sbo quest pin <id|all>)") end
       return
