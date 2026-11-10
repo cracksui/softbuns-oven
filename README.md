@@ -130,6 +130,7 @@ sbo slots short|full      short slot names in eq tables, or the game's full ones
 sbo helpwindow on|off     game help pages (and the sbo command list) in their own window
 sbo bar on|off            prompt bar
 sbo bar gauges|raw        prompt bar as gauges, or the prompt exactly as the game sends it
+sbo bar session on|off    a second line under the bar: session time, exp/hour, level ETA, kills
 sbo bar bg [r g b]        prompt bar background colour, 0-255 each (no numbers = default)
 sbo bar blanks on|off     keep / remove the blank line before each prompt (removed by default)
 sbo bar width [n]         length of each gauge (default 10)

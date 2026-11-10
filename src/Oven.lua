@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.2"
+M.version = "0.11.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -41,6 +41,7 @@ M.defaults = {
   barMode      = "gauges",   -- gauges | raw
   barWidth     = 10,         -- length of each gauge in the prompt bar
   barBg        = { 12, 12, 16 },  -- prompt bar background (r, g, b): a faint tint
+  barSession   = false,      -- a second line under the prompt bar with session stats
   barBlank     = true,       -- with the bar on, also drop the blank line before each prompt
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
@@ -2273,10 +2274,34 @@ function M.layoutBar()
     local okL, l = pcall(getBorderLeft); if okL and l then left = l end
   end
   local h = M.barHeight()
-  setBorderBottom(h)
-  M.bar:move(left, H - h)
+  local sessionOn = M.cfg.barSession and M.sbar
+  local total = sessionOn and (h * 2) or h
+  setBorderBottom(total)
+  M.bar:move(left, H - total)
   M.bar:resize(W - left - right, h)
+  if sessionOn then
+    M.sbar:move(left, H - h)
+    M.sbar:resize(W - left - right, h)
+  end
   M.barRight = right
+end
+
+-- the optional session line under the prompt bar
+function M.showSessionBar(on)
+  if on and M.cfg.bar then
+    if not M.sbar then
+      M.sbar = Geyser.Label:new({ name = "ovenSessionBarLabel", x = 0, y = 0, width = 200, height = 20 })
+    end
+    M.sbar:show()
+    M.applyBarBg()
+    if M.sessTimer then killTimer(M.sessTimer) end
+    M.sessTimer = tempTimer(30, function() M.drawSessionBar() end, true)   -- keep the clock moving
+  else
+    if M.sbar then M.sbar:hide() end
+    if M.sessTimer then killTimer(M.sessTimer); M.sessTimer = nil end
+  end
+  M.layoutBar()
+  M.drawSessionBar()
 end
 
 function M.showBar(on)
@@ -2293,8 +2318,11 @@ function M.showBar(on)
     M.layoutBar()
     M.applyBarBg()
     M.drawBar()
+    if M.cfg.barSession then M.showSessionBar(true) end
   else
     if M.bar then M.bar:hide() end
+    if M.sbar then M.sbar:hide() end
+    if M.sessTimer then killTimer(M.sessTimer); M.sessTimer = nil end
     setBorderBottom(0)
   end
 end
@@ -2441,10 +2469,11 @@ function M.barBg()
   return c[1], c[2], c[3]
 end
 function M.applyBarBg()
-  if not M.bar then return end
   local r, g, b = M.barBg()
-  M.bar:setStyleSheet(string.format(
-    "background-color: rgb(%d,%d,%d); padding-left: 4px; qproperty-alignment: 'AlignVCenter | AlignLeft';", r, g, b))
+  local css = string.format(
+    "background-color: rgb(%d,%d,%d); padding-left: 4px; qproperty-alignment: 'AlignVCenter | AlignLeft';", r, g, b)
+  if M.bar then M.bar:setStyleSheet(css) end
+  if M.sbar then M.sbar:setStyleSheet(css) end
 end
 
 -- characters across the bar
@@ -2456,14 +2485,41 @@ local function barCols()
 end
 
 -- put decho text in the bar, in the main window's font
-local function barEcho(d)
+local function barEcho(d, label)
+  label = label or M.bar
   local font = (pcall(getFont) and getFont()) or "monospace"
   -- decho2html gives every piece of text a (black) background; drop it so the bar's tint shows
   local html = decho2html(d)
     :gsub("background%-color:%s*rgba?%b();?", "")
     :gsub("background:%s*rgba?%b();?", "")
-  M.bar:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
+  label:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
     font, M.barFontSize(), html))
+end
+
+function M.drawSessionBar()
+  if not M.sbar or not M.cfg.barSession or not M.cfg.bar then return end
+  local S, c = M.sess, M.cfg.char or {}
+  local dot = { C.dim, "  ·  " }
+  local segs = { { C.dim, "session " }, { C.num, M.duration(os.time() - S.start) } }
+  local gained = (S.exp0 and S.expNow) and (S.expNow - S.exp0 + (S.gainedAfterScore or 0)) or S.gained or 0
+  local rate = M.expRate()
+  if gained > 0 then segs[#segs + 1] = dot; segs[#segs + 1] = { C.plus, "+" .. M.commaNum(gained) .. " exp" } end
+  if rate and rate > 0 then
+    segs[#segs + 1] = dot; segs[#segs + 1] = { C.num, M.commaNum(math.floor(rate)) .. "/h" }
+    if c.tnl then
+      segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "level in " }
+      segs[#segs + 1] = { C.title, "≈" .. M.duration(c.tnl * 3600 / rate) }
+    end
+  end
+  if S.kills0 and S.killsNow then
+    segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "kills " }; segs[#segs + 1] = { C.plus, tostring(S.killsNow - S.kills0) }
+    segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "deaths " }
+    segs[#segs + 1] = { C.minus, tostring((S.deathsNow or 0) - (S.deaths0 or 0)) }
+  end
+  if not S.exp0 and gained == 0 then
+    segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "type score now and then to measure exp and kills" }
+  end
+  barEcho(M.segsToDecho({ segs })[1], M.sbar)
 end
 
 function M.drawBar()
@@ -2504,7 +2560,7 @@ function M.drawBar()
     local info = M.levelInfo()
     if info then tail[#tail + 1] = { C.dim, string.format(" %d%%", math.floor(info.frac * 100)) } end
     local rate = M.expRate()
-    if rate and rate > 0 then tail[#tail + 1] = { C.dim, " ≈" .. M.duration(tnl * 3600 / rate) } end
+    if rate and rate > 0 and not M.cfg.barSession then tail[#tail + 1] = { C.dim, " ≈" .. M.duration(tnl * 3600 / rate) } end
   end
   p.vals = pools
   -- gauges are a fixed width (sbo bar width), shrunk only if the bar is too narrow
@@ -2545,6 +2601,7 @@ function M.onMsdp(event)
 end
 
 function M.barUpdate(d)
+  if M.cfg.barSession then pcall(M.drawSessionBar) end
   if not M.bar or not M.bar.rawEcho then M.showBar(true) end
   -- re-layout if something else (e.g. the base UI dock) changed the side borders
   local ok, r = pcall(getBorderRight)
@@ -2854,6 +2911,7 @@ function M.help()
   <khaki>sbo helpwindow on|off<reset>     game help pages (and this list) in their own window
   <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
   <khaki>sbo bar gauges|raw<reset>        prompt bar as gauges, or the prompt exactly as the game sends it
+  <khaki>sbo bar session on|off<reset>    a second line under the bar: session time, exp/hour, level ETA, kills
   <khaki>sbo bar bg [r g b]<reset>        prompt bar background colour (no numbers = default)
   <khaki>sbo bar blanks on|off<reset>     keep (on) or remove (off) the blank line the game puts before each prompt
   <khaki>sbo bar width [n]<reset>         length of each gauge (no number = default, 10)
@@ -3040,6 +3098,9 @@ function M.command(args)
     local sub, val = b:match("^(%S*)%s*(.-)$")
     if sub == "on" or sub == "off" then M.cfg.bar = (sub == "on"); M.showBar(M.cfg.bar); say("prompt bar " .. sub)
     elseif sub == "raw" or sub == "gauges" then M.cfg.barMode = sub; M.drawBar(); say("prompt bar mode " .. sub)
+    elseif sub == "session" and (val == "on" or val == "off") then
+      M.cfg.barSession = (val == "on"); M.showSessionBar(M.cfg.barSession); M.drawBar()
+      say("session line under the prompt bar " .. val .. (M.cfg.bar and "" or " (shows when the bar is on: sbo bar on)"))
     elseif sub == "bg" then
       local r, g, b = val:match("^(%d+)[%s,]+(%d+)[%s,]+(%d+)$")
       if val == "" then M.cfg.barBg = { unpack(M.defaults.barBg) }
@@ -3202,6 +3263,7 @@ function M.teardown()
   if M.alias then killAlias(M.alias) end
   M.handlers, M.lineTrigger, M.alias = nil, nil, nil
   if M.pollTimer then killTimer(M.pollTimer); M.pollTimer = nil end
+  if M.sessTimer then killTimer(M.sessTimer); M.sessTimer = nil end
 end
 
 function M.init()
@@ -3216,6 +3278,7 @@ function M.init()
         if M.container then M.container:hide() end
         if M.helpContainer then M.helpContainer:hide() end
         if M.bar then M.bar:hide(); setBorderBottom(0) end
+        if M.sbar then M.sbar:hide() end
       end
     end),
   }
