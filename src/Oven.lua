@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.8"
+M.version = "0.11.9"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2657,11 +2657,7 @@ function M.drawBar()
       addAll(main, sess)
     end
   end
-  if M.barNote and os.time() <= (M.barNoteUntil or 0) then
-    main[#main + 1] = { C.dim, "   " }; main[#main + 1] = { C.slot, M.barNote }
-  elseif M.updateAvailable and M.newer and M.newer(M.updateAvailable, M.version) then
-    main[#main + 1] = { C.dim, "   " }; main[#main + 1] = { C.flag, "↑ " .. M.updateAvailable }
-  end
+  addAll(main, M.versionTag())
   if collapsed ~= (M.barCollapsed or false) then
     M.barCollapsed = collapsed
     M.layoutBar()
@@ -3249,36 +3245,46 @@ end
 M.newer = newer
 
 -- update messages: a short note on the prompt bar when it's on, otherwise a line in the log
--- compact form of an update message: bar text, log text (nil = not worth a log line)
+-- an update message -> state for the bar's version tag, and a log line (nil = not worth one)
+-- states: check, down (downloading/installing), ok (up to date), avail (newer exists), err
 function M.compactStatus(msg)
   msg = msg:gsub("<[%w_]+>", "")
   local v
-  if msg:find("^checking") then return "⟳ checking", nil end
+  if msg:find("^checking") then return "check", nil end
   v = msg:match("^downloading v(%S-)…?$") or msg:match("^new version v(%S+) %-")
-  if v then return "⇣ " .. v, nil end
-  if msg:find("^installing") then return "⇣ installing", nil end
+  if v then return "down", nil, v end
+  if msg:find("^installing") then return "down", nil, M.updState and M.updState.ver end
   v = msg:match("^updated: v%S+ %-> v(%S+)")
-  if v then return "✓ " .. v, "✓ updated to v" .. v end
+  if v then return "ok", "✓ updated to v" .. v end
   v = msg:match("latest version %(v(%S+)%)")
-  if v then return "✓ up to date", "✓ up to date (v" .. v .. ")" end
+  if v then return "ok", "✓ up to date (v" .. v .. ")" end
   v = msg:match("^v(%S+) is available")
-  if v then return "↑ " .. v, "↑ v" .. v .. " available - sbo update" end
-  if msg:find("fail") then return "⚠ update failed", "⚠ " .. msg end
-  return msg, msg
+  if v then return "avail", "↑ v" .. v .. " available - sbo update", v end
+  if msg:find("fail") then return "err", "✗ " .. msg end
+  return nil, msg
 end
 
--- update messages: a compact note on the prompt bar when it's on, otherwise one log
--- line for outcomes only (no "checking… downloading… installing…")
+-- update status: the bar's version tag when the bar is on; otherwise one log line for outcomes
 function M.notify(msg, secs)
-  local short, long = M.compactStatus(msg)
+  local state, long, ver = M.compactStatus(msg)
+  if state then M.updState = { state = state, ver = ver } end
   if M.cfg.bar and M.bar and M.bar.rawEcho then
-    M.barNote = short
-    M.barNoteUntil = os.time() + (secs or 8)
     pcall(M.drawBar)
-    tempTimer((secs or 8) + 0.5, function() pcall(M.drawBar) end)
   elseif long then
     cecho("<dim_grey>[sbo] " .. long .. "<reset>\n")
   end
+end
+
+-- "v0.11.9 ✓" at the end of the bar: ✓ current, ↑ update available, ⟳ checking, ⇣ updating, ✗ error
+function M.versionTag()
+  local st = M.updState or {}
+  local segs = { { C.dim, "   v" .. M.version } }
+  if st.state == "ok" then segs[#segs + 1] = { C.plus, " ✓" }
+  elseif st.state == "avail" and st.ver and M.newer(st.ver, M.version) then segs[#segs + 1] = { C.flag, " ↑" }
+  elseif st.state == "check" then segs[#segs + 1] = { C.dim, " ⟳" }
+  elseif st.state == "down" then segs[#segs + 1] = { C.slot, " ⇣" }
+  elseif st.state == "err" then segs[#segs + 1] = { C.minus, " ✗" } end
+  return segs
 end
 
 function M.installFrom(path)
@@ -3328,6 +3334,7 @@ end
 function M.checkForUpdate()
   if M.REPO:find("@@", 1, true) or not M.cfg.updateCheck or M.pending then return end
   M.pending = M.cfg.autoUpdate and "auto" or "check"
+  if M.cfg.bar then M.updState = { state = "check" }; pcall(M.drawBar) end
   M.fetchVersion()
 end
 
@@ -3354,7 +3361,8 @@ function M.onDownload(event, file, err)
   end
   if event == "sysDownloadError" then
     M.pending = nil
-    if mode ~= "check" and mode ~= "auto" then M.notify("update download failed: " .. tostring(err or file), 15) end
+    if mode ~= "check" and mode ~= "auto" then M.notify("update download failed: " .. tostring(err or file))
+    else M.updState = { state = "err" }; pcall(M.drawBar) end
     return
   end
   if file == M.dl.version then
@@ -3362,13 +3370,14 @@ function M.onDownload(event, file, err)
     if not latest or latest == "" then M.pending = nil; return end
     if mode == "check" then
       M.pending = nil
+      if not newer(latest, M.version) then M.updState = { state = "ok" }; pcall(M.drawBar) end
       if newer(latest, M.version) and latest ~= M.toldAbout then
         M.toldAbout = latest
-        M.updateAvailable = latest   -- also shown on the bar until you update
-        M.notify("v" .. latest .. " is available (you have v" .. M.version .. ") - type sbo update", 20)
+        M.notify("v" .. latest .. " is available (you have v" .. M.version .. ") - type sbo update")
       end
     elseif mode == "auto" and not newer(latest, M.version) then
       M.pending = nil
+      M.updState = { state = "ok" }; pcall(M.drawBar)
     elseif newer(latest, M.version) or mode == "force" then
       M.notify(mode == "auto" and ("new version v" .. latest .. " - updating automatically…") or ("downloading v" .. latest .. "…"))
       downloadFile(M.dl.pkg, M.rawUrl("Oven.mpackage"))
