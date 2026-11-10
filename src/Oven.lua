@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.17.1"
+M.version = "0.17.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4537,7 +4537,7 @@ function M.mapRun(arg)
   if not M.cfg.map then return say("map following is off - sbo map on first") end
   local here = M.mapRoom or M.currentRoom()
   if not here or not roomExists(here) then return say("Oven doesn't know where you are on the map yet - move one room first") end
-  local targets = M.runTargets(q)
+  local targets, fromNotes = M.runTargets(q)
   if #targets == 0 then return say("nothing called '" .. q .. "' that Oven has seen, and no room on the map by that name") end
   -- walking distance to each (the nearest 60 candidates are plenty)
   local reach = {}
@@ -4546,7 +4546,18 @@ function M.mapRun(arg)
     if t.id == here then t.steps = 0; reach[#reach + 1] = t
     elseif getPath(here, t.id) then t.steps = #speedWalkDir; reach[#reach + 1] = t end
   end
-  if #reach == 0 then return say("found " .. #targets .. " match" .. (#targets == 1 and "" or "es") .. " for '" .. q .. "', but no route on the map from here") end
+  if #reach == 0 then
+    -- say what was found, so it's clear whether it's the place you meant
+    local names = {}
+    for i, t in ipairs(targets) do
+      if i > 3 then names[#names + 1] = "…"; break end
+      local area = getRoomArea(t.id)
+      area = area and getRoomAreaName(area) or ""
+      names[#names + 1] = (getRoomName(t.id) or "?") .. " #" .. t.id .. (area ~= "" and (" (" .. area .. ")") or "")
+    end
+    return say(string.format("no route on the map from here (#%d) to %s%s", here, table.concat(names, ", "),
+      fromNotes and "" or string.format(" - a room name match: Oven hasn't seen an NPC tagged or named '%s' yet", q)))
+  end
   table.sort(reach, function(a, b) if a.rank ~= b.rank then return a.rank < b.rank end return a.steps < b.steps end)
   -- best kind of match first, then the nearest of that kind
   -- (not the room you're standing in: running to "trainer" at a trainer goes to the next one)
