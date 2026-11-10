@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.20.2"
+M.version = "0.20.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3328,14 +3328,14 @@ M.buildPresets = {
 }
 -- Materia Magica's classes (help classes), each with the build its description suggests
 local CLASS_BUILD = {
-  fighter = "melee", barbarian = "melee", cavalier = "melee", valkyrie = "tank", paladin = "paladin",
+  fighter = "melee", warrior = "melee", barbarian = "melee", cavalier = "melee", valkyrie = "tank", paladin = "paladin",
   mage = "caster", wizard = "caster", monk = "monk", ranger = "caster", psionic = "caster",
   cleric = "healer", priest = "healer", druid = "healer", shaman = "healer", witch = "caster",
   thief = "thief", rogue = "thief", bard = "thief", knave = "thief",
 }
 -- a class Oven has no build for gets its group's: learned from `help classes` (fighter / mage /
 -- cleric / thief columns), so classes the game adds later still get something sensible
-local GROUP_BUILD = { fighter = "melee", mage = "caster", cleric = "healer", thief = "thief" }
+local GROUP_BUILD = { fighter = "melee", warrior = "melee", mage = "caster", cleric = "healer", thief = "thief" }
 
 function M.classBuild(cls)
   cls = (cls or ""):lower()
@@ -3343,6 +3343,15 @@ function M.classBuild(cls)
   local grp = (M.cfg.classGroups or {})[cls]
   if grp and GROUP_BUILD[grp] then return GROUP_BUILD[grp], true end
   return "balanced", cls == ""
+end
+
+-- reading a class's help page: "A Barbarian's primary attribute is STRENGTH."
+function M.noteClassPrimary(l)
+  local cls, stat = l:match("^%s*An? (%a+)'s primary attribute is (%a+)")
+  if not cls then return end
+  M.cfg.classPrimary = M.cfg.classPrimary or {}
+  M.cfg.classPrimary[cls:lower()] = stat:lower()
+  M.saveSettings()
 end
 
 -- reading a race's help page: its name ("sahuagin - a playable race ...") and the
@@ -3410,10 +3419,28 @@ function M.noteClassHelp(l)
 end
 local RANK = { min = 1, minimal = 1, low = 2, med = 3, medium = 3, moderate = 3, high = 4, max = 5, maximum = 5 }
 
+function M.classPrimary()
+  local cls = ((M.cfg.char or {}).class or ""):lower()
+  return cls ~= "" and (M.cfg.classPrimary or {})[cls] or nil
+end
+
 function M.activeBuild()
   local name = M.cfg.build
   if not name then name = M.classBuild((M.cfg.char or {}).class) end
-  local w = (M.cfg.builds or {})[name] or M.buildPresets[name] or M.buildPresets.balanced
+  local custom = (M.cfg.builds or {})[name]
+  local w = custom or M.buildPresets[name] or M.buildPresets.balanced
+  -- a starting build puts your class's primary attribute (from its help page) on top
+  local primary = M.classPrimary()
+  if not custom and primary then
+    local top = 0
+    for _, v in pairs(w) do if v > top then top = v end end
+    if (w[primary] or 0) < top + 0.5 then
+      local copy = {}
+      for k, v in pairs(w) do copy[k] = v end
+      copy[primary] = top + 0.5
+      w = copy
+    end
+  end
   return name, w
 end
 
@@ -3566,6 +3593,13 @@ function M.buildLines(width)
   table.sort(keys, function(a, b) if w[a] ~= w[b] then return w[a] > w[b] end return a < b end)
   local stats = c.stats or {}
   local race = (M.cfg.raceStats or {})[(c.race or ""):lower()]
+  local primary = M.classPrimary()
+  if primary then
+    out[#out + 1] = { { C.dim, "primary attribute for " .. c.class .. " (its help page): " }, { C.slot, primary },
+      { C.dim, (M.cfg.builds or {})[bname] and "  (your own weights are kept as you set them)" or "  - weighted highest" } }
+  elseif c.class then
+    out[#out + 1] = { { C.dim, "help " .. c.class:lower() .. " once and Oven puts your class's primary attribute on top" } }
+  end
   if next(stats) then out[#out + 1] = { { C.dim, "  " .. pad("stat", 20) .. pad("weight", 9) .. "you now" .. (race and "   race max" or "") } } end
   for _, k in ipairs(keys) do
     local r = { { C.key, "  " .. pad(k, 20) }, { w[k] > 0 and C.num or C.dim, pad(tostring(w[k]), 9) } }
@@ -4370,6 +4404,7 @@ function M.onLine()
   pcall(M.noteRoomLine, line)
   pcall(M.noteClassHelp, line)
   pcall(M.noteRaceHelp, line)
+  pcall(M.noteClassPrimary, line)
   pcall(M.noteKillContext, line)
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
   -- It goes on the bar; it's never part of a command's output.
