@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.9"
+M.version = "0.10.10"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -40,6 +40,7 @@ M.defaults = {
   bar          = false,      -- move the prompt into a fixed bar at the bottom
   barMode      = "gauges",   -- gauges | raw
   barWidth     = 10,         -- length of each gauge in the prompt bar
+  barBg        = { 28, 30, 42 },  -- prompt bar background (r, g, b)
   barBlank     = true,       -- with the bar on, also drop the blank line before each prompt
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
@@ -2114,6 +2115,7 @@ function M.showBar(on)
     M.layoutBar()
     -- same font as the main window so the text lines up
     pcall(setFont, "ovenPromptBar", getFont())
+    M.applyBarBg()
     M.drawBar()
   else
     if M.bar then M.bar:hide() end
@@ -2156,12 +2158,28 @@ function M.updateMaxes(raw)
 end
 
 local barColors = { hp = "tomato", sp = "light_sky_blue", st = "gold" }
+-- the bar's background (a slight tint so it stands apart from the game text)
+function M.barBg()
+  local c = M.cfg.barBg
+  if type(c) ~= "table" or #c < 3 then c = M.defaults.barBg end
+  return c[1], c[2], c[3]
+end
+function M.applyBarBg()
+  if not M.bar then return end
+  local r, g, b = M.barBg()
+  pcall(setBackgroundColor, "ovenPromptBar", r, g, b, 255)
+end
+
 function M.drawBar()
   if not M.bar or not M.lastPromptText then return end
   local win = "ovenPromptBar"
   clearWindow(win)
+  local bgR, bgG, bgB = M.barBg()
+  pcall(setBgColor, win, bgR, bgG, bgB)   -- text cells use the bar's tint too
   if M.cfg.barMode == "raw" or #M.parsePrompt(M.lastPromptText).vals == 0 then
-    decho(win, M.lastPromptDecho or M.lastPromptText)
+    -- drop the game's (black) text background so the bar's tint shows through
+    local d = (M.lastPromptDecho or M.lastPromptText):gsub("<(%d+,%d+,%d+):[%d,]+>", "<%1>")
+    decho(win, d)
     return
   end
   local p = M.parsePrompt(M.lastPromptText)
@@ -2217,7 +2235,7 @@ function M.drawBar()
   for _, sg in ipairs(segs) do
     local col = sg[1]
     if color_table and not color_table[col] then col = "white" end
-    fg(win, col); echo(win, sg[2])
+    fg(win, col); setBgColor(win, bgR, bgG, bgB); echo(win, sg[2])
   end
   resetFormat(win)
 end
@@ -2543,6 +2561,7 @@ function M.help()
   <khaki>sbo helpwindow on|off<reset>     game help pages (and this list) in their own window
   <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
   <khaki>sbo bar gauges|raw<reset>        prompt bar as gauges, or the prompt exactly as the game sends it
+  <khaki>sbo bar bg [r g b]<reset>        prompt bar background colour (no numbers = default)
   <khaki>sbo bar blanks on|off<reset>     keep (on) or remove (off) the blank line the game puts before each prompt
   <khaki>sbo bar width [n]<reset>         length of each gauge (no number = default, 10)
   <khaki>sbo bar lines [n]<reset> / <khaki>font [n]<reset>  prompt bar height / font size (no number = default)
@@ -2723,6 +2742,13 @@ function M.command(args)
     local sub, val = b:match("^(%S*)%s*(.-)$")
     if sub == "on" or sub == "off" then M.cfg.bar = (sub == "on"); M.showBar(M.cfg.bar); say("prompt bar " .. sub)
     elseif sub == "raw" or sub == "gauges" then M.cfg.barMode = sub; M.drawBar(); say("prompt bar mode " .. sub)
+    elseif sub == "bg" then
+      local r, g, b = val:match("^(%d+)[%s,]+(%d+)[%s,]+(%d+)$")
+      if val == "" then M.cfg.barBg = { unpack(M.defaults.barBg) }
+      elseif r then M.cfg.barBg = { math.min(255, tonumber(r)), math.min(255, tonumber(g)), math.min(255, tonumber(b)) }
+      else return say("usage: sbo bar bg <red> <green> <blue>  (0-255; nothing = default)") end
+      M.applyBarBg(); M.drawBar()
+      say(string.format("prompt bar background %d %d %d%s", M.cfg.barBg[1], M.cfg.barBg[2], M.cfg.barBg[3], val == "" and " (default)" or ""))
     elseif sub == "blanks" and (val == "on" or val == "off") then
       M.cfg.barBlank = (val == "off")
       say("blank line before each prompt " .. (val == "on" and "kept" or "removed"))
