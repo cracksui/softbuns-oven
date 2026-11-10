@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.12.2"
+M.version = "0.12.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1739,11 +1739,33 @@ function M.formatters.skills(raw, width)
     end
     if #new > 0 then
       blank(out)
-      local names = {}
-      -- non-breaking spaces keep each name on one line ("detect invisibility")
-      for _, s in ipairs(new) do names[#names + 1] = (s.name:lower():gsub(" ", "\194\160")) end
+      -- alphabetical columns, read top to bottom
+      local names, w = {}, 0
+      for _, s in ipairs(new) do names[#names + 1] = s.name:lower(); w = math.max(w, ulen(s.name)) end
+      table.sort(names)
+      -- as many columns as fit, each as wide as its own longest name
+      local gap = 3
+      local ncols, nrows, widths = 1, #names, { w }
+      for try = math.min(#names, math.floor((width + gap) / 4)), 1, -1 do
+        local rows = math.ceil(#names / try)
+        local ws, total = {}, 0
+        for c = 0, try - 1 do
+          local cw = 0
+          for r = 1, rows do local n = names[c * rows + r]; if n then cw = math.max(cw, ulen(n)) end end
+          ws[c + 1] = cw; total = total + cw
+        end
+        total = total + gap * (try - 1)
+        if total <= width then ncols, nrows, widths = try, rows, ws; break end
+      end
       out[#out + 1] = { { C.title, "New to you (" .. #new .. ")" } }
-      addAll(out, wrapWords(table.concat(names, " · "), width, 0, C.text))
+      for r = 1, nrows do
+        local row = {}
+        for c = 0, ncols - 1 do
+          local n = names[c * nrows + r]
+          if n then row[#row + 1] = { C.text, c < ncols - 1 and pad(n, widths[c + 1] + gap) or n } end
+        end
+        out[#out + 1] = row
+      end
     end
     if not next(mine) then
       blank(out)
