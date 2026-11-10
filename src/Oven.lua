@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.2"
+M.version = "0.10.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1466,6 +1466,8 @@ local pageStyle = "background-color: black; padding: 6px; qproperty-alignment: '
 -- the top, and no stale (unstyled, white) area is left over from a longer page.
 local function buildPage(pg)
   if pg.scroll then pcall(function() pg.scroll:delete() end) end
+  -- never build a page without its window: Geyser would put it on the main screen at full size
+  if not pg.container then return false end
   pg.flip = (pg.flip == "A") and "B" or "A"
   local base = pg.prefix .. pg.flip
   pg.scroll = Geyser.ScrollBox:new({ name = base .. "Scroll", x = 0, y = 0, width = "100%", height = "100%" }, pg.container)
@@ -1475,6 +1477,23 @@ local function buildPage(pg)
   pg.label = Geyser.Label:new({ name = base .. "Label", x = 0, y = 0, width = "100%", height = 40 }, pg.scroll)
   pg.label:setStyleSheet(pageStyle)
   pg.links = {}
+  return true
+end
+
+-- remove page widgets left over from an earlier version in this session
+-- (0.10.0 pages didn't know their window, and 0.10.1-0.10.2 rebuilt them full-screen)
+function M.dropPages()
+  for _, key in ipairs({ "viewPg", "helpPg" }) do
+    local pg = M[key]
+    if pg and pg.scroll then pcall(function() pg.scroll:delete() end) end
+    M[key] = nil
+  end
+  -- the 0.9.3-0.9.11 help panel too (it lived in the help window, but rebuild it the current way)
+  if M.helpScroll then pcall(function() M.helpScroll:delete() end) end
+  M.helpScroll, M.helpLabel, M.helpLinks, M.helpSpacer = nil, nil, nil, nil
+  for _, n in ipairs({ "ovenHelpAScroll", "ovenHelpBScroll", "ovenViewAScroll", "ovenViewBScroll" }) do
+    pcall(deleteScrollBox, n)
+  end
 end
 
 function M.newPage(prefix, container)
@@ -1510,7 +1529,7 @@ function M.pageShow(pg, lines, fmt, links)
   local doc = string.format(
     "<div style=\"white-space: pre-wrap; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
     font, size, table.concat(html, "\n"))
-  buildPage(pg)
+  if buildPage(pg) == false then return end
   pg.label:rawEcho(doc)
   -- height: wrapped rows times the label's real line height (rich text spaces lines wider than the font)
   local rows = 0
@@ -1563,6 +1582,7 @@ function M.createWindow()
   end
   if M.console then M.console:hide() end   -- console used by versions before 0.10
   if not M.viewPg then M.viewPg = M.newPage("ovenView", M.container) end
+  M.viewPg.container = M.container
 end
 
 function M.viewCols()
@@ -1615,6 +1635,7 @@ function M.createHelpWindow()
     M.helpPg = { prefix = "ovenHelp", container = M.helpContainer, scroll = M.helpScroll, label = M.helpLabel, links = M.helpLinks or {} }
   end
   if not M.helpPg then M.helpPg = M.newPage("ovenHelp", M.helpContainer) end
+  M.helpPg.container = M.helpContainer
 end
 
 -- cecho text -> decho text (colour names -> r,g,b)
@@ -2708,6 +2729,7 @@ end
 
 function M.init()
   M.teardown()
+  M.dropPages()
   M.loadSettings()
   M.handlers = {
     registerAnonymousEventHandler("sysDataSendRequest", M.onSend),
