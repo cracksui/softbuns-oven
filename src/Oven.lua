@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.15.3"
+M.version = "0.15.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3609,9 +3609,30 @@ local function isPromptLine()
   return M.cfg.promptPattern ~= "" and line:match(M.cfg.promptPattern) ~= nil
 end
 
+M.recentLines = M.recentLines or {}
+M.killCtxLogged = M.killCtxLogged or 0
+function M.noteKillContext(l)
+  -- remember the last 8 lines; when exp is gained (not from a quest reward), log them once
+  -- so the game's wording for a kill can be learned
+  local R = M.recentLines
+  if l:match("^%s*You gain [%d,]+ experience") and M.cfg.samples and M.killCtxLogged < 30 then
+    M.killCtxLogged = M.killCtxLogged + 1
+    local f = io.open(M.samplesFile, "a")
+    if f then
+      f:write("===== " .. os.date("%Y-%m-%d %H:%M:%S") .. " | kind=killctx | cmd=\n")
+      for _, x in ipairs(R) do f:write(x, "\n") end
+      f:write(l, "\n===== end\n\n")
+      f:close()
+    end
+  end
+  R[#R + 1] = l
+  if #R > 8 then table.remove(R, 1) end
+end
+
 function M.onLine()
   local cap = M.cap
   pcall(M.observe, line)
+  pcall(M.noteKillContext, line)
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
   -- It goes on the bar; it's never part of a command's output.
   if line:find("^%s*The Powers take pity on you and restore your soul to your body") then
