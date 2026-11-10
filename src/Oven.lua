@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.17.0"
+M.version = "0.17.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4549,8 +4549,11 @@ function M.mapRun(arg)
   if #reach == 0 then return say("found " .. #targets .. " match" .. (#targets == 1 and "" or "es") .. " for '" .. q .. "', but no route on the map from here") end
   table.sort(reach, function(a, b) if a.rank ~= b.rank then return a.rank < b.rank end return a.steps < b.steps end)
   -- best kind of match first, then the nearest of that kind
-  local best = reach[1]
-  for _, t in ipairs(reach) do if t.rank == best.rank and t.steps < best.steps then best = t end end
+  -- (not the room you're standing in: running to "trainer" at a trainer goes to the next one)
+  local best
+  for _, t in ipairs(reach) do
+    if t.steps > 0 and (not best or t.rank < best.rank or (t.rank == best.rank and t.steps < best.steps)) then best = t end
+  end
   if all then
     table.sort(reach, function(a, b) return a.steps < b.steps end)
     local width = M.cfg.window and M.viewCols() or 80
@@ -4566,11 +4569,12 @@ function M.mapRun(arg)
     if M.cfg.window then M.viewAdd({ lines = out, links = links }) else render("main", out) end
     return
   end
-  local others = #reach - 1
+  if not best then return say("you're already at the only " .. q .. " Oven knows of") end
+  local others = 0
+  for _, t in ipairs(reach) do if t ~= best and t.steps > 0 then others = others + 1 end end
   say(string.format("running to %s · %s #%d · %d step%s%s", best.why, getRoomName(best.id) or "?", best.id,
     best.steps, best.steps == 1 and "" or "s",
     others > 0 and string.format("  (%d other%s: sbo run all %s)", others, others == 1 and "" or "s", q) or ""))
-  if best.steps == 0 then return say("you're already there") end
   M.mapWalkTo(best.id)
 end
 
