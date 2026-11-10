@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.14"
+M.version = "0.11.15"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -136,6 +136,14 @@ end
 -- Small helpers
 ---------------------------------------------------------------------------
 local function trim(s) s = s:gsub("^%s+", ""); s = s:gsub("%s+$", ""); return s end
+
+-- print an Oven line in the main window: a line break first only when the last line
+-- already has text on it (a prompt, say), so there's never an empty line before it
+function M.log(text)
+  local cur = ""
+  pcall(function() moveCursorEnd("main"); cur = getCurrentLine("main") or "" end)
+  cecho("main", ((cur ~= "") and "\n" or "") .. text .. "\n")
+end
 local function now() return (getEpoch and getEpoch()) or os.clock() end
 local function rtrim(s) return (s:gsub("%s+$", "")) end
 local function ulen(s) return (utf8 and utf8.len(s)) or #s end
@@ -2212,15 +2220,15 @@ end
 
 function M.pin(name)
   local it = M.findItem(name or M.recent[#M.recent])
-  if not it then return cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches that\n") end
+  if not it then return M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches that") end
   M.pinned = it.name; M.saveItems()
-  cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> pinned: " .. it.name .. " - items you look at next are compared against it (sbo unpin to stop)\n")
+  M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> pinned: " .. it.name .. " - items you look at next are compared against it (sbo unpin to stop)")
 end
 
 function M.compareNames(qa, qb)
   local a, b = M.findItem(qa), M.findItem(qb)
-  if not a then return cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches: " .. tostring(qa) .. "\n") end
-  if not b then return cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches: " .. tostring(qb) .. "\n") end
+  if not a then return M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches: " .. tostring(qa)) end
+  if not b then return M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches: " .. tostring(qb)) end
   M.compare(a, b)
 end
 
@@ -2987,7 +2995,7 @@ end
 ---------------------------------------------------------------------------
 -- `sbo` command
 ---------------------------------------------------------------------------
-local function say(msg) cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg .. "\n") end
+local function say(msg) M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg) end
 
 -- sbo learn: look at every worn item Oven doesn't know yet (the "?" in eq), quietly
 function M.learn()
@@ -3078,9 +3086,9 @@ function M.help()
     local lines = {}
     for l in (text:gsub("^\n", "") .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
     M.helpPage("Soft Bun's Oven", lines, "cecho")
-    _G.cecho("main", "<dim_grey>[sbo] command list → help window<reset>\n")
+    M.log("<dim_grey>[sbo] command list → help window<reset>")
   else
-    _G.cecho("main", text)
+    M.log((text:gsub("^\n", ""):gsub("\n$", "")))
   end
 end
 
@@ -3341,7 +3349,7 @@ function M.notify(msg, secs)
   if M.cfg.bar and M.bar and M.bar.rawEcho then
     pcall(M.drawBar)
   elseif long then
-    cecho("<dim_grey>[sbo] " .. long .. "<reset>\n")
+    M.log("<dim_grey>[sbo] " .. long .. "<reset>")
   end
 end
 
@@ -3374,6 +3382,7 @@ function M.installFrom(path)
       if sbo and sbo.version then
         local msg = "updated: v" .. old .. " -> v" .. sbo.version
         if sbo.notify then sbo.notify(msg, 10)
+        elseif sbo and sbo.log then sbo.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg)
         else cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg .. "\n") end
       end
     end)
@@ -3510,8 +3519,8 @@ function M.init()
   if not M.booted then
     M.booted = true
     tempTimer(8, function() M.checkForUpdate() end)
-    cecho("\n<dim_grey>[<orange>Soft Bun's Oven<dim_grey>] v" .. M.version ..
-      " by softbuns :: preheated :: raw stream in, baked output out :: type <khaki>sbo<dim_grey> for commands<reset>\n")
+    M.log("<dim_grey>[<orange>Soft Bun's Oven<dim_grey>] v" .. M.version ..
+      " by softbuns :: preheated :: raw stream in, baked output out :: type <khaki>sbo<dim_grey> for commands<reset>")
   end
 end
 
