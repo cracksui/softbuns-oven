@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.15"
+M.version = "0.11.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -98,6 +98,10 @@ M.commands = {
   { word = "score",     min = 2, kind = "score" },    -- "sc" is score in Materia Magica
   { word = "affects",   min = 2, kind = "affects" },
   { word = "help",      min = 3, kind = "help" },     -- shown as-is in the help window
+  -- recorded (not reformatted yet) so a practice planner can be built from real output
+  { word = "skills",    min = 3, kind = "skills" },
+  { word = "practice",  min = 3, kind = "skills" },
+  { word = "train",     min = 3, kind = "skills" },
 }
 
 function M.classify(cmd)
@@ -423,6 +427,16 @@ function M.runsExact(idx, text)
     pos = pos + n
   end
   return #out > 0 and out or nil
+end
+
+-- which armor location a worn position protects (nil when the game doesn't make that clear)
+function M.arLocationFor(worn)
+  if not worn then return nil end
+  local w = worn:lower()
+  for _, pair in ipairs({ { "head", "head" }, { "body", "torso" }, { "torso", "torso" }, { "arms", "arms" },
+                          { "legs", "legs" }, { "tail", "tail" } }) do
+    if w:find(pair[1], 1, true) then return pair[2] end
+  end
 end
 
 -- the game's colour of `sub` on capture line `idx` (first visible character), or nil
@@ -802,6 +816,16 @@ function M.formatters.eq(raw, width)
   renderSlots(out, rows, width, M.cfg.eqStats)
 
   if #ar > 0 then
+    -- damage reduction per AR point, measured from this eq (0.75% at the moment)
+    local sumAR, sumPct = 0, 0
+    for _, a in ipairs(ar) do
+      if tonumber(a[2]) and tonumber(a[3]) and tonumber(a[2]) > 0 then
+        sumAR = sumAR + tonumber(a[2]); sumPct = sumPct + tonumber(a[3])
+      end
+    end
+    if sumAR > 0 then M.cfg.arRate = sumPct / sumAR end
+    M.cfg.arLoc = {}
+    for _, a in ipairs(ar) do M.cfg.arLoc[a[1]:lower()] = tonumber(a[2]) end
     -- body-location totals as a small table (each is the sum of everything protecting that location)
     local total = 0
     for _, a in ipairs(ar) do total = total + (tonumber(a[2]) or 0) end
@@ -828,6 +852,15 @@ function M.formatters.eq(raw, width)
           { C.text, tonumber(a[3]) and ("   %-" .. string.format("%.2f", tonumber(a[3])) .. " damage") or "" } }
       end
       out[#out + 1] = { { C.dim, pad("total", 10) }, { C.num, string.format("%3s", total) } }
+    end
+    -- weakest location(s), and what one more point is worth
+    local low
+    for _, a in ipairs(ar) do if tonumber(a[2]) and (not low or tonumber(a[2]) < low) then low = tonumber(a[2]) end end
+    local weak = {}
+    for _, a in ipairs(ar) do if tonumber(a[2]) == low then weak[#weak + 1] = a[1]:lower() end end
+    if #weak > 0 and M.cfg.arRate then
+      out[#out + 1] = { { C.dim, pad("", 10) }, { C.dim, "weakest: " }, { C.flag, table.concat(weak, ", ") },
+        { C.dim, string.format("  ·  each AR point = %.2f%% less damage there", M.cfg.arRate) } }
     end
   end
 
@@ -1068,7 +1101,15 @@ function M.formatters.item(raw, width)
   add("Align", it.align and numSegs(it.align))
   add("Weight", it.weight and { { C.num, it.weight[1] }, { C.text, " st " }, { C.num, it.weight[2] }, { C.text, " pb" } })
   add("Value", it.value and { { C.num, it.value }, { C.text, " gold" } })
-  add("Armor", it.ar and numSegs(it.ar))
+  if it.ar then
+    local segs = numSegs(it.ar)
+    local rate = M.cfg.arRate
+    if rate and tonumber(it.ar) then
+      local loc = M.arLocationFor(it.worn)
+      segs[#segs + 1] = { C.dim, string.format("  %%-%.2f dmg%s", tonumber(it.ar) * rate, loc and (" " .. loc) or "") }
+    end
+    add("Armor", segs)
+  end
   add("Repairs", it.repairs and { { C.num, it.repairs }, { C.text, " left" } })
   add("Category", it.cat and { { C.num, it.cat } })
   add("Slots", it.slots and { { C.num, it.slots } })
@@ -1288,6 +1329,12 @@ function M.formatters.score(raw, width)
     local nxt = tonumber(lvl or "") and (" to level " .. (tonumber(lvl) + 1)) or " to next level"
     out[#out + 1] = { { C.plus, commaNum(sc.tnl) }, { C.text, " exp" .. nxt },
                       { C.dim, "   (" .. commaNum(sc.exp) .. " total)" } }
+    local rate = M.expRate and M.expRate()
+    if rate and rate > 0 then
+      local tnlN = tonumber((sc.tnl:gsub(",", "")))
+      out[#out + 1] = { { C.dim, string.format("at %s exp/hour this session: level in ≈ ", commaNum(math.floor(rate))) },
+                        { C.title, M.duration(tnlN * 3600 / rate) } }
+    end
   end
   if sc.path and #sc.path > 1 then
     out[#out + 1] = { { C.dim, "Class path: " }, { C.item, table.concat(sc.path, " → ") } }
@@ -1931,6 +1978,12 @@ function M.compareRows(a, b)
   textRow("Worn", a.worn, b.worn, true)
   numRow("Level", a.level, b.level)
   numRow("Armor", a.ar, b.ar, "high")
+  if M.cfg.arRate and (a.ar or b.ar) then
+    local d = (tonumber(b.ar) or 0) - (tonumber(a.ar) or 0)
+    if d ~= 0 then
+      rows[#rows + 1] = { "  damage", "", "", string.format("%+.2f%%", -d * M.cfg.arRate), d > 0 and 1 or -1 }
+    end
+  end
   if a.weight or b.weight then
     local aw, bw = pebbles(a), pebbles(b)
     local fmt = function(it) return it.weight and (it.weight[1] .. "st " .. it.weight[2] .. "pb") or "—" end
@@ -2142,10 +2195,110 @@ function M.parsePrompt(t)
 end
 
 -- maxima, level and exp-to-level come from `score` (and live from MSDP when the game sends it)
+-- Session: exp / kills since you logged in, and how fast levels are coming
+M.sess = M.sess or { start = os.time(), gained = 0 }
+function M.sessionScore(sc)
+  local S = M.sess
+  local exp = sc.exp and tonumber((sc.exp:gsub(",", "")))
+  local kills = sc.mobKills and tonumber((sc.mobKills:gsub(",", "")))
+  local deaths = sc.mobDeaths and tonumber((sc.mobDeaths:gsub(",", "")))
+  if exp then
+    if not S.exp0 then S.exp0, S.t0 = exp, os.time() end
+    S.expNow, S.tNow = exp, os.time()
+  end
+  if kills and not S.kills0 then S.kills0, S.deaths0 = kills, deaths end
+  S.killsNow, S.deathsNow = kills or S.killsNow, deaths or S.deathsNow
+end
+
+-- exp per hour this session, or nil if there isn't enough to go on yet
+function M.expRate()
+  local S = M.sess
+  local gained, since
+  if S.exp0 and S.expNow and S.expNow > S.exp0 then
+    gained, since = S.expNow - S.exp0 + (S.gainedAfterScore or 0), os.time() - S.t0
+  elseif (S.gained or 0) > 0 then
+    gained, since = S.gained, os.time() - S.start
+  end
+  if gained and since and since >= 120 then return gained * 3600 / since end
+end
+
+local function duration(sec)
+  sec = math.floor(sec)
+  local fl = math.floor
+  if sec >= 86400 then return string.format("%dd %dh", fl(sec / 86400), fl((sec % 86400) / 3600)) end
+  if sec >= 3600 then return string.format("%dh %02dm", fl(sec / 3600), fl((sec % 3600) / 60)) end
+  return string.format("%dm", math.max(1, fl(sec / 60)))
+end
+M.duration = duration
+
+-- live exp gains: the exact message isn't known yet, so lines mentioning experience are
+-- logged (kind=observe) for tuning, and a few likely wordings are recognised
+M.expGain = { "^You receive ([%d,]+) experience", "^You gain ([%d,]+) experience", "^You have gained ([%d,]+) experience",
+              "([%d,]+) experience points?[%.!]" }
+local observed = {}
+function M.observe(l)
+  if not l:find("xperience", 1, true) then return end
+  local t = trim(l)
+  if M.cfg.samples and not observed[t] and #observed < 100 then
+    observed[t] = true; observed[#observed + 1] = t
+    local f = io.open(M.samplesFile, "a")
+    if f then f:write("===== " .. os.date("%Y-%m-%d %H:%M:%S") .. " | kind=observe | cmd=\n" .. t .. "\n===== end\n\n"); f:close() end
+  end
+  if M.cap and M.cap.kind == "score" then return end   -- score's own exp line
+  for _, p in ipairs(M.expGain) do
+    local n = t:match(p)
+    if n and not t:find("need", 1, true) then
+      n = tonumber((n:gsub(",", "")))
+      if n and n > 0 then
+        M.sess.gained = (M.sess.gained or 0) + n
+        if M.sess.exp0 then M.sess.gainedAfterScore = (M.sess.gainedAfterScore or 0) + n end
+        local c = M.cfg.char or {}
+        if c.tnl then c.tnl = math.max(0, c.tnl - n) end
+        if c.exp then c.exp = c.exp + n end
+        M.drawBar()
+      end
+      return
+    end
+  end
+end
+
+-- `sbo session`: a summary page in the Inspector
+function M.sessionLines(width)
+  local S, c = M.sess, M.cfg.char or {}
+  local out = { header("session", "", width, "Session  (" .. duration(os.time() - S.start) .. ")") }
+  local gained = (S.exp0 and S.expNow) and (S.expNow - S.exp0 + (S.gainedAfterScore or 0)) or S.gained or 0
+  local rate = M.expRate()
+  local cells = {}
+  cells[#cells + 1] = { "Exp gained", { { C.plus, M.commaNum(gained) } } }
+  cells[#cells + 1] = { "Exp / hour", rate and { { C.num, M.commaNum(math.floor(rate)) } } or { { C.dim, "not enough data yet" } } }
+  if c.tnl then cells[#cells + 1] = { "To level " .. ((c.level or 0) + 1), { { C.num, M.commaNum(c.tnl) } } } end
+  if c.tnl and rate and rate > 0 then
+    cells[#cells + 1] = { "Level in", { { C.title, "≈ " .. duration(c.tnl * 3600 / rate) } } }
+  end
+  if S.kills0 and S.killsNow then
+    cells[#cells + 1] = { "Kills", { { C.plus, tostring(S.killsNow - S.kills0) } } }
+    cells[#cells + 1] = { "Deaths", { { C.minus, tostring((S.deathsNow or 0) - (S.deaths0 or 0)) } } }
+    local k = S.killsNow - S.kills0
+    if k > 0 and gained > 0 and c.tnl then
+      cells[#cells + 1] = { "Kills to level", { { C.num, "≈ " .. math.ceil(c.tnl / (gained / k)) } } }
+    end
+  end
+  grid(out, cells, width)
+  blank(out)
+  if not S.exp0 then
+    out[#out + 1] = { { C.dim, "Type score (sc) now and again: exp and kills are measured between scores." } }
+  else
+    out[#out + 1] = { { C.dim, "Measured from your score at " .. os.date("%H:%M", S.t0) .. " and the latest one; type score to refresh." } }
+  end
+  return out
+end
+
 function M.updateMaxes(raw)
   M.cfg.maxes = M.cfg.maxes or {}
   local ok, sc = pcall(M.parseScore, raw)
   if ok and sc then
+    M.sessionScore(sc)
+    M.sess.gainedAfterScore = 0
     M.cfg.char = M.cfg.char or {}
     local c = M.cfg.char
     if sc.info["Class Level"] then c.level = tonumber(sc.info["Class Level"]) end
@@ -2230,6 +2383,8 @@ function M.drawBar()
   end
   if tnl then
     tail[#tail + 1] = { C.dim, (lvl and "  " or "") .. "tnl " }; tail[#tail + 1] = { C.plus, commaNum(tnl) }
+    local rate = M.expRate()
+    if rate and rate > 0 then tail[#tail + 1] = { C.dim, " ≈" .. M.duration(tnl * 3600 / rate) } end
   end
   p.vals = pools
   -- gauges are a fixed width (sbo bar width), shrunk only if the bar is too narrow
@@ -2388,6 +2543,7 @@ end
 
 function M.onLine()
   local cap = M.cap
+  pcall(M.observe, line)
   if not cap and not M.cfg.bar then return end
   -- the game's pager: "[C]ontinue [R]edraw [B]ack [E]xit:"
   if line:match("^%s*%[C%]ontinue") then
@@ -2568,6 +2724,7 @@ function M.help()
   <khaki>sbo pin [name]<reset> / <khaki>unpin<reset>    compare every item you look at against this one
   <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
   <khaki>sbo items<reset>                 list remembered items
+  <khaki>sbo session [reset]<reset>       exp gained, exp/hour, time and kills to next level
   <khaki>sbo gamecolors on|off<reset>     keep the game's own colours on item names
   <khaki>sbo eqstats on|off<reset>        AR and affects of each worn item in eq (look at an item once to fill it in)
   <khaki>sbo empty on|off<reset>          show empty equipment slots in eq
@@ -2735,6 +2892,11 @@ function M.command(args)
     say("help window " .. b)
   elseif a == "slots" and (b == "short" or b == "full") then
     M.cfg.slotNames = b; say("slot names: " .. b)
+  elseif a == "session" then
+    if b == "reset" then M.sess = { start = os.time(), gained = 0 }; say("session counters reset"); return end
+    if M.cfg.window then M.viewAdd({ lines = M.sessionLines(M.viewCols()), links = {} })
+    else render("main", M.sessionLines(columns("main"))) end
+    return
   elseif a == "gamecolors" and onoff ~= nil then
     M.cfg.gameColors = onoff; say("game colours on item names " .. b)
   elseif a == "eqstats" and onoff ~= nil then

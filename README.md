@@ -85,11 +85,11 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 
 | Command | Becomes |
 |---|---|
-| `eq` | slot table with short slot names, empty slots marked, and each item's AR and affects (from items you've looked at); armor resistance totals, defenses, weapon damage breakdown |
+| `eq` | slot table with short slot names, empty slots marked, and each item's AR and affects (from items you've looked at); armor table with your weakest location, defenses, weapon damage breakdown |
 | `look` / `examine` / `identify` an item | stat grid, keywords, flags, affects, relics, weapon block, description |
 | `ex` / `look` a creature | its description, then what it is using |
 | `i`, `look in <container>` | one item per row, stack counts, capacity footer |
-| `score` | level and exp to level first, vitals and attribute gauges, standing, kill record |
+| `score` | level, exp to level and how long the next level will take at this session's pace; vitals and attribute gauges, standing, kill record |
 | `aff` | resistances, spell and racial affects with their modifiers |
 | `help <topic>` | the help page opens in its own **help window**, exactly as the game sends it |
 
@@ -120,6 +120,7 @@ sbo clear                 clear the Inspector's history
 sbo font [size]           Inspector / help window font size (leave the number off for the default)
 sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
+sbo session [reset]       exp gained, exp/hour, time and kills to next level
 sbo gamecolors on|off     keep the game's own colours on item names
 sbo eqstats on|off        AR / affects column in eq (look at an item once to fill it in)
 sbo empty on|off          show empty slots in eq
