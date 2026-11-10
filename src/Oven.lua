@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.14.3"
+M.version = "0.14.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2078,8 +2078,19 @@ function M.hudPress(ev)
   if type(ev) == "table" and ev.button and ev.button ~= "LeftButton" then return end
   local ok, mx, my = pcall(getMousePosition)
   if not ok or not mx then M.questRefresh("all"); return end
-  M.hudDrag = { mx = mx, my = my, x = M.questHud:get_x(), y = M.questHud:get_y(), moved = 0 }
+  M.hudDrag = { mx = mx, my = my, x = M.questHud:get_x(), y = M.questHud:get_y(), moved = 0, started = os.time() }
   pcall(function() M.questHud:setCursor("ClosedHand") end)
+  -- some setups (e.g. Linux under WSL) don't deliver mouse-move events while the button is
+  -- held, so also follow the cursor with a short timer until the button is released
+  if M.hudPoll then killTimer(M.hudPoll) end
+  M.hudPoll = tempTimer(0.03, function()
+    if not M.hudDrag or os.time() - M.hudDrag.started > 15 then
+      if M.hudPoll then killTimer(M.hudPoll); M.hudPoll = nil end
+      if M.hudDrag then M.hudRelease() end
+      return
+    end
+    M.hudMove()
+  end, true)
 end
 function M.hudMove(ev)
   local d = M.hudDrag
@@ -2095,6 +2106,7 @@ end
 function M.hudRelease(ev)
   local d = M.hudDrag
   M.hudDrag = nil
+  if M.hudPoll then killTimer(M.hudPoll); M.hudPoll = nil end
   pcall(function() M.questHud:setCursor("OpenHand") end)
   if not d then return end
   if d.moved < 4 then
