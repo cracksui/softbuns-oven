@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.12.5"
+M.version = "0.12.6"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1713,29 +1713,49 @@ function M.formatters.skills(raw, width)
 
   local pr = M.parsePractice(raw)
   if pr then
-    -- the game's list exactly as sent (order, columns, colours, usage lines); Oven only adds
-    -- one line on top: your class-recommended skills this trainer can teach
-    local out = {}
-    local mine = M.cfg.skills or {}
-    local rec = {}
+    -- every skill the trainer lists, one row each, sorted by how far along you are
+    local out, mine = {}, M.cfg.skills or {}
+    local list, rec = {}, {}
     for _, s2 in ipairs(pr.list) do
+      list[#list + 1] = s2
       local info = mine[skillKey(s2.name)]
       if info and info.rec then rec[#rec + 1] = s2 end
     end
+    table.sort(list, function(x, y)
+      if x.lrnd ~= y.lrnd then return x.lrnd > y.lrnd end
+      return x.name:lower() < y.name:lower()
+    end)
+    -- availability: stated once when it's the same for everyone, else per row where it differs
+    local sameA = list[1] and list[1].avail
+    for _, s2 in ipairs(list) do if s2.avail ~= sameA then sameA = nil end end
     if #rec > 0 then
       local row = { { C.title, "★ recommended, trainable here: " } }
       for i, s2 in ipairs(rec) do
         if i > 1 then row[#row + 1] = { C.dim, ", " } end
-        row[#row + 1] = { C.item, s2.name }
-        row[#row + 1] = { C.num, " " .. s2.lrnd .. "%" }
+        row[#row + 1] = { C.item, s2.name }; row[#row + 1] = { C.num, " " .. s2.lrnd .. "%" }
       end
       out[#out + 1] = row
       blank(out)
     end
-    for idx, l in ipairs(raw) do
-      local line = rtrim(l)
-      if line == "" then out[#out + 1] = {}
-      else out[#out + 1] = M.runsExact(idx, line) or { { C.text, line } } end
+    local hdr = { { C.title, #list .. " skills" } }
+    if sameA and sameA ~= "" then hdr[#hdr + 1] = { C.dim, "  ·  all " .. sameA:lower() } end
+    out[#out + 1] = hdr
+    local nameW = 0
+    for _, s2 in ipairs(list) do nameW = math.max(nameW, ulen(s2.name)) end
+    local gw = width >= 80 and 10 or 6
+    for _, s2 in ipairs(list) do
+      local info = mine[skillKey(s2.name)]
+      local r = { { C.title, (info and info.rec) and "★ " or "  " } }
+      addAll(r, M.runsExact(s2.idx, s2.name) or { { C.item, s2.name } })
+      r[#r + 1] = { C.text, string.rep(" ", nameW + 1 - ulen(s2.name)) }
+      addAll(r, learnedSegs(s2.lrnd, gw))
+      if not sameA and s2.avail and s2.avail ~= "" then r[#r + 1] = { C.dim, "   " .. s2.avail:lower() } end
+      out[#out + 1] = r
+    end
+    if pr.prac then blank(out); out[#out + 1] = { { C.key, "Practices available: " }, { C.num, pr.prac } } end
+    if #pr.other > 0 then
+      blank(out)
+      for _, o in ipairs(pr.other) do addAll(out, wrapWords(trim(o), width, 7, C.dim)) end
     end
     return out, pr.trainer .. " can train you"
   end
