@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.9"
+M.version = "0.9.10"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2017,7 +2017,11 @@ function M.onLine()
       cap.pages = (cap.pages or 1) + 1
       if cap.gag then deleteLine() end
       if cap.maxTimer then killTimer(cap.maxTimer) end
-      cap.maxTimer = tempTimer(M.cfg.maxTime, function() M.finish("maxtime") end)
+      cap.maxTimer = tempTimer(M.cfg.maxTime + 3, function() M.finish("maxtime") end)
+      -- the next page needs a round trip to the game: don't let the short
+      -- "no more text" timer close the page while we wait for it
+      if cap.idleTimer then killTimer(cap.idleTimer) end
+      cap.idleTimer = tempTimer(3, function() M.finish("idle") end)
       send("c", false)
     end
     return   -- otherwise leave it in the main window so you can answer it
