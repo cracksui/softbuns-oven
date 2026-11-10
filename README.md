@@ -142,7 +142,9 @@ sbo kills [all]           what you've killed, with counts and exp - this session
 sbo session [reset]       exp gained, exp/hour, time and kills to next level
 sbo map on|off            follow you on the map (GMCP room number); double-click a room to walk there
 sbo map stop              cancel a walk in progress
-sbo map panel on|off      the map in its own window, with the room name and zoom/centre buttons
+sbo map panel on|off      the map in its own window: room name, search box, zoom/centre buttons
+sbo map find <text>       find rooms by name - click a result to show it or walk there
+sbo map walk <room #>     walk to a room (sbo map show <#> just centres the map on it)
 sbo map load [file]       load a map file (default: map/mm_map.dat)
 sbo gamecolors on|off     keep the game's own colours on item names
 sbo eqstats on|off        AR / affects column in eq (look at an item once to fill it in)

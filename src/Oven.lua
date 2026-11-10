@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.15.6"
+M.version = "0.15.7"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3936,6 +3936,13 @@ function M.createMapPanel()
     b:setClickCallback(function() fn() end)
     return b
   end
+  -- search box: type part of a room name, Enter
+  M.mapSearchBox = Geyser.CommandLine:new({ name = "ovenMapSearch", width = 150, h_policy = Geyser.Fixed }, header)
+  pcall(function() M.mapSearchBox:setStyleSheet("background-color: rgba(30,30,42,255); color: #c0c0c0; border: 1px solid #333;") end)
+  M.mapSearchBox:setAction(function(text)
+    M.mapSearchBox:clear()
+    M.mapFind(text)
+  end)
   button("ovenMapZoomOut", "−", "zoom out", function() M.mapZoom(1.25) end)
   button("ovenMapZoomIn", "+", "zoom in", function() M.mapZoom(0.8) end)
   button("ovenMapCentre", "◎", "centre on you", function() if M.mapRoom and roomExists(M.mapRoom) then centerview(M.mapRoom) end end)
@@ -3976,6 +3983,73 @@ function M.showMapPanel(on)
   elseif M.mapPanel then
     M.mapPanel:hide()
   end
+end
+
+-- map search: rooms whose name contains the text (rooms in your current area first)
+function M.mapFind(q)
+  q = trim(q or "")
+  if q == "" then return say("usage: sbo map find <part of a room name>") end
+  local ok, found = pcall(searchRoom, q)
+  if not ok or type(found) ~= "table" then return say("map search isn't available (is a map loaded?)") end
+  local here = M.mapRoom and roomExists(M.mapRoom) and getRoomArea(M.mapRoom)
+  local rows = {}
+  for key, name in pairs(found) do
+    local id = tonumber(key)
+    if id then
+      local area = getRoomArea(id)
+      rows[#rows + 1] = { id = id, name = name, area = area, areaName = area and getRoomAreaName(area) or "" }
+    end
+  end
+  table.sort(rows, function(a, b)
+    local ah, bh = a.area == here, b.area == here
+    if ah ~= bh then return ah end
+    if a.areaName ~= b.areaName then return a.areaName < b.areaName end
+    return a.name < b.name
+  end)
+  local width = M.cfg.window and M.viewCols() or 80
+  local out = { header("map", "", width, string.format("Map search: %s  (%d room%s)", q, #rows, #rows == 1 and "" or "s")) }
+  local links = {}
+  if #rows == 0 then out[#out + 1] = { { C.dim, "no rooms on the map match that" } } end
+  for i, r in ipairs(rows) do
+    if i > 25 then
+      out[#out + 1] = { { C.dim, string.format("… and %d more - try a longer search", #rows - 25) } }
+      break
+    end
+    local row = { { C.dim, pad("#" .. r.id, 8) }, { C.item, r.name } }
+    if r.areaName ~= "" then row[#row + 1] = { r.area == here and C.slot or C.dim, "  · " .. r.areaName } end
+    out[#out + 1] = row
+    local id, nm = r.id, r.name
+    links[#links + 1] = { "show #" .. id .. " " .. nm, function() M.mapShow(id) end }
+    links[#links + 1] = { "walk to #" .. id .. " " .. nm, function() M.mapWalkTo(id) end }
+  end
+  if M.cfg.window then M.viewAdd({ lines = out, links = links })
+  else render("main", out) end
+  if rows[1] and #rows == 1 then M.mapShow(rows[1].id) end
+end
+
+-- centre the map on a room and highlight it (the previous highlight is cleared)
+function M.mapShow(id)
+  if not roomExists(id) then return say("room #" .. id .. " isn't on the map") end
+  if M.mapHighlight then pcall(unHighlightRoom, M.mapHighlight) end
+  pcall(highlightRoom, id, 64, 224, 208, 64, 224, 208, 1.5, 200, 60)
+  M.mapHighlight = id
+  if M.mapPanel and M.cfg.mapPanel then M.showMapPanel(true) end   -- (this centres on you...)
+  centerview(id)                                                    -- ...so centre on the room after
+end
+
+-- walk to a room the way a double-click on the map does
+function M.mapWalkTo(id)
+  id = tonumber(id)
+  if not id or not roomExists(id) then return say("room #" .. tostring(id) .. " isn't on the map") end
+  if not M.mapRoom then return say("Oven doesn't know where you are yet - move one room first") end
+  M.mapShow(id)
+  if not getPath(M.mapRoom, id) then return say("no route on the map from here to #" .. id) end
+  local dirs, path = {}, {}
+  for i, d in ipairs(speedWalkDir) do dirs[i] = d; path[i] = tonumber(speedWalkPath[i]) end
+  if #dirs == 0 then return say("you're already there") end
+  M.walk = { dirs = dirs, path = path, step = 1 }
+  M.notifyWalk(string.format("%d step%s…", #dirs, #dirs == 1 and "" or "s"))
+  M.walkStep()
 end
 
 function M.mapStart()
@@ -4131,6 +4205,8 @@ function M.help()
   <khaki>sbo map on|off<reset>            follow you on the map by room number; double-click a room to walk there
   <khaki>sbo map stop<reset> / <khaki>load [file]<reset>  cancel a walk / load a map file (default: map/mm_map.dat)
   <khaki>sbo map panel on|off<reset>      the map in its own window, with the room name and zoom/centre buttons
+  <khaki>sbo map find [text]<reset>       rooms whose name contains the text (also the map panel's search box)
+  <khaki>sbo map walk|show [room #]<reset> walk to a room, or centre the map on it
   <khaki>sbo kills [all]<reset>            what you've killed: this session and all time (reset / clear)
   <khaki>sbo session [reset]<reset>       exp gained, exp/hour, time and kills to next level
   <khaki>sbo gamecolors on|off<reset>     keep the game's own colours on item names
@@ -4346,6 +4422,12 @@ function M.command(args)
     elseif b == "stop" then
       if M.walk then M.walk = nil; return say("walk cancelled") end
       return say("not walking")
+    elseif b:match("^find%s") or b:match("^search%s") then
+      return M.mapFind(b:gsub("^%a+%s+", ""))
+    elseif b:match("^walk%s+%d+$") then
+      return M.mapWalkTo(tonumber(b:match("(%d+)$")))
+    elseif b:match("^show%s+%d+$") then
+      return M.mapShow(tonumber(b:match("(%d+)$")))
     elseif b == "panel on" or b == "panel off" then
       M.cfg.mapPanel = (b == "panel on"); M.saveSettings(); M.showMapPanel(M.cfg.mapPanel)
       if M.cfg.mapPanel and not M.cfg.map then M.cfg.map = true; M.saveSettings(); M.mapStart() end
