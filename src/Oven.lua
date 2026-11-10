@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.20.3"
+M.version = "0.20.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3357,7 +3357,7 @@ end
 -- reading a race's help page: its name ("sahuagin - a playable race ...") and the
 -- "Maximum racial stats" block, kept per race
 function M.noteRaceHelp(l)
-  local race = l:match("^(%a[%a%-]*) %- a playable race")
+  local race = l:match("^(%a[%a%-]*) %- an? [%a%s%-]-playable race")
   if race then M.raceHelp = { race = race:lower() }; return end
   local st = M.raceHelp
   if not st then return end
