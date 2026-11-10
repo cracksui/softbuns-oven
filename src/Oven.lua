@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.15.2"
+M.version = "0.15.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -38,6 +38,7 @@ M.defaults = {
   autoUpdate   = false,      -- check every 2 minutes and install new versions automatically
   questHudSide = "right",    -- quest HUD corner: right or left (top of the game text area)
   questHudOpacity = 100,     -- quest HUD background opacity, 0-100
+  questHudBlurb = false,     -- show each quest's description (hints) in the HUD
   map          = false,      -- follow your room (GMCP) on the map and walk where you double-click
   mapPanel     = false,      -- the map in its own Oven window
   autocompare  = true,       -- compare looked-at items with what you wear in that slot
@@ -2039,9 +2040,27 @@ local function questFinished(Q)
 end
 M.questFinished = questFinished
 
--- one quest's lines (html) and their widest width in characters
+-- wrap plain text to `n` characters (word boundaries); continuation lines indented by `ind`
+local function hudWrap(text, n, ind)
+  local lines, cur = {}, ""
+  for word in text:gmatch("%S+") do
+    if cur ~= "" and ulen(cur) + 1 + ulen(word) > n then
+      lines[#lines + 1] = cur; cur = string.rep(" ", ind or 0) .. word
+    else
+      cur = (cur == "" or cur:match("^%s+$")) and (cur .. word) or (cur .. " " .. word)
+    end
+  end
+  if cur ~= "" then lines[#lines + 1] = cur end
+  return lines
+end
+
+local HUD_WRAP = 64
+
+-- one quest's lines (html) and their widest width in characters:
+-- the name and progress, every step still to do (the next one marked), and optionally the blurb
 local function questCardHtml(id, Q)
   local html, widest = {}, 0
+  local function add(h, w) html[#html + 1] = h; widest = math.max(widest, w) end
   local name = Q.name or ("#" .. id)
   local finished = questFinished(Q)
   local bar = ""
@@ -2052,21 +2071,51 @@ local function questCardHtml(id, Q)
     local col = finished and C.plus or (M.REC or C.slot)
     bar = span(col, string.rep("█", k)) .. span(C.dim, string.rep("░", n - k)) .. span(C.num, string.format(" %d/%d", done, Q.total))
   end
-  html[#html + 1] = (finished and span(C.plus, "✓ ") or "") .. span(C.dim, "#" .. id .. " ")
-    .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar
-  widest = ulen(name) + ulen(id) + 4 + (Q.total and 13 or 0) + (finished and 2 or 0)
-  local np
-  for _, ph in ipairs(Q.phases or {}) do if not ph.done then np = ph; break end end
+  add((finished and span(C.plus, "✓ ") or "") .. span(C.dim, "#" .. id .. " ")
+    .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar,
+    ulen(name) + ulen(id) + 4 + (Q.total and 13 or 0) + (finished and 2 or 0))
   if finished then
-    html[#html + 1] = span(C.plus, " complete") .. span(C.dim, " · click to clear")
-    widest = math.max(widest, 28)
-  elseif np then
-    local line = " ▶ " .. np.text .. (np.area and (" · " .. np.area) or "")
-    html[#html + 1] = span(M.REC or C.title, " ▶ ") .. span(C.text, np.text) .. (np.area and span(C.dim, " · " .. np.area) or "")
-    widest = math.max(widest, ulen(line))
-  elseif not Q.phases then
-    html[#html + 1] = span(C.dim, " (click to load its steps)")
-    widest = math.max(widest, 27)
+    add(span(C.plus, " complete") .. span(C.dim, " · click to clear"), 28)
+  elseif Q.phases then
+    local first = true
+    for _, ph in ipairs(Q.phases) do
+      if not ph.done then
+        local label = string.format("%d. %s", ph.n, ph.text) .. (ph.area and (" · " .. ph.area) or "")
+        for i, l in ipairs(hudWrap(label, HUD_WRAP, ulen(tostring(ph.n)) + 2)) do
+          local mark = (i == 1) and (first and span(M.REC or C.title, " ▶ ") or "   ") or "   "
+          add(mark .. span(first and C.item or C.text, l), ulen(l) + 3)
+        end
+        first = false
+      end
+    end
+  else
+    add(span(C.dim, " (click to load its steps)"), 27)
+  end
+  -- the quest's blurb (often holds hints), dimmed
+  if M.cfg.questHudBlurb and Q.desc and #Q.desc > 0 and not finished then
+    local para = {}
+    local function flush()
+      if #para > 0 then
+        for _, l in ipairs(hudWrap(table.concat(para, " "), HUD_WRAP, 0)) do add(span(C.dim, " " .. l), ulen(l) + 1) end
+        para = {}
+      end
+    end
+    add("", 0)
+    for _, l in ipairs(Q.desc) do
+      if trim(l) == "" then flush()
+      elseif l:match("%S%s%s%s+%S") or l:match("^%s%s%s%s+%S") or l:match("^%s*[%*%-] ") or trim(l):match(":$") then
+        flush()   -- list lines and "You can find:" headings keep their own line, spacing and all
+        local line = rtrim(l)
+        if ulen(line) <= HUD_WRAP + 12 then
+          add(span(C.dim, " " .. line:gsub(" ", "\194\160")), ulen(line) + 1)
+        else
+          for _, w in ipairs(hudWrap(line, HUD_WRAP, 4)) do add(span(C.dim, " " .. w), ulen(w) + 1) end
+        end
+      else
+        para[#para + 1] = trim(l)
+      end
+    end
+    flush()
   end
   return html, widest
 end
@@ -3975,6 +4024,7 @@ function M.help()
   <khaki>sbo items<reset>                 list remembered items
   <khaki>sbo quest pin|unpin [id|all]<reset> keep quests in the quest tracker window
   <khaki>sbo quest refresh [id]<reset>    quietly re-check pinned quests (or click the quest HUD)
+  <khaki>sbo quest hud blurb on|off<reset>  show each quest's description (hints) in the HUD
   <khaki>sbo quest hud opacity [0-100]<reset> how see-through the quest HUD is (no number = opaque)
   <khaki>sbo quest hud left|right|reset<reset> quest HUD corner, or back to it after dragging (sbo quest show|hide)
   <khaki>sbo learn<reset>                 look at the worn items Oven doesn't know yet (the ? in eq)
@@ -4170,6 +4220,9 @@ function M.command(args)
       M.cfg.questHudOpacity = (n == "") and 100 or math.max(0, math.min(100, tonumber(n)))
       M.saveSettings(); M.drawQuestTracker()
       return say("quest HUD opacity " .. M.cfg.questHudOpacity .. "%" .. (n == "" and " (default)" or ""))
+    elseif sub == "hud" and (val == "blurb on" or val == "blurb off") then
+      M.cfg.questHudBlurb = (val == "blurb on"); M.saveSettings(); M.drawQuestTracker()
+      return say("quest descriptions (hints) in the HUD " .. (M.cfg.questHudBlurb and "on" or "off"))
     elseif sub == "hud" and val == "reset" then
       M.cfg.questHudPos = nil; M.saveSettings(); M.drawQuestTracker(); return say("quest HUD back in its corner")
     elseif sub == "show" or sub == "" then M.drawQuestTracker()
