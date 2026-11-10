@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.12.9"
+M.version = "0.12.10"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1705,20 +1705,22 @@ function M.formatters.skills(raw, width)
     end
     M.saveSettings()
     local out = {}
-    local nameW = 0
+    local first = tbl.kind == "spells" and "Spell" or "Proficiency"
+    local nameW = ulen(first)
     for _, r in ipairs(tbl.rows) do nameW = math.max(nameW, ulen(r.name)) end
     local gw = width >= 80 and 10 or 6
-    out[#out + 1] = { { C.key, pad("", 2) .. pad(tbl.kind == "spells" and "spell" or "proficiency", nameW + 1)
-      .. pad(tbl.kind == "spells" and "school" or "type", 7) .. (tbl.kind == "spells" and "   SP " or "")
-      .. " cmplx  learned" } }
+    out[#out + 1] = { { C.key, "  " .. pad(first, nameW + 2)
+      .. pad(tbl.kind == "spells" and "School" or "Type", 8)
+      .. (tbl.kind == "spells" and string.format("%7s", "SP cost") or "")
+      .. string.format("%12s", "Complexity") .. "  Learned" } }
     local usual = usualColour(tbl.rows)
     for _, r in ipairs(tbl.rows) do
       local row = { starSeg(r.rec) }
       addAll(row, nameSegs(r, r.rec, usual))
-      row[#row + 1] = { C.text, string.rep(" ", nameW + 1 - ulen(r.name)) }
-      row[#row + 1] = { C.slot, pad(r.group, 7) }
-      if r.sp then row[#row + 1] = { C.num, string.format("%5s ", r.sp) } end
-      row[#row + 1] = { C.dim, string.format("%5d%%  ", r.cmplx) }
+      row[#row + 1] = { C.text, string.rep(" ", nameW + 2 - ulen(r.name)) }
+      row[#row + 1] = { C.slot, pad(r.group, 8) }
+      if r.sp then row[#row + 1] = { C.num, string.format("%7s", r.sp) } end
+      row[#row + 1] = { C.dim, string.format("%11d%%  ", r.cmplx) }
       addAll(row, learnedSegs(r.lrnd, gw))
       out[#out + 1] = row
     end
@@ -1772,10 +1774,9 @@ function M.formatters.skills(raw, width)
     end
     out[#out + 1] = hdr
     local nameW = 0
-    for _, s2 in ipairs(list) do nameW = math.max(nameW, ulen("Skill Name"), ulen(s2.name)) end
+    for _, s2 in ipairs(list) do nameW = math.max(nameW, ulen("Skill"), ulen(s2.name)) end
     local gw = width >= 80 and 10 or 6
-    -- column headers, with the game's own labels
-    out[#out + 1] = { { C.key, "  " .. pad("Skill Name", nameW + 1) .. pad("Lrnd", gw + 5) .. "   Avail." } }
+    out[#out + 1] = { { C.key, "  " .. pad("Skill", nameW + 1) .. pad("Learned", gw + 5) .. "   Availability" } }
     for _, s2 in ipairs(list) do
       local info = mine[skillKey(s2.name)]
       local isRec = info and info.rec
