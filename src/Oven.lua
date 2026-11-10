@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.10"
+M.version = "0.11.11"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2505,15 +2505,27 @@ local function barCols()
 end
 
 -- put decho text in the bar, in the main window's font
-local function barEcho(d, label)
+local function toHtml(d)
+  -- decho2html gives every piece of text a (black) background; drop it so the bar's tint shows
+  return (decho2html(d)
+    :gsub("background%-color:%s*rgba?%b();?", "")
+    :gsub("background:%s*rgba?%b();?", ""))
+end
+
+-- d: left part (decho); right: optional part pinned to the right edge
+local function barEcho(d, label, right)
   label = label or M.bar
   local font = (pcall(getFont) and getFont()) or "monospace"
-  -- decho2html gives every piece of text a (black) background; drop it so the bar's tint shows
-  local html = decho2html(d)
-    :gsub("background%-color:%s*rgba?%b();?", "")
-    :gsub("background:%s*rgba?%b();?", "")
-  label:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
-    font, M.barFontSize(), html))
+  local style = string.format("white-space: pre; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;",
+    font, M.barFontSize())
+  if right then
+    label:rawEcho(string.format(
+      "<table width=\"100%%\" cellspacing=\"0\" cellpadding=\"0\"><tr>" ..
+      "<td style=\"%s\">%s</td><td align=\"right\" style=\"%s padding-right: 6px;\">%s</td></tr></table>",
+      style, toHtml(d), style, toHtml(right)))
+  else
+    label:rawEcho(string.format("<div style=\"%s\">%s</div>", style, toHtml(d)))
+  end
 end
 
 -- short number: 950, 1.3k, 31k, 1.2M
@@ -2643,12 +2655,13 @@ function M.drawBar()
   if M.cfg.barSession then
     local sess = M.sessionSegs()
     local sep = { C.dim, "   │ " }
-    local need = segLen(main) + ulen(sep[2]) + segLen(sess) - cols
+    local tagW = ulen(" [v" .. M.version .. " ✓]  ")
+    local need = segLen(main) + ulen(sep[2]) + segLen(sess) + tagW - cols
     if need > 0 and #p.vals > 0 then
       local smaller = gw - math.ceil(need / #p.vals)
       if smaller >= 4 then
         main = build(smaller)
-        need = segLen(main) + ulen(sep[2]) + segLen(sess) - cols
+        need = segLen(main) + ulen(sep[2]) + segLen(sess) + tagW - cols
       end
     end
     if need <= 0 then
@@ -2657,12 +2670,12 @@ function M.drawBar()
       addAll(main, sess)
     end
   end
-  addAll(main, M.versionTag())
+  local tag = M.versionTag()
   if collapsed ~= (M.barCollapsed or false) then
     M.barCollapsed = collapsed
     M.layoutBar()
   end
-  barEcho(M.segsToDecho({ main })[1])
+  barEcho(M.segsToDecho({ main })[1], nil, M.segsToDecho({ tag })[1])
   if M.cfg.barSession and not collapsed then pcall(M.drawSessionBar) end
 end
 
@@ -3279,12 +3292,13 @@ end
 -- "v0.11.9 ✓" at the end of the bar: ✓ current, ↑ update available, ⟳ checking, ⇣ updating, ✗ error
 function M.versionTag()
   local st = M.updState or {}
-  local segs = { { C.dim, "   v" .. M.version } }
+  local segs = { { C.dim, "[v" .. M.version } }
   if st.state == "ok" then segs[#segs + 1] = { C.plus, " ✓" }
   elseif st.state == "avail" and st.ver and M.newer(st.ver, M.version) then segs[#segs + 1] = { C.flag, " ↑" }
   elseif st.state == "check" then segs[#segs + 1] = { C.dim, " ⟳" }
   elseif st.state == "down" then segs[#segs + 1] = { C.slot, " ⇣" }
   elseif st.state == "err" then segs[#segs + 1] = { C.minus, " ✗" } end
+  segs[#segs + 1] = { C.dim, "]" }
   return segs
 end
 
