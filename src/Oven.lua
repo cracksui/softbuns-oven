@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.5"
+M.version = "0.11.6"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -41,7 +41,8 @@ M.defaults = {
   barMode      = "gauges",   -- gauges | raw
   barWidth     = 10,         -- length of each gauge in the prompt bar
   barBg        = { 12, 12, 16 },  -- prompt bar background (r, g, b): a faint tint
-  barSession   = false,      -- a second line under the prompt bar with session stats
+  barSession   = false,      -- session stats: on the bar when they fit, else their own line
+  barSessionPos = "top",     -- where that line goes: top of the screen, or bottom (under the bar)
   barBlank     = true,       -- with the bar on, also drop the blank line before each prompt
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
@@ -2275,13 +2276,27 @@ function M.layoutBar()
   end
   local h = M.barHeight()
   local sessionOn = M.cfg.barSession and M.sbar and not M.barCollapsed
-  local total = sessionOn and (h * 2) or h
+  local atTop = sessionOn and M.cfg.barSessionPos ~= "bottom"
+  local below = sessionOn and not atTop
+  local total = below and (h * 2) or h
   setBorderBottom(total)
   M.bar:move(left, H - total)
   M.bar:resize(W - left - right, h)
+  -- the top line takes space above any top border something else already uses, and gives it back after
+  if atTop then
+    if not M.topTaken then
+      local okT, t = pcall(getBorderTop)
+      M.baseTop = (okT and tonumber(t)) or 0
+      M.topTaken = true
+    end
+    setBorderTop(M.baseTop + h)
+  elseif M.topTaken then
+    setBorderTop(M.baseTop or 0)
+    M.topTaken = nil
+  end
   if sessionOn then
     M.sbar:show()
-    M.sbar:move(left, H - h)
+    M.sbar:move(left, atTop and (M.baseTop or 0) or (H - h))
     M.sbar:resize(W - left - right, h)
   elseif M.sbar then
     M.sbar:hide()
@@ -2326,6 +2341,7 @@ function M.showBar(on)
     if M.bar then M.bar:hide() end
     if M.sbar then M.sbar:hide() end
     if M.sessTimer then killTimer(M.sessTimer); M.sessTimer = nil end
+    if M.topTaken then setBorderTop(M.baseTop or 0); M.topTaken = nil end
     setBorderBottom(0)
   end
 end
@@ -2954,7 +2970,8 @@ function M.help()
   <khaki>sbo helpwindow on|off<reset>     game help pages (and this list) in their own window
   <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
   <khaki>sbo bar gauges|raw<reset>        prompt bar as gauges, or the prompt exactly as the game sends it
-  <khaki>sbo bar session on|off<reset>    a second line under the bar: session time, exp/hour, level ETA, kills
+  <khaki>sbo bar session on|off<reset>    session time, exp/hour, level ETA, kills (on the bar when it fits)
+  <khaki>sbo bar session top|bottom<reset> where they go when they don't fit: top of the screen or under the bar
   <khaki>sbo bar bg [r g b]<reset>        prompt bar background colour (no numbers = default)
   <khaki>sbo bar blanks on|off<reset>     keep (on) or remove (off) the blank line the game puts before each prompt
   <khaki>sbo bar width [n]<reset>         length of each gauge (no number = default, 10)
@@ -3143,7 +3160,10 @@ function M.command(args)
     elseif sub == "raw" or sub == "gauges" then M.cfg.barMode = sub; M.drawBar(); say("prompt bar mode " .. sub)
     elseif sub == "session" and (val == "on" or val == "off") then
       M.cfg.barSession = (val == "on"); M.showSessionBar(M.cfg.barSession); M.drawBar()
-      say("session line under the prompt bar " .. val .. (M.cfg.bar and "" or " (shows when the bar is on: sbo bar on)"))
+      say("session details " .. val .. (M.cfg.bar and "" or " (they show when the bar is on: sbo bar on)"))
+    elseif sub == "session" and (val == "top" or val == "bottom") then
+      M.cfg.barSessionPos = val; M.layoutBar(); M.drawBar()
+      say("when they don't fit on the bar, session details go at the " .. val .. (val == "top" and " of the screen" or ", under the bar"))
     elseif sub == "bg" then
       local r, g, b = val:match("^(%d+)[%s,]+(%d+)[%s,]+(%d+)$")
       if val == "" then M.cfg.barBg = { unpack(M.defaults.barBg) }
@@ -3340,6 +3360,7 @@ function M.init()
         if M.helpContainer then M.helpContainer:hide() end
         if M.bar then M.bar:hide(); setBorderBottom(0) end
         if M.sbar then M.sbar:hide() end
+        if M.topTaken then setBorderTop(M.baseTop or 0); M.topTaken = nil end
       end
     end),
   }
