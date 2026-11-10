@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.3"
+M.version = "0.10.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1676,7 +1676,9 @@ function M.showHelp(topic, dechoLines)
     for _, run in ipairs(M.dechoRuns(d)) do plain = plain .. run[2] end
     if plain:match("^%s*SEE ALSO:?%s*$") then
       inSeeAlso = true; body[#body + 1] = d
-    elseif inSeeAlso and M.helpLinkFor(plain) then
+    elseif (inSeeAlso and M.helpLinkFor(plain))
+        -- topic lists outside SEE ALSO, e.g. search results: " [1087] general object ..."
+        or plain:match("^%s+%[%s*%d+%s*%]") then
       local cmd = M.helpLinkFor(plain)
       links[#links + 1] = { trim(plain), function() send(cmd) end }
     else
