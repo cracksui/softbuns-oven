@@ -119,6 +119,7 @@ sbo clear                 clear the oven window
 sbo font [size]           oven window font size (leave the number off for the default)
 sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
+sbo gamecolors on|off     keep the game's own colours on item names
 sbo eqstats on|off        AR / affects column in eq (look at an item once to fill it in)
 sbo empty on|off          show empty slots in eq
 sbo donation on|off       show / hide empty donation-only slots (amulet, face, aura)

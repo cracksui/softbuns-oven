@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.6"
+M.version = "0.9.7"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -44,6 +44,7 @@ M.defaults = {
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
   showEmpty    = true,       -- list empty equipment slots in eq
   showDonation = true,       -- include empty donation-only slots (amulets, face, aura)
+  gameColors   = true,       -- keep the game's own colours on item names
   eqStats      = true,       -- AR / affects column in eq, from items you have looked at
   barLines     = 1,
   barFont      = 0,          -- 0 = same size as the main window
@@ -310,9 +311,71 @@ local function condSegs(conds)
   return segs
 end
 
-local function itemSegs(text)
+-- The game's own colours. M.curDecho holds the captured lines with colour codes
+-- (index-aligned with the plain lines the formatter is given).
+-- decho line -> runs { {rgb or nil, text}, ... }
+function M.dechoRuns(d)
+  local runs, cur, i = {}, nil, 1
+  local function add(txt)
+    if txt == "" then return end
+    local last = runs[#runs]
+    if last and last[1] == cur then last[2] = last[2] .. txt else runs[#runs + 1] = { cur, txt } end
+  end
+  while i <= #d do
+    local s1, e1, tag = d:find("^<([^<>]*)>", i)
+    if s1 and (tag:match("^%d+,%d+,%d+") or tag:match("^:") or tag == "r" or tag:match("^/?[biuso]$")) then
+      local r, g, b = tag:match("^(%d+),(%d+),(%d+)")
+      if r then cur = { tonumber(r), tonumber(g), tonumber(b) } elseif tag == "r" then cur = nil end
+      i = e1 + 1
+    else
+      local nxt = d:find("<", i + 1, true) or (#d + 1)
+      add(d:sub(i, nxt - 1)); i = nxt
+    end
+  end
+  return runs
+end
+
+-- substring by characters (Mudlet's utf8 has sub; plain Lua's doesn't)
+function M.usub(str, i, j)
+  if utf8 and utf8.sub then return utf8.sub(str, i, j) end
+  if utf8 and utf8.offset then
+    local bi = utf8.offset(str, i) or (#str + 1)
+    local bj = (utf8.offset(str, j + 1) or (#str + 1)) - 1
+    return str:sub(bi, bj)
+  end
+  return str:sub(i, j)
+end
+
+-- the runs covering `text` inside the line `idx` of the current capture, or nil
+function M.runsFor(idx, text)
+  if not M.cfg.gameColors or not M.curDecho or not idx or not M.curDecho[idx] or not text or text == "" then return nil end
+  local plainLine = M.curPlain and M.curPlain[idx]
+  if not plainLine then return nil end
+  local at = plainLine:find(text, 1, true)
+  if not at then return nil end
+  local from = (utf8 and utf8.len(plainLine:sub(1, at - 1))) or (at - 1)
+  local to = from + ((utf8 and utf8.len(text)) or #text)
+  local runs = M.dechoRuns(M.curDecho[idx])
+  -- the colour of plain text on this line = colour of its first character
+  local base = runs[1] and runs[1][1]
+  local out, pos, coloured = {}, 0, false
+  for _, run in ipairs(runs) do
+    local n = (utf8 and utf8.len(run[2])) or #run[2]
+    local a, b = math.max(pos, from), math.min(pos + n, to)
+    if a < b then
+      local piece = M.usub(run[2], a - pos + 1, b - pos)
+      local same = (run[1] == nil and base == nil) or (run[1] and base and run[1][1] == base[1] and run[1][2] == base[2] and run[1][3] == base[3])
+      if not same then coloured = true end
+      out[#out + 1] = { same and C.item or run[1], piece }
+    end
+    pos = pos + n
+  end
+  return coloured and out or nil
+end
+
+local function itemSegs(text, runs)
   local name, conds = stripConds(text)
-  local segs = { { C.item, name } }
+  local segs = runs or { { C.item, name } }
   for _, c in ipairs(condSegs(conds)) do segs[#segs + 1] = c end
   return segs
 end
@@ -548,7 +611,7 @@ local function renderSlots(out, slots, width, withStats)
     if r.empty then
       segs = r.donation and { { C.dim, "empty · donation-only slot" } } or { { C.flag, "empty" } }
     else
-      segs = itemSegs(r[2])
+      segs = itemSegs(r[2], r.runs)
     end
     local row = { unpack(pre) }
     local nameW = indent + segLen(segs)
@@ -611,7 +674,7 @@ function M.formatters.eq(raw, width)
   local slots, ar, misc, weapons, other = {}, {}, {}, {}, {}
   local slotW, header = 0, nil
   local weapon
-  for _, l in ipairs(raw) do
+  for idx, l in ipairs(raw) do
     local t = trim(l)
     local slot, item = parseSlot(l)
     local arLoc, arVal, arRest = t:match("^%((%a[%a ]-)%s*%)%s+(%-?%d+)%s*(.*)$")
@@ -619,7 +682,7 @@ function M.formatters.eq(raw, width)
        or t:match("^Equipped weapon damage") then
       -- section headings are re-drawn by us
     elseif slot then
-      slots[#slots + 1] = { slot, item }; slotW = math.max(slotW, ulen(slot))
+      slots[#slots + 1] = { slot, item, runs = M.runsFor(idx, (stripConds(item))) }; slotW = math.max(slotW, ulen(slot))
     elseif arLoc then
       ar[#ar + 1] = { arLoc, arVal, arRest:match("([%d%.]+)%%") }
     elseif t:match("^With .-, you will deal") then
@@ -864,7 +927,7 @@ function M.formatMob(raw, width)
   local desc, slots, after, facts = {}, {}, {}, {}
   local name
   local seenSlot = false
-  for _, l in ipairs(raw) do
+  for idx, l in ipairs(raw) do
     local t = trim(l)
     local slot, item = parseSlot(l)
     local hn, health = t:match("^(.-) is in (.-) health%.?$")
@@ -872,7 +935,7 @@ function M.formatMob(raw, width)
     local race, height = t:match("^%S+ is an? (.-) approximately (.-) tall%.?$")
     local hair = t:match("^.-'s hair .-, and is:%s*(.-)%.?$")
     local pn, posture = t:match("^(.-) is (%a+)%.$")
-    if slot then slots[#slots + 1] = { slot, item }; seenSlot = true
+    if slot then slots[#slots + 1] = { slot, item, runs = M.runsFor(idx, (stripConds(item))) }; seenSlot = true
     elseif seenSlot then if t ~= "" then after[#after + 1] = t end
     elseif hn then name = name or hn
       local word = health:lower():match("(%a+)%s*$") or ""
@@ -995,7 +1058,7 @@ end
 ---------------------------------------------------------------- containers / inventory
 function M.formatters.contents(raw, width)
   local title, rows, footer, other = nil, {}, nil, {}
-  for _, l in ipairs(raw) do
+  for idx, l in ipairs(raw) do
     local t = trim(l)
     local n, items, w, maxW = t:match("^A total of (%d+) %((%d+) max%) items weighing (.-) %((.-) max%)%.?$")
     local invN, invW, invGold = t:match("^A total of (%d+) items weighing (.-)%s*%((.-) gold weight%)%.?$")
@@ -1014,14 +1077,15 @@ function M.formatters.contents(raw, width)
       footer = { n, items, w, maxW }
     else
       local cnt, rest = t:match("^%(%s*(%d+)%)%s*(.+)$")
-      rows[#rows + 1] = { tonumber(cnt) or 1, rest or t }
+      local txt = rest or t
+      rows[#rows + 1] = { tonumber(cnt) or 1, txt, runs = M.runsFor(idx, (stripConds(txt))) }
     end
   end
   if #rows == 0 then return M.formatters.generic(raw, width) end
   local out = {}
   for _, r in ipairs(rows) do
     local row = { { C.num, r[1] > 1 and string.format("%3d× ", r[1]) or "     " } }
-    local segs = itemSegs(r[2])
+    local segs = itemSegs(r[2], r.runs)
     if 5 + segLen(segs) <= width then
       for _, s in ipairs(segs) do row[#row + 1] = s end
       out[#out + 1] = row
@@ -1301,8 +1365,12 @@ local function render(win, lines)
   for _, segs in ipairs(lines) do
     for _, s in ipairs(segs) do
       local col = s[1]
-      if color_table and not color_table[col] then col = "white" end
-      fg(win, col)
+      if type(col) == "table" then
+        setFgColor(win, col[1], col[2], col[3])
+      else
+        if color_table and not color_table[col] then col = "white" end
+        fg(win, col)
+      end
       echo(win, s[2])
     end
     resetFormat(win)
@@ -1320,7 +1388,8 @@ local function columns(win)
   return math.min(n - 1, 110)
 end
 
-function M.format(kind, target, raw, width)
+function M.format(kind, target, raw, width, dechoLines)
+  M.curPlain, M.curDecho = raw, dechoLines
   local f = M.formatters[kind] or M.formatters.generic
   local ok, res, title = pcall(f, raw, width)
   if not ok then
@@ -1383,7 +1452,7 @@ local function segsToDecho(lines)
   for _, segs in ipairs(lines) do
     local t = {}
     for _, sg in ipairs(segs) do
-      local c = color_table and color_table[sg[1]]
+      local c = type(sg[1]) == "table" and sg[1] or (color_table and color_table[sg[1]])
       t[#t + 1] = (c and string.format("<%d,%d,%d>", c[1], c[2], c[3]) or "") .. sg[2]
     end
     outl[#outl + 1] = table.concat(t)
@@ -1942,10 +2011,8 @@ function M.onLine()
     return
   end
   cap.plain[#cap.plain + 1] = line
-  if cap.gag then
-    cap.decho[#cap.decho + 1] = selectionDecho() or line
-    deleteLine()
-  end
+  cap.decho[#cap.decho + 1] = selectionDecho() or line   -- keeps the game's colours
+  if cap.gag then deleteLine() end
   if cap.idleTimer then killTimer(cap.idleTimer) end
   cap.idleTimer = tempTimer(M.cfg.idle, function() M.finish("idle") end)
   if #cap.plain >= (cap.kind == "help" and 2000 or M.cfg.maxLines) then M.finish("maxlines") end
@@ -2028,7 +2095,7 @@ function M.finish(reason)
     if replace then
       moveCursorEnd("main")
       if getCurrentLine("main") ~= "" then echo("main", "\n") end
-      local lines = worth and M.format(cap.kind, cap.target, cap.plain, columns("main"))
+      local lines = worth and M.format(cap.kind, cap.target, cap.plain, columns("main"), cap.decho)
       if lines then
         render("main", lines)
       else
@@ -2039,7 +2106,7 @@ function M.finish(reason)
     end
     if worth and M.cfg.window then
       M.showWindow(true)
-      local lines = M.format(cap.kind, cap.target, cap.plain, columns("ovenViewerConsole"))
+      local lines = M.format(cap.kind, cap.target, cap.plain, columns("ovenViewerConsole"), cap.decho)
       if lines then render("ovenViewerConsole", lines); echo("ovenViewerConsole", "\n") end
     end
     if cap.kind == "eq" then M.updateEqNames(cap.plain) end
@@ -2077,6 +2144,7 @@ function M.help()
   <khaki>sbo pin [name]<reset> / <khaki>unpin<reset>    compare every item you look at against this one
   <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
   <khaki>sbo items<reset>                 list remembered items
+  <khaki>sbo gamecolors on|off<reset>     keep the game's own colours on item names
   <khaki>sbo eqstats on|off<reset>        AR and affects of each worn item in eq (look at an item once to fill it in)
   <khaki>sbo empty on|off<reset>          show empty equipment slots in eq
   <khaki>sbo donation on|off<reset>       show / hide empty donation-only slots (amulet, face, aura)
@@ -2242,6 +2310,8 @@ function M.command(args)
     say("help window " .. b)
   elseif a == "slots" and (b == "short" or b == "full") then
     M.cfg.slotNames = b; say("slot names: " .. b)
+  elseif a == "gamecolors" and onoff ~= nil then
+    M.cfg.gameColors = onoff; say("game colours on item names " .. b)
   elseif a == "eqstats" and onoff ~= nil then
     M.cfg.eqStats = onoff; say("item stats column in eq: " .. b)
   elseif a == "donation" and onoff ~= nil then
