@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.19.1"
+M.version = "0.19.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2300,6 +2300,14 @@ local function questCardHtml(id, Q)
           local mark = (i == 1) and (first and span(M.REC or C.title, " ▶ ") or "   ") or "   "
           add(mark .. span(first and C.item or C.text, l), ulen(l) + 3)
         end
+        if first then
+          -- where the next step is, when Oven can place it
+          local ok, room, why = pcall(M.questTarget, ph)
+          if ok and room then
+            local where = "→ " .. (getRoomName(room) or ("#" .. room)) .. "  · sbo quest go " .. id
+            add("   " .. span(C.dim, where), ulen(where) + 3)
+          end
+        end
         first = false
       end
     end
@@ -2515,6 +2523,116 @@ function M.layoutQuestHud()
 end
 
 -- quietly ask the game for a quest's details (nothing shown in the main window)
+-- Quest autopilot: find where a quest step points - an NPC Oven has seen, a creature you've
+-- killed somewhere, or a room on the map by name (in the step's [Area] when it has one)
+local function stripArticle(s)
+  s = trim(s or ""):gsub("[%.!,;:]+$", "")
+  for _, a in ipairs({ "a certain ", "the ", "a ", "an ", "some " }) do
+    if s:lower():sub(1, #a) == a then return s:sub(#a + 1) end
+  end
+  return s
+end
+
+-- the names a step mentions: "Journey to Western Gate of Rune", "Visit Agatha",
+-- "Seek out Samara, guardian of ...", "Defeat 5/5 of a risen paladin", "take them to Jeria"
+function M.questStepNames(text)
+  local t = trim(text or "")
+  local out, seen = {}, {}
+  local function add(x)
+    x = stripArticle(x)
+    if x ~= "" and ulen(x) >= 3 and not seen[x:lower()] then seen[x:lower()] = true; out[#out + 1] = x end
+  end
+  local pats = {
+    "^Journey to (.+)$", "^Travel to (.+)$", "^Go to (.+)$", "^Visit (.+)$", "^Speak with (.+)$", "^Talk to (.+)$",
+    "^Seek out ([^,]+)", "^Find ([^,]-)'s ", "^Find ([^,]+)", "^Assist (.-) from ", "^Assist ([^,]+)",
+    "^Defeat [%d/]+ of (.+)$", "^Defeat ([^,]+)", "^Kill ([^,]+)", "^Slay ([^,]+)",
+    " take them to (.+)$", " bring them to (.+)$", " return to (.+)$", " errand for (.+)$", " to (an? [^,]+)$",
+    " to (a certain [^,]+)$", " seek out ([^,]+)",
+  }
+  for _, p in ipairs(pats) do
+    local m = t:match(p)
+    if m then add((m:gsub(",.*$", ""))) end
+  end
+  return out
+end
+
+M.questTargetCache = M.questTargetCache or {}
+function M.questTarget(ph)
+  if not ph or not ph.text then return end
+  local ck = ph.text .. "|" .. tostring(ph.area)
+  local c = M.questTargetCache[ck]
+  if c and now() - c.at < 60 then return c.room, c.why end
+  local room, why
+  local area = ph.area and ph.area:lower()
+  local function inArea(id)
+    if not area then return true end
+    local a = getRoomArea(id)
+    local an = a and getRoomAreaName(a)
+    return an and an:lower():find(area, 1, true) ~= nil
+  end
+  for _, name in ipairs(M.questStepNames(ph.text)) do
+    local q = name:lower()
+    -- an NPC seen in a room
+    for _, r in ipairs(M.dbRows("SELECT room, text FROM room_npcs WHERE instr(lower(text), %s) > 0 ORDER BY last DESC", q)) do
+      local id = tonumber(r.room)
+      if id and roomExists(id) then room, why = id, r.text; break end
+    end
+    -- a creature you've killed: the room where you've killed it most
+    if not room then
+      local r = M.dbRow("SELECT room, SUM(n) AS c FROM kills WHERE (key = %s OR instr(key, %s) > 0) AND room IS NOT NULL GROUP BY room ORDER BY c DESC LIMIT 1", q, q)
+      local id = r and tonumber(r.room)
+      if id and roomExists(id) then room, why = id, "where you've killed " .. name end
+    end
+    -- a room by that name
+    if not room then
+      local ok, found = pcall(searchRoom, name)
+      if ok and type(found) == "table" then
+        local exact, partial
+        for key, nm in pairs(found) do
+          local id = tonumber(key)
+          if id and inArea(id) then
+            if nm:lower() == q then exact = exact or id else partial = partial or id end
+          end
+        end
+        room = exact or partial
+        if room then why = getRoomName(room) end
+      end
+    end
+    if room then break end
+  end
+  M.questTargetCache[ck] = { at = now(), room = room, why = why }
+  return room, why
+end
+
+-- the next step of a quest (or of the first pinned quest that has a step to do)
+function M.questNextStep(id)
+  local ids = {}
+  if id and id ~= "" then ids[1] = tostring(id)
+  else for qid in pairs(M.cfg.questPins or {}) do ids[#ids + 1] = qid end table.sort(ids) end
+  for _, qid in ipairs(ids) do
+    local Q = M.quests[qid]
+    for _, ph in ipairs(Q and Q.phases or {}) do
+      if not ph.done then return qid, Q, ph end
+    end
+  end
+end
+
+function M.questGo(id)
+  local qid, Q, ph = M.questNextStep(id)
+  if not ph then
+    return M.say(id and id ~= "" and ("quest " .. id .. " has no step to do that Oven knows of (quest info " .. id .. " to load it)")
+      or "no pinned quest with a step to do - pin one with sbo quest pin <id>")
+  end
+  local room, why = M.questTarget(ph)
+  if not room then
+    local names = M.questStepNames(ph.text)
+    return M.say(string.format("#%s step %d: \"%s\" - couldn't place %s yet (see the NPC or room once and try again)",
+      qid, ph.n, ph.text, #names > 0 and ("'" .. table.concat(names, "' / '") .. "'") or "it"))
+  end
+  M.say(string.format("#%s step %d → %s · %s #%d", qid, ph.n, why or "?", getRoomName(room) or "?", room))
+  M.mapWalkTo(room)
+end
+
 function M.questRefresh(id)
   if id == "all" then
     local ids = {}
@@ -4095,7 +4213,12 @@ end
 ---------------------------------------------------------------------------
 -- `sbo` command
 ---------------------------------------------------------------------------
-local function say(msg) M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg) end
+-- (Mudlet reads <word> as a colour, so placeholders like <id> are shown as ‹id›)
+local function say(msg)
+  msg = tostring(msg):gsub("<", "‹"):gsub(">", "›")
+  M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg)
+end
+M.say = say
 
 ---------------------------------------------------------------------------
 -- Map: follow your room by GMCP room number, and walk where you double-click
@@ -5224,6 +5347,7 @@ M.helpSections = {
     { "sbo quest pin {id|all}", "put quests on the quest HUD (or click pin under quest info)" },
     { "sbo quest unpin {id|all}", "take them off (click a finished quest to clear it)" },
     { "sbo quest refresh [id]", "quietly re-check pinned quests (or click the HUD)" },
+    { "sbo quest go [id]", "run to the next step of a quest (or of your first pinned quest)" },
     { "sbo quest show|hide", "show / hide the quest HUD" },
     { "sbo quest hud blurb on|off", "add each quest's description, which often holds hints" },
     { "sbo quest hud left|right", "which top corner it sits in (reset: back there after dragging)" },
@@ -5487,6 +5611,7 @@ function M.command(args)
     if sub == "pin" and val ~= "" then M.questPin(val, true); return say("pinned " .. val .. " to the quest tracker")
     elseif sub == "unpin" and val ~= "" then M.questPin(val, false); return say("unpinned " .. val)
     elseif sub == "refresh" then M.questRefresh(val ~= "" and val or "all"); return
+    elseif sub == "go" or sub == "run" then return M.questGo(val)
     elseif sub == "hide" then
       if M.questHud then M.questHud:hide() end
       for _, c in ipairs(M.questCards or {}) do c:hide() end
