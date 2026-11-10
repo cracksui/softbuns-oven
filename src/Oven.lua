@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.10.4"
+M.version = "0.10.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1517,31 +1517,93 @@ function M.pageCols(pg)
   return math.max(30, math.floor((((okW and boxW) or 600) - 40) / cw))
 end
 
+-- runs -> decho text
+local function runsToDecho(runs)
+  local t = {}
+  for _, r in ipairs(runs) do
+    t[#t + 1] = (r[1] and string.format("<%d,%d,%d>", r[1][1], r[1][2], r[1][3]) or "<192,192,192>") .. r[2]
+  end
+  return table.concat(t)
+end
+
+-- characters a..b (inclusive) of a run list
+local function sliceRuns(runs, a, b)
+  local out, pos = {}, 0
+  for _, r in ipairs(runs) do
+    local n = ulen(r[2])
+    local x, y = math.max(a, pos + 1), math.min(b, pos + n)
+    if x <= y then out[#out + 1] = { r[1], M.usub(r[2], x - pos, y - pos) } end
+    pos = pos + n
+  end
+  return out
+end
+
+-- wrap one decho line to `cols` characters, keeping its colours; continuation
+-- lines keep the original indent. Returns a list of decho lines.
+function M.wrapDecho(d, cols)
+  local runs = M.dechoRuns(d)
+  local plain = ""
+  for _, r in ipairs(runs) do plain = plain .. r[2] end
+  local len = ulen(plain)
+  if len <= cols then return { d } end
+  local indent = math.min(#(plain:match("^(%s*)")), math.floor(cols / 2))
+  local out, pos, first = {}, 1, true
+  while pos <= len do
+    local width = first and cols or (cols - indent)
+    local stop = pos + width - 1
+    if stop >= len then stop = len
+    else
+      -- break at the last space inside the width, if there is one
+      local chunk = M.usub(plain, pos, stop + 1)
+      local lastSpace
+      for i = ulen(chunk), 2, -1 do
+        if M.usub(chunk, i, i) == " " then lastSpace = i; break end
+      end
+      if lastSpace then stop = pos + lastSpace - 2 end
+    end
+    local piece = runsToDecho(sliceRuns(runs, pos, stop))
+    out[#out + 1] = (first and "" or string.rep(" ", indent)) .. piece
+    first = false
+    pos = stop + 1
+    while pos <= len and M.usub(plain, pos, pos) == " " do pos = pos + 1 end   -- skip the break's spaces
+  end
+  return out
+end
+
 -- lines: decho ("decho") or cecho ("cecho") strings; links: { {text, function}, ... }
 function M.pageShow(pg, lines, fmt, links)
   local font, size, cw, ch = pageFont()
   local cols = M.pageCols(pg)
-  local html, plain = {}, {}
+  -- wrap here (keeping colours) so the page has an exact number of lines and
+  -- Qt doesn't wrap on its own: then the measured height is exact too
+  local html, nLines = {}, 0
   for _, l in ipairs(lines) do
-    html[#html + 1] = (l == "") and "" or (fmt == "cecho" and cecho2html(l) or decho2html(l))
-    plain[#plain + 1] = fmt == "cecho" and l:gsub("<[%w_:,]+>", "") or l:gsub("<[%d,:]*>", ""):gsub("<r>", "")
+    if fmt == "cecho" then l = M.cechoToDecho(l) end
+    for _, w in ipairs(M.wrapDecho(l, cols)) do
+      html[#html + 1] = (w == "") and "" or decho2html(w)
+      nLines = nLines + 1
+    end
   end
   local doc = string.format(
-    "<div style=\"white-space: pre-wrap; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
+    "<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
     font, size, table.concat(html, "\n"))
   if buildPage(pg) == false then return end
   pg.label:rawEcho(doc)
-  -- height: wrapped rows times the label's real line height (rich text spaces lines wider than the font)
-  local rows = 0
-  for _, p in ipairs(plain) do rows = rows + math.max(1, math.ceil(ulen(p) / cols)) end
+  -- height: Qt's measurement of the (already wrapped) page, else an estimate
   local lineH = ch * 1.25
   local okH, _, hintH = pcall(function() return pg.label:getSizeHint() end)
-  if okH and tonumber(hintH) and hintH > 0 and #plain > 0 then lineH = math.max(lineH, hintH / #plain) end
+  local pageH
+  if okH and tonumber(hintH) and hintH > 0 then
+    pageH = math.ceil(hintH) + 4
+    if nLines > 0 then lineH = math.max(ch, hintH / nLines) end
+  else
+    pageH = math.ceil(nLines * lineH + 12)
+  end
   local rowH = math.ceil(lineH)
-  local pageH = math.ceil(rows * lineH + 12)
   links = links or {}
   pg.label:resize(nil, pageH)
   -- clickable lines under the page (labels can't hold links, so each is its own label)
+  local linkY = pageH
   for i, ln in ipairs(links) do
     local lab = pg.links[i]
     if not lab then
@@ -1553,17 +1615,27 @@ function M.pageShow(pg, lines, fmt, links)
                font-family: '%s', monospace; font-size: %dpt; }
       QLabel::hover { color: #ffffff; text-decoration: underline; }]], font, size))
     pcall(function() lab:setCursor("PointingHand") end)
-    lab:echo((ln[1]:gsub("&", "&amp;"):gsub("<", "&lt;")))
+    -- long entries wrap onto extra rows (indented under the text) instead of being cut off
+    local hang = math.min(8, #(ln[1]:match("^(%[%s*%d+%s*%]%s*)") or "  "))
+    local rowsOf = M.wrapDecho(string.rep(" ", hang) .. ln[1], math.max(20, cols - 2))
+    local htmlRows = {}
+    for r, w in ipairs(rowsOf) do
+      if r == 1 then w = M.usub(w, hang + 1, ulen(w)) end   -- the first row isn't indented
+      local esc = w:gsub("<%d+,%d+,%d+>", ""):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(" ", "&nbsp;")
+      htmlRows[r] = esc
+    end
+    lab:echo(table.concat(htmlRows, "<br>"))
     local fn = ln[2]
     lab:setClickCallback(function() fn() end)
-    lab:move(0, pageH + (i - 1) * rowH)
-    lab:resize("100%", rowH)
+    lab:move(0, linkY)
+    lab:resize("100%", rowH * #rowsOf)
+    linkY = linkY + rowH * #rowsOf
     lab:show()
   end
   for i = #links + 1, #pg.links do pg.links[i]:hide() end
   -- backdrop: as tall as the content (plus a little room) and at least the visible area
   local okV, visH = pcall(function() return pg.scroll:get_height() end)
-  local contentH = pageH + #links * rowH + 2 * rowH
+  local contentH = linkY + 2 * rowH
   pg.backdrop:resize("100%", math.max(contentH, (okV and tonumber(visH)) or 0))
 end
 
@@ -1670,19 +1742,28 @@ function M.helpLinkFor(plain)
 end
 
 function M.showHelp(topic, dechoLines)
-  local body, links, inSeeAlso = {}, {}, false
+  local body, links, inSeeAlso, lastWasLink = {}, {}, false, false
   for _, d in ipairs(dechoLines) do
     local plain = ""
     for _, run in ipairs(M.dechoRuns(d)) do plain = plain .. run[2] end
-    if plain:match("^%s*SEE ALSO:?%s*$") then
+    local blankLine = trim(plain) == ""
+    local prevBlank = #body > 0 and trim(body[#body]:gsub("<[^<>]*>", "")) == ""
+    if inSeeAlso and lastWasLink and not blankLine and not M.helpLinkFor(plain) then
+      -- an entry that wrapped onto a second line: "... through which you may trade" / "items to other players"
+      links[#links][1] = links[#links][1] .. " " .. trim(plain)
+    elseif blankLine and (prevBlank or inSeeAlso) then
+      -- collapse runs of blank lines; none inside SEE ALSO
+    elseif plain:match("^%s*SEE ALSO:?%s*$") then
       inSeeAlso = true; body[#body + 1] = d
     elseif (inSeeAlso and M.helpLinkFor(plain))
         -- topic lists outside SEE ALSO, e.g. search results: " [1087] general object ..."
         or plain:match("^%s+%[%s*%d+%s*%]") then
       local cmd = M.helpLinkFor(plain)
       links[#links + 1] = { trim(plain), function() send(cmd) end }
+      lastWasLink = true
     else
       body[#body + 1] = d
+      lastWasLink = false
     end
   end
   -- drop trailing blank lines before the links
