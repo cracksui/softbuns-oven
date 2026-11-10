@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.20.1"
+M.version = "0.20.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3345,6 +3345,25 @@ function M.classBuild(cls)
   return "balanced", cls == ""
 end
 
+-- reading a race's help page: its name ("sahuagin - a playable race ...") and the
+-- "Maximum racial stats" block, kept per race
+function M.noteRaceHelp(l)
+  local race = l:match("^(%a[%a%-]*) %- a playable race")
+  if race then M.raceHelp = { race = race:lower() }; return end
+  local st = M.raceHelp
+  if not st then return end
+  if l:match("^Maximum racial stats") then st.on = true; st.stats = {}; return end
+  if st.on then
+    if trim(l) == "" or l:match("^Maximum racial vital") then
+      M.cfg.raceStats = M.cfg.raceStats or {}
+      if next(st.stats) then M.cfg.raceStats[st.race] = st.stats; M.saveSettings() end
+      M.raceHelp = nil
+      return
+    end
+    for key, v in l:gmatch("(%a+):%s+(%d+)") do st.stats[key:lower()] = tonumber(v) end
+  end
+end
+
 -- reading `help classes`: "Character classes in Alyria are as follows:", a row of group
 -- names, then the classes under each, in columns
 function M.noteClassHelp(l)
@@ -3427,11 +3446,20 @@ function M.itemStats(it)
   return s
 end
 
+-- a stat already at its maximum (score's "12/20") gains little from gear: it counts a quarter
+local CAPPED = 0.25
+function M.statCapped(stat)
+  local st = ((M.cfg.char or {}).stats or {})[stat]
+  return st and st.cur and st.max and st.cur >= st.max
+end
+
 function M.gearScore(it, w)
   if not it then return nil end
   if not w then local _; _, w = M.activeBuild() end
   local total = 0
-  for stat, v in pairs(M.itemStats(it)) do total = total + v * weightOf(w, stat) end
+  for stat, v in pairs(M.itemStats(it)) do
+    total = total + v * weightOf(w, stat) * (M.statCapped(stat) and CAPPED or 1)
+  end
   return math.floor(total * 10 + 0.5) / 10
 end
 
@@ -3536,8 +3564,25 @@ function M.buildLines(width)
   local keys = {}
   for k in pairs(w) do keys[#keys + 1] = k end
   table.sort(keys, function(a, b) if w[a] ~= w[b] then return w[a] > w[b] end return a < b end)
+  local stats = c.stats or {}
+  local race = (M.cfg.raceStats or {})[(c.race or ""):lower()]
+  if next(stats) then out[#out + 1] = { { C.dim, "  " .. pad("stat", 20) .. pad("weight", 9) .. "you now" .. (race and "   race max" or "") } } end
   for _, k in ipairs(keys) do
-    out[#out + 1] = { { C.key, "  " .. pad(k, 20) }, { w[k] > 0 and C.num or C.dim, tostring(w[k]) } }
+    local r = { { C.key, "  " .. pad(k, 20) }, { w[k] > 0 and C.num or C.dim, pad(tostring(w[k]), 9) } }
+    local st = stats[k]
+    if st then
+      r[#r + 1] = { M.statCapped(k) and C.flag or C.text, pad(st.cur .. "/" .. st.max, 7) }
+      if race and race[k] then r[#r + 1] = { C.dim, "   " .. race[k] } end
+      if M.statCapped(k) then r[#r + 1] = { C.flag, "   at max: gear counts 1/4" } end
+    end
+    out[#out + 1] = r
+  end
+  if not next(stats) then out[#out + 1] = { { C.dim, "  (type score so Oven can see which stats are at their maximum)" } } end
+  if race then
+    local fav = {}
+    for k, v in pairs(race) do if v > 17 then fav[#fav + 1] = k .. " " .. v end end
+    table.sort(fav)
+    if #fav > 0 then out[#out + 1] = {}; out[#out + 1] = { { C.dim, "your race's strengths (average max is 17): " .. table.concat(fav, ", ") } } end
   end
   out[#out + 1] = {}
   local names = {}
@@ -3924,9 +3969,15 @@ function M.updateMaxes(raw)
     if sc.tnl then c.tnl = tonumber((sc.tnl:gsub(",", ""))); c.exp = tonumber((sc.exp:gsub(",", ""))) end
   end
   for _, l in ipairs(raw) do
-    for key, _, mx in l:gmatch("([%a][%a ]-):%s+(%-?%d+)/(%d+)") do
+    for key, cur, mx in l:gmatch("([%a][%a ]-):%s+(%-?%d+)/(%d+)") do
       local k = trim(key)
-      if M.maxNames[k] then M.cfg.maxes[M.maxNames[k]] = tonumber(mx) end
+      if M.maxNames[k] then M.cfg.maxes[M.maxNames[k]] = tonumber(mx)
+      else
+        -- Strength 12/20 ...: where each attribute stands, for the gear score's caps
+        M.cfg.char = M.cfg.char or {}
+        M.cfg.char.stats = M.cfg.char.stats or {}
+        M.cfg.char.stats[k:lower()] = { cur = tonumber(cur), max = tonumber(mx) }
+      end
     end
   end
   M.saveSettings()
@@ -4318,6 +4369,7 @@ function M.onLine()
   pcall(M.observe, line)
   pcall(M.noteRoomLine, line)
   pcall(M.noteClassHelp, line)
+  pcall(M.noteRaceHelp, line)
   pcall(M.noteKillContext, line)
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
   -- It goes on the bar; it's never part of a command's output.

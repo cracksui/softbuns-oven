@@ -131,7 +131,9 @@ to you (+1 strength might count 3, +1 hp 0.2). Looking at an item shows its scor
 there (`+5.5 (+31%) upgrade`), comparisons start with it, and `sbo upgrades` lists, slot by slot, the
 best item you've seen that beats your gear. The build starts from your class (Materia Magica's 16 classes each map to monk, melee, caster, healer,
 thief, tank or paladin - and Oven reads `help classes` to place any it doesn't know by their group); `sbo build` shows the weights, `sbo build set strength 4` changes one, `sbo build pvp`
-makes and switches to a new build, `sbo build reset` / `sbo build auto` go back.
+makes and switches to a new build, `sbo build reset` / `sbo build auto` go back. Stats already at their
+maximum in `score` (Strength 20/20) count a quarter, since more of them is mostly wasted; `sbo build` shows
+where each stat stands and, once you've read your race's help page, your race's maximums.
 
 ## Commands
 
