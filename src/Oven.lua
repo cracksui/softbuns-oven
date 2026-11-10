@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.20.4"
+M.version = "0.20.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3354,24 +3354,78 @@ function M.noteClassPrimary(l)
   M.saveSettings()
 end
 
--- reading a race's help page: its name ("sahuagin - a playable race ...") and the
--- "Maximum racial stats" block, kept per race
+-- reading a race's help page: its name ("dwarf - a hardy playable race ..."), its weapon
+-- bonuses from the description ("deal 10% more damage with bashing weapons", "strong
+-- fighters when equipped with staves"), and the "Maximum racial stats" block
+local WEAPON_WORDS = { bashing = "bash", slashing = "slash", piercing = "pierce", blunt = "bash",
+  staves = "staff", axes = "axe", swords = "sword", daggers = "dagger", spears = "spear", maces = "mace",
+  flails = "flail", hammers = "hammer", bows = "bow", whips = "whip", polearms = "polearm", halberds = "halberd" }
+local function weaponWord(w)
+  w = w:lower()
+  return WEAPON_WORDS[w] or w:gsub("s$", "")
+end
+
+function M.parseRaceBonuses(text)
+  local out = {}
+  text = text:gsub("%s+", " ")
+  for pct, kind in text:gmatch("(%d+)%% more damage with (%a+) weapons") do
+    out[#out + 1] = { kind = weaponWord(kind), pct = tonumber(pct) }
+  end
+  for kind in text:gmatch("strong fighters when equipped with (%a+)") do
+    out[#out + 1] = { kind = weaponWord(kind), pct = 10, assumed = true }
+  end
+  for kind in text:gmatch("excel when wielding (%a+)") do
+    out[#out + 1] = { kind = weaponWord(kind), pct = 10, assumed = true }
+  end
+  return out
+end
+
 function M.noteRaceHelp(l)
   local race = l:match("^(%a[%a%-]*) %- an? [%a%s%-]-playable race")
-  if race then M.raceHelp = { race = race:lower() }; return end
+  if race then M.raceHelp = { race = race:lower(), text = {} }; return end
   local st = M.raceHelp
   if not st then return end
-  if l:match("^Maximum racial stats") then st.on = true; st.stats = {}; return end
-  if st.on then
-    if trim(l) == "" or l:match("^Maximum racial vital") then
-      M.cfg.raceStats = M.cfg.raceStats or {}
-      if next(st.stats) then M.cfg.raceStats[st.race] = st.stats; M.saveSettings() end
-      M.raceHelp = nil
-      return
-    end
-    for key, v in l:gmatch("(%a+):%s+(%d+)") do st.stats[key:lower()] = tonumber(v) end
+  if l:match("^Maximum racial stats") then
+    st.on = true; st.stats = {}
+    M.cfg.raceBonus = M.cfg.raceBonus or {}
+    M.cfg.raceBonus[st.race] = M.parseRaceBonuses(table.concat(st.text, " "))
+    return
   end
+  if not st.on then st.text[#st.text + 1] = l; return end
+  if trim(l) == "" or l:match("^Maximum racial vital") then
+    M.cfg.raceStats = M.cfg.raceStats or {}
+    if next(st.stats) then M.cfg.raceStats[st.race] = st.stats end
+    M.saveSettings()
+    M.raceHelp = nil
+    return
+  end
+  for key, v in l:gmatch("(%a+):%s+(%d+)") do st.stats[key:lower()] = tonumber(v) end
 end
+
+-- the weapon bonuses that apply to you: your race's, unless your build sets weapon:KIND itself
+function M.weaponBonuses(w)
+  local out, seen = {}, {}
+  for k, v in pairs(w or {}) do
+    local kind = k:match("^weapon:(.+)$")
+    if kind then out[#out + 1] = { kind = kind, pct = v, own = true }; seen[kind] = true end
+  end
+  local race = ((M.cfg.char or {}).race or ""):lower()
+  for _, b in ipairs((M.cfg.raceBonus or {})[race] or {}) do
+    if not seen[b.kind] then out[#out + 1] = b end
+  end
+  return out
+end
+
+-- does a weapon count as KIND: its damage type (bash), its noun (Your maul ...) or a keyword
+local function weaponIs(it, kind)
+  local wp = it.weapon or {}
+  if (wp.dmgType or ""):lower() == kind then return true end
+  local noun = (wp.summary or ""):match("^Your (%a+) will deal")
+  if noun and noun:lower() == kind then return true end
+  for word in (it.keywords or ""):lower():gmatch("%S+") do if word == kind then return true end end
+  return false
+end
+M.weaponIs = weaponIs
 
 -- reading `help classes`: "Character classes in Alyria are as follows:", a row of group
 -- names, then the classes under each, in columns
@@ -3484,8 +3538,16 @@ function M.gearScore(it, w)
   if not it then return nil end
   if not w then local _; _, w = M.activeBuild() end
   local total = 0
+  local boost = 1
+  if it.weapon then
+    for _, b in ipairs(M.weaponBonuses(w)) do
+      if M.weaponIs(it, b.kind) then boost = boost + (tonumber(b.pct) or 0) / 100 end
+    end
+  end
   for stat, v in pairs(M.itemStats(it)) do
-    total = total + v * weightOf(w, stat) * (M.statCapped(stat) and CAPPED or 1)
+    local x = v * weightOf(w, stat) * (M.statCapped(stat) and CAPPED or 1)
+    if stat:match("^weapon%-") then x = x * boost end
+    total = total + x
   end
   return math.floor(total * 10 + 0.5) / 10
 end
@@ -3589,7 +3651,7 @@ function M.buildLines(width)
   end
   out[#out + 1] = {}
   local keys = {}
-  for k in pairs(w) do keys[#keys + 1] = k end
+  for k in pairs(w) do if not k:match("^weapon:") then keys[#keys + 1] = k end end
   table.sort(keys, function(a, b) if w[a] ~= w[b] then return w[a] > w[b] end return a < b end)
   local stats = c.stats or {}
   local race = (M.cfg.raceStats or {})[(c.race or ""):lower()]
@@ -3612,6 +3674,14 @@ function M.buildLines(width)
     out[#out + 1] = r
   end
   if not next(stats) then out[#out + 1] = { { C.dim, "  (type score so Oven can see which stats are at their maximum)" } } end
+  local bon = M.weaponBonuses(w)
+  if #bon > 0 then
+    out[#out + 1] = {}
+    for _, b in ipairs(bon) do
+      out[#out + 1] = { { C.key, "  weapon bonus  " }, { C.plus, string.format("+%s%% ", b.pct) }, { C.text, b.kind .. " weapons" },
+        { C.dim, b.own and "  (your setting)" or (b.assumed and "  (your race's page names no number - assumed; sbo build set weapon:" .. b.kind .. " N)" or "  (your race's page)") } }
+    end
+  end
   if race then
     local fav = {}
     for k, v in pairs(race) do if v > 17 then fav[#fav + 1] = k .. " " .. v end end

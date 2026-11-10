@@ -133,7 +133,9 @@ best item you've seen that beats your gear. The build starts from your class (Ma
 thief, tank or paladin - and Oven reads `help classes` to place any it doesn't know by their group); `sbo build` shows the weights, `sbo build set strength 4` changes one, `sbo build pvp`
 makes and switches to a new build, `sbo build reset` / `sbo build auto` go back. Stats already at their
 maximum in `score` (Strength 20/20) count a quarter, since more of them is mostly wasted; `sbo build` shows
-where each stat stands and, once you've read your race's help page, your race's maximums.
+where each stat stands and, once you've read your race's help page, your race's maximums. Race pages'
+weapon bonuses count too (a dwarf's +10% with bashing weapons makes a maul score higher; where a page
+names no number, 10% is assumed - `sbo build set weapon:staff 20` sets your own).
 
 ## Commands
 
