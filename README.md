@@ -85,7 +85,7 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 
 | Command | Becomes |
 |---|---|
-| `eq` | slot table with short slot names, empty slots marked, and each item's AR and affects (from items you've looked at); armor table with your weakest location, defenses, weapon damage breakdown |
+| `eq` | slot table with short slot names, empty slots marked, and each item's AR and affects (from items you've looked at); armor table with the weakest location highlighted, defenses, weapon damage breakdown |
 | `look` / `examine` / `identify` an item | stat grid, keywords, flags, affects, relics, weapon block, description |
 | `ex` / `look` a creature | its description, then what it is using |
 | `i`, `look in <container>` | one item per row, stack counts, capacity footer |

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.12"
+M.version = "0.11.13"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -837,13 +837,18 @@ function M.formatters.eq(raw, width)
     local cw = 8
     for _, a in ipairs(ar) do cw = math.max(cw, ulen(a[1]) + 2) end
     local function cell(txt) return string.format("%" .. cw .. "s", txt) end
+    -- the lowest AR is highlighted rather than spelled out
+    local low
+    for _, a in ipairs(ar) do local n = tonumber(a[2]); if n and (not low or n < low) then low = n end end
+    local function weakest(a) return tonumber(a[2]) == low end
     local head = { { C.title, pad("Armor", 10) } }
     local arRow = { { C.key, pad("AR", 10) } }
     local dmgRow = { { C.key, pad("damage", 10) } }
     for _, a in ipairs(ar) do
-      head[#head + 1] = { C.slot, cell(a[1]:lower()) }
-      arRow[#arRow + 1] = { C.num, cell(tostring(a[2])) }
-      dmgRow[#dmgRow + 1] = { C.text, cell(tonumber(a[3]) and ("%-" .. string.format("%.2f", tonumber(a[3]))) or "") }
+      local w = weakest(a)
+      head[#head + 1] = { w and C.flag or C.slot, cell(a[1]:lower()) }
+      arRow[#arRow + 1] = { w and C.flag or C.num, cell(tostring(a[2])) }
+      dmgRow[#dmgRow + 1] = { w and C.flag or C.text, cell(tonumber(a[3]) and ("%-" .. string.format("%.2f", tonumber(a[3]))) or "") }
     end
     head[#head + 1] = { C.dim, cell("total") }
     arRow[#arRow + 1] = { C.num, cell(tostring(total)) }
@@ -853,33 +858,11 @@ function M.formatters.eq(raw, width)
     else
       -- too narrow for columns: one location per line
       for _, a in ipairs(ar) do
-        out[#out + 1] = { { C.slot, pad(a[1]:lower(), 10) }, { C.num, string.format("%3s", a[2]) },
-          { C.text, tonumber(a[3]) and ("   %-" .. string.format("%.2f", tonumber(a[3])) .. " damage") or "" } }
+        local w = weakest(a)
+        out[#out + 1] = { { w and C.flag or C.slot, pad(a[1]:lower(), 10) }, { w and C.flag or C.num, string.format("%3s", a[2]) },
+          { w and C.flag or C.text, tonumber(a[3]) and ("   %-" .. string.format("%.2f", tonumber(a[3])) .. " damage") or "" } }
       end
       out[#out + 1] = { { C.dim, pad("total", 10) }, { C.num, string.format("%3s", total) } }
-    end
-    -- weakest location(s) you have gear on (an empty slot being weakest is obvious), and
-    -- what one more point is worth
-    local wearsAt = { head = bySlot["head"], torso = bySlot["torso"], arms = bySlot["arms"],
-                      legs = bySlot["legs"], tail = bySlot["tail"] }
-    local low
-    for _, a in ipairs(ar) do
-      local n, loc = tonumber(a[2]), a[1]:lower()
-      if n and wearsAt[loc] and (not low or n < low) then low = n end
-    end
-    local weak = {}
-    for _, a in ipairs(ar) do
-      local loc = a[1]:lower()
-      if tonumber(a[2]) == low and wearsAt[loc] then weak[#weak + 1] = loc end
-    end
-    if M.cfg.arRate then
-      local row = { { C.dim, pad("", 10) } }
-      if #weak > 0 then
-        row[#row + 1] = { C.dim, "weakest: " }; row[#row + 1] = { C.flag, table.concat(weak, ", ") }
-        row[#row + 1] = { C.dim, "  ·  " }
-      end
-      row[#row + 1] = { C.dim, string.format("each AR point = %.2f%% less damage there", M.cfg.arRate) }
-      out[#out + 1] = row
     end
   end
 
