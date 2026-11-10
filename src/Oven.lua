@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.13"
+M.version = "0.11.14"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2718,6 +2718,11 @@ function M.start(kind, target, cmd)
             hasLayout = M.formatters[kind] ~= nil }
   if kind == "help" then M.cap.gag = M.cfg.helpWindow
   else M.cap.gag = M.cfg.main == "replace" and M.cap.hasLayout end
+  if M.learning and kind == "item" then
+    -- sbo learn: record the item, show nothing
+    M.cap.quiet, M.cap.gag = true, true
+    M.learning.started = true
+  end
   M.cap.maxTimer = tempTimer(M.cfg.maxTime, function() M.finish("maxtime") end)
 end
 
@@ -2895,7 +2900,21 @@ function M.finish(reason)
     end
   end
 
-  if #cap.plain == 0 and not heldPrompt then
+  if #cap.plain == 0 and not heldPrompt and not cap.quiet then
+    local nxt = table.remove(M.queue, 1)
+    if nxt then M.start(nxt[1], nxt[2], nxt[3]) end
+    return
+  end
+
+  if cap.quiet then
+    -- sbo learn: remember the item, draw nothing, keep the prompt out of the log too
+    if reason == "prompt" and not M.cfg.bar then deleteLine() end
+    local ok, it = pcall(M.parseItem, cap.plain)
+    if ok and it and it.name then M.remember(it); M.learnStats.ok = M.learnStats.ok + 1
+    else M.learnStats.fail = M.learnStats.fail + 1 end
+    if M.cfg.samples and #cap.plain > 0 then writeSample(cap) end
+    M.learning = nil
+    tempTimer(0.3, function() M.learnNext() end)
     local nxt = table.remove(M.queue, 1)
     if nxt then M.start(nxt[1], nxt[2], nxt[3]) end
     return
@@ -2970,6 +2989,44 @@ end
 ---------------------------------------------------------------------------
 local function say(msg) cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg .. "\n") end
 
+-- sbo learn: look at every worn item Oven doesn't know yet (the "?" in eq), quietly
+function M.learn()
+  if #M.eqNames == 0 then return say("type eq first, so Oven knows what you're wearing") end
+  M.learnQueue, M.learnStats = {}, { ok = 0, fail = 0 }
+  local seen = {}
+  for _, n in ipairs(M.eqNames) do
+    if not M.items[n] and not seen[n] then seen[n] = true; M.learnQueue[#M.learnQueue + 1] = n end
+  end
+  if #M.learnQueue == 0 then return say("every item you're wearing is already known") end
+  say("looking at " .. #M.learnQueue .. " worn item" .. (#M.learnQueue == 1 and "" or "s") .. "…")
+  M.learnNext()
+end
+
+function M.learnNext()
+  if not M.learnQueue then return end
+  local name = table.remove(M.learnQueue, 1)
+  if not name then
+    local st = M.learnStats
+    M.learnQueue = nil
+    say(string.format("learned %d item%s%s", st.ok, st.ok == 1 and "" or "s",
+      st.fail > 0 and string.format(" (%d couldn't be looked at)", st.fail) or ""))
+    send("eq")   -- show the filled-in table
+    return
+  end
+  M.learning = { name = name }
+  local mine = M.learning
+  send('look "' .. name .. '"', false)
+  -- no reply at all? move on
+  tempTimer(5, function()
+    if M.learning == mine and not mine.started then
+      M.learning = nil
+      M.learnStats.fail = M.learnStats.fail + 1
+      M.learnNext()
+    end
+  end)
+end
+
+
 function M.help()
   -- collect the text, then show it in the help window (or the main window)
   local buf = {}
@@ -2991,6 +3048,7 @@ function M.help()
   <khaki>sbo pin [name]<reset> / <khaki>unpin<reset>    compare every item you look at against this one
   <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
   <khaki>sbo items<reset>                 list remembered items
+  <khaki>sbo learn<reset>                 look at the worn items Oven doesn't know yet (the ? in eq)
   <khaki>sbo session [reset]<reset>       exp gained, exp/hour, time and kills to next level
   <khaki>sbo gamecolors on|off<reset>     keep the game's own colours on item names
   <khaki>sbo eqstats on|off<reset>        AR and affects of each worn item in eq (look at an item once to fill it in)
@@ -3162,6 +3220,7 @@ function M.command(args)
     say("help window " .. b)
   elseif a == "slots" and (b == "short" or b == "full") then
     M.cfg.slotNames = b; say("slot names: " .. b)
+  elseif a == "learn" then return M.learn()
   elseif a == "session" then
     if b == "reset" then M.sess = { start = os.time(), gained = 0 }; say("session counters reset"); return end
     if M.cfg.window then M.viewAdd({ lines = M.sessionLines(M.viewCols()), links = {} })

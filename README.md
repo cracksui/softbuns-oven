@@ -105,6 +105,8 @@ Every item you look at is remembered (it survives logging out).
 - **Any two:** `sbo compare` compares the last two items you looked at;
   `sbo compare hook vs dagger` compares any two remembered items by part of their names.
 - `sbo items` lists what Oven remembers.
+- `sbo learn` looks at every worn item Oven doesn't know yet (the `?` in `eq`) in one go, quietly,
+  then shows your `eq` again with their stats filled in.
 
 Green marks the better value in each row.
 
@@ -121,6 +123,7 @@ sbo clear                 clear the Inspector's history
 sbo font [size]           Inspector / help window font size (leave the number off for the default)
 sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
+sbo learn                 look at worn items Oven doesn't know yet (the ? in eq)
 sbo session [reset]       exp gained, exp/hour, time and kills to next level
 sbo gamecolors on|off     keep the game's own colours on item names
 sbo eqstats on|off        AR / affects column in eq (look at an item once to fill it in)
