@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.17.2"
+M.version = "0.18.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -86,6 +86,57 @@ function M.loadSettings()
   M.cfg = t
 end
 function M.saveSettings() table.save(M.settingsFile, M.cfg) end
+
+-- World data (kills, loot, what's in each room...) lives in its own file, so the settings stay
+-- small; it's written at most every 30 seconds, and when you disconnect or quit
+M.worldFile = getMudletHomeDir() .. "/oven_world.lua"
+M.world = M.world or {}
+local WORLD_KEYS = { "loot", "kills", "roomNpcs", "roomFlags", "roomEnters", "roomKills", "roomDeaths", "marks" }
+
+function M.loadWorld()
+  local t = {}
+  if io.exists(M.worldFile) then pcall(table.load, M.worldFile, t) end
+  -- before 0.18 these were kept in the settings file: move them over once
+  local moved = false
+  for _, k in ipairs(WORLD_KEYS) do
+    if M.cfg[k] ~= nil then
+      if t[k] == nil then t[k] = M.cfg[k] end
+      M.cfg[k] = nil
+      moved = true
+    end
+  end
+  M.world = t
+  if moved then M.flushWorld(); M.saveSettings() end
+end
+
+function M.flushWorld()
+  if M.worldTimer then killTimer(M.worldTimer); M.worldTimer = nil end
+  M.worldDirty = nil
+  table.save(M.worldFile, M.world)
+end
+
+function M.saveWorld()
+  M.worldDirty = true
+  if not M.worldTimer then
+    M.worldTimer = tempTimer(30, function()
+      M.worldTimer = nil
+      if M.worldDirty then M.flushWorld() end
+    end)
+  end
+end
+
+-- the samples log is for tuning layouts; keep it from growing without end
+function M.rotateSamples()
+  local f = io.open(M.samplesFile, "r")
+  if not f then return end
+  local size = f:seek("end")
+  f:close()
+  if size and size > 2 * 1024 * 1024 then
+    local old = M.samplesFile:gsub("%.txt$", ".old.txt")
+    os.remove(old)
+    os.rename(M.samplesFile, old)
+  end
+end
 
 -- Which commands start a capture. Checked against the lower-cased command.
 -- Return a kind ("eq", "item", "contents") or nil.
@@ -4027,7 +4078,7 @@ function M.roomCardLines(id)
   local area = getRoomArea(id)
   local areaName = area and getRoomAreaName(area) or ""
   local title = { { C.item, name }, { C.dim, "  #" .. id } }
-  local fl = (M.cfg.roomFlags or {})[tostring(id)]
+  local fl = (M.world.roomFlags or {})[tostring(id)]
   if fl and fl.tags and #fl.tags > 0 then
     title[#title + 1] = { C.dim, "  " }
     for _, t in ipairs(fl.tags) do title[#title + 1] = { C.flag, "[" .. t .. "]" } end
@@ -4046,7 +4097,7 @@ function M.roomCardLines(id)
   local MAX = 8
   -- notable NPCs ([QUEST] [SHOP] [TRAINER] ...)
   local npcs = {}
-  for _, n in pairs((M.cfg.roomNpcs or {})[tostring(id)] or {}) do npcs[#npcs + 1] = n end
+  for _, n in pairs((M.world.roomNpcs or {})[tostring(id)] or {}) do npcs[#npcs + 1] = n end
   table.sort(npcs, function(a, b) return (a.last or 0) > (b.last or 0) end)
   if #npcs > 0 then
     any = true
@@ -4061,7 +4112,7 @@ function M.roomCardLines(id)
   end
   -- "enter ..." commands that work here
   local enters = {}
-  for cmd, e in pairs((M.cfg.roomEnters or {})[tostring(id)] or {}) do enters[#enters + 1] = { cmd = cmd, to = e.to } end
+  for cmd, e in pairs((M.world.roomEnters or {})[tostring(id)] or {}) do enters[#enters + 1] = { cmd = cmd, to = e.to } end
   table.sort(enters, function(a, b) return a.cmd < b.cmd end)
   if #enters > 0 then
     any = true
@@ -4073,7 +4124,7 @@ function M.roomCardLines(id)
   end
   -- kills
   local kills = {}
-  for _, e in pairs((M.cfg.roomKills or {})[tostring(id)] or {}) do kills[#kills + 1] = e end
+  for _, e in pairs((M.world.roomKills or {})[tostring(id)] or {}) do kills[#kills + 1] = e end
   table.sort(kills, function(a, b) return a.count ~= b.count and a.count > b.count or (a.last or 0) > (b.last or 0) end)
   if #kills > 0 then
     any = true
@@ -4087,7 +4138,7 @@ function M.roomCardLines(id)
   end
   -- loot
   local found, order = {}, {}
-  for _, e in ipairs(M.cfg.loot or {}) do
+  for _, e in ipairs(M.world.loot or {}) do
     if e.room == id then
       local k = e.item:lower()
       local f = found[k]
@@ -4111,7 +4162,7 @@ function M.roomCardLines(id)
     end
   end
   -- deaths
-  local deaths = (M.cfg.roomDeaths or {})[tostring(id)] or {}
+  local deaths = (M.world.roomDeaths or {})[tostring(id)] or {}
   if #deaths > 0 then
     any = true
     row(); row({ C.minus, "▸ You died here" }, { C.dim, "  " .. #deaths })
@@ -4242,19 +4293,19 @@ function M.noteRoomFlags(id, l)
   for t in before:gmatch("%[([^%]]+)%]") do
     if not NOT_ROOM_FLAGS[t:lower()] then flags[#flags + 1] = t end
   end
-  M.cfg.roomFlags = M.cfg.roomFlags or {}
-  local key, old = tostring(id), M.cfg.roomFlags[tostring(id)]
+  M.world.roomFlags = M.world.roomFlags or {}
+  local key, old = tostring(id), M.world.roomFlags[tostring(id)]
   local was = old and table.concat(old.tags or {}, ",") or nil
   if was == table.concat(flags, ",") then return end
   if #flags == 0 and not old then return end
-  M.cfg.roomFlags[key] = #flags > 0 and { tags = flags, last = os.time() } or nil
-  M.saveSettings()
+  M.world.roomFlags[key] = #flags > 0 and { tags = flags, last = os.time() } or nil
+  M.saveWorld()
 end
 
 -- 0.16.7 took tags from anywhere on a line, so item lines ("Item '...' ... [Study][LTB]")
 -- were saved as NPCs; drop those, and tidy leading "**" off names
 function M.cleanRoomNpcs()
-  for _, book in pairs(M.cfg.roomNpcs or {}) do
+  for _, book in pairs(M.world.roomNpcs or {}) do
     local drop, rename = {}, {}
     for key, n in pairs(book) do
       local t = n.text or ""
@@ -4278,9 +4329,9 @@ function M.noteRoomLine(l)
     local buf = M.roomLineBuf
     M.roomLineBuf = {}
     if id and #buf > 0 then
-      M.cfg.roomNpcs = M.cfg.roomNpcs or {}
-      local book = M.cfg.roomNpcs[tostring(id)] or {}
-      M.cfg.roomNpcs[tostring(id)] = book
+      M.world.roomNpcs = M.world.roomNpcs or {}
+      local book = M.world.roomNpcs[tostring(id)] or {}
+      M.world.roomNpcs[tostring(id)] = book
       for _, e in ipairs(buf) do
         local key = e.text:lower()
         local n = book[key]
@@ -4291,7 +4342,7 @@ function M.noteRoomLine(l)
         end
         if n then n.tags = e.tags; n.seen = n.seen + 1; n.last = os.time() end
       end
-      M.saveSettings()
+      M.saveWorld()
     end
     pcall(M.checkEnter, id)
     return
@@ -4322,11 +4373,11 @@ function M.checkEnter(id)
   if now() - p.at > 6 then M.pendingEnter = nil; return end
   if not id or not p.from or id == p.from then return end   -- not moved (yet)
   M.pendingEnter = nil
-  M.cfg.roomEnters = M.cfg.roomEnters or {}
-  local book = M.cfg.roomEnters[tostring(p.from)] or {}
-  M.cfg.roomEnters[tostring(p.from)] = book
+  M.world.roomEnters = M.world.roomEnters or {}
+  local book = M.world.roomEnters[tostring(p.from)] or {}
+  M.world.roomEnters[tostring(p.from)] = book
   book[p.cmd] = { to = id, last = os.time() }
-  M.saveSettings()
+  M.saveWorld()
   if roomExists(p.from) and roomExists(id) then
     local ok, exits = pcall(getSpecialExitsSwap, p.from)
     if not (ok and type(exits) == "table" and exits[p.cmd]) then
@@ -4339,9 +4390,9 @@ end
 function M.noteRoomKill(key, name)
   local id = M.currentRoom()
   if not id then return end
-  M.cfg.roomKills = M.cfg.roomKills or {}
-  local book = M.cfg.roomKills[tostring(id)] or {}
-  M.cfg.roomKills[tostring(id)] = book
+  M.world.roomKills = M.world.roomKills or {}
+  local book = M.world.roomKills[tostring(id)] or {}
+  M.world.roomKills[tostring(id)] = book
   local e = book[key] or { name = name, count = 0 }
   book[key] = e
   e.count = e.count + 1
@@ -4353,11 +4404,11 @@ function M.noteRoomDeath()
   local id = M.currentRoom()
   if not id then return end
   local c = M.cfg.char or {}
-  M.cfg.roomDeaths = M.cfg.roomDeaths or {}
-  local list = M.cfg.roomDeaths[tostring(id)] or {}
-  M.cfg.roomDeaths[tostring(id)] = list
+  M.world.roomDeaths = M.world.roomDeaths or {}
+  local list = M.world.roomDeaths[tostring(id)] or {}
+  M.world.roomDeaths[tostring(id)] = list
   list[#list + 1] = { t = os.time(), level = c.level, total = c.total }
-  M.saveSettings()
+  M.saveWorld()
   -- the lines before it, so the game's own death message can be learned
   if M.cfg.samples and (M.deathCtxLogged or 0) < 10 then
     M.deathCtxLogged = (M.deathCtxLogged or 0) + 1
@@ -4497,7 +4548,7 @@ function M.runTargets(q)
     if not f then f = { id = id, why = why, rank = rank }; found[id] = f; order[#order + 1] = f
     elseif rank < f.rank then f.why, f.rank = why, rank end
   end
-  for id, book in pairs(M.cfg.roomNpcs or {}) do
+  for id, book in pairs(M.world.roomNpcs or {}) do
     for _, n in pairs(book) do
       local tagHit
       for _, t in ipairs(n.tags or {}) do
@@ -4511,7 +4562,7 @@ function M.runTargets(q)
       elseif (n.text or ""):lower():find(q, 1, true) then add(id, label, 2) end
     end
   end
-  for id, fl in pairs(M.cfg.roomFlags or {}) do
+  for id, fl in pairs(M.world.roomFlags or {}) do
     for _, t in ipairs(fl.tags or {}) do
       local tl = t:lower()
       if tl == q or tl == single then add(id, "[" .. t .. "]", 3) end
@@ -4614,10 +4665,10 @@ end
 function M.recordKill(name)
   name = trim(name)
   local key = name:lower()
-  M.cfg.kills = M.cfg.kills or {}
+  M.world.kills = M.world.kills or {}
   M.sess.killBook = M.sess.killBook or {}
   local t = os.time()
-  for _, book in ipairs({ M.cfg.kills, M.sess.killBook }) do
+  for _, book in ipairs({ M.world.kills, M.sess.killBook }) do
     local e = killBook(book, key, name)
     e.count = e.count + 1
     e.last = t
@@ -4625,7 +4676,7 @@ function M.recordKill(name)
   M.sess.killsLive = (M.sess.killsLive or 0) + 1
   pcall(M.noteRoomKill, key, name)
   M.lastKill = { key = key, at = now() }
-  M.saveSettings()
+  M.saveWorld()
   pcall(M.drawBar)
 end
 
@@ -4633,12 +4684,12 @@ end
 function M.creditKillExp(n)
   local k = M.lastKill
   if not k or now() - k.at > 5 then return end
-  for _, book in ipairs({ M.cfg.kills or {}, M.sess.killBook or {} }) do
+  for _, book in ipairs({ M.world.kills or {}, M.sess.killBook or {} }) do
     local e = book[k.key]
     if e then e.exp = (e.exp or 0) + n end
   end
   M.lastKill = nil
-  M.saveSettings()
+  M.saveWorld()
 end
 
 local function killTable(out, title, book, width, limit)
@@ -4671,7 +4722,7 @@ end
 function M.killLines(width, all)
   local out = { header("kills", "", width, "Kills") }
   killTable(out, "This session", M.sess.killBook, width, all and nil or 25)
-  killTable(out, "All time", M.cfg.kills, width, all and nil or 25)
+  killTable(out, "All time", M.world.kills, width, all and nil or 25)
   return out
 end
 
@@ -4728,11 +4779,11 @@ function M.recordLoot(e)
     M.sess.lootGold = (M.sess.lootGold or 0) + n
     return
   end
-  local log = M.cfg.loot or {}
-  M.cfg.loot = log
+  local log = M.world.loot or {}
+  M.world.loot = log
   log[#log + 1] = e
   while #log > LOOT_KEEP do table.remove(log, 1) end
-  M.saveSettings()
+  M.saveWorld()
 end
 
 -- learn the game's wording: the replies to your first few get/take commands go to the samples file
@@ -4763,7 +4814,7 @@ function M.noteLootContext(l)
 end
 
 function M.lootLines(width, q, all)
-  local log = M.cfg.loot or {}
+  local log = M.world.loot or {}
   local out, links, rooms = {}, {}, {}
   q = q and trim(q):lower() or ""
   local sessN = 0
@@ -5109,7 +5160,7 @@ function M.command(args)
   elseif a == "learn" then return M.learn()
   elseif a == "run" then return M.mapRun(b)
   elseif a == "loot" then
-    if b == "clear" then M.cfg.loot = {}; M.saveSettings(); return say("loot log cleared") end
+    if b == "clear" then M.world.loot = {}; M.saveWorld(); return say("loot log cleared") end
     local all = b == "all" or b:match("^all%s") ~= nil
     local q = all and b:gsub("^all%s*", "") or b
     local w = M.cfg.window and M.viewCols() or columns("main")
@@ -5118,7 +5169,7 @@ function M.command(args)
     return
   elseif a == "kills" then
     if b == "reset" then M.sess.killBook = {}; return say("this session's kill list cleared")
-    elseif b == "clear" then M.cfg.kills = {}; M.saveSettings(); return say("all-time kill list cleared") end
+    elseif b == "clear" then M.world.kills = {}; M.saveWorld(); return say("all-time kill list cleared") end
     local lines = M.killLines(M.cfg.window and M.viewCols() or columns("main"), b == "all")
     if M.cfg.window then M.viewAdd({ lines = lines, links = {} }) else render("main", lines) end
     return
@@ -5443,6 +5494,7 @@ end
 -- Setup (safe to re-run)
 ---------------------------------------------------------------------------
 function M.teardown()
+  if M.worldDirty then pcall(M.flushWorld) end
   if M.handlers then for _, h in ipairs(M.handlers) do killAnonymousEventHandler(h) end end
   if M.lineTrigger then killTrigger(M.lineTrigger) end
   if M.alias then killAlias(M.alias) end
@@ -5460,10 +5512,14 @@ function M.init()
   M.teardown()
   M.dropPages()
   M.loadSettings()
-  if pcall(M.cleanRoomNpcs) then pcall(M.saveSettings) end
+  M.loadWorld()
+  pcall(M.rotateSamples)
+  pcall(M.cleanRoomNpcs)
   M.quests = M.cfg.quests or M.quests or {}
   M.handlers = {
     registerAnonymousEventHandler("sysDataSendRequest", M.onSend),
+    registerAnonymousEventHandler("sysDisconnectionEvent", function() if M.worldDirty then M.flushWorld() end end),
+    registerAnonymousEventHandler("sysExitEvent", function() if M.worldDirty then M.flushWorld() end end),
     registerAnonymousEventHandler("sysUninstallPackage", function(_, pkg)
       if pkg == "Oven" then
         M.teardown()
