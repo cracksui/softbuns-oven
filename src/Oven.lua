@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.3"
+M.version = "0.11.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2583,6 +2583,11 @@ function M.drawBar()
   end
   addAll(segs, tail)
   if p.rest ~= "" then segs[#segs + 1] = { C.text, "   " .. p.rest } end
+  if M.barNote and os.time() <= (M.barNoteUntil or 0) then
+    segs[#segs + 1] = { C.dim, "   [sbo] " }; segs[#segs + 1] = { C.slot, M.barNote }
+  elseif M.updateAvailable and M.newer and M.newer(M.updateAvailable, M.version) then
+    segs[#segs + 1] = { C.dim, "   " }; segs[#segs + 1] = { C.flag, "↑ " .. M.updateAvailable }
+  end
   barEcho(M.segsToDecho({ segs })[1])
 end
 
@@ -3157,12 +3162,25 @@ local function newer(a, b)  -- is version a newer than b?
 end
 M.newer = newer
 
+-- update messages: a short note on the prompt bar when it's on, otherwise a line in the log
+function M.notify(msg, secs)
+  if M.cfg.bar and M.bar and M.bar.rawEcho then
+    M.barNote = msg:gsub("<[%w_]+>", "")
+    M.barNoteUntil = os.time() + (secs or 8)
+    pcall(M.drawBar)
+    tempTimer((secs or 8) + 0.5, function() pcall(M.drawBar) end)
+  else
+    say(msg)
+  end
+end
+
 function M.installFrom(path)
   if M.cap then   -- don't reinstall in the middle of capturing something
     return tempTimer(2, function() M.installFrom(path) end)
   end
-  say("installing " .. path)
+  M.notify(path:find("oven_latest", 1, true) and "installing update…" or ("installing " .. path))
   local old = M.version
+  M.updating = true   -- keep the windows and bar up while the package is swapped
   for _, pkg in ipairs({ "MMFormat", "SoftbunsOS", "Oven" }) do  -- old names too
     if table.contains(getPackages(), pkg) then uninstallPackage(pkg) end
   end
@@ -3170,7 +3188,9 @@ function M.installFrom(path)
     installPackage(path)
     tempTimer(1, function()
       if sbo and sbo.version then
-        cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> updated: v" .. old .. " -> v" .. sbo.version .. "\n")
+        local msg = "updated: v" .. old .. " -> v" .. sbo.version
+        if sbo.notify then sbo.notify(msg, 10)
+        else cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg .. "\n") end
       end
     end)
   end)
@@ -3194,7 +3214,7 @@ function M.update(arg)
   end
   if M.REPO:find("@@", 1, true) then return say("no GitHub repository configured in this build") end
   M.pending = (arg == "force") and "force" or "update"
-  say("checking github.com/" .. M.REPO .. " for updates…")
+  M.notify("checking for updates…")
   M.fetchVersion()
 end
 
@@ -3227,7 +3247,7 @@ function M.onDownload(event, file, err)
   end
   if event == "sysDownloadError" then
     M.pending = nil
-    if mode ~= "check" and mode ~= "auto" then say("download failed: " .. tostring(err or file)) end
+    if mode ~= "check" and mode ~= "auto" then M.notify("update download failed: " .. tostring(err or file), 15) end
     return
   end
   if file == M.dl.version then
@@ -3237,16 +3257,17 @@ function M.onDownload(event, file, err)
       M.pending = nil
       if newer(latest, M.version) and latest ~= M.toldAbout then
         M.toldAbout = latest
-        say("v" .. latest .. " is available (you have v" .. M.version .. ") - type <khaki>sbo update<reset>")
+        M.updateAvailable = latest   -- also shown on the bar until you update
+        M.notify("v" .. latest .. " is available (you have v" .. M.version .. ") - type sbo update", 20)
       end
     elseif mode == "auto" and not newer(latest, M.version) then
       M.pending = nil
     elseif newer(latest, M.version) or mode == "force" then
-      say((mode == "auto" and "new version v" .. latest .. " - updating automatically…" or ("downloading v" .. latest .. "…")))
+      M.notify(mode == "auto" and ("new version v" .. latest .. " - updating automatically…") or ("downloading v" .. latest .. "…"))
       downloadFile(M.dl.pkg, M.rawUrl("Oven.mpackage"))
     else
       M.pending = nil
-      say("you already have the latest version (v" .. M.version .. ")")
+      M.notify("you already have the latest version (v" .. M.version .. ")")
     end
   elseif file == M.dl.pkg then
     M.pending = nil
@@ -3267,6 +3288,7 @@ function M.teardown()
 end
 
 function M.init()
+  M.updating = nil
   M.teardown()
   M.dropPages()
   M.loadSettings()
@@ -3275,6 +3297,7 @@ function M.init()
     registerAnonymousEventHandler("sysUninstallPackage", function(_, pkg)
       if pkg == "Oven" then
         M.teardown()
+        if M.updating then return end   -- an update: the new version takes the windows over
         if M.container then M.container:hide() end
         if M.helpContainer then M.helpContainer:hide() end
         if M.bar then M.bar:hide(); setBorderBottom(0) end
