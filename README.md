@@ -184,6 +184,8 @@ sbo bar blanks on|off     keep / remove the blank line before each prompt (remov
 sbo bar width [n]         length of each gauge (default 10)
 sbo bar lines [n]         prompt bar height
 sbo bar font [n]          prompt bar font size (0 or no number = same as the main window)
+sbo record [min|off]      record everything the game sends (with your commands and GMCP) to oven_record.txt
+sbo gmcp                  list what the game sends over GMCP (written in full to oven_gmcp.txt)
 sbo update                get the newest version
 sbo update auto on|off    install new versions automatically
 ```
