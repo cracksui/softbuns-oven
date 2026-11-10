@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.9.5"
+M.version = "0.9.6"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2070,7 +2070,7 @@ function M.help()
   <khaki>sbo raw<reset>                   reprint the last capture exactly as the game sent it
   <khaki>sbo samples on|off<reset>        log raw captures to oven_samples.txt (helps tune the layout)
   <khaki>sbo prompt [lua pattern]<reset>  set your prompt pattern (blank = telnet GA only)
-  <khaki>sbo font [size]<reset>           oven window font size
+  <khaki>sbo font [size]<reset>           oven window font size (no size = default)
   <khaki>sbo test<reset>                  show a demo
   <khaki>sbo compare<reset>               compare the last two items you looked at
   <khaki>sbo compare [a] vs [b]<reset>    compare two remembered items by (part of) their names
@@ -2085,8 +2085,8 @@ function M.help()
   <khaki>sbo bar on|off<reset>            show the prompt in a fixed bar at the bottom instead of in the text
   <khaki>sbo bar gauges|raw<reset>        prompt bar as gauges, or the prompt exactly as the game sends it
   <khaki>sbo bar blanks on|off<reset>     keep (on) or remove (off) the blank line the game puts before each prompt
-  <khaki>sbo bar width [n]<reset>         length of each gauge (default 10)
-  <khaki>sbo bar lines [n]<reset> / <khaki>font [n]<reset>  prompt bar height / font size
+  <khaki>sbo bar width [n]<reset>         length of each gauge (no number = default, 10)
+  <khaki>sbo bar lines [n]<reset> / <khaki>font [n]<reset>  prompt bar height / font size (no number = default)
   <khaki>sbo update<reset>                get the latest version from GitHub (settings are kept)
   <khaki>sbo update force<reset>          reinstall the latest version even if you already have it
   <khaki>sbo update [file]<reset>         install a local .mpackage file instead
@@ -2185,6 +2185,14 @@ function M.test()
   end
 end
 
+-- numeric setting argument: a number, or blank for the default
+function M.numArg(v, key)
+  v = trim(v or "")
+  if v == "" then return M.defaults[key] end
+  local n = tonumber(v)
+  if n and n >= 0 then return n end
+end
+
 function M.command(args)
   args = trim(args or "")
   local a, b = args:match("^(%S*)%s*(.-)$")
@@ -2201,10 +2209,10 @@ function M.command(args)
     M.cfg.samples = onoff; say("sample logging " .. b .. " (" .. M.samplesFile .. ")")
   elseif a == "prompt" then
     M.cfg.promptPattern = b; say("prompt pattern set to " .. string.format("%q", b))
-  elseif a == "font" and tonumber(b) then
-    M.cfg.fontSize = tonumber(b)
+  elseif a == "font" and M.numArg(b, "fontSize") then
+    M.cfg.fontSize = M.numArg(b, "fontSize")
     if M.console then M.console:setFontSize(M.cfg.fontSize) end
-    say("font size " .. b)
+    say("oven window font size " .. M.cfg.fontSize .. (b == "" and " (default)" or ""))
   elseif a == "clear" then if M.console then M.console:clear() end
   elseif a == "raw" then
     local last = M.history[#M.history]
@@ -2257,10 +2265,18 @@ function M.command(args)
     elseif sub == "blanks" and (val == "on" or val == "off") then
       M.cfg.barBlank = (val == "off")
       say("blank line before each prompt " .. (val == "on" and "kept" or "removed"))
-    elseif sub == "width" and tonumber(val) then M.cfg.barWidth = tonumber(val); M.drawBar(); say("gauge width " .. val)
-    elseif sub == "lines" and tonumber(val) then M.cfg.barLines = tonumber(val); M.layoutBar(); say("prompt bar lines " .. val)
-    elseif sub == "font" and tonumber(val) then
-      M.cfg.barFont = tonumber(val); if M.bar then M.bar:setFontSize(M.cfg.barFont) end; M.layoutBar(); say("prompt bar font " .. val)
+    elseif sub == "width" and M.numArg(val, "barWidth") then
+      M.cfg.barWidth = M.numArg(val, "barWidth"); M.drawBar()
+      say("gauge width " .. M.cfg.barWidth .. (val == "" and " (default)" or ""))
+    elseif sub == "lines" and M.numArg(val, "barLines") then
+      M.cfg.barLines = M.numArg(val, "barLines"); M.layoutBar()
+      say("prompt bar lines " .. M.cfg.barLines .. (val == "" and " (default)" or ""))
+    elseif sub == "font" and M.numArg(val, "barFont") then
+      M.cfg.barFont = M.numArg(val, "barFont")
+      if M.bar then M.bar:setFontSize(M.barFontSize()) end
+      M.layoutBar(); M.drawBar()
+      say("prompt bar font " .. (M.cfg.barFont > 0 and M.cfg.barFont or ("same as main window (" .. M.barFontSize() .. ")"))
+        .. (val == "" and " (default)" or ""))
     else return M.help() end
   else return M.help() end
   M.saveSettings()

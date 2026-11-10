@@ -116,7 +116,7 @@ sbo main replace|keep     replace the raw text in the main window, or leave it a
                           (keep = formatted output only in the oven window)
 sbo window on|off         show / hide the oven window
 sbo clear                 clear the oven window
-sbo font [size]           oven window font size
+sbo font [size]           oven window font size (leave the number off for the default)
 sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
 sbo eqstats on|off        AR / affects column in eq (look at an item once to fill it in)
@@ -129,9 +129,11 @@ sbo bar gauges|raw        prompt bar as gauges, or the prompt exactly as the gam
 sbo bar blanks on|off     keep / remove the blank line before each prompt (removed by default)
 sbo bar width [n]         length of each gauge (default 10)
 sbo bar lines [n]         prompt bar height
-sbo bar font [n]          prompt bar font size (0 = same as the main window)
+sbo bar font [n]          prompt bar font size (0 or no number = same as the main window)
 sbo update                get the newest version
 ```
+
+Any number setting goes back to its default if you leave the number off (e.g. `sbo bar width`).
 
 `oven` works as well as `sbo`.
 
