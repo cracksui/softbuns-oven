@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.6"
+M.version = "0.11.7"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2515,27 +2515,49 @@ local function barEcho(d, label)
     font, M.barFontSize(), html))
 end
 
+-- short number: 950, 1.3k, 31k, 1.2M
+function M.shortNum(n)
+  n = tonumber(n) or 0
+  local a = math.abs(n)
+  local out
+  if a < 1000 then out = tostring(math.floor(a))
+  elseif a < 10000 then out = string.format("%.1fk", a / 1000):gsub("%.0k", "k")
+  elseif a < 1000000 then out = string.format("%dk", math.floor(a / 1000 + 0.5))
+  else out = string.format("%.1fM", a / 1000000):gsub("%.0M", "M") end
+  return (n < 0 and "-" or "") .. out
+end
+
+-- short duration: 54m, 1h12m, 2d3h
+function M.shortDur(sec)
+  local fl = math.floor
+  sec = fl(sec)
+  if sec >= 86400 then return string.format("%dd%dh", fl(sec / 86400), fl((sec % 86400) / 3600)) end
+  if sec >= 3600 then return string.format("%dh%02dm", fl(sec / 3600), fl((sec % 3600) / 60)) end
+  return string.format("%dm", math.max(1, fl(sec / 60)))
+end
+
 function M.sessionSegs()
   local S, c = M.sess, M.cfg.char or {}
-  local dot = { C.dim, "  ·  " }
-  local segs = { { C.dim, "session " }, { C.num, M.duration(os.time() - S.start) } }
+  local gap = { C.dim, "  " }
+  local segs = { { C.dim, "session " }, { C.num, M.shortDur(os.time() - S.start) } }
   local gained = (S.exp0 and S.expNow) and (S.expNow - S.exp0 + (S.gainedAfterScore or 0)) or S.gained or 0
   local rate = M.expRate()
-  if gained > 0 then segs[#segs + 1] = dot; segs[#segs + 1] = { C.plus, "+" .. M.commaNum(gained) .. " exp" } end
+  if gained > 0 then segs[#segs + 1] = gap; segs[#segs + 1] = { C.plus, "+" .. M.shortNum(gained) .. " xp" } end
   if rate and rate > 0 then
-    segs[#segs + 1] = dot; segs[#segs + 1] = { C.num, M.commaNum(math.floor(rate)) .. "/h" }
+    segs[#segs + 1] = gap; segs[#segs + 1] = { C.num, M.shortNum(rate) .. "/h" }
     if c.tnl then
-      segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "level in " }
-      segs[#segs + 1] = { C.title, "≈" .. M.duration(c.tnl * 3600 / rate) }
+      segs[#segs + 1] = gap
+      segs[#segs + 1] = { C.dim, (c.level and ("L" .. (c.level + 1)) or "level") .. " in " }
+      segs[#segs + 1] = { C.title, M.shortDur(c.tnl * 3600 / rate) }
     end
   end
   if S.kills0 and S.killsNow then
-    segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "kills " }; segs[#segs + 1] = { C.plus, tostring(S.killsNow - S.kills0) }
-    segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "deaths " }
-    segs[#segs + 1] = { C.minus, tostring((S.deathsNow or 0) - (S.deaths0 or 0)) }
+    segs[#segs + 1] = gap; segs[#segs + 1] = { C.plus, tostring(S.killsNow - S.kills0) }; segs[#segs + 1] = { C.dim, " kills" }
+    segs[#segs + 1] = gap; segs[#segs + 1] = { C.minus, tostring((S.deathsNow or 0) - (S.deaths0 or 0)) }
+    segs[#segs + 1] = { C.dim, " deaths" }
   end
   if not S.exp0 and gained == 0 then
-    segs[#segs + 1] = dot; segs[#segs + 1] = { C.dim, "type score now and then to measure exp and kills" }
+    segs[#segs + 1] = gap; segs[#segs + 1] = { C.dim, "(type score to start measuring)" }
   end
   return segs
 end
@@ -2634,7 +2656,7 @@ function M.drawBar()
     end
   end
   if M.barNote and os.time() <= (M.barNoteUntil or 0) then
-    main[#main + 1] = { C.dim, "   [sbo] " }; main[#main + 1] = { C.slot, M.barNote }
+    main[#main + 1] = { C.dim, "   " }; main[#main + 1] = { C.slot, M.barNote }
   elseif M.updateAvailable and M.newer and M.newer(M.updateAvailable, M.version) then
     main[#main + 1] = { C.dim, "   " }; main[#main + 1] = { C.flag, "↑ " .. M.updateAvailable }
   end
@@ -3221,14 +3243,35 @@ end
 M.newer = newer
 
 -- update messages: a short note on the prompt bar when it's on, otherwise a line in the log
+-- compact form of an update message: bar text, log text (nil = not worth a log line)
+function M.compactStatus(msg)
+  msg = msg:gsub("<[%w_]+>", "")
+  local v
+  if msg:find("^checking") then return "⟳ checking", nil end
+  v = msg:match("^downloading v(%S-)…?$") or msg:match("^new version v(%S+) %-")
+  if v then return "⇣ " .. v, nil end
+  if msg:find("^installing") then return "⇣ installing", nil end
+  v = msg:match("^updated: v%S+ %-> v(%S+)")
+  if v then return "✓ " .. v, "✓ updated to v" .. v end
+  v = msg:match("latest version %(v(%S+)%)")
+  if v then return "✓ up to date", "✓ up to date (v" .. v .. ")" end
+  v = msg:match("^v(%S+) is available")
+  if v then return "↑ " .. v, "↑ v" .. v .. " available - sbo update" end
+  if msg:find("fail") then return "⚠ update failed", "⚠ " .. msg end
+  return msg, msg
+end
+
+-- update messages: a compact note on the prompt bar when it's on, otherwise one log
+-- line for outcomes only (no "checking… downloading… installing…")
 function M.notify(msg, secs)
+  local short, long = M.compactStatus(msg)
   if M.cfg.bar and M.bar and M.bar.rawEcho then
-    M.barNote = msg:gsub("<[%w_]+>", "")
+    M.barNote = short
     M.barNoteUntil = os.time() + (secs or 8)
     pcall(M.drawBar)
     tempTimer((secs or 8) + 0.5, function() pcall(M.drawBar) end)
-  else
-    say(msg)
+  elseif long then
+    cecho("<dim_grey>[sbo] " .. long .. "<reset>\n")
   end
 end
 
