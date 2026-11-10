@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.1"
+M.version = "0.16.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3103,6 +3103,8 @@ function M.showBar(on)
       M.bar = Geyser.Label:new({ name = "ovenPromptBarLabel", x = 0, y = 0, width = 200, height = 20 })
     end
     M.bar:show()
+    -- clicking the version tag at the right end checks for / installs an update
+    pcall(function() M.bar:setClickCallback(function(ev) M.barClick(ev) end) end)
     M.layoutBar()
     M.applyBarBg()
     M.drawBar()
@@ -4394,7 +4396,7 @@ M.helpSections = {
     { "sbo clear", "clear the Inspector's history" },
   } },
   { key = "update", title = "Updates and troubleshooting", rows = {
-    { "sbo update", "get the newest version (settings are kept)" },
+    { "sbo update", "get the newest version, settings kept (or click the version on the bar)" },
     { "sbo update auto on|off", "install new versions by themselves" },
     { "sbo update force", "reinstall even if you're current" },
     { "sbo update {file}", "install a local .mpackage file" },
@@ -4776,6 +4778,20 @@ function M.notify(msg, secs)
   elseif long then
     M.log("<dim_grey>[sbo] " .. long .. "<reset>")
   end
+end
+
+-- a click on the bar: on the version tag (right end) = sbo update
+function M.barClick(ev)
+  if type(ev) ~= "table" or not ev.x or not M.bar then return end
+  local font = (pcall(getFont) and getFont()) or "monospace"
+  local ok, cw = pcall(calcFontSize, M.barFontSize(), font)
+  cw = (ok and tonumber(cw)) or 8
+  local tagW = (ulen(" [v" .. M.version .. " ✓]") + 2) * cw + 6
+  local w = M.bar:get_width()
+  if ev.x < w - tagW then return end
+  local st = (M.updState or {}).state
+  if st == "check" or st == "down" or M.updating then return say("already checking for an update…") end
+  M.update()
 end
 
 -- "v0.11.9 ✓" at the end of the bar: ✓ current, ↑ update available, ⟳ checking, ⇣ updating, ✗ error

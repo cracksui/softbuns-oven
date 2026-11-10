@@ -174,7 +174,7 @@ Any number setting goes back to its default if you leave the number off (e.g. `s
 
 ## Updating
 
-Type **`sbo update`**. Oven checks this page for a newer version and installs it, keeping your
+Type **`sbo update`** (or click the version tag at the right end of the prompt bar). Oven checks this page for a newer version and installs it, keeping your
 settings and remembered items. You'll also get a one-line notice when you log in if an update
 is out. `sbo update force` reinstalls even if you're current.
 
