@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.16.5"
+M.version = "0.16.6"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3518,6 +3518,7 @@ end
 
 function M.onSend(_, cmd)
   pcall(M.noteLootCommand, cmd)
+  pcall(M.noteEnterCommand, cmd)
   if not M.cfg.enabled then return end
   local kind, target = M.classify(cmd)
   if not kind then return end
@@ -3640,6 +3641,7 @@ end
 function M.onLine()
   local cap = M.cap
   pcall(M.observe, line)
+  pcall(M.noteRoomLine, line)
   pcall(M.noteKillContext, line)
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
   -- It goes on the bar; it's never part of a command's output.
@@ -4036,6 +4038,33 @@ function M.roomCardLines(id)
   row({ C.dim, (areaName ~= "" and (areaName .. "  ·  ") or "") .. (#exits > 0 and ("exits " .. table.concat(exits, " ")) or "no exits mapped") })
   local any = false
   local MAX = 8
+  -- notable NPCs ([QUEST] [SHOP] [TRAINER] ...)
+  local npcs = {}
+  for _, n in pairs((M.cfg.roomNpcs or {})[tostring(id)] or {}) do npcs[#npcs + 1] = n end
+  table.sort(npcs, function(a, b) return (a.last or 0) > (b.last or 0) end)
+  if #npcs > 0 then
+    any = true
+    row(); row({ M.REC or C.title, "▸ Notable here" })
+    for i, n in ipairs(npcs) do
+      if i > MAX then row({ C.dim, string.format("  … and %d more", #npcs - MAX) }); break end
+      local r = { { C.dim, "  " } }
+      for _, t in ipairs(n.tags or {}) do r[#r + 1] = { C.flag, "[" .. t .. "] " } end
+      r[#r + 1] = { C.text, n.text }
+      out[#out + 1] = r
+    end
+  end
+  -- "enter ..." commands that work here
+  local enters = {}
+  for cmd, e in pairs((M.cfg.roomEnters or {})[tostring(id)] or {}) do enters[#enters + 1] = { cmd = cmd, to = e.to } end
+  table.sort(enters, function(a, b) return a.cmd < b.cmd end)
+  if #enters > 0 then
+    any = true
+    row(); row({ M.REC or C.title, "▸ Ways in" })
+    for _, e in ipairs(enters) do
+      local dest = e.to and roomExists(e.to) and getRoomName(e.to) or nil
+      row({ C.key, "  " .. e.cmd }, { C.dim, "  → " .. (dest and (dest .. "  #" .. e.to) or ("#" .. tostring(e.to))) })
+    end
+  end
   -- kills
   local kills = {}
   for _, e in pairs((M.cfg.roomKills or {})[tostring(id)] or {}) do kills[#kills + 1] = e end
@@ -4086,7 +4115,7 @@ function M.roomCardLines(id)
           { C.dim, "  " .. ago(d.t) })
     end
   end
-  if not any then row(); row({ C.dim, "nothing killed, picked up or died here yet" }) end
+  if not any then row(); row({ C.dim, "nothing recorded here yet" }) end
   row(); row({ C.dim, "double-click the room to walk there · click this card to close" })
   return out
 end
@@ -4168,6 +4197,91 @@ end
 function M.stopMapSelect()
   if M.mapSelTimer then killTimer(M.mapSelTimer); M.mapSelTimer = nil end
   M.hideRoomCard()
+end
+
+-- Notable NPCs: room lines carrying all-caps tags like [QUEST] [SHOP] [TRAINER], kept per room.
+-- Lines are gathered until the prompt and filed under the room you're in at the prompt
+-- (the room number may arrive just before or just after the room's text).
+local NOT_TAGS = { CRIT = true }
+M.roomLineBuf = M.roomLineBuf or {}
+M.npcCtxLogged = M.npcCtxLogged or 0
+
+local function npcTags(l)
+  -- channels and speech aren't room occupants
+  for _, v in ipairs({ " tells ", " says", " asks", " exclaims", " yells", " shouts", " whispers", " chats", " replies", "%]: " }) do
+    if l:find(v) then return end
+  end
+  local tags = {}
+  for t in l:gmatch("%[(%u[%u %-]+%u)%]") do
+    if not NOT_TAGS[t] then tags[#tags + 1] = t end
+  end
+  if #tags == 0 then return end
+  local text = trim((l:gsub("%[%u[%u %-]+%u%]", ""):gsub("%s+", " ")))
+  if text == "" or ulen(text) > 160 then return end
+  return tags, text
+end
+
+function M.noteRoomLine(l)
+  if isPromptLine() then
+    local id = M.currentRoom()
+    local buf = M.roomLineBuf
+    M.roomLineBuf = {}
+    if id and #buf > 0 then
+      M.cfg.roomNpcs = M.cfg.roomNpcs or {}
+      local book = M.cfg.roomNpcs[tostring(id)] or {}
+      M.cfg.roomNpcs[tostring(id)] = book
+      for _, e in ipairs(buf) do
+        local key = e.text:lower()
+        local n = book[key]
+        if not n then
+          local count = 0
+          for _ in pairs(book) do count = count + 1 end
+          if count < 20 then n = { text = e.text, seen = 0 }; book[key] = n end
+        end
+        if n then n.tags = e.tags; n.seen = n.seen + 1; n.last = os.time() end
+      end
+      M.saveSettings()
+    end
+    pcall(M.checkEnter, id)
+    return
+  end
+  local tags, text = npcTags(l)
+  if tags then
+    M.roomLineBuf[#M.roomLineBuf + 1] = { tags = tags, text = text }
+    if M.cfg.samples and M.npcCtxLogged < 15 then
+      M.npcCtxLogged = M.npcCtxLogged + 1
+      local f = io.open(M.samplesFile, "a")
+      if f then f:write("===== " .. os.date("%Y-%m-%d %H:%M:%S") .. " | kind=npcctx | cmd=\n" .. l .. "\n===== end\n\n"); f:close() end
+    end
+  end
+end
+
+-- "enter <something>": when it takes you to another room, remember it for the room you left,
+-- and add it to the map as a special exit so walking can use it
+function M.noteEnterCommand(cmd)
+  local c = trim(cmd or "")
+  if c:lower():match("^enter%s") or c:lower() == "enter" then
+    M.pendingEnter = { cmd = c:lower(), from = M.currentRoom(), at = now() }
+  end
+end
+
+function M.checkEnter(id)
+  local p = M.pendingEnter
+  if not p then return end
+  if now() - p.at > 6 then M.pendingEnter = nil; return end
+  if not id or not p.from or id == p.from then return end   -- not moved (yet)
+  M.pendingEnter = nil
+  M.cfg.roomEnters = M.cfg.roomEnters or {}
+  local book = M.cfg.roomEnters[tostring(p.from)] or {}
+  M.cfg.roomEnters[tostring(p.from)] = book
+  book[p.cmd] = { to = id, last = os.time() }
+  M.saveSettings()
+  if roomExists(p.from) and roomExists(id) then
+    local ok, exits = pcall(getSpecialExitsSwap, p.from)
+    if not (ok and type(exits) == "table" and exits[p.cmd]) then
+      pcall(addSpecialExit, p.from, id, p.cmd)
+    end
+  end
 end
 
 -- the room's history: who was killed where
@@ -4613,7 +4727,7 @@ M.helpSections = {
   { key = "map", title = "Map and walking", rows = {
     { "sbo map on|off", "follow you on the map; double-click a room to walk there" },
     { "sbo map panel on|off", "the map in its own window, with a search box and zoom buttons" },
-    { "sbo map card on|off", "click a room: a card with what was killed, picked up and died there" },
+    { "sbo map card on|off", "click a room: its [QUEST]/[SHOP] NPCs, enter commands, kills, loot, deaths" },
     { "sbo map find {text}", "find rooms by name; click a result to show it or walk there" },
     { "sbo map walk {room #}", "walk to a room" },
     { "sbo map show {room #}", "centre the map on a room" },
