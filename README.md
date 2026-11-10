@@ -128,6 +128,9 @@ sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
 sbo learn                 look at worn items Oven doesn't know yet (the ? in eq)
 sbo session [reset]       exp gained, exp/hour, time and kills to next level
+sbo map on|off            follow you on the map (GMCP room number); double-click a room to walk there
+sbo map stop              cancel a walk in progress
+sbo map load [file]       load a map file (default: map/mm_map.dat)
 sbo gamecolors on|off     keep the game's own colours on item names
 sbo eqstats on|off        AR / affects column in eq (look at an item once to fill it in)
 sbo empty on|off          show empty slots in eq

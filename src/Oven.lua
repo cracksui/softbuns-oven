@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.12.11"
+M.version = "0.13.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -36,6 +36,7 @@ M.defaults = {
   promptPattern = "^%s*<[^>]*%d[^>]*>%s*$",
   updateCheck  = true,       -- on login, quietly check GitHub for a newer version
   autoUpdate   = false,      -- check every 2 minutes and install new versions automatically
+  map          = false,      -- follow your room (GMCP) on the map and walk where you double-click
   autocompare  = true,       -- compare looked-at items with what you wear in that slot
   bar          = false,      -- move the prompt into a fixed bar at the bottom
   barMode      = "gauges",   -- gauges | raw
@@ -2922,6 +2923,7 @@ function M.drawBar()
       addAll(main, sess)
     end
   end
+  if M.walkNote then main[#main + 1] = { C.dim, "   walk " }; main[#main + 1] = { C.slot, M.walkNote } end
   local tag = M.versionTag()
   if collapsed ~= (M.barCollapsed or false) then
     M.barCollapsed = collapsed
@@ -3244,6 +3246,85 @@ end
 ---------------------------------------------------------------------------
 local function say(msg) M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg) end
 
+---------------------------------------------------------------------------
+-- Map: follow your room by GMCP room number, and walk where you double-click
+---------------------------------------------------------------------------
+function M.mapRoomId()
+  local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info
+  return info and tonumber(info.num)
+end
+
+function M.onRoom()
+  local id = M.mapRoomId()
+  if not id then return end
+  M.mapRoom = id
+  if roomExists(id) then centerview(id) end
+  -- walking: arrived where the next step should take us?
+  local w = M.walk
+  if w then
+    if id == w.path[w.step] then
+      w.step = w.step + 1
+      if w.step > #w.dirs then
+        M.walk = nil
+        M.notifyWalk("arrived")
+      else
+        M.walkStep()
+      end
+    elseif id ~= w.from then
+      M.walk = nil
+      M.notifyWalk("stopped: ended up somewhere unexpected")
+    end
+  end
+end
+
+function M.notifyWalk(msg)
+  if M.cfg.bar and M.bar and M.bar.rawEcho then
+    M.walkNote = msg; pcall(M.drawBar)
+    tempTimer(6, function() if M.walkNote == msg then M.walkNote = nil; pcall(M.drawBar) end end)
+  else
+    say("walk " .. msg)
+  end
+end
+
+function M.walkStep()
+  local w = M.walk
+  if not w then return end
+  w.from = M.mapRoom
+  local mine, step = w, w.step
+  send(w.dirs[w.step], false)
+  -- no arrival within a few seconds (door, blocked, exhausted…): stop
+  tempTimer(6, function()
+    if M.walk == mine and mine.step == step then
+      M.walk = nil
+      M.notifyWalk("stopped: no progress (blocked or a closed door?)")
+    end
+  end)
+end
+
+-- Mudlet calls this when you double-click a room on the map; it fills in
+-- speedWalkDir (directions) and speedWalkPath (the rooms they lead to)
+function M.doSpeedWalk()
+  if type(speedWalkDir) ~= "table" or #speedWalkDir == 0 then return end
+  local dirs, path = {}, {}
+  for i, d in ipairs(speedWalkDir) do dirs[i] = d; path[i] = tonumber(speedWalkPath[i]) end
+  M.walk = { dirs = dirs, path = path, step = 1 }
+  M.notifyWalk(string.format("%d step%s…", #dirs, #dirs == 1 and "" or "s"))
+  M.walkStep()
+end
+
+function M.mapStart()
+  if M.mapHandler then killAnonymousEventHandler(M.mapHandler) end
+  M.mapHandler = registerAnonymousEventHandler("gmcp.room.info", function() M.onRoom() end)
+  doSpeedWalk = function() M.doSpeedWalk() end   -- the global Mudlet's map calls
+  M.onRoom()
+end
+
+function M.mapStop()
+  if M.mapHandler then killAnonymousEventHandler(M.mapHandler); M.mapHandler = nil end
+  if doSpeedWalk and M.cfg.map == false then doSpeedWalk = nil end
+  M.walk = nil
+end
+
 -- sbo learn: look at every worn item Oven doesn't know yet (the "?" in eq), quietly
 function M.learn()
   if #M.eqNames == 0 then return say("type eq first, so Oven knows what you're wearing") end
@@ -3304,6 +3385,8 @@ function M.help()
   <khaki>sbo autocompare on|off<reset>    compare looked-at items with what you wear in that slot
   <khaki>sbo items<reset>                 list remembered items
   <khaki>sbo learn<reset>                 look at the worn items Oven doesn't know yet (the ? in eq)
+  <khaki>sbo map on|off<reset>            follow you on the map by room number; double-click a room to walk there
+  <khaki>sbo map stop<reset> / <khaki>load [file]<reset>  cancel a walk / load a map file (default: map/mm_map.dat)
   <khaki>sbo session [reset]<reset>       exp gained, exp/hour, time and kills to next level
   <khaki>sbo gamecolors on|off<reset>     keep the game's own colours on item names
   <khaki>sbo eqstats on|off<reset>        AR and affects of each worn item in eq (look at an item once to fill it in)
@@ -3476,6 +3559,25 @@ function M.command(args)
   elseif a == "slots" and (b == "short" or b == "full") then
     M.cfg.slotNames = b; say("slot names: " .. b)
   elseif a == "learn" then return M.learn()
+  elseif a == "map" then
+    if b == "on" then
+      M.cfg.map = true; M.saveSettings(); M.mapStart()
+      return say("map: following you by room number; double-click a room to walk there (sbo map stop cancels)")
+    elseif b == "off" then
+      M.cfg.map = false; M.saveSettings(); M.mapStop(); return say("map following and click-to-walk off")
+    elseif b == "stop" then
+      if M.walk then M.walk = nil; return say("walk cancelled") end
+      return say("not walking")
+    elseif b:match("^load") then
+      local file = trim(b:gsub("^load", "")); if file == "" then file = getMudletHomeDir() .. "/map/mm_map.dat" end
+      if not io.exists(file) then return say("map file not found: " .. file) end
+      local ok = loadMap(file)
+      say(ok and ("loaded " .. file) or ("couldn't load " .. file))
+      if M.cfg.map then M.onRoom() end
+      return
+    end
+    return say("map " .. (M.cfg.map and "on" or "off") .. (M.mapRoom and (" · you're in room " .. M.mapRoom) or "")
+      .. "  (sbo map on|off|stop|load [file])")
   elseif a == "session" then
     if b == "reset" then M.sess = { start = os.time(), gained = 0 }; say("session counters reset"); return end
     if M.cfg.window then M.viewAdd({ lines = M.sessionLines(M.viewCols()), links = {} })
@@ -3730,6 +3832,7 @@ function M.teardown()
   M.handlers, M.lineTrigger, M.alias = nil, nil, nil
   if M.pollTimer then killTimer(M.pollTimer); M.pollTimer = nil end
   if M.sessTimer then killTimer(M.sessTimer); M.sessTimer = nil end
+  if M.mapHandler then killAnonymousEventHandler(M.mapHandler); M.mapHandler = nil end
 end
 
 function M.init()
@@ -3762,6 +3865,7 @@ function M.init()
   M.alias = tempAlias("^(?:sbo|oven)(?:\\s+(.*))?$", function() M.command(matches[2]) end)
   if M.cfg.window and M.container then M.container:show() end
   if M.cfg.bar then M.showBar(true) end
+  if M.cfg.map then M.mapStart() end
   M.startUpdatePoll()
   if not M.booted then
     M.booted = true
