@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.20.0"
+M.version = "0.20.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3318,23 +3318,82 @@ M.buildPresets = {
   caster   = { wisdom = 3, knowledge = 3, intelligence = 3, ["spell-points"] = 0.2, ["sp-regen"] = 1, ar = 2, hp = 0.1,
                vitality = 1, sanity = 1, ["damage-*"] = 0.2 },
   tank     = { ar = 5, hp = 0.3, vitality = 3, ["hp-regen"] = 1, strength = 1.5, agility = 1, ["damage-*"] = 0.1, ["weapon-damage"] = 1 },
+  healer   = { wisdom = 3, knowledge = 2, ["spell-points"] = 0.2, ["sp-regen"] = 1.5, vitality = 1.5, ar = 2, hp = 0.15,
+               ["hp-regen"] = 0.5, sanity = 1 },
+  thief    = { agility = 3.5, strength = 2, vitality = 1, ar = 2, hp = 0.15, ["hp-regen"] = 0.3, ["damage-*"] = 0.3,
+               ["weapon-damage"] = 3, ["weapon-accuracy"] = 2.5, ["weapon-crit"] = 3, knowledge = 0.5 },
+  paladin  = { strength = 2.5, vitality = 2, ar = 3.5, wisdom = 1.5, hp = 0.2, ["hp-regen"] = 0.5, ["spell-points"] = 0.1,
+               ["sp-regen"] = 0.5, ["damage-*"] = 0.2, ["weapon-damage"] = 3, ["weapon-accuracy"] = 1.5, ["weapon-crit"] = 1 },
   balanced = { ["*"] = 1, ar = 2, hp = 0.1, ["spell-points"] = 0.1, ["damage-*"] = 0.2 },
 }
+-- Materia Magica's classes (help classes), each with the build its description suggests
 local CLASS_BUILD = {
-  monk = "monk",
-  warrior = "melee", fighter = "melee", barbarian = "melee", knight = "melee", paladin = "melee", ranger = "melee",
-  thief = "melee", rogue = "melee", assassin = "melee", berserker = "melee", samurai = "melee",
-  mage = "caster", wizard = "caster", sorcerer = "caster", necromancer = "caster", cleric = "caster", priest = "caster",
-  druid = "caster", shaman = "caster", psionicist = "caster", bard = "caster", warlock = "caster",
+  fighter = "melee", barbarian = "melee", cavalier = "melee", valkyrie = "tank", paladin = "paladin",
+  mage = "caster", wizard = "caster", monk = "monk", ranger = "caster", psionic = "caster",
+  cleric = "healer", priest = "healer", druid = "healer", shaman = "healer", witch = "caster",
+  thief = "thief", rogue = "thief", bard = "thief", knave = "thief",
 }
+-- a class Oven has no build for gets its group's: learned from `help classes` (fighter / mage /
+-- cleric / thief columns), so classes the game adds later still get something sensible
+local GROUP_BUILD = { fighter = "melee", mage = "caster", cleric = "healer", thief = "thief" }
+
+function M.classBuild(cls)
+  cls = (cls or ""):lower()
+  if CLASS_BUILD[cls] then return CLASS_BUILD[cls], true end
+  local grp = (M.cfg.classGroups or {})[cls]
+  if grp and GROUP_BUILD[grp] then return GROUP_BUILD[grp], true end
+  return "balanced", cls == ""
+end
+
+-- reading `help classes`: "Character classes in Alyria are as follows:", a row of group
+-- names, then the classes under each, in columns
+function M.noteClassHelp(l)
+  local st = M.classHelp
+  if not st then
+    if l:match("^%s*Character classes in .- are as follows:") then M.classHelp = { stage = 1 } end
+    return
+  end
+  if trim(l) == "" then
+    if st.stage == 2 then
+      M.classHelp = nil
+      M.saveSettings()
+    end
+    return
+  end
+  if st.stage == 1 then
+    st.cols = {}
+    local pos = 1
+    while true do
+      local a, b, word = l:find("(%u%u+)", pos)
+      if not a then break end
+      st.cols[#st.cols + 1] = { at = a, group = word:lower() }
+      pos = b + 1
+    end
+    if #st.cols == 0 then M.classHelp = nil; return end
+    st.stage = 2
+    M.cfg.classGroups = M.cfg.classGroups or {}
+    for _, c in ipairs(st.cols) do M.cfg.classGroups[c.group] = c.group end
+    return
+  end
+  -- a row of classes: each belongs to the group whose column it starts nearest
+  local pos = 1
+  while true do
+    local a, b, word = l:find("(%a[%a%-']*)", pos)
+    if not a then break end
+    local best, bd
+    for _, c in ipairs(st.cols) do
+      local d = math.abs(c.at - a)
+      if not bd or d < bd then best, bd = c, d end
+    end
+    if best then M.cfg.classGroups[word:lower()] = best.group end
+    pos = b + 1
+  end
+end
 local RANK = { min = 1, minimal = 1, low = 2, med = 3, medium = 3, moderate = 3, high = 4, max = 5, maximum = 5 }
 
 function M.activeBuild()
   local name = M.cfg.build
-  if not name then
-    local cls = ((M.cfg.char or {}).class or ""):lower()
-    name = CLASS_BUILD[cls] or "balanced"
-  end
+  if not name then name = M.classBuild((M.cfg.char or {}).class) end
   local w = (M.cfg.builds or {})[name] or M.buildPresets[name] or M.buildPresets.balanced
   return name, w
 end
@@ -3467,6 +3526,12 @@ function M.buildLines(width)
   local out = { header("gear", "", width, "Build: " .. bname) }
   out[#out + 1] = { { C.dim, "character: " .. (c.race or "?") .. " " .. (c.class or "?") .. (c.total and (", total level " .. c.total) or "")
     .. (M.cfg.build and "" or "  ·  build picked from your class") } }
+  local _, known = M.classBuild(c.class)
+  if not M.cfg.build and not c.class then
+    out[#out + 1] = { { C.flag, "type score once so Oven knows your class - until then this is the balanced build" } }
+  elseif not M.cfg.build and not known then
+    out[#out + 1] = { { C.flag, "Oven doesn't know the class '" .. c.class .. "' - using balanced. Pick one: sbo build melee / caster / healer / thief / tank (or help classes, and Oven learns it)" } }
+  end
   out[#out + 1] = {}
   local keys = {}
   for k in pairs(w) do keys[#keys + 1] = k end
@@ -3849,6 +3914,13 @@ function M.updateMaxes(raw)
     if sc.info["Total Level"] then c.total = tonumber(sc.info["Total Level"]) end
     if sc.info["Class"] then c.class = sc.info["Class"] end
     if sc.info["Race"] then c.race = sc.info["Race"] end
+    local _, known = M.classBuild(c.class)
+    if c.class and not known and not M.cfg.build and not M.classWarned then
+      M.classWarned = true
+      tempTimer(0.5, function()
+        M.say("gear score: Oven doesn't know the class '" .. c.class .. "' yet, so it's using the balanced build - type help classes once, or pick one with sbo build")
+      end)
+    end
     if sc.tnl then c.tnl = tonumber((sc.tnl:gsub(",", ""))); c.exp = tonumber((sc.exp:gsub(",", ""))) end
   end
   for _, l in ipairs(raw) do
@@ -4245,6 +4317,7 @@ function M.onLine()
   local cap = M.cap
   pcall(M.observe, line)
   pcall(M.noteRoomLine, line)
+  pcall(M.noteClassHelp, line)
   pcall(M.noteKillContext, line)
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
   -- It goes on the bar; it's never part of a command's output.
