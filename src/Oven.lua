@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.18.0"
+M.version = "0.19.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -87,42 +87,206 @@ function M.loadSettings()
 end
 function M.saveSettings() table.save(M.settingsFile, M.cfg) end
 
--- World data (kills, loot, what's in each room...) lives in its own file, so the settings stay
--- small; it's written at most every 30 seconds, and when you disconnect or quit
-M.worldFile = getMudletHomeDir() .. "/oven_world.lua"
-M.world = M.world or {}
-local WORLD_KEYS = { "loot", "kills", "roomNpcs", "roomFlags", "roomEnters", "roomKills", "roomDeaths", "marks" }
+---------------------------------------------------------------------------
+-- Database (oven.db, Mudlet's built-in SQLite): items, loot, kills, deaths and what's in
+-- each room. Rows are added or changed one at a time - nothing is ever rewritten whole -
+-- and only what's needed is read.
+---------------------------------------------------------------------------
+M.dbFile = getMudletHomeDir() .. "/oven.db"
 
-function M.loadWorld()
-  local t = {}
-  if io.exists(M.worldFile) then pcall(table.load, M.worldFile, t) end
-  -- before 0.18 these were kept in the settings file: move them over once
-  local moved = false
-  for _, k in ipairs(WORLD_KEYS) do
-    if M.cfg[k] ~= nil then
-      if t[k] == nil then t[k] = M.cfg[k] end
-      M.cfg[k] = nil
-      moved = true
+-- a Lua value as Lua source (tables of strings/numbers/booleans), and back
+local function ser(v)
+  local t = type(v)
+  if t == "string" then return string.format("%q", v)
+  elseif t == "number" or t == "boolean" then return tostring(v)
+  elseif t ~= "table" then return "nil" end
+  local parts, n = {}, #v
+  for i = 1, n do parts[#parts + 1] = ser(v[i]) end
+  for k, x in pairs(v) do
+    if not (type(k) == "number" and k >= 1 and k <= n and k % 1 == 0) then
+      parts[#parts + 1] = "[" .. ser(k) .. "]=" .. ser(x)
     end
   end
-  M.world = t
-  if moved then M.flushWorld(); M.saveSettings() end
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+local function deser(s)
+  if type(s) ~= "string" or s == "" then return nil end
+  local f = loadstring("return " .. s)
+  if not f then return nil end
+  setfenv(f, {})
+  local ok, v = pcall(f)
+  return ok and v or nil
+end
+M.ser, M.deser = ser, deser
+
+-- "Shop,Trainer" -> { "Shop", "Trainer" }
+local function splitTags(s)
+  local t = {}
+  for x in tostring(s or ""):gmatch("[^,]+") do t[#t + 1] = x end
+  return t
 end
 
-function M.flushWorld()
-  if M.worldTimer then killTimer(M.worldTimer); M.worldTimer = nil end
-  M.worldDirty = nil
-  table.save(M.worldFile, M.world)
+local function sq(v)
+  if v == nil then return "NULL"
+  elseif type(v) == "number" then return tostring(v)
+  elseif type(v) == "boolean" then return v and "1" or "0" end
+  return "'" .. (tostring(v):gsub("'", "''")) .. "'"
+end
+-- "... %s ..." with each value quoted for SQL
+local function sql(fmt, ...)
+  local args = { ... }
+  for i = 1, select("#", ...) do args[i] = sq(args[i]) end
+  return string.format(fmt, unpack(args, 1, select("#", ...)))
 end
 
-function M.saveWorld()
-  M.worldDirty = true
-  if not M.worldTimer then
-    M.worldTimer = tempTimer(30, function()
-      M.worldTimer = nil
-      if M.worldDirty then M.flushWorld() end
-    end)
+local SCHEMA = {
+  "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)",
+  "CREATE TABLE IF NOT EXISTS items (name TEXT PRIMARY KEY, type TEXT, level INTEGER, worn TEXT, seen INTEGER, data TEXT)",
+  "CREATE TABLE IF NOT EXISTS item_stats (name TEXT, stat TEXT, value REAL)",
+  "CREATE INDEX IF NOT EXISTS item_stats_name ON item_stats (name)",
+  "CREATE INDEX IF NOT EXISTS item_stats_stat ON item_stats (stat)",
+  "CREATE TABLE IF NOT EXISTS loot (id INTEGER PRIMARY KEY, t INTEGER, who TEXT, item TEXT, src TEXT, n INTEGER, room INTEGER, room_name TEXT, area TEXT)",
+  "CREATE INDEX IF NOT EXISTS loot_room ON loot (room)",
+  "CREATE TABLE IF NOT EXISTS kills (id INTEGER PRIMARY KEY, t INTEGER, key TEXT, name TEXT, room INTEGER, n INTEGER DEFAULT 1, exp INTEGER DEFAULT 0)",
+  "CREATE INDEX IF NOT EXISTS kills_room ON kills (room)",
+  "CREATE INDEX IF NOT EXISTS kills_key ON kills (key)",
+  "CREATE TABLE IF NOT EXISTS deaths (id INTEGER PRIMARY KEY, t INTEGER, room INTEGER, level INTEGER, total INTEGER, recap TEXT)",
+  "CREATE INDEX IF NOT EXISTS deaths_room ON deaths (room)",
+  "CREATE TABLE IF NOT EXISTS room_npcs (room INTEGER, key TEXT, text TEXT, tags TEXT, seen INTEGER, last INTEGER, PRIMARY KEY (room, key))",
+  "CREATE TABLE IF NOT EXISTS room_flags (room INTEGER PRIMARY KEY, tags TEXT, last INTEGER)",
+  "CREATE TABLE IF NOT EXISTS room_enters (room INTEGER, cmd TEXT, dest INTEGER, last INTEGER, PRIMARY KEY (room, cmd))",
+  "CREATE TABLE IF NOT EXISTS marks (name TEXT PRIMARY KEY, room INTEGER, t INTEGER)",
+}
+
+function M.dbOpen()
+  if M.dbConn then return M.dbConn end
+  if not luasql or not luasql.sqlite3 then return nil end
+  M.dbEnv = M.dbEnv or luasql.sqlite3()
+  local conn, err = M.dbEnv:connect(M.dbFile)
+  if not conn then M.log("<red>[sbo] can't open " .. M.dbFile .. ": " .. tostring(err) .. "<reset>"); return nil end
+  M.dbConn = conn
+  conn:execute("PRAGMA journal_mode=WAL")
+  conn:execute("PRAGMA synchronous=NORMAL")
+  for _, s in ipairs(SCHEMA) do conn:execute(s) end
+  return conn
+end
+
+function M.dbClose()
+  if M.dbConn then pcall(function() M.dbConn:close() end); M.dbConn = nil end
+end
+
+-- run a statement; returns true or nil, error
+function M.dbx(fmt, ...)
+  local conn = M.dbOpen()
+  if not conn then return nil, "no database" end
+  local q = sql(fmt, ...)
+  local res, err = conn:execute(q)
+  if not res then
+    if M.cfg and M.cfg.samples then M.log("<dim_grey>[sbo] db: " .. tostring(err) .. "<reset>") end
+    return nil, err
   end
+  if type(res) == "userdata" or type(res) == "table" then pcall(function() res:close() end) end
+  return true
+end
+
+-- all rows of a query, as tables keyed by column name
+function M.dbRows(fmt, ...)
+  local conn = M.dbOpen()
+  if not conn then return {} end
+  local cur = conn:execute(sql(fmt, ...))
+  if not cur or type(cur) == "number" then return {} end
+  local rows = {}
+  local row = cur:fetch({}, "a")
+  while row do
+    rows[#rows + 1] = row
+    row = cur:fetch({}, "a")
+  end
+  cur:close()
+  return rows
+end
+
+function M.dbRow(fmt, ...) return M.dbRows(fmt, ...)[1] end
+
+function M.dbGet(key)
+  local r = M.dbRow("SELECT value FROM kv WHERE key = %s", key)
+  return r and deser(r.value)
+end
+function M.dbSet(key, value)
+  M.dbx("INSERT OR REPLACE INTO kv (key, value) VALUES (%s, %s)", key, ser(value))
+end
+
+function M.dbLastId()
+  local r = M.dbRow("SELECT last_insert_rowid() AS id")
+  return r and tonumber(r.id)
+end
+
+-- One-time move of the older files into the database: oven_world.lua (0.18), the same data
+-- inside oven_settings.lua (before 0.18) and oven_items.lua. The files are kept, renamed
+-- to *.migrated.
+local OLD_WORLD_KEYS = { "loot", "kills", "roomNpcs", "roomFlags", "roomEnters", "roomKills", "roomDeaths" }
+function M.importOld()
+  if not M.dbOpen() then return end
+  local worldFile = getMudletHomeDir() .. "/oven_world.lua"
+  local w = {}
+  if io.exists(worldFile) then pcall(table.load, worldFile, w) end
+  local fromSettings = false
+  for _, k in ipairs(OLD_WORLD_KEYS) do
+    if M.cfg[k] ~= nil then
+      if w[k] == nil then w[k] = M.cfg[k] end
+      M.cfg[k] = nil
+      fromSettings = true
+    end
+  end
+  local items = {}
+  if io.exists(M.itemsFile) then pcall(table.load, M.itemsFile, items) end
+  if not next(w) and not next(items) then return end
+  M.cleanRoomNpcs(w.roomNpcs)
+  M.dbx("BEGIN")
+  -- loot, oldest first
+  for _, e in ipairs(w.loot or {}) do
+    M.dbx("INSERT INTO loot (t, who, item, src, n, room, room_name, area) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+      e.t, e.who, e.item, e.from, e.count or 1, e.room, e.roomName, e.area)
+  end
+  -- kills: the per-room counts become rows in their rooms; the rest of each creature's
+  -- all-time count (and all its exp) goes in one row with no room
+  local inRooms = {}
+  for room, book in pairs(w.roomKills or {}) do
+    for key, e in pairs(book) do
+      M.dbx("INSERT INTO kills (t, key, name, room, n, exp) VALUES (%s, %s, %s, %s, %s, 0)", e.last, key, e.name, tonumber(room), e.count)
+      inRooms[key] = (inRooms[key] or 0) + (e.count or 0)
+    end
+  end
+  for key, e in pairs(w.kills or {}) do
+    M.dbx("INSERT INTO kills (t, key, name, room, n, exp) VALUES (%s, %s, %s, NULL, %s, %s)",
+      e.last, key, e.name, math.max(0, (e.count or 0) - (inRooms[key] or 0)), e.exp or 0)
+  end
+  for room, list in pairs(w.roomDeaths or {}) do
+    for _, d in ipairs(list) do
+      M.dbx("INSERT INTO deaths (t, room, level, total) VALUES (%s, %s, %s, %s)", d.t, tonumber(room), d.level, d.total)
+    end
+  end
+  for room, book in pairs(w.roomNpcs or {}) do
+    for key, n in pairs(book) do
+      M.dbx("INSERT OR REPLACE INTO room_npcs (room, key, text, tags, seen, last) VALUES (%s, %s, %s, %s, %s, %s)",
+        tonumber(room), key, n.text, table.concat(n.tags or {}, ","), n.seen or 1, n.last)
+    end
+  end
+  for room, f in pairs(w.roomFlags or {}) do
+    M.dbx("INSERT OR REPLACE INTO room_flags (room, tags, last) VALUES (%s, %s, %s)", tonumber(room), table.concat(f.tags or {}, ","), f.last)
+  end
+  for room, book in pairs(w.roomEnters or {}) do
+    for cmd, e in pairs(book) do
+      M.dbx("INSERT OR REPLACE INTO room_enters (room, cmd, dest, last) VALUES (%s, %s, %s, %s)", tonumber(room), cmd, e.to, e.last)
+    end
+  end
+  for _, it in pairs(items.items or {}) do if it.name then M.storeItem(it) end end
+  if items.recent then M.dbSet("recent", items.recent) end
+  if items.eq then M.dbSet("eq", items.eq) end
+  if items.pinned then M.dbSet("pinned", items.pinned) end
+  M.dbx("COMMIT")
+  if io.exists(worldFile) then os.rename(worldFile, worldFile .. ".migrated") end
+  if io.exists(M.itemsFile) then os.rename(M.itemsFile, M.itemsFile .. ".migrated") end
+  if fromSettings then M.saveSettings() end
 end
 
 -- the samples log is for tuning layouts; keep it from growing without end
@@ -2828,16 +2992,49 @@ M.items = M.items or {}      -- name -> parsed item
 M.recent = M.recent or {}    -- names, most recent last
 M.eqNames = M.eqNames or {}  -- names of what you wore at the last `eq`
 
+-- items live in the database; M.items is a cache that reads an item the first time it's asked for
+local function itemCache()
+  return setmetatable({}, { __index = function(t, name)
+    if type(name) ~= "string" then return nil end
+    local r = M.dbRow("SELECT data FROM items WHERE name = %s", name)
+    local it = r and M.deser(r.data)
+    if it then rawset(t, name, it) end
+    return it
+  end })
+end
+
 function M.loadItems()
   migrate(M.itemsFile, "softbunsos_items.lua")
   migrate(M.itemsFile, "mmformat_items.lua")
-  local t = {}
-  if io.exists(M.itemsFile) then pcall(table.load, M.itemsFile, t) end
-  M.items, M.recent, M.eqNames = t.items or {}, t.recent or {}, t.eq or {}
-  M.pinned = t.pinned
+  M.items = itemCache()
+  M.recent = M.dbGet("recent") or {}
+  M.eqNames = M.dbGet("eq") or {}
+  M.pinned = M.dbGet("pinned")
 end
+
+-- the small lists that go with items (recent, what you wear, the pinned one)
 function M.saveItems()
-  table.save(M.itemsFile, { items = M.items, recent = M.recent, eq = M.eqNames, pinned = M.pinned })
+  M.dbSet("recent", M.recent)
+  M.dbSet("eq", M.eqNames)
+  M.dbSet("pinned", M.pinned or false)
+end
+
+-- an item's numbers, one row per stat, so items can be ranked with a query (gear score)
+function M.storeItem(it)
+  M.dbx("INSERT OR REPLACE INTO items (name, type, level, worn, seen, data) VALUES (%s, %s, %s, %s, %s, %s)",
+    it.name, it.type, tonumber(it.level), it.worn, it.seen, M.ser(it))
+  M.dbx("DELETE FROM item_stats WHERE name = %s", it.name)
+  local sums = {}
+  for _, list in ipairs({ it.affects or {}, it.relicAffects or {} }) do
+    for _, a in ipairs(list) do
+      local stat, v = a[1], tonumber(a[2])
+      if stat and v then sums[stat] = (sums[stat] or 0) + v end
+    end
+  end
+  if tonumber(it.ar) then sums.ar = (sums.ar or 0) + tonumber(it.ar) end
+  for stat, v in pairs(sums) do
+    M.dbx("INSERT INTO item_stats (name, stat, value) VALUES (%s, %s, %s)", it.name, stat, v)
+  end
 end
 
 function M.remember(it)
@@ -2846,7 +3043,8 @@ function M.remember(it)
     if k ~= "desc" and k ~= "other" and k ~= "header" and k ~= "relics" then copy[k] = v end
   end
   copy.seen = os.time()
-  M.items[it.name] = copy
+  rawset(M.items, it.name, copy)
+  M.storeItem(copy)
   for i = #M.recent, 1, -1 do if M.recent[i] == it.name then table.remove(M.recent, i) end end
   M.recent[#M.recent + 1] = it.name
   while #M.recent > 40 do table.remove(M.recent, 1) end
@@ -2871,7 +3069,8 @@ function M.findItem(q)
     local n = M.recent[i]
     if M.items[n] and n:lower():find(q, 1, true) then return M.items[n] end
   end
-  for n, it in pairs(M.items) do if n:lower():find(q, 1, true) then return it end end
+  local r = M.dbRow("SELECT name FROM items WHERE instr(lower(name), %s) > 0 ORDER BY seen DESC LIMIT 1", q)
+  return r and M.items[r.name]
 end
 
 local rank = { min = 1, minimal = 1, low = 2, med = 3, medium = 3, moderate = 3, high = 4, max = 5, maximum = 5 }
@@ -3680,13 +3879,13 @@ function M.noteKillContext(l)
     local f = io.open(M.samplesFile, "a")
     if f then
       f:write("===== " .. os.date("%Y-%m-%d %H:%M:%S") .. " | kind=killctx | cmd=\n")
-      for _, x in ipairs(R) do f:write(x, "\n") end
+      for i = math.max(1, #R - 7), #R do f:write(R[i], "\n") end
       f:write(l, "\n===== end\n\n")
       f:close()
     end
   end
   R[#R + 1] = l
-  if #R > 8 then table.remove(R, 1) end
+  if #R > 30 then table.remove(R, 1) end
 end
 
 function M.onLine()
@@ -4078,7 +4277,7 @@ function M.roomCardLines(id)
   local area = getRoomArea(id)
   local areaName = area and getRoomAreaName(area) or ""
   local title = { { C.item, name }, { C.dim, "  #" .. id } }
-  local fl = (M.world.roomFlags or {})[tostring(id)]
+  local fl = M.roomFlagsOf(id)
   if fl and fl.tags and #fl.tags > 0 then
     title[#title + 1] = { C.dim, "  " }
     for _, t in ipairs(fl.tags) do title[#title + 1] = { C.flag, "[" .. t .. "]" } end
@@ -4096,9 +4295,7 @@ function M.roomCardLines(id)
   local any = false
   local MAX = 8
   -- notable NPCs ([QUEST] [SHOP] [TRAINER] ...)
-  local npcs = {}
-  for _, n in pairs((M.world.roomNpcs or {})[tostring(id)] or {}) do npcs[#npcs + 1] = n end
-  table.sort(npcs, function(a, b) return (a.last or 0) > (b.last or 0) end)
+  local npcs = M.roomNpcsOf(id)
   if #npcs > 0 then
     any = true
     row(); row({ M.REC or C.title, "▸ Notable here" })
@@ -4111,9 +4308,7 @@ function M.roomCardLines(id)
     end
   end
   -- "enter ..." commands that work here
-  local enters = {}
-  for cmd, e in pairs((M.world.roomEnters or {})[tostring(id)] or {}) do enters[#enters + 1] = { cmd = cmd, to = e.to } end
-  table.sort(enters, function(a, b) return a.cmd < b.cmd end)
+  local enters = M.roomEntersOf(id)
   if #enters > 0 then
     any = true
     row(); row({ M.REC or C.title, "▸ Ways in" })
@@ -4123,9 +4318,7 @@ function M.roomCardLines(id)
     end
   end
   -- kills
-  local kills = {}
-  for _, e in pairs((M.world.roomKills or {})[tostring(id)] or {}) do kills[#kills + 1] = e end
-  table.sort(kills, function(a, b) return a.count ~= b.count and a.count > b.count or (a.last or 0) > (b.last or 0) end)
+  local kills = M.roomKillsOf(id)
   if #kills > 0 then
     any = true
     local total = 0
@@ -4137,32 +4330,20 @@ function M.roomCardLines(id)
     end
   end
   -- loot
-  local found, order = {}, {}
-  for _, e in ipairs(M.world.loot or {}) do
-    if e.room == id then
-      local k = e.item:lower()
-      local f = found[k]
-      if not f then f = { item = e.item, count = 0, who = {} }; found[k] = f; order[#order + 1] = f end
-      f.count = f.count + (e.count or 1)
-      f.last = math.max(f.last or 0, e.t or 0)
-      f.who[e.who or "?"] = true
-    end
-  end
-  table.sort(order, function(a, b) return (a.last or 0) > (b.last or 0) end)
+  local order = M.roomLootOf(id)
   if #order > 0 then
     any = true
     row(); row({ M.REC or C.title, "▸ Picked up here" })
     for i, f in ipairs(order) do
       if i > MAX then row({ C.dim, string.format("  … and %d more (sbo loot #%d)", #order - MAX, id) }); break end
-      local who = {}
-      for w in pairs(f.who) do who[#who + 1] = w end
+      local who = splitTags(f.who)
       table.sort(who)
       row({ C.num, string.format("  %3d× ", f.count) }, { C.item, f.item },
           { C.dim, "  " .. table.concat(who, ", ") .. " · " .. ago(f.last) })
     end
   end
   -- deaths
-  local deaths = (M.world.roomDeaths or {})[tostring(id)] or {}
+  local deaths = M.roomDeathsOf(id)
   if #deaths > 0 then
     any = true
     row(); row({ C.minus, "▸ You died here" }, { C.dim, "  " .. #deaths })
@@ -4293,19 +4474,26 @@ function M.noteRoomFlags(id, l)
   for t in before:gmatch("%[([^%]]+)%]") do
     if not NOT_ROOM_FLAGS[t:lower()] then flags[#flags + 1] = t end
   end
-  M.world.roomFlags = M.world.roomFlags or {}
-  local key, old = tostring(id), M.world.roomFlags[tostring(id)]
+  -- the prompt comes with every line of combat: only touch the database when the room changes
+  local now_ = table.concat(flags, ",")
+  if M.flagsSeen and M.flagsSeen.room == id and M.flagsSeen.tags == now_ then return end
+  M.flagsSeen = { room = id, tags = now_ }
+  local old = M.roomFlagsOf(id)
   local was = old and table.concat(old.tags or {}, ",") or nil
-  if was == table.concat(flags, ",") then return end
+  if was == now_ then return end
   if #flags == 0 and not old then return end
-  M.world.roomFlags[key] = #flags > 0 and { tags = flags, last = os.time() } or nil
-  M.saveWorld()
+  if #flags > 0 then
+    M.dbx("INSERT OR REPLACE INTO room_flags (room, tags, last) VALUES (%s, %s, %s)", id, now_, os.time())
+  else
+    M.dbx("DELETE FROM room_flags WHERE room = %s", id)
+  end
 end
 
 -- 0.16.7 took tags from anywhere on a line, so item lines ("Item '...' ... [Study][LTB]")
--- were saved as NPCs; drop those, and tidy leading "**" off names
-function M.cleanRoomNpcs()
-  for _, book in pairs(M.world.roomNpcs or {}) do
+-- were saved as NPCs; drop those, and tidy leading "**" off names (run on the old data
+-- before it's moved into the database)
+function M.cleanRoomNpcs(roomNpcs)
+  for _, book in pairs(roomNpcs or {}) do
     local drop, rename = {}, {}
     for key, n in pairs(book) do
       local t = n.text or ""
@@ -4329,20 +4517,18 @@ function M.noteRoomLine(l)
     local buf = M.roomLineBuf
     M.roomLineBuf = {}
     if id and #buf > 0 then
-      M.world.roomNpcs = M.world.roomNpcs or {}
-      local book = M.world.roomNpcs[tostring(id)] or {}
-      M.world.roomNpcs[tostring(id)] = book
       for _, e in ipairs(buf) do
-        local key = e.text:lower()
-        local n = book[key]
-        if not n then
-          local count = 0
-          for _ in pairs(book) do count = count + 1 end
-          if count < 20 then n = { text = e.text, seen = 0 }; book[key] = n end
+        local key, tags = e.text:lower(), table.concat(e.tags, ",")
+        local have = M.dbRow("SELECT seen FROM room_npcs WHERE room = %s AND key = %s", id, key)
+        if have then
+          M.dbx("UPDATE room_npcs SET tags = %s, seen = seen + 1, last = %s WHERE room = %s AND key = %s", tags, os.time(), id, key)
+        else
+          local c = M.dbRow("SELECT COUNT(*) AS c FROM room_npcs WHERE room = %s", id)
+          if tonumber(c and c.c or 0) < 20 then
+            M.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (%s, %s, %s, %s, 1, %s)", id, key, e.text, tags, os.time())
+          end
         end
-        if n then n.tags = e.tags; n.seen = n.seen + 1; n.last = os.time() end
       end
-      M.saveWorld()
     end
     pcall(M.checkEnter, id)
     return
@@ -4373,11 +4559,7 @@ function M.checkEnter(id)
   if now() - p.at > 6 then M.pendingEnter = nil; return end
   if not id or not p.from or id == p.from then return end   -- not moved (yet)
   M.pendingEnter = nil
-  M.world.roomEnters = M.world.roomEnters or {}
-  local book = M.world.roomEnters[tostring(p.from)] or {}
-  M.world.roomEnters[tostring(p.from)] = book
-  book[p.cmd] = { to = id, last = os.time() }
-  M.saveWorld()
+  M.dbx("INSERT OR REPLACE INTO room_enters (room, cmd, dest, last) VALUES (%s, %s, %s, %s)", p.from, p.cmd, id, os.time())
   if roomExists(p.from) and roomExists(id) then
     local ok, exits = pcall(getSpecialExitsSwap, p.from)
     if not (ok and type(exits) == "table" and exits[p.cmd]) then
@@ -4386,17 +4568,54 @@ function M.checkEnter(id)
   end
 end
 
--- the room's history: who was killed where
-function M.noteRoomKill(key, name)
-  local id = M.currentRoom()
-  if not id then return end
-  M.world.roomKills = M.world.roomKills or {}
-  local book = M.world.roomKills[tostring(id)] or {}
-  M.world.roomKills[tostring(id)] = book
-  local e = book[key] or { name = name, count = 0 }
-  book[key] = e
-  e.count = e.count + 1
-  e.last = os.time()
+-- what's known about a room, read from the database
+function M.roomFlagsOf(id)
+  local r = M.dbRow("SELECT tags, last FROM room_flags WHERE room = %s", id)
+  return r and { tags = splitTags(r.tags), last = tonumber(r.last) }
+end
+function M.roomNpcsOf(id)
+  local out = {}
+  for _, r in ipairs(M.dbRows("SELECT text, tags, seen, last FROM room_npcs WHERE room = %s ORDER BY last DESC", id)) do
+    out[#out + 1] = { text = r.text, tags = splitTags(r.tags), seen = tonumber(r.seen), last = tonumber(r.last) }
+  end
+  return out
+end
+function M.roomEntersOf(id)
+  local out = {}
+  for _, r in ipairs(M.dbRows("SELECT cmd, dest FROM room_enters WHERE room = %s ORDER BY cmd", id)) do
+    out[#out + 1] = { cmd = r.cmd, to = tonumber(r.dest) }
+  end
+  return out
+end
+function M.roomKillsOf(id)
+  local out = {}
+  for _, r in ipairs(M.dbRows("SELECT MAX(name) AS name, SUM(n) AS count, MAX(t) AS last FROM kills WHERE room = %s GROUP BY key ORDER BY count DESC, last DESC", id)) do
+    out[#out + 1] = { name = r.name, count = tonumber(r.count) or 0, last = tonumber(r.last) }
+  end
+  return out
+end
+function M.roomLootOf(id)
+  local out = {}
+  for _, r in ipairs(M.dbRows("SELECT MAX(item) AS item, SUM(n) AS count, MAX(t) AS last, group_concat(DISTINCT who) AS who FROM loot WHERE room = %s GROUP BY lower(item) ORDER BY last DESC", id)) do
+    out[#out + 1] = { item = r.item, count = tonumber(r.count) or 1, last = tonumber(r.last), who = r.who or "?" }
+  end
+  return out
+end
+function M.roomDeathsOf(id)
+  local out = {}
+  for _, r in ipairs(M.dbRows("SELECT t, level, total, recap FROM deaths WHERE room = %s ORDER BY t", id)) do
+    out[#out + 1] = { t = tonumber(r.t), level = tonumber(r.level), total = tonumber(r.total), recap = M.deser(r.recap) }
+  end
+  return out
+end
+
+-- the lines before a death, for the recap (prompts and blank lines left out)
+function M.deathRecapLines()
+  local out = {}
+  for _, l in ipairs(M.recentLines or {}) do
+    if trim(l) ~= "" and not l:match("^%[?.-<%d+hp") then out[#out + 1] = l end
+  end
+  return out
 end
 
 -- you died: "restore your soul to your body" happens where the body is, i.e. where you fell
@@ -4404,11 +4623,8 @@ function M.noteRoomDeath()
   local id = M.currentRoom()
   if not id then return end
   local c = M.cfg.char or {}
-  M.world.roomDeaths = M.world.roomDeaths or {}
-  local list = M.world.roomDeaths[tostring(id)] or {}
-  M.world.roomDeaths[tostring(id)] = list
-  list[#list + 1] = { t = os.time(), level = c.level, total = c.total }
-  M.saveWorld()
+  M.dbx("INSERT INTO deaths (t, room, level, total, recap) VALUES (%s, %s, %s, %s, %s)",
+    os.time(), id, tonumber(c.level), tonumber(c.total), M.ser(M.deathRecapLines()))
   -- the lines before it, so the game's own death message can be learned
   if M.cfg.samples and (M.deathCtxLogged or 0) < 10 then
     M.deathCtxLogged = (M.deathCtxLogged or 0) + 1
@@ -4548,7 +4764,12 @@ function M.runTargets(q)
     if not f then f = { id = id, why = why, rank = rank }; found[id] = f; order[#order + 1] = f
     elseif rank < f.rank then f.why, f.rank = why, rank end
   end
-  for id, book in pairs(M.world.roomNpcs or {}) do
+  local npcRooms = {}
+  for _, r in ipairs(M.dbRows("SELECT room, text, tags FROM room_npcs WHERE instr(lower(tags), %s) > 0 OR instr(lower(text), %s) > 0", single, q)) do
+    npcRooms[r.room] = npcRooms[r.room] or {}
+    table.insert(npcRooms[r.room], { text = r.text, tags = splitTags(r.tags) })
+  end
+  for id, book in pairs(npcRooms) do
     for _, n in pairs(book) do
       local tagHit
       for _, t in ipairs(n.tags or {}) do
@@ -4562,8 +4783,9 @@ function M.runTargets(q)
       elseif (n.text or ""):lower():find(q, 1, true) then add(id, label, 2) end
     end
   end
-  for id, fl in pairs(M.world.roomFlags or {}) do
-    for _, t in ipairs(fl.tags or {}) do
+  for _, r in ipairs(M.dbRows("SELECT room, tags FROM room_flags WHERE instr(lower(tags), %s) > 0", single)) do
+    local id = r.room
+    for _, t in ipairs(splitTags(r.tags)) do
       local tl = t:lower()
       if tl == q or tl == single then add(id, "[" .. t .. "]", 3) end
     end
@@ -4665,18 +4887,14 @@ end
 function M.recordKill(name)
   name = trim(name)
   local key = name:lower()
-  M.world.kills = M.world.kills or {}
   M.sess.killBook = M.sess.killBook or {}
   local t = os.time()
-  for _, book in ipairs({ M.world.kills, M.sess.killBook }) do
-    local e = killBook(book, key, name)
-    e.count = e.count + 1
-    e.last = t
-  end
+  local e = killBook(M.sess.killBook, key, name)
+  e.count = e.count + 1
+  e.last = t
   M.sess.killsLive = (M.sess.killsLive or 0) + 1
-  pcall(M.noteRoomKill, key, name)
-  M.lastKill = { key = key, at = now() }
-  M.saveWorld()
+  M.dbx("INSERT INTO kills (t, key, name, room, n, exp) VALUES (%s, %s, %s, %s, 1, 0)", t, key, name, M.currentRoom())
+  M.lastKill = { key = key, at = now(), id = M.dbLastId() }
   pcall(M.drawBar)
 end
 
@@ -4684,12 +4902,10 @@ end
 function M.creditKillExp(n)
   local k = M.lastKill
   if not k or now() - k.at > 5 then return end
-  for _, book in ipairs({ M.world.kills or {}, M.sess.killBook or {} }) do
-    local e = book[k.key]
-    if e then e.exp = (e.exp or 0) + n end
-  end
+  local e = (M.sess.killBook or {})[k.key]
+  if e then e.exp = (e.exp or 0) + n end
+  if k.id then M.dbx("UPDATE kills SET exp = exp + %s WHERE id = %s", n, k.id) end
   M.lastKill = nil
-  M.saveWorld()
 end
 
 local function killTable(out, title, book, width, limit)
@@ -4722,14 +4938,17 @@ end
 function M.killLines(width, all)
   local out = { header("kills", "", width, "Kills") }
   killTable(out, "This session", M.sess.killBook, width, all and nil or 25)
-  killTable(out, "All time", M.world.kills, width, all and nil or 25)
+  local book = {}
+  for _, r in ipairs(M.dbRows("SELECT key, MAX(name) AS name, SUM(n) AS count, SUM(exp) AS exp, MAX(t) AS last FROM kills GROUP BY key")) do
+    book[r.key] = { name = r.name, count = tonumber(r.count) or 0, exp = tonumber(r.exp) or 0, last = tonumber(r.last) }
+  end
+  killTable(out, "All time", book, width, all and nil or 25)
   return out
 end
 
 ---------------------------------------------------------------------------
 -- Loot log: what you (or anyone with you) pick up, and the exact room it was in
 ---------------------------------------------------------------------------
-local LOOT_KEEP = 500
 -- "You get ..." lines that aren't items
 local NOT_LOOT = { "^the feeling", "^a feeling", "^the sense", "^a sense", "^the impression", "^the idea",
                    "^nothing", "^hungry", "^thirsty", "^tired", "^up", "^dressed", "^undressed",
@@ -4779,11 +4998,8 @@ function M.recordLoot(e)
     M.sess.lootGold = (M.sess.lootGold or 0) + n
     return
   end
-  local log = M.world.loot or {}
-  M.world.loot = log
-  log[#log + 1] = e
-  while #log > LOOT_KEEP do table.remove(log, 1) end
-  M.saveWorld()
+  M.dbx("INSERT INTO loot (t, who, item, src, n, room, room_name, area) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+    e.t, e.who, e.item, e.from, e.count or 1, e.room, e.roomName, e.area)
 end
 
 -- learn the game's wording: the replies to your first few get/take commands go to the samples file
@@ -4814,23 +5030,34 @@ function M.noteLootContext(l)
 end
 
 function M.lootLines(width, q, all)
-  local log = M.world.loot or {}
   local out, links, rooms = {}, {}, {}
   q = q and trim(q):lower() or ""
-  local sessN = 0
-  for _, e in ipairs(log) do if e.t >= (M.sess.start or 0) then sessN = sessN + 1 end end
+  local r1 = M.dbRow("SELECT COUNT(*) AS c FROM loot WHERE t >= %s", M.sess.start or 0)
+  local r2 = M.dbRow("SELECT COUNT(*) AS c FROM loot")
+  local sessN, total = tonumber(r1 and r1.c) or 0, tonumber(r2 and r2.c) or 0
+  local limit = all and 1000 or 30
+  -- newest first; the search covers item, who, source, room, area and room number
+  local rows = M.dbRows([[SELECT t, who, item, src, n, room, room_name, area FROM loot
+    WHERE %s = '' OR instr(lower(item || ' ' || ifnull(who, '') || ' ' || ifnull(src, '') || ' ' || ifnull(room_name, '')
+      || ' ' || ifnull(area, '') || ' #' || ifnull(room, '')), %s) > 0
+    ORDER BY id DESC LIMIT %s]], q, q, limit + 1)
+  local log = {}
+  for i = #rows, 1, -1 do
+    local r = rows[i]
+    log[#log + 1] = { t = tonumber(r.t), who = r.who, item = r.item, from = r.src, count = tonumber(r.n) or 1,
+                      room = tonumber(r.room), roomName = r.room_name, area = r.area }
+  end
   local title = q ~= "" and ("Loot: " .. q) or "Loot"
   out[1] = header("loot", "", width, title)
   local gold = M.sess.lootGold or 0
-  out[#out + 1] = { { C.dim, string.format("%d pickup%s this session, %d logged in all", sessN, sessN == 1 and "" or "s", #log) },
+  out[#out + 1] = { { C.dim, string.format("%d pickup%s this session, %d logged in all", sessN, sessN == 1 and "" or "s", total) },
                     gold > 0 and { C.num, "  ·  " .. M.commaNum(gold) .. " gold picked up" } or { C.dim, "" } }
   out[#out + 1] = {}
-  local shown, limit = 0, all and LOOT_KEEP or 30
+  local shown = 0
   local lastDay
   for i = #log, 1, -1 do
     local e = log[i]
-    local hay = (e.item .. " " .. (e.who or "") .. " " .. (e.from or "") .. " " .. (e.roomName or "") .. " " .. (e.area or "") .. " #" .. tostring(e.room)):lower()
-    if q == "" or hay:find(q, 1, true) then
+    do
       shown = shown + 1
       if shown > limit then
         out[#out + 1] = { { C.dim, "… more: sbo loot all" .. (q ~= "" and (" " .. q) or "") } }
@@ -5160,7 +5387,7 @@ function M.command(args)
   elseif a == "learn" then return M.learn()
   elseif a == "run" then return M.mapRun(b)
   elseif a == "loot" then
-    if b == "clear" then M.world.loot = {}; M.saveWorld(); return say("loot log cleared") end
+    if b == "clear" then M.dbx("DELETE FROM loot"); return say("loot log cleared") end
     local all = b == "all" or b:match("^all%s") ~= nil
     local q = all and b:gsub("^all%s*", "") or b
     local w = M.cfg.window and M.viewCols() or columns("main")
@@ -5169,7 +5396,7 @@ function M.command(args)
     return
   elseif a == "kills" then
     if b == "reset" then M.sess.killBook = {}; return say("this session's kill list cleared")
-    elseif b == "clear" then M.world.kills = {}; M.saveWorld(); return say("all-time kill list cleared") end
+    elseif b == "clear" then M.dbx("DELETE FROM kills"); return say("all-time kill list cleared") end
     local lines = M.killLines(M.cfg.window and M.viewCols() or columns("main"), b == "all")
     if M.cfg.window then M.viewAdd({ lines = lines, links = {} }) else render("main", lines) end
     return
@@ -5494,7 +5721,7 @@ end
 -- Setup (safe to re-run)
 ---------------------------------------------------------------------------
 function M.teardown()
-  if M.worldDirty then pcall(M.flushWorld) end
+  pcall(M.dbClose)
   if M.handlers then for _, h in ipairs(M.handlers) do killAnonymousEventHandler(h) end end
   if M.lineTrigger then killTrigger(M.lineTrigger) end
   if M.alias then killAlias(M.alias) end
@@ -5512,14 +5739,16 @@ function M.init()
   M.teardown()
   M.dropPages()
   M.loadSettings()
-  M.loadWorld()
+  if not M.dbOpen() then
+    M.log("<red>[sbo] couldn't open the database (oven.db) - items, loot and kills won't be saved this session<reset>")
+  end
+  local okI, errI = pcall(M.importOld)
+  if not okI then M.log("<red>[sbo] moving your saved data into the database failed: " .. tostring(errI) .. "<reset>") end
   pcall(M.rotateSamples)
-  pcall(M.cleanRoomNpcs)
   M.quests = M.cfg.quests or M.quests or {}
   M.handlers = {
     registerAnonymousEventHandler("sysDataSendRequest", M.onSend),
-    registerAnonymousEventHandler("sysDisconnectionEvent", function() if M.worldDirty then M.flushWorld() end end),
-    registerAnonymousEventHandler("sysExitEvent", function() if M.worldDirty then M.flushWorld() end end),
+    registerAnonymousEventHandler("sysExitEvent", function() pcall(M.dbClose) end),
     registerAnonymousEventHandler("sysUninstallPackage", function(_, pkg)
       if pkg == "Oven" then
         M.teardown()

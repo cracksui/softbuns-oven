@@ -110,7 +110,8 @@ holds hints - updates whenever the game shows that quest, and re-checks quietly 
 
 ## Comparing gear
 
-Every item you look at is remembered (it survives logging out).
+Every item you look at is remembered (it survives logging out). Items, loot, kills, deaths and what's
+in each room are kept in a database in your profile folder (`oven.db`), so nothing has to be capped.
 
 - **Automatic:** look at an item and it's compared with whatever you wear in that slot
   (run `eq` and look at your worn item once so Oven knows it).
