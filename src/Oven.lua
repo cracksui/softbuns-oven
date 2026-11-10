@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.11.15"
+M.version = "0.12.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -105,6 +105,7 @@ M.commands = {
   { word = "level",     min = 3, kind = "levels" },
   { word = "levels",    min = 6, kind = "levels" },
   { word = "skills",    min = 3, kind = "skills" },
+  { word = "skill",     min = 3, kind = "skills" },
   { word = "practice",  min = 3, kind = "skills" },
   { word = "train",     min = 3, kind = "skills" },
 }
@@ -1548,6 +1549,158 @@ function M.formatters.levels(raw, width)
     end
   end
   return out, "Levels"
+end
+
+---------------------------------------------------------------- skills / practice
+-- remembered from `skills spells` / `skills prof`: name (lower) -> { lrnd, cmplx, rec, group }
+local function skillKey(n) return trim(n):lower() end
+
+-- `skills spells` / `skills prof` table
+function M.parseSkillTable(raw)
+  local rows, kind, footer = {}, nil, {}
+  for idx, l in ipairs(raw) do
+    local t = trim(l)
+    if t:match("^%[ # %] %[%s*Spell Name") then kind = "spells"
+    elseif t:match("^%[ # %] %[%s*Proficiency Name") then kind = "proficiencies"
+    else
+      local n, name, grp, rest = t:match("^(%d+)%s+(.-)%s%s+(%u%u%u)%s+(.*)$")
+      if n then
+        local sp, cm, lr, star
+        if kind == "spells" then sp, cm, lr, star = rest:match("^(%d+)%s+(%d+)%%%s+(%d+)%%%s*(.*)$")
+        else cm, lr, star = rest:match("^(%d+)%%%s+(%d+)%%%s*(.*)$") end
+        if lr then
+          rows[#rows + 1] = { name = name, group = grp, sp = sp, cmplx = tonumber(cm), lrnd = tonumber(lr),
+                              rec = star and star:find("%*") ~= nil, idx = idx }
+        end
+      elseif t:match("^You have the ability to learn") then footer.can = t:match("%[(%d+)%]")
+      elseif t:match("^You have %[%d+%] practice") then footer.prac = t:match("%[(%d+)%]") end
+    end
+  end
+  return kind and #rows > 0 and { kind = kind, rows = rows, footer = footer } or nil
+end
+
+-- `practice` at a trainer: "Name   [ 1%] No limit  Name2   [15%] No limit"
+function M.parsePractice(raw)
+  local trainer, list, prac
+  for idx, l in ipairs(raw) do
+    local t = trim(l)
+    local who = t:match("^(.-) can train you in the following skills") or t:match("^(.-) offers training in the following skills")
+    if who then trainer = who; list = {}
+    elseif list and t:find("%[%s*%d+%%%]") then
+      -- split around each "[ nn%]"
+      local pos, name = 1, nil
+      local s = l
+      while true do
+        local a, b, pct = s:find("%[%s*(%d+)%%%]", pos)
+        if not a then break end
+        local before = s:sub(pos, a - 1)
+        if not name then name = trim(before)
+        else
+          -- before = "<avail of previous>  <next name>"
+          local avail, nextName = before:match("^%s*(.-)%s%s+(%S.-)%s*$")
+          if list[#list] then list[#list].avail = trim(avail or before) end
+          name = trim(nextName or before)
+        end
+        list[#list + 1] = { name = name, lrnd = tonumber(pct), idx = idx }
+        pos = b + 1
+      end
+      if list[#list] then list[#list].avail = trim(s:sub(pos)) end
+    elseif t:match("^You have %[%d+%] practice") then prac = t:match("%[(%d+)%]") end
+  end
+  return trainer and { trainer = trainer, list = list or {}, prac = prac } or nil
+end
+
+local function learnedSegs(pct, width)
+  local segs = {}
+  addAll(segs, M.gauge(pct, 100, width))
+  segs[#segs + 1] = { C.num, string.format(" %3d%%", pct) }
+  return segs
+end
+
+function M.formatters.skills(raw, width)
+  local tbl = M.parseSkillTable(raw)
+  if tbl then
+    -- remember them for the practice planner
+    M.cfg.skills = M.cfg.skills or {}
+    for _, r in ipairs(tbl.rows) do
+      M.cfg.skills[skillKey(r.name)] = { lrnd = r.lrnd, cmplx = r.cmplx, rec = r.rec, group = r.group }
+    end
+    M.saveSettings()
+    local out = {}
+    local nameW = 0
+    for _, r in ipairs(tbl.rows) do nameW = math.max(nameW, ulen(r.name)) end
+    local gw = width >= 80 and 10 or 6
+    out[#out + 1] = { { C.key, pad("", 2) .. pad(tbl.kind == "spells" and "spell" or "proficiency", nameW + 1)
+      .. pad(tbl.kind == "spells" and "school" or "type", 7) .. (tbl.kind == "spells" and "   SP " or "")
+      .. " cmplx  learned" } }
+    for _, r in ipairs(tbl.rows) do
+      local row = { { C.title, r.rec and "★ " or "  " } }
+      local nameSegs = M.runsExact(r.idx, r.name) or { { C.item, r.name } }
+      addAll(row, nameSegs)
+      row[#row + 1] = { C.text, string.rep(" ", nameW + 1 - ulen(r.name)) }
+      row[#row + 1] = { C.slot, pad(r.group, 7) }
+      if r.sp then row[#row + 1] = { C.num, string.format("%5s ", r.sp) } end
+      row[#row + 1] = { C.dim, string.format("%5d%%  ", r.cmplx) }
+      addAll(row, learnedSegs(r.lrnd, gw))
+      out[#out + 1] = row
+    end
+    blank(out)
+    local f = { { C.dim, "★ recommended for your class" } }
+    if tbl.footer.prac then f[#f + 1] = { C.dim, "  ·  practices: " }; f[#f + 1] = { C.num, tbl.footer.prac } end
+    out[#out + 1] = f
+    return out, (tbl.kind == "spells" and "Spells" or "Proficiencies") .. " (" .. #tbl.rows .. ")"
+  end
+
+  local pr = M.parsePractice(raw)
+  if pr then
+    local known, new, recHere = {}, {}, {}
+    local mine = M.cfg.skills or {}
+    for _, s in ipairs(pr.list) do
+      local info = mine[skillKey(s.name)]
+      if s.lrnd > 0 then known[#known + 1] = s else new[#new + 1] = s end
+      if info and info.rec then recHere[#recHere + 1] = s end
+    end
+    table.sort(known, function(a, b) return a.lrnd > b.lrnd end)
+    local out = {}
+    local nameW = 0
+    for _, s in ipairs(known) do nameW = math.max(nameW, ulen(s.name)) end
+    for _, s in ipairs(recHere) do nameW = math.max(nameW, ulen(s.name)) end
+    local gw = width >= 80 and 10 or 6
+    local function row(s)
+      local info = mine[skillKey(s.name)]
+      local r = { { C.title, (info and info.rec) and "★ " or "  " } }
+      addAll(r, M.runsExact(s.idx, s.name) or { { C.item, s.name } })
+      r[#r + 1] = { C.text, string.rep(" ", nameW + 1 - ulen(s.name)) }
+      addAll(r, learnedSegs(s.lrnd, gw))
+      if info and info.cmplx then r[#r + 1] = { C.dim, string.format("   cmplx %d%%", info.cmplx) } end
+      if s.avail and s.avail ~= "" and s.avail:lower() ~= "no limit" then r[#r + 1] = { C.flag, "   limit " .. s.avail } end
+      return r
+    end
+    if #recHere > 0 then
+      out[#out + 1] = { { C.title, "Recommended, trainable here" } }
+      for _, s in ipairs(recHere) do out[#out + 1] = row(s) end
+      blank(out)
+    end
+    if #known > 0 then
+      out[#out + 1] = { { C.title, "You know (" .. #known .. ")" } }
+      for _, s in ipairs(known) do out[#out + 1] = row(s) end
+    end
+    if #new > 0 then
+      blank(out)
+      local names = {}
+      -- non-breaking spaces keep each name on one line ("detect invisibility")
+      for _, s in ipairs(new) do names[#names + 1] = (s.name:lower():gsub(" ", "\194\160")) end
+      out[#out + 1] = { { C.title, "New to you (" .. #new .. ")" } }
+      addAll(out, wrapWords(table.concat(names, " · "), width, 0, C.text))
+    end
+    if not next(mine) then
+      blank(out)
+      out[#out + 1] = { { C.dim, "(type skills spells and skills prof once so Oven can mark recommended skills and complexity)" } }
+    end
+    if pr.prac then blank(out); out[#out + 1] = { { C.key, "Practices available: " }, { C.num, pr.prac } } end
+    return out, pr.trainer .. " can train you"
+  end
+  return M.formatters.generic(raw, width)
 end
 
 ---------------------------------------------------------------- affects

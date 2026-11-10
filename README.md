@@ -92,6 +92,8 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 | `score` | level, exp to level and how long the next level will take at this session's pace; vitals and attribute gauges, standing, kill record |
 | `aff` | resistances, spell and racial affects with their modifiers |
 | `level` | exp needed for each upcoming level, what's still to go and how long it'll take at this session's pace |
+| `skills spells`, `skills prof` | one row per skill: ★ class-recommended, school/type, SP, complexity, a learned gauge |
+| `prac` / `prac all` at a trainer | recommended skills this trainer teaches first, then what you know (by progress, with complexity), then what's new to you |
 | `help <topic>` | the help page opens in its own **help window**, exactly as the game sends it |
 
 ## Comparing gear
