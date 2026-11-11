@@ -718,7 +718,6 @@ def quest_step_done_real():
     card = o.ev('sbo.questCardHtml("52", sbo.quests["52"])')
     card = "\n".join(card[0].values())   # (lines, width)
     assert "return to Lord Agrippa" in card, card
-    o.lua('SENT = {}')
     o.L.execute("runTimers()")
     eq(list(o.ev("SENT").values()), ["quest info 52"], "no GMCP with it: quest info 52, quietly")
 
