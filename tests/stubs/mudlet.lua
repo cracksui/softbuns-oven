@@ -90,3 +90,23 @@ if not utf8 then
   end
   utf8.charpattern = "[%z\1-\127\194-\244][\128-\191]*"
 end
+
+-- layout widgets: remember who's hidden, so tests can see which tab is in front
+local function box(kind)
+  return { new = function(self, o, parent)
+    local t = { name = o.name, kind = kind, parent = parent, shown = true }
+    function t:show() t.shown = true end
+    function t:hide() t.shown = false end
+    function t:setStyleSheet(s) t.css = s end
+    function t:echo(m) t.text = m end
+    function t:setClickCallback(f) t.click = f end
+    function t:setCursor() end
+    function t:raise() end
+    WIDGETS = WIDGETS or {}; WIDGETS[o.name] = t
+    return t
+  end }
+end
+Geyser.Container = box("container"); Geyser.VBox = box("vbox"); Geyser.HBox = box("hbox")
+Geyser.Fixed, Geyser.Dynamic = "fixed", "dynamic"
+local labelNew = Geyser.Label.new
+Geyser.Label.new = function(self, o, parent) local t = labelNew(self, o, parent); WIDGETS = WIDGETS or {}; WIDGETS[o.name] = t; return t end

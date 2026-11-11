@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.27.2"
+M.version = "0.28.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -52,6 +52,7 @@ M.defaults = {
   barSessionStyle = "full",  -- full: time · k/d · xp/hr   short: just xp/hr
   barBlank     = true,       -- with the bar on, also drop the blank line before each prompt
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
+  tabs         = true,       -- the Inspector window has tabs: Inspector | Help | Log (help pages open there)
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
   showEmpty    = true,       -- list empty equipment slots in eq
   showDonation = true,       -- include empty donation-only slots (amulets, face, aura)
@@ -3018,9 +3019,106 @@ function M.createWindow()
     })
   end
   if M.console then M.console:hide() end   -- console used by versions before 0.10
-  if not M.viewPg then M.viewPg = M.newPage("ovenView", M.container) end
-  M.viewPg.container = M.container
+  M.applyTabs()
 end
+
+-- Tabs along the top of the Inspector window. Each tab is its own page; whatever arrives for a
+-- tab (an item, a help page, the session) brings it to the front.
+M.TABS = { { key = "view", title = "Inspector" }, { key = "help", title = "Help" }, { key = "log", title = "Log" } }
+local tabStyle = [[
+  QLabel { background-color: rgba(24,24,32,255); color: #808080; border: 1px solid #333; border-bottom: none;
+           border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 10px; margin-right: 2px; }
+  QLabel::hover { color: #e0e0e0; }]]
+local tabOnStyle = [[
+  QLabel { background-color: black; color: #e6c35c; border: 1px solid #555; border-bottom: none;
+           border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 10px; margin-right: 2px; }]]
+
+function M.buildTabs()
+  if M.tabBox then return end
+  M.tabBox = Geyser.VBox:new({ name = "ovenTabBox", x = 0, y = 0, width = "100%", height = "100%" }, M.container)
+  M.tabBar = Geyser.HBox:new({ name = "ovenTabBar", height = 24, v_policy = Geyser.Fixed }, M.tabBox)
+  M.tabBody = Geyser.Container:new({ name = "ovenTabBody" }, M.tabBox)
+  M.tabLabels, M.tabPages = {}, {}
+  for _, t in ipairs(M.TABS) do
+    local key = t.key
+    local lab = Geyser.Label:new({ name = "ovenTab_" .. key, width = 96, h_policy = Geyser.Fixed }, M.tabBar)
+    lab:echo("<center>" .. t.title .. "</center>")
+    pcall(function() lab:setCursor("PointingHand") end)
+    lab:setClickCallback(function() M.tabShow(key) end)
+    M.tabLabels[key] = lab
+    M.tabPages[key] = Geyser.Container:new({ name = "ovenTabPage_" .. key, x = 0, y = 0, width = "100%", height = "100%" }, M.tabBody)
+  end
+  -- the rest of the bar stays empty
+  M.tabFill = Geyser.Label:new({ name = "ovenTabFill" }, M.tabBar)
+  M.tabFill:setStyleSheet("background-color: rgba(20,20,28,0); border-bottom: 1px solid #555;")
+end
+
+-- point each page at its tab (tabs on) or at its own window (tabs off)
+local function movePage(pg, container)
+  if not pg then return end
+  if pg.container ~= container and pg.scroll then pcall(function() pg.scroll:delete() end); pg.scroll = nil end
+  pg.container = container
+end
+function M.applyTabs()
+  if M.cfg.tabs then
+    M.buildTabs()
+    M.tabBox:show()
+    if not M.viewPg then M.viewPg = M.newPage("ovenView", M.tabPages.view) end
+    movePage(M.viewPg, M.tabPages.view)
+    movePage(M.helpPg, M.tabPages.help)
+    if M.helpContainer then M.helpContainer:hide() end
+    if not M.logPg then M.logPg = M.newPage("ovenLog", M.tabPages.log) end
+    movePage(M.logPg, M.tabPages.log)
+    M.tabShow(M.tabOn or "view", true)
+  else
+    if M.tabBox then M.tabBox:hide() end
+    if not M.viewPg then M.viewPg = M.newPage("ovenView", M.container) end
+    movePage(M.viewPg, M.container)
+    if M.helpPg and M.helpContainer then movePage(M.helpPg, M.helpContainer) end
+  end
+end
+
+function M.tabShow(key, quiet)
+  if not M.cfg.tabs or not M.tabPages or not M.tabPages[key] then return end
+  M.tabOn = key
+  for _, t in ipairs(M.TABS) do
+    local on = t.key == key
+    if on then M.tabPages[t.key]:show() else M.tabPages[t.key]:hide() end
+    M.tabLabels[t.key]:setStyleSheet(on and tabOnStyle or tabStyle)
+  end
+  -- a tab nothing has been shown in yet
+  if not quiet then
+    if key == "view" and not M.viewShown then M.viewShow()
+    elseif key == "log" and not M.logShown then M.logAdd(M.sessionLines(M.pageCols(M.logPg)), M.logLinks())
+    elseif key == "help" and not M.helpShown then
+      M.helpPage("Help", { "<128,128,128>Game help pages open here - try help classes, or sbo for Oven's commands." }, "decho")
+    end
+  end
+  if M.raiseQuestHud then M.raiseQuestHud() end
+end
+
+-- Log tab: session, kills, loot, deaths - with links between them
+function M.logLinks()
+  return {
+    { "session", function() M.command("session") end },
+    { "kills", function() M.command("kills") end },
+    { "loot", function() M.command("loot") end },
+    { "deaths", function() M.command("deaths") end },
+  }
+end
+function M.logAdd(lines, links)
+  if not M.cfg.tabs then return M.viewAdd({ lines = lines, links = links or {} }) end
+  M.createWindow()
+  M.container:show()
+  M.logShown = true
+  local all = {}
+  for _, l in ipairs(links or {}) do all[#all + 1] = l end
+  for _, l in ipairs(M.logLinks()) do all[#all + 1] = l end
+  M.tabShow("log", true)
+  M.pageShow(M.logPg, segsToDecho(lines), "decho", all)
+  M.tabShow("log")
+end
+function M.logCols() return (M.cfg.tabs and M.logPg) and math.min(M.pageCols(M.logPg), 110) or M.viewCols() end
 
 function M.viewCols()
   M.createWindow()
@@ -3037,6 +3135,7 @@ function M.viewAdd(entry)
 end
 
 function M.viewShow()
+  M.viewShown = true
   M.createWindow()
   M.container:show()
   local h, pos = M.viewHist, M.viewPos or #M.viewHist
@@ -3050,7 +3149,9 @@ function M.viewShow()
   if pos < #h then
     links[#links + 1] = { "newer ▶  (" .. (#h - pos) .. " more)", function() M.viewPos = pos + 1; M.viewShow() end }
   end
+  M.tabShow("view", true)
   M.pageShow(M.viewPg, segsToDecho(e.lines), "decho", links)
+  M.tabShow("view")
   if M.raiseQuestHud then M.raiseQuestHud() end
 end
 
@@ -3058,6 +3159,12 @@ end
 -- Help window: game help pages exactly as sent (colours and layout kept)
 ---------------------------------------------------------------------------
 function M.createHelpWindow()
+  if M.cfg.tabs then
+    M.createWindow()
+    if not M.helpPg then M.helpPg = M.newPage("ovenHelp", M.tabPages.help) end
+    M.helpPg.container = M.tabPages.help
+    return
+  end
   if not M.helpContainer then
     M.helpContainer = Adjustable.Container:new({
       name = "ovenHelp",
@@ -3089,11 +3196,18 @@ end
 -- links: { {text, function}, ... }
 function M.helpPage(title, lines, fmt, links)
   M.createHelpWindow()
-  M.helpContainer:show()
+  if M.cfg.tabs then
+    M.container:show()
+    M.helpShown = true
+    M.tabShow("help", true)
+  else
+    M.helpContainer:show()
+  end
   local cols = M.pageCols(M.helpPg)
   local all = { segsToDecho({ header("help", "", math.min(cols, 100), title) })[1] }
   for _, l in ipairs(lines) do all[#all + 1] = (fmt == "cecho") and M.cechoToDecho(l) or l end
   M.pageShow(M.helpPg, all, "decho", links)
+  if M.cfg.tabs then M.tabShow("help") end
   if M.raiseQuestHud then M.raiseQuestHud() end
 end
 
@@ -6460,7 +6574,9 @@ M.helpSections = {
     { "sbo on|off", "turn formatting on / off" },
     { "sbo main replace|keep", "formatted text in the main window, or leave the main window alone" },
     { "sbo window on|off", "the Inspector window (drag it by its title, resize from its edges)" },
-    { "sbo helpwindow on|off", "game help pages (and this list) in their own window" },
+    { "sbo helpwindow on|off", "game help pages (and this list) in a window instead of the main screen" },
+    { "sbo tabs on|off", "Inspector | Help | Log as tabs in one window (off: help gets its own window)" },
+    { "sbo tab inspector|help|log", "bring a tab to the front (or click it)" },
     { "sbo font [size]", "Inspector / help window font size" },
     { "sbo clear", "clear the Inspector's history" },
   } },
@@ -6652,6 +6768,14 @@ function M.command(args)
     return
   elseif a == "pin" then return M.pin(b ~= "" and b or nil)
   elseif a == "unpin" then M.pinned = nil; M.saveItems(); say("unpinned"); return
+  elseif a == "tabs" and onoff ~= nil then
+    M.cfg.tabs = onoff
+    if M.container then M.applyTabs(); M.viewShow() end
+    say(onoff and "tabs on: Inspector | Help | Log in one window" or "tabs off: help pages get their own window again")
+  elseif a == "tab" and (b == "inspector" or b == "help" or b == "log") then
+    M.createWindow(); M.container:show()
+    M.tabShow(b == "inspector" and "view" or b)
+    return
   elseif a == "helpwindow" and onoff ~= nil then
     M.cfg.helpWindow = onoff
     if not onoff and M.helpContainer then M.helpContainer:hide() end
@@ -6699,23 +6823,23 @@ function M.command(args)
     if #names == 0 then return say("the game hasn't sent any GMCP yet") end
     return say("GMCP packages: " .. table.concat(names, ", ") .. " - written in full to oven_gmcp.txt")
   elseif a == "deaths" then
-    local w = M.cfg.window and M.viewCols() or columns("main")
+    local w = M.cfg.window and M.logCols() or columns("main")
     local lines, links = M.deathLines(w)
-    if M.cfg.window then M.viewAdd({ lines = lines, links = links }) else render("main", lines) end
+    if M.cfg.window then M.logAdd(lines, links) else render("main", lines) end
     return
   elseif a == "loot" then
     if b == "clear" then M.dbx("DELETE FROM loot"); return say("loot log cleared") end
     local all = b == "all" or b:match("^all%s") ~= nil
     local q = all and b:gsub("^all%s*", "") or b
-    local w = M.cfg.window and M.viewCols() or columns("main")
+    local w = M.cfg.window and M.logCols() or columns("main")
     local lines, links = M.lootLines(w, q, all)
-    if M.cfg.window then M.viewAdd({ lines = lines, links = links }) else render("main", lines) end
+    if M.cfg.window then M.logAdd(lines, links) else render("main", lines) end
     return
   elseif a == "kills" then
     if b == "reset" then M.sess.killBook = {}; return say("this session's kill list cleared")
     elseif b == "clear" then M.dbx("DELETE FROM kills"); return say("all-time kill list cleared") end
-    local lines = M.killLines(M.cfg.window and M.viewCols() or columns("main"), b == "all")
-    if M.cfg.window then M.viewAdd({ lines = lines, links = {} }) else render("main", lines) end
+    local lines = M.killLines(M.cfg.window and M.logCols() or columns("main"), b == "all")
+    if M.cfg.window then M.logAdd(lines) else render("main", lines) end
     return
   elseif a == "quest" or a == "quests" then
     local sub, val = b:match("^(%S*)%s*(.-)$")
@@ -6779,7 +6903,7 @@ function M.command(args)
       .. "  (sbo map on|off|stop|load [file])")
   elseif a == "session" then
     if b == "reset" then M.sess = { start = os.time(), gained = 0 }; say("session counters reset"); return end
-    if M.cfg.window then M.viewAdd({ lines = M.sessionLines(M.viewCols()), links = {} })
+    if M.cfg.window then M.logAdd(M.sessionLines(M.logCols()))
     else render("main", M.sessionLines(columns("main"))) end
     return
   elseif a == "gamecolors" and onoff ~= nil then
@@ -7097,7 +7221,11 @@ function M.init()
   end
   M.lineTrigger = tempRegexTrigger("^", function() M.onLine() end)
   M.alias = tempAlias("^(?:sbo|oven)(?:\\s+(.*))?$", function() M.command(matches[2]) end)
-  if M.cfg.window and M.container then M.container:show() end
+  if M.cfg.window and M.container then
+    M.container:show()
+    -- an update in the middle of a session: rebuild the open window with (or without) its tabs
+    pcall(M.viewShow)
+  end
   if M.cfg.bar then M.showBar(true) end
   if M.cfg.map then M.mapStart() end
   if M.cfg.mapPanel then pcall(M.showMapPanel, true) end

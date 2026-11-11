@@ -358,6 +358,31 @@ def quest_info_typed_updates_pins():
 
 
 @test
+def inspector_tabs():
+    o = Oven()
+    o.lua('''sbo.cfg.window = true
+      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log" }) do if WIDGETS["ovenTabPage_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end''')
+    o.lua('sbo.viewAdd({ lines = { { { "white", "an item" } } }, links = {} })')
+    eq(o.ev("FRONT()"), "view", "an item: Inspector tab")
+    o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES", "Character classes in Alyria are as follows:" })')
+    eq(o.ev("FRONT()"), "help", "a help page: Help tab")
+    eq(o.ev("sbo.helpContainer"), None, "no separate help window")
+    assert "(in window)" in o.ev("CREATED[#CREATED]"), "help page built inside the window"
+    o.lua('sbo.command("session")')
+    eq(o.ev("FRONT()"), "log", "session: Log tab")
+    o.lua('sbo.command("kills")'); eq(o.ev("FRONT()"), "log", "kills: Log tab")
+    o.lua('WIDGETS.ovenTab_view.click()'); eq(o.ev("FRONT()"), "view", "clicking a tab")
+    o.lua('sbo.command("tab help")'); eq(o.ev("FRONT()"), "help", "sbo tab help")
+    eq(o.ev("WIDGETS.ovenTab_help.css").count("e6c35c"), 1, "the front tab is highlighted")
+    o.lua('sbo.command("tabs off")')
+    eq(o.ev("WIDGETS.ovenTabBox.shown"), False, "tabs off hides the bar")
+    o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES" })')
+    assert o.ev("sbo.helpContainer") is not None, "tabs off: help gets its own window again"
+    bad = [m for m in o.ev("CREATED").values() if "MAIN SCREEN" in m]
+    assert not bad, bad
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

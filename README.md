@@ -83,6 +83,10 @@ Drag it by its title bar and resize it from its edges; it remembers where you pu
 
 Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipment`…).
 
+Results open in the **Inspector** window, which has three tabs: **Inspector** (eq, items, score, comparisons,
+with ◀ older / newer ▶), **Help** (game help pages and `sbo`'s command list) and **Log** (`sbo session`, `kills`,
+`loot`, `deaths`, with links between them). Whatever arrives brings its tab to the front; click a tab to switch.
+
 | Command | Becomes |
 |---|---|
 | `eq` | slot table with short slot names, empty slots marked, and each item's AR and affects (from items you've looked at); armor table with the weakest location highlighted, defenses, weapon damage breakdown |
@@ -96,7 +100,7 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 | `quest info` / `quest status` | your quests with progress gauges and next phase; a quest's page with levels, master, rewards, story and phases (✓ done, ▶ next) |
 | `train` | attributes and vitals with current/max gauges, practice cost, and how many times you can afford each |
 | `prac` / `prac all` at a trainer | every skill the trainer lists, one row each with a learned gauge, sorted by progress; ★ class-recommended skills, called out on top |
-| `help <topic>` | the help page opens in its own **help window**, exactly as the game sends it |
+| `help <topic>` | the help page opens in the Inspector's **Help** tab, exactly as the game sends it |
 
 ## Quest tracker
 
@@ -156,6 +160,8 @@ sbo on|off                turn formatting on / off
 sbo main replace|keep     replace the raw text in the main window, or leave it alone
                           (keep = formatted output only in the Inspector)
 sbo window on|off         show / hide the Inspector window
+sbo tabs on|off           Inspector | Help | Log as tabs in that window (off: help gets its own window)
+sbo tab inspector|help|log  bring a tab to the front (or click it)
 sbo clear                 clear the Inspector's history
 sbo font [size]           Inspector / help window font size (leave the number off for the default)
 sbo raw                   reprint the last output exactly as the game sent it
@@ -182,7 +188,7 @@ sbo eqstats on|off        AR / affects column in eq (look at an item once to fil
 sbo empty on|off          show empty slots in eq
 sbo donation on|off       show / hide empty donation-only slots (amulet, face, aura)
 sbo slots short|full      short slot names in eq tables, or the game's full ones
-sbo helpwindow on|off     game help pages (and the sbo command list) in their own window
+sbo helpwindow on|off     game help pages (and the sbo command list) in a window, not the main screen
 sbo bar on|off            prompt bar
 sbo bar gauges|raw        prompt bar as gauges, or the prompt exactly as the game sends it
 sbo bar session on|off    session time, kills/deaths and exp per hour - on the bar when it fits, else their own line
