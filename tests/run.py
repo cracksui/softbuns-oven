@@ -966,6 +966,20 @@ def combat_mxp_lines():
     assert "a mental patient" in out[0] and "27%" in out[0] and "you 1 hit" in out[0] and "it 1 missed" in out[0], out[0]
     assert "out of reach" in out[1], out[1]
     assert "slain" in out[2] and "2 rounds" in out[2] and "you hit 3/5" in out[2] and "it hit 1/3" in out[2], out[2]
+    # the dummy fight, as recorded: you hit, you miss... then flee east - no char.status at all
+    o.lua('''OUT = {}; gmcp.room = { info = { num = "10422", name = "Combat Training" } }
+      local function round(hit) gmcp.char.combat_mxp = { opponent_hp_percent = 100, opponent_hits = 0, your_hp_percent = 100, your_weapon_range = 2,
+        you_defend = 0, opponent_misses = 0, opponent_name = "a practice dummy", opponent_defends = 0, you_hit = hit, you_miss = 1 - hit, distance_to_opponent = 2 }
+        handlers["gmcp.char.combat_mxp"]() end
+      round(1); round(0); round(1)
+      gmcp.room.info = { num = "10542", name = "Antechamber" }; handlers["gmcp.room.info"]()''')
+    out = list(o.ev("OUT").values())
+    eq(len(out), 4, f"three rounds and a summary: {out}")
+    assert "you left" in out[3] and "3 rounds" in out[3] and "you hit 2/3" in out[3], out[3]
+    # no rounds for a while (combat mode normal mid-fight): summary from the timer
+    o.lua('OUT = {}; round = nil; gmcp.char.combat_mxp.opponent_name = "a rat"; handlers["gmcp.char.combat_mxp"](); runTimers()')
+    out = list(o.ev("OUT").values())
+    assert len(out) == 2 and "a rat" in out[1] and "1 round" in out[1], out
     o.lua('OUT = {}; sbo.command("combat off"); gmcp.char.combat_mxp.opponent_name = "a rat"; handlers["gmcp.char.combat_mxp"]()')
     eq(list(o.ev("OUT").values()), [], "sbo combat off")
 

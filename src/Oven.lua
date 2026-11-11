@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.45.0"
+M.version = "0.45.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5084,6 +5084,11 @@ function M.onCombatRound()
   F.hit, F.miss, F.parried = F.hit + n("you_hit"), F.miss + n("you_miss"), F.parried + n("opponent_defends")
   F.took, F.missed, F.defended = F.took + n("opponent_hits"), F.missed + n("opponent_misses"), F.defended + n("you_defend")
   F.lastPct, F.at = n("opponent_hp_percent"), os.time()
+  F.room = F.room or tonumber((G("room.info") or {}).num)
+  -- rounds come every few seconds; none for a while = the fight's over (combat mode changed, it ended
+  -- some way Oven didn't see). The game doesn't send char.status while you fight, so don't wait on it.
+  if M.fightTimer then killTimer(M.fightTimer) end
+  M.fightTimer = tempTimer(10, function() M.fightTimer = nil; if M.fight == F then M.fightSummary() end end)
   if not M.cfg.combatLines then return end
   -- "⚔ a mental patient ██▌░░ 27%   you hit 1 · it missed 1   you 100%"
   local segs = { { C.dim, "⚔ " }, { C.item, r.opponent_name .. " " },
@@ -5126,6 +5131,7 @@ end
 function M.fightSummary(how)
   local F = M.fight
   M.fight = nil
+  if M.fightTimer then killTimer(M.fightTimer); M.fightTimer = nil end
   if not F or F.rounds == 0 or not M.cfg.combatLines then return end
   local function rate(a, b) return (a + b) > 0 and string.format(" (%d%%)", math.floor(a * 100 / (a + b) + 0.5)) or "" end
   M.combatEcho({ { C.dim, "⚔ " }, { C.item, F.name }, { C.dim, how and ("  " .. how) or "" },
@@ -5142,9 +5148,16 @@ function M.noteFightEnd(l)
   local who = l:match("^%s*(.-) has been slain!")
   if who and who:lower():gsub("^the ", ""):gsub("^an? ", "") == F.name:lower():gsub("^the ", ""):gsub("^an? ", "") then
     -- after the line has been drawn (echoing while a line is being read would join the two)
+    if M.fightTimer then killTimer(M.fightTimer); M.fightTimer = nil end
     tempTimer(0, function() M.fightSummary("slain") end)
     F.ended = true
   end
+end
+-- you left the room (fled, walked out): the fight's over
+function M.onFightRoom()
+  local F = M.fight
+  local id = tonumber((G("room.info") or {}).num)
+  if F and F.room and id and id ~= F.room then M.fightSummary("you left") end
 end
 function M.onFightStatus()
   local s = G("char.status")
@@ -5159,6 +5172,7 @@ function M.gmcpHandlersList()
     registerAnonymousEventHandler("gmcp.char.quests", function() pcall(M.onGmcpQuests) end),
     registerAnonymousEventHandler("gmcp.char.combat_mxp", function() pcall(M.onCombatRound) end),
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onFightStatus) end),
+    registerAnonymousEventHandler("gmcp.room.info", function() pcall(M.onFightRoom) end),
     -- a new connection: read your aliases again at its first prompt
     registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil end),
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onGmcpStatus) end),
