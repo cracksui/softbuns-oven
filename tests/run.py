@@ -318,6 +318,46 @@ def quest_pin_all_only_active():
 
 
 @test
+def quest_info_typed_updates_pins():
+    # the real reply to a plain "quest info" with one quest: that quest in full, no list
+    reply = open(fixture("quest_info_one.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
+    for main in ("replace", "keep"):
+        o = Oven()
+        o.lua(f'''sbo.cfg.promptPattern = "<%d+hp"; sbo.cfg.main = "{main}"
+          sbo.quests = {{ ["100"] = {{ name = "Old Gone", done = 1, total = 4, active = true }} }}
+          sbo.cfg.questPins = {{ ["100"] = true }}
+          sbo.onSend(nil, "quest info")''')
+        o.feed(*reply, "[Mail]<270hp 550sp 401st>")
+        o.L.execute("runTimers()")
+        eq(o.ev("sbo.cfg.questPins['100']"), None, f"main={main}: dropped quest unpinned")
+        eq(o.ev("sbo.quests['3098'].active"), True, f"main={main}: the one quest is active")
+        eq(o.ev("sbo.quests['100'].active"), False, f"main={main}: old quest inactive")
+        # quest info for one quest by number says nothing about the others
+        o.lua('sbo.questPin("3098", true); sbo.quests["100"].active = true; sbo.onSend(nil, "quest info 3098")')
+        o.feed(*reply, "[Mail]<270hp 550sp 401st>")
+        o.L.execute("runTimers()")
+        eq(o.ev("sbo.quests['100'].active"), True, f"main={main}: quest info <id> leaves other quests alone")
+    # several quests: the list
+    o = Oven()
+    o.lua('''sbo.cfg.promptPattern = "<%d+hp"; sbo.cfg.questPins = { ["100"] = true }; sbo.onSend(nil, "quest info")''')
+    o.feed("Quest #3098: Training in the Forest (6/6 complete)", "Quest #2503: Part-ay! (3/8 complete)", "[Mail]<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("sbo.cfg.questPins['100']"), None, "list: dropped quest unpinned")
+    eq((o.ev("sbo.quests['2503'].active"), o.ev("sbo.quests['2503'].done")), (True, 3), "list: quests and progress")
+    # sbo quest pin all, one quest
+    o = Oven()
+    o.lua('''sbo.cfg.promptPattern = "<%d+hp"; sbo.quests = { ["100"] = { name = "Old Gone", done = 1, total = 4 } }
+      send = function(c) sbo.onSend(nil, c) end
+      sbo.command("quest pin all")''')
+    o.feed(*reply, "[Mail]<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    # every phase of this one is done (the * marks), so there's nothing to pin - but it was checked
+    eq(o.ev("sbo.quests['3098'].active"), True, "pin all read the single-quest reply")
+    eq(sorted(o.ev("sbo.cfg.questPins").keys()), [], "a finished quest isn't pinned")
+    eq(o.ev("sbo.pinAllPending"), None, "pin all isn't left waiting")
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

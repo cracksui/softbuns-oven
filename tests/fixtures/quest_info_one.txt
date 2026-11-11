@@ -1,0 +1,30 @@
+This quest [3098] is called 'Training in the Forest'.
+The head park keeper is the master in charge of this quest.
+While many adventurers who come to the Forest choose to join the battle
+between the twin Orders, there are also other tasks one can seek out. 
+Available Marks can be viewed via 'MARK WHERE', and some are listed in
+this quest's phases. There are also [Bosses] to be found here, but the
+lone adventurer might find him or herself slain rather quickly.
+
+You can find:
+* Samara                    - near the banks of Rune River
+* The Queen of the Dark     - deep in the Ant Hill.
+* The sycophantic goblin    - anywhere in the Forest, wandering.
+* The bird village          - in the northern part of the Forest.
+* Sombar                    - in the northeast corner of Rune Park.
+* Star fragments            - in the abandoned village, the Desolation,
+                              and the other two anywhere in the Forest.
+* The bloodied groom        - near the abandoned village to the northwest
+ 
+This quest can be turned in at the head park keeper in Rune Park.
+Upon successful completion of this quest the Quest Master will show
+notable appreciation for your efforts.
+This quest has no time limit.
+Training in the Forest consists of:
+Phase 1: *Seek out Samara, guardian of the bridge, and pass his trial.
+Phase 2: *Journey deep into the Ant Hill, and seek out the Queen of the Dark.
+Phase 3: *Display your charisma and prowess to a certain sycophantic goblin.
+Phase 4: *Recover the four star fragments, and take them to Jeria.
+Phase 5: *Undertake an errand for Sombar.
+Phase 6: *Assist a bloodied groom from the destroyed village.
+*You are on 1 of 99 maximum simultaneous SPECIAL quests.

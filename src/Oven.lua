@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.27.1"
+M.version = "0.27.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2109,13 +2109,19 @@ function M.parseQuests(raw)
 end
 
 -- keep what we learn about quests, for the tracker
-function M.rememberQuests(q)
+function M.rememberQuests(q, bare)
   local now = os.time()
-  if #q.list > 0 then
+  -- a plain "quest info" lists your quests - or, with only one, shows that one in full
+  local list = q.list
+  if #list == 0 and bare and q.detail and q.detail.id then
+    list = { { id = q.detail.id, name = q.detail.name, done = q.detail.done, total = q.detail.total } }
+  end
+  if #list > 0 then
     local active = {}
-    for _, e in ipairs(q.list) do
+    for _, e in ipairs(list) do
       local Q = M.quests[e.id] or {}
-      Q.name, Q.done, Q.total, Q.seen = e.name, e.done, e.total, now
+      Q.name, Q.seen = e.name or Q.name, now
+      if e.done then Q.done, Q.total = e.done, e.total end
       Q.active = true
       M.quests[e.id] = Q
       active[e.id] = true
@@ -2142,7 +2148,7 @@ function M.rememberQuests(q)
   M.saveSettings()
   M.drawQuestTracker()
   -- "sbo quest pin all" waiting for the quest list
-  if #q.list > 0 and M.pinAllPending ~= nil then
+  if #list > 0 and M.pinAllPending ~= nil then
     local on = M.pinAllPending
     M.pinAllPending = nil
     M.pinAllFromList = true
@@ -2174,7 +2180,7 @@ end
 function M.formatters.quest(raw, width)
   local q = M.parseQuests(raw)
   if #q.list == 0 and not q.detail then return M.formatters.generic(raw, width) end
-  M.rememberQuests(q)
+  M.rememberQuests(q, M.questReplyBare)
   local out = {}
   local links = {}
   if #q.list > 0 then
@@ -5171,6 +5177,8 @@ function M.finish(reason)
   local cap = M.cap
   if not cap then return end
   M.cap = nil
+  -- the reply to a plain "quest info" (no quest number): every quest you have
+  M.questReplyBare = cap.kind == "quest" and tostring(cap.cmd or ""):lower():match("^%s*quest%s+info%s*$") ~= nil
   if cap.idleTimer then killTimer(cap.idleTimer) end
   if cap.maxTimer then killTimer(cap.maxTimer) end
 
@@ -5198,7 +5206,7 @@ function M.finish(reason)
   if cap.quiet and cap.quietKind == "quest" then
     -- tracker refresh: update the quest, draw nothing
     if reason == "prompt" and not M.cfg.bar then deleteLine() end
-    pcall(function() M.rememberQuests(M.parseQuests(cap.plain)) end)
+    pcall(function() M.rememberQuests(M.parseQuests(cap.plain), M.questReplyBare) end)
     if M.cfg.samples and #cap.plain > 0 then writeSample(cap) end
     local nxt = table.remove(M.queue, 1)
     if nxt then M.start(nxt[1], nxt[2], nxt[3]) end
