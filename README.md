@@ -135,7 +135,16 @@ makes and switches to a new build, `sbo build reset` / `sbo build auto` go back.
 maximum in `score` (Strength 20/20) count a quarter, since more of them is mostly wasted; `sbo build` shows
 where each stat stands and, once you've read your race's help page, your race's maximums. Race pages'
 weapon bonuses count too (a dwarf's +10% with bashing weapons makes a maul score higher; where a page
-names no number, 10% is assumed - `sbo build set weapon:staff 20` sets your own).
+names no number, 10% is assumed - `sbo build set weapon:staff 20` sets your own). Your race's built-in
+weaknesses, which the game reports as you log in (a sahuagin's *maladapted*: disease resistance -25), make
+matching resistances on gear count for more.
+
+## What Oven reads from the game's data (GMCP)
+
+Materia Magica sends some things as data alongside the text, and Oven uses that wherever it can: your level and
+exp to level (the bar stays current without `score`), HP/SP/ST and attribute maximums, room flags, the exact
+target room of quest steps (`sbo quest go`), the creature you're fighting (kills are stored with its mob number and
+race, deaths with what you were fighting) and your race's built-in weaknesses.
 
 ## Commands
 

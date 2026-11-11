@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.23.0"
+M.version = "0.24.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -161,6 +161,9 @@ local SCHEMA = {
 
 local SCHEMA_ADD = {
   "ALTER TABLE room_npcs ADD COLUMN src TEXT",   -- 0.23.0: which kind of block it was read from
+  "ALTER TABLE kills ADD COLUMN vnum INTEGER",    -- 0.24.0: the mob's number and race, from GMCP
+  "ALTER TABLE kills ADD COLUMN race TEXT",
+  "ALTER TABLE deaths ADD COLUMN killer TEXT",    -- 0.24.0: what you were fighting
 }
 
 function M.dbOpen()
@@ -2309,7 +2312,7 @@ local function questCardHtml(id, Q)
         end
         if first then
           -- where the next step is, when Oven can place it
-          local ok, room, why = pcall(M.questTarget, ph)
+          local ok, room, why = pcall(M.questTarget, ph, id)
           if ok and room then
             local where = "→ " .. (getRoomName(room) or ("#" .. room)) .. "  · sbo quest go " .. id
             add("   " .. span(C.dim, where), ulen(where) + 3)
@@ -2564,8 +2567,13 @@ function M.questStepNames(text)
 end
 
 M.questTargetCache = M.questTargetCache or {}
-function M.questTarget(ph)
+function M.questTarget(ph, qid)
   if not ph or not ph.text then return end
+  -- the game's quest log names the room for many steps
+  if qid and ph.n then
+    local r = M.gmcpQuestRoom(qid, ph.n)
+    if r then return r, "the quest's target room" end
+  end
   local ck = ph.text .. "|" .. tostring(ph.area)
   local c = M.questTargetCache[ck]
   if c and now() - c.at < 60 then return c.room, c.why end
@@ -2630,7 +2638,7 @@ function M.questGo(id)
     return M.say(id and id ~= "" and ("quest " .. id .. " has no step to do that Oven knows of (quest info " .. id .. " to load it)")
       or "no pinned quest with a step to do - pin one with sbo quest pin <id>")
   end
-  local room, why = M.questTarget(ph)
+  local room, why = M.questTarget(ph, qid)
   if not room then
     local names = M.questStepNames(ph.text)
     return M.say(string.format("#%s step %d: \"%s\" - couldn't place %s yet (see the NPC or room once and try again)",
@@ -3502,6 +3510,18 @@ function M.activeBuild()
       w = copy
     end
   end
+  -- your race's weaknesses (GMCP: "maladapted: disease-res -25"): cover for them is worth more,
+  -- 0.1 a point plus 0.02 for each point of weakness, unless your own build sets the stat
+  local weak = {}
+  for stat, mod in pairs(M.innateMods()) do
+    if mod < 0 and not (custom and custom[stat]) then weak[stat] = 0.1 + 0.02 * -mod end
+  end
+  if next(weak) then
+    local copy = {}
+    for k, v in pairs(w) do copy[k] = v end
+    for k, v in pairs(weak) do copy[k] = math.max(copy[k] or 0, v) end
+    w = copy
+  end
   return name, w
 end
 
@@ -3674,7 +3694,7 @@ function M.buildLines(width)
     local r = { { C.key, "  " .. pad(k, 20) }, { w[k] > 0 and C.num or C.dim, pad(tostring(w[k]), 9) } }
     local st = stats[k]
     if st then
-      r[#r + 1] = { M.statCapped(k) and C.flag or C.text, pad(st.cur .. "/" .. st.max, 7) }
+      r[#r + 1] = { M.statCapped(k) and C.flag or C.text, pad(tostring(st.cur or "?") .. "/" .. tostring(st.max or "?"), 7) }
       if race and race[k] then r[#r + 1] = { C.dim, "   " .. race[k] } end
       if M.statCapped(k) then r[#r + 1] = { C.flag, "   at max: gear counts 1/4" } end
     end
@@ -3687,6 +3707,18 @@ function M.buildLines(width)
     for _, b in ipairs(bon) do
       out[#out + 1] = { { C.key, "  weapon bonus  " }, { C.plus, string.format("+%s%% ", b.pct) }, { C.text, b.kind .. " weapons" },
         { C.dim, b.own and "  (your setting)" or (b.assumed and "  (your race's page names no number - assumed; sbo build set weapon:" .. b.kind .. " N)" or "  (your race's page)") } }
+    end
+  end
+  local innate = M.innateMods()
+  if next(innate) then
+    out[#out + 1] = {}
+    local keys = {}
+    for k in pairs(innate) do keys[#keys + 1] = k end
+    table.sort(keys)
+    for _, k in ipairs(keys) do
+      local v = innate[k]
+      out[#out + 1] = { { C.key, "  racial        " }, { v < 0 and C.minus or C.plus, string.format("%+d ", v) }, { C.text, k },
+        { C.dim, v < 0 and string.format("  (a weakness: %s on gear counts %.1f)", k, weightOf(w, k)) or "" } }
     end
   end
   if race then
@@ -4308,6 +4340,153 @@ function M.onMsdp(event)
   end
   L.tnl = tnl or L.tnl
   M.drawBar()
+end
+
+---------------------------------------------------------------------------
+-- GMCP: what the game reports as data. Where it covers something, it wins over reading text.
+---------------------------------------------------------------------------
+local function G(path)
+  local v = type(gmcp) == "table" and gmcp or nil
+  for k in path:gmatch("[^.]+") do
+    if type(v) ~= "table" then return nil end
+    v = v[k]
+  end
+  return v
+end
+M.gmcpGet = G
+
+-- char.status: level, total level and exp to level, as they change
+function M.onGmcpStatus()
+  local s = G("char.status")
+  if type(s) ~= "table" then return end
+  local L, c = M.live, M.cfg.char or {}
+  M.cfg.char = c
+  local lvl, total, tnl = tonumber(s.level), tonumber(s.totallevel), tonumber(s.tnl)
+  if lvl then L.level, c.level = lvl, lvl end
+  if total then L.total, c.total = total, total end
+  if tnl then
+    L.tnl, c.tnl = tnl, tnl
+  end
+  L.enemy = (s.enemy and s.enemy ~= "_empty") and s.enemy or nil
+  L.enemyPct = tonumber(s.enemypct)
+  pcall(M.drawBar)
+end
+
+-- char.maxstats: HP/SP/ST maximums and each attribute's maximum
+local MAXSTAT_POOLS = { maxhp = "hp", maxsp = "sp", maxst = "st" }
+function M.onGmcpMaxStats()
+  local s = G("char.maxstats")
+  if type(s) ~= "table" then return end
+  M.cfg.maxes = M.cfg.maxes or {}
+  M.cfg.char = M.cfg.char or {}
+  local c = M.cfg.char
+  c.stats = c.stats or {}
+  local changed = false
+  for k, v in pairs(s) do
+    v = tonumber(v)
+    if v then
+      local pool = MAXSTAT_POOLS[k]
+      if pool then
+        if M.cfg.maxes[pool] ~= v then M.cfg.maxes[pool] = v; changed = true end
+      else
+        local st = c.stats[k] or {}
+        if st.max ~= v then st.max = v; c.stats[k] = st; changed = true end
+      end
+    end
+  end
+  if changed then M.saveSettings(); pcall(M.drawBar) end
+end
+
+-- char.worth: gold, bank, quest points, practices
+function M.onGmcpWorth()
+  local s = G("char.worth")
+  if type(s) ~= "table" then return end
+  local w = {}
+  for k, v in pairs(s) do w[k] = tonumber(v) or v end
+  M.live.worth = w
+end
+
+-- char.affect_application_msg: an affect landing on you. Permanent ones (duration -1) are your
+-- race's: "maladapted: disease-res -25" - kept, so the gear score can value cover for weaknesses.
+function M.onGmcpAffect()
+  local a = G("char.affect_application_msg")
+  if type(a) ~= "table" or a.target ~= "you" then return end
+  if tonumber(a.duration) ~= -1 or not a.modifies or not tonumber(a.modifier) then return end
+  M.cfg.char = M.cfg.char or {}
+  local c = M.cfg.char
+  c.innate = c.innate or {}
+  local key = tostring(a.skill or a.modifies) .. "|" .. tostring(a.modifies)
+  local mod = tonumber(a.modifier)
+  local old = c.innate[key]
+  if not old or old.mod ~= mod then
+    c.innate[key] = { skill = a.skill, stat = a.modifies, mod = mod }
+    M.saveSettings()
+  end
+end
+
+-- what an innate affect adds up to per stat: { ["disease-res"] = -25 }
+function M.innateMods()
+  local out = {}
+  for _, e in pairs(((M.cfg.char or {}).innate) or {}) do
+    if e.stat and e.mod then out[e.stat] = (out[e.stat] or 0) + e.mod end
+  end
+  return out
+end
+
+-- char.lasttargeted: what you're fighting - name, race, mob number, health
+function M.onGmcpTarget()
+  local t = G("char.lasttargeted")
+  if type(t) ~= "table" then return end
+  M.live.target = { name = t.short_descr, race = t.race, vnum = tonumber(t.vnum), pct = tonumber(t.hp_percent), at = now() }
+end
+
+-- the mob behind "X has been slain!", when it's the one you were fighting
+function M.targetFor(name)
+  local t = M.live.target
+  if not t or not t.name or not name then return end
+  local a, b = t.name:lower(), name:lower()
+  if a == b or a:gsub("^an? ", ""):gsub("^the ", "") == b:gsub("^an? ", ""):gsub("^the ", "") then return t end
+end
+
+-- char.quests: the game's own quest log; many phases name the exact room
+function M.gmcpQuestRoom(qid, n)
+  local q = G("char.quests")
+  q = type(q) == "table" and (q["q" .. tostring(qid)] or q[tostring(qid)]) or nil
+  if type(q) ~= "table" or type(q.goals) ~= "table" then return end
+  for _, g in ipairs(q.goals) do
+    if tonumber(g.phase_number) == tonumber(n) then
+      local r = tonumber(g.room_target)
+      if r and r > 0 then return r end
+      return
+    end
+  end
+end
+
+-- room.info flags ("safe, indoors, no-npcs, reinforced, library"); nil when GMCP isn't about this room
+function M.gmcpRoomFlags(id)
+  local info = G("room.info")
+  if type(info) ~= "table" or tonumber(info.num) ~= tonumber(id) or type(info.flags) ~= "string" then return end
+  local out = {}
+  for raw in info.flags:gmatch("[^,]+") do
+    local f = trim(raw)
+    if f ~= "" and f ~= "_empty" then out[#out + 1] = f end
+  end
+  return out
+end
+
+function M.gmcpHandlersList()
+  return {
+    registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onGmcpStatus) end),
+    registerAnonymousEventHandler("gmcp.char.maxstats", function() pcall(M.onGmcpMaxStats) end),
+    registerAnonymousEventHandler("gmcp.char.worth", function() pcall(M.onGmcpWorth) end),
+    registerAnonymousEventHandler("gmcp.char.affect_application_msg", function() pcall(M.onGmcpAffect) end),
+    registerAnonymousEventHandler("gmcp.char.lasttargeted", function() pcall(M.onGmcpTarget) end),
+  }
+end
+
+-- whatever GMCP already holds when Oven starts (an update mid-session)
+function M.gmcpCatchUp()
+  pcall(M.onGmcpStatus); pcall(M.onGmcpMaxStats); pcall(M.onGmcpWorth); pcall(M.onGmcpTarget)
 end
 
 function M.barUpdate(d)
@@ -5397,10 +5576,14 @@ M.npcTags = npcTags
 local NOT_ROOM_FLAGS = { mail = true }
 function M.noteRoomFlags(id, l)
   if not id then return end
-  local before = l:match("^(.-)<") or l
-  local flags = {}
-  for t in before:gmatch("%[([^%]]+)%]") do
-    if not NOT_ROOM_FLAGS[t:lower()] then flags[#flags + 1] = t end
+  -- GMCP's room.info has the room's real flags; the prompt's tags are the fallback
+  local flags = M.gmcpRoomFlags(id)
+  if not flags then
+    flags = {}
+    local before = l:match("^(.-)<") or l
+    for t in before:gmatch("%[([^%]]+)%]") do
+      if not NOT_ROOM_FLAGS[t:lower()] then flags[#flags + 1] = t end
+    end
   end
   -- the prompt comes with every line of combat: only touch the database when the room changes
   local now_ = table.concat(flags, ",")
@@ -5524,8 +5707,10 @@ function M.noteRoomDeath()
   local id = M.currentRoom()
   if not id then return end
   local c = M.cfg.char or {}
-  M.dbx("INSERT INTO deaths (t, room, level, total, recap) VALUES (%s, %s, %s, %s, %s)",
-    os.time(), id, tonumber(c.level), tonumber(c.total), M.ser(M.deathRecapLines()))
+  local tg = M.live.target
+  local killer = tg and tg.name and now() - (tg.at or 0) < 120 and tg.name or nil
+  M.dbx("INSERT INTO deaths (t, room, level, total, recap, killer) VALUES (%s, %s, %s, %s, %s, %s)",
+    os.time(), id, tonumber(c.level), tonumber(c.total), M.ser(M.deathRecapLines()), killer)
   if not M.rec then pcall(M.windowSave, "you died in room " .. tostring(id)) end
   -- the lines before it, so the game's own death message can be learned
   if M.cfg.samples and (M.deathCtxLogged or 0) < 10 then
@@ -5698,7 +5883,7 @@ end
 
 -- Deaths: where, at what level, and the lines that led up to it
 function M.deathLines(width)
-  local rows = M.dbRows("SELECT t, room, level, total, recap FROM deaths ORDER BY t DESC LIMIT 10")
+  local rows = M.dbRows("SELECT t, room, level, total, recap, killer FROM deaths ORDER BY t DESC LIMIT 10")
   local total = M.dbRow("SELECT COUNT(*) AS c FROM deaths")
   local out = { header("deaths", "", width, string.format("Deaths  (%s in all)", tostring(total and total.c or 0))) }
   local links = {}
@@ -5708,7 +5893,8 @@ function M.deathLines(width)
     local nm = (id and roomExists(id) and getRoomName(id)) or "?"
     out[#out + 1] = {}
     out[#out + 1] = { { C.minus, "▸ " .. os.date("%Y-%m-%d %H:%M", tonumber(r.t)) }, { C.item, "  " .. nm }, { C.dim, "  #" .. tostring(id) },
-                      { C.text, r.level and ("  · level " .. r.level) or "" } }
+                      { C.text, r.level and ("  · level " .. r.level) or "" },
+                      { C.dim, r.killer and ("  · fighting " .. r.killer) or "" } }
     local recap = M.deser(r.recap)
     if recap and #recap > 0 then
       for i = math.max(1, #recap - 14), #recap do out[#out + 1] = { { C.dim, "    " .. recap[i] } } end
@@ -5863,7 +6049,9 @@ function M.recordKill(name)
   e.count = e.count + 1
   e.last = t
   M.sess.killsLive = (M.sess.killsLive or 0) + 1
-  M.dbx("INSERT INTO kills (t, key, name, room, n, exp) VALUES (%s, %s, %s, %s, 1, 0)", t, key, name, M.currentRoom())
+  local tg = M.targetFor(name) or {}
+  M.dbx("INSERT INTO kills (t, key, name, room, n, exp, vnum, race) VALUES (%s, %s, %s, %s, 1, 0, %s, %s)",
+    t, key, name, M.currentRoom(), tg.vnum, tg.race)
   M.lastKill = { key = key, at = now(), id = M.dbLastId() }
   pcall(M.drawBar)
 end
@@ -6792,7 +6980,9 @@ function M.init()
       end
     end),
   }
+  for _, h in ipairs(M.gmcpHandlersList()) do M.handlers[#M.handlers + 1] = h end
   M.loadItems()
+  M.gmcpCatchUp()
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysWindowResizeEvent", function() M.layoutBar(); pcall(M.drawBar); pcall(M.layoutQuestHud) end)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadDone", M.onDownload)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadError", M.onDownload)
