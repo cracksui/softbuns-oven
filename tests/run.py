@@ -998,6 +998,37 @@ def combat_mxp_lines():
 
 
 @test
+def combat_bar():
+    o = Oven()
+    o.lua('''sbo.cfg.bar = true; BARS = {}
+      local nop = function() end
+      sbo.bar = { rawEcho = function(self, h) end, move = nop, resize = nop, show = nop, hide = nop, setStyleSheet = nop }
+      local old = Geyser.Label.new
+      Geyser.Label.new = function(self, c, p) local t = old(self, c, p)
+        t.rawEcho = function(x, m) BARS[c.name] = (m:gsub("<[^>]+>", "")) end
+        t.move = function(x, a, b) t.y = b end; t.resize = nop; t.show = function() t.shown = true end; t.hide = function() t.shown = false end
+        return t end
+      decho = nop
+      function ROUND(name, pct, hit) gmcp.char = gmcp.char or {}; gmcp.char.combat_mxp = { opponent_hp_percent = pct, opponent_hits = 0, your_hp_percent = 100,
+        your_weapon_range = 2, you_defend = 0, opponent_misses = 1, opponent_name = name, opponent_defends = 0, you_hit = hit, you_miss = 1 - hit,
+        distance_to_opponent = 1 }; handlers["gmcp.char.combat_mxp"]() end
+      ROUND("a mental patient", 62, 1)''')
+    bar = o.ev("BARS.ovenCombatBarLabel") or ""
+    assert "62%" in bar and "a mental patient" in bar and bar.index("62%") < bar.index("a mental patient"), f"health bar, then the name: {bar}"
+    assert "you hit 1/1" in bar, bar
+    eq(o.ev("sbo.cbar.shown"), True, "shown while fighting")
+    eq(o.ev("sbo.cbar.y < 900 - 20"), True, "above the prompt bar")
+    o.lua('ROUND("a wolf", 30, 0)')
+    bar = o.ev("BARS.ovenCombatBarLabel")
+    assert "a mental patient" in bar and "a wolf" in bar and "│" in bar, f"both targets: {bar}"
+    o.feed("A mental patient has been slain!"); o.feed("A wolf has been slain!")
+    o.lua("runTimers()")
+    eq(o.ev("sbo.cbar.shown"), False, "gone once the fights are over")
+    o.lua('sbo.command("combat bar off"); ROUND("a rat", 90, 1)')
+    eq(o.ev("sbo.cbar.shown"), False, "sbo combat bar off")
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

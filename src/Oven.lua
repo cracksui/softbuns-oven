@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.45.2"
+M.version = "0.46.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -42,6 +42,7 @@ M.defaults = {
   questHudBlurb = false,     -- show each quest's description (hints) in the HUD
   questAutoPin = true,       -- a quest you take with quest request goes straight onto the quest HUD
   combatLines  = true,       -- combat mode mxp: a line per round (the game shows none) and a summary per fight
+  combatBar    = true,       -- combat mode mxp: a line above the prompt bar with your targets' health, while you fight
   map          = false,      -- follow your room (GMCP) on the map and walk where you double-click
   mapPanel     = false,      -- the map in its own Oven window
   autocompare  = true,       -- compare looked-at items with what you wear in that slot
@@ -4345,10 +4346,18 @@ function M.layoutBar()
   local sessionOn = M.cfg.barSession and M.sbar and not M.barCollapsed
   local atTop = sessionOn and M.cfg.barSessionPos ~= "bottom"
   local below = sessionOn and not atTop
-  local total = below and (h * 2) or h
+  local barY = H - (below and (h * 2) or h)
+  -- while you fight (combat mode mxp): your targets' line sits right above the prompt bar
+  local combatOn = M.cbar and M.cbarShown
+  local total = H - barY + (combatOn and h or 0)
   setBorderBottom(total)
-  M.bar:move(left, H - total)
+  M.bar:move(left, barY)
   M.bar:resize(W - left - right, h)
+  if combatOn then
+    M.cbar:show(); M.cbar:move(left, barY - h); M.cbar:resize(W - left - right, h)
+  elseif M.cbar then
+    M.cbar:hide()
+  end
   -- the top line takes space above any top border something else already uses, and gives it back after
   if atTop then
     if not M.topTaken then
@@ -4587,6 +4596,7 @@ function M.applyBarBg()
     "background-color: rgb(%d,%d,%d); padding-left: 4px; qproperty-alignment: 'AlignVCenter | AlignLeft';", r, g, b)
   if M.bar then M.bar:setStyleSheet(css) end
   if M.sbar then M.sbar:setStyleSheet(css) end
+  if M.cbar then M.cbar:setStyleSheet(css) end
 end
 
 -- characters across the bar
@@ -4669,6 +4679,49 @@ function M.sessionSegs()
   segs[#segs + 1] = { C.num, rate and tostring(fl(rate)) or "-" }
   segs[#segs + 1] = { C.dim, " xp/hr" }
   return segs
+end
+
+-- the combat line: each target's health bar, then its name; with one target, how the fight's going
+function M.drawCombatBar()
+  local fights = {}
+  for _, F in pairs(M.fights or {}) do fights[#fights + 1] = F end
+  table.sort(fights, function(a, b) return (a.order or 0) < (b.order or 0) end)
+  local want = #fights > 0 and M.cfg.combatBar and M.cfg.bar and M.bar ~= nil
+  if not want then
+    if M.cbarShown then
+      -- a moment with the end result before it goes
+      if M.cbarHideTimer then killTimer(M.cbarHideTimer) end
+      M.cbarHideTimer = tempTimer(3, function()
+        M.cbarHideTimer = nil
+        if not next(M.fights or {}) and M.cbarShown then M.cbarShown = false; pcall(M.layoutBar) end
+      end)
+    end
+    return
+  end
+  if M.cbarHideTimer then killTimer(M.cbarHideTimer); M.cbarHideTimer = nil end
+  if not M.cbar then
+    M.cbar = Geyser.Label:new({ name = "ovenCombatBarLabel", x = 0, y = 0, width = 200, height = 20 })
+    M.applyBarBg()
+  end
+  if not M.cbarShown then M.cbarShown = true; pcall(M.layoutBar) end
+  local segs = {}
+  for i, F in ipairs(fights) do
+    if i > 1 then segs[#segs + 1] = { C.dim, "   │   " } end
+    local pctv = tonumber(F.lastPct) or 0
+    local col = pctv >= 70 and C.plus or (pctv >= 35 and C.title or C.minus)
+    segs[#segs + 1] = { col, M.pctBar(pctv, 8) }
+    segs[#segs + 1] = { col, string.format(" %3d%%", pctv) }
+    segs[#segs + 1] = { C.item, "  " .. F.name }
+    local tries, takes = F.hit + F.miss + F.parried, F.took + F.missed + F.defended
+    if #fights == 1 then
+      segs[#segs + 1] = { C.dim, string.format("    you hit %d/%d", F.hit, tries) }
+      segs[#segs + 1] = { C.dim, string.format("  ·  it hit %d/%d", F.took, takes) }
+      segs[#segs + 1] = { C.dim, string.format("  ·  round %d", F.rounds) }
+    else
+      segs[#segs + 1] = { C.dim, string.format("  (you %d/%d)", F.hit, tries) }
+    end
+  end
+  barEcho(M.segsToDecho({ segs })[1], M.cbar)
 end
 
 function M.drawSessionBar()
@@ -5068,6 +5121,7 @@ local function pctBar(p, n)
   local k = math.floor(n * p / 100 + 0.5)
   return string.rep("█", k) .. string.rep("░", n - k)
 end
+M.pctBar = pctBar
 local function hpCol(p) p = tonumber(p) or 0; return p >= 70 and C.plus or (p >= 35 and C.title or C.minus) end
 
 function M.onCombatRound()
@@ -5079,7 +5133,9 @@ function M.onCombatRound()
   local key = r.opponent_name:lower()
   local F = M.fights[key]
   if not F then
-    F = { key = key, name = r.opponent_name, rounds = 0, hit = 0, miss = 0, parried = 0, took = 0, missed = 0, defended = 0 }
+    M.fightOrder = (M.fightOrder or 0) + 1
+    F = { key = key, name = r.opponent_name, rounds = 0, hit = 0, miss = 0, parried = 0, took = 0, missed = 0, defended = 0,
+          order = M.fightOrder }
     M.fights[key] = F
   end
   M.fight = F
@@ -5092,6 +5148,7 @@ function M.onCombatRound()
   -- some way Oven didn't see). The game doesn't send char.status while you fight, so don't wait on it.
   if F.timer then killTimer(F.timer) end
   F.timer = tempTimer(10, function() F.timer = nil; if M.fights[key] == F then M.fightSummary(nil, F) end end)
+  pcall(M.drawCombatBar)
   if not M.cfg.combatLines then return end
   -- "⚔ a mental patient ██▌░░ 27%   you hit 1 · it missed 1   you 100%"
   local segs = { { C.dim, "⚔ " }, { C.item, r.opponent_name .. " " },
@@ -5137,6 +5194,7 @@ function M.fightSummary(how, F)
   if (M.fights or {})[F.key] == F then M.fights[F.key] = nil end
   if M.fight == F then M.fight = nil end
   if F.timer then killTimer(F.timer); F.timer = nil end
+  pcall(M.drawCombatBar)
   if not F or F.rounds == 0 or not M.cfg.combatLines then return end
   local function rate(a, b) return (a + b) > 0 and string.format(" (%d%%)", math.floor(a * 100 / (a + b) + 0.5)) or "" end
   M.combatEcho({ { C.dim, "⚔ " }, { C.item, F.name }, { C.dim, how and ("  " .. how) or "" },
@@ -7632,7 +7690,8 @@ M.helpSections = {
     { "sbo window on|off", "the Inspector window (drag it by its title, resize from its edges)" },
     { "sbo helpwindow on|off", "game help pages (and this list) in a window, or on the main screen" },
     { "sbo mirror {tab} on|off", "also show a tab's output on the main screen: inspector help log chat (sbo mirror: what's on)" },
-    { "sbo combat on|off", "with the game's combat mode mxp: a line per round and a summary per fight" },
+    { "sbo combat on|off", "with the game's combat mode mxp: a target bar above the prompt bar, a line per round, a summary per fight" },
+    { "sbo combat bar|lines on|off", "just the target bar, or just the round lines and summaries" },
     { "sbo layout save|restore|reset", "your panels' places: saved by themselves when moved, put back after connecting" },
     { "sbo tabs on|off", "Inspector | Help | Log | Chat as tabs in one window (off: help gets its own window)" },
     { "sbo tab inspector|help|log|chat", "bring a tab to the front (or click it)" },
@@ -7843,9 +7902,15 @@ function M.command(args)
     if b == "save" then M.panelsSave(true); return say("panel layout saved - it's also saved by itself a few seconds after you move a panel")
     elseif b == "restore" then M.panelsRestore(); return say("panels put back where you saved them")
     else M.panelsReset(); return say("panels back to Oven's default places") end
-  elseif a == "combat" and onoff ~= nil then
-    M.cfg.combatLines = onoff
-    say(onoff and "combat mode mxp: a line per round and a summary per fight" or "no combat lines from Oven")
+  elseif a == "combat" and (onoff ~= nil or b:match("^bar %a+$") or b:match("^lines %a+$")) then
+    local what, v = b:match("^(%a+) (%a+)$")
+    if not what then what, v = "both", b end
+    if v ~= "on" and v ~= "off" then return say("sbo combat on|off · sbo combat bar on|off · sbo combat lines on|off") end
+    if what == "bar" or what == "both" then M.cfg.combatBar = (v == "on") end
+    if what == "lines" or what == "both" then M.cfg.combatLines = (v == "on") end
+    if not M.cfg.combatBar then M.cbarShown = false; pcall(M.layoutBar) end
+    say(string.format("combat mode mxp: target bar %s, round lines and summaries %s",
+      M.cfg.combatBar and "on" or "off", M.cfg.combatLines and "on" or "off"))
   elseif a == "chat" then return M.chatCommand(b)
   elseif a == "tab" and (b == "inspector" or b == "help" or b == "log" or b == "chat") then
     M.createWindow(); M.container:show()
