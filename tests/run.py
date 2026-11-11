@@ -845,6 +845,20 @@ def quest_target_colours():
 
 
 @test
+def mob_formation():
+    lines = open(fixture("mob_formation.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
+    o = Oven()
+    r = o.sbo.format("item", "jan", o.L.table_from(lines), 100)
+    text = ["".join(seg[j][2] for j in range(1, len(seg) + 1)) for seg in (r[i] for i in range(1, len(r) + 1))]
+    para = [t for t in text if "janitors who work" in t or "workload" in t]
+    assert not any("[" in t or "Formation" in t for t in para), f"formation run into the description: {para}"
+    grid = [t for t in text if t.startswith("[")]
+    eq(len(grid), 5, "the grid, row by row")
+    assert grid[0].split() [:3] == ["[------------]", "[vagabond", "]"], grid[0]
+    assert any("formation of 2" in t and "Box Formation" in t for t in text), text
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

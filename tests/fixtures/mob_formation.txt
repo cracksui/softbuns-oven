@@ -1,0 +1,15 @@
+This is one of the many janitors who work diligently to keep the Towne of 
+Rune clean.  The man looks like he could really use a vacation.  But 
+considering what you've heard about what janitors get paid, he probably 
+can't afford to take one.  Watching the man so hard at work, you decide 
+that you should do what you can to cut down on his workload.
+He is a human approximately 5'8" tall.
+The janitor is currently in the vagabond's formation of 2.
+-- Box Formation --
+[------------]  [vagabond    ]  [janitor     ]  [------------]  [------------]
+[------------]  [------------]  [------------]  [------------]  [------------]
+[------------]  [------------]  [------------]  [------------]  [------------]
+[------------]  [------------]  [------------]  [------------]  [------------]
+[------------]  [------------]  [------------]  [------------]  [------------]
+You are 1 distance away from the janitor and your attack range is 2.
+The janitor is in good health.

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.40.0"
+M.version = "0.40.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1344,7 +1344,15 @@ function M.formatMob(raw, width)
     local race, height = t:match("^%S+ is an? (.-) approximately (.-) tall%.?$")
     local hair = t:match("^.-'s hair .-, and is:%s*(.-)%.?$")
     local pn, posture = t:match("^(.-) is (%a+)%.$")
-    if slot then slots[#slots + 1] = { slot, item, runs = M.runsFor(idx, (stripConds(item))) }; seenSlot = true
+    -- "The janitor is currently in the vagabond's formation of 2." / "-- Box Formation --" / a grid of
+    -- "[janitor     ]" cells: its own section, the grid as the game draws it
+    local fwho, fsize = t:match("^.- is currently in (.-) formation of (%d+)%.?$")
+    local fshape = t:match("^%-%-%s*(.-)%s*%-%-$")
+    local frow = t:match("^%[.-%]%s*%[.-%]") and t
+    if fwho then facts.formation = { who = fwho, size = fsize }
+    elseif fshape and fshape:lower():find("formation") then facts.formation = facts.formation or {}; facts.formation.shape = fshape
+    elseif frow and not seenSlot then facts.grid = facts.grid or {}; facts.grid[#facts.grid + 1] = t
+    elseif slot then slots[#slots + 1] = { slot, item, runs = M.runsFor(idx, (stripConds(item))) }; seenSlot = true
     elseif seenSlot then if t ~= "" then after[#after + 1] = t end
     elseif hn then name = name or hn
       local word = health:lower():match("(%a+)%s*$") or ""
@@ -1367,6 +1375,24 @@ function M.formatMob(raw, width)
   if facts.race then kvLine(out, "Race", 8, facts.race, width) end
   if facts.hair then kvLine(out, "Hair", 8, facts.hair, width) end
   paragraphs(out, desc, width)
+  if facts.formation or facts.grid then
+    subhead(out, "Formation")
+    local f = facts.formation or {}
+    local segs = {}
+    if f.who then segs[#segs + 1] = { C.item, f.who }; segs[#segs + 1] = { C.dim, " formation of " }; segs[#segs + 1] = { C.num, f.size } end
+    if f.shape then segs[#segs + 1] = { C.dim, (#segs > 0 and "  ·  " or "") .. f.shape } end
+    if #segs > 0 then out[#out + 1] = segs end
+    local me = name and name:lower():gsub("^the ", ""):gsub("^an? ", "")
+    for _, row in ipairs(facts.grid or {}) do
+      local r = {}
+      for cell in row:gmatch("%[[^%]]*%]") do
+        local inner = trim(cell:sub(2, -2))
+        local col = inner:match("^%-+$") and C.dim or ((me and inner:lower() == me) and C.title or C.item)
+        r[#r + 1] = { col, cell }; r[#r + 1] = { C.text, "  " }
+      end
+      out[#out + 1] = r
+    end
+  end
   if #slots > 0 then
     subhead(out, "Equipment")
     renderSlots(out, slots, width)
