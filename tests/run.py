@@ -723,6 +723,33 @@ def quest_step_done_real():
 
 
 @test
+def quest_stays_until_turned_in():
+    for log, want in (("other quest", None), ("still there", True), ("empty", None)):
+        o = Oven()
+        o.lua(f'''sbo.cfg.promptPattern = "<%d+hp"; SENT = {{}}
+          sbo.quests = {{ ["52"] = {{ name = "Jail Time", done = 4, total = 4, complete = true, active = true }},
+                         ["7"] = {{ name = "Other", done = 0, total = 2, active = true }} }}
+          sbo.cfg.questPins = {{ ["52"] = true }}
+          local replies = {{
+            ["quest complete"] = {{ "Lord Agrippa takes your report and rewards you." }},
+            ["quest info"] = ({{ ["other quest"] = {{ "Quest #7: Other (0/2 complete)", "Quest #9: Third (1/3 complete)" }},
+                               ["still there"] = {{ "Quest #52: Jail Time (4/4 complete)", "Quest #7: Other (0/2 complete)" }},
+                               ["empty"] = {{ "You are not on any quests." }} }})["{log}"],
+          }}
+          send = function(c)
+            SENT[#SENT + 1] = c
+            sbo.onSend(nil, c)
+            for _, l in ipairs(replies[c] or {{}}) do line = l; sbo.onLine() end
+            line = "<270hp>"; sbo.onLine()
+          end''')
+        o.lua('sbo.drawQuestTracker()')
+        eq(o.ev("sbo.cfg.questPins['52']"), True, "a finished quest stays pinned")
+        o.lua('send("quest complete"); runTimers()')
+        eq(list(o.ev("SENT").values()), ["quest complete", "quest info"], "checks the log after quest complete")
+        eq(o.ev("sbo.cfg.questPins['52']"), want, f"log: {log}")
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

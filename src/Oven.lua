@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.37.2"
+M.version = "0.38.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2151,7 +2151,8 @@ function M.rememberQuests(q, bare)
     for id in pairs(M.cfg.questPins or {}) do
       if not active[id] then
         M.cfg.questPins[id] = nil
-        M.notifyQuest((M.quests[id] and M.quests[id].name or ("#" .. id)) .. " is no longer active - unpinned")
+        local Q = M.quests[id]
+        M.notifyQuest((Q and Q.name or ("#" .. id)) .. ((Q and questFinished(Q)) and " turned in - unpinned" or " is no longer active - unpinned"))
       end
     end
   end
@@ -2359,7 +2360,7 @@ local function questCardHtml(id, Q)
   if finished then
     -- who to turn it in to: "Return to Lord Agrippa in time to receive your reward!" (else the quest master)
     local who = Q.turnIn or Q.master
-    local tail = (who and (" · return to " .. who) or "") .. " · click to clear"
+    local tail = (who and (" · return to " .. who) or "") .. " · stays until you quest complete"
     add(span(C.plus, " complete") .. span(C.dim, tail), 9 + ulen(tail))
   elseif Q.phases then
     local first = true
@@ -2563,7 +2564,7 @@ function M.questMarkComplete(name)
       M.drawQuestTracker()
       M.questJustDone = id
       if M.cfg.questPins and M.cfg.questPins[id] then
-        M.notifyQuest(name .. " complete - turn it in, then click it to clear")
+        M.notifyQuest(name .. " complete - turn it in with quest complete")
       end
       return id
     end
@@ -5909,11 +5910,15 @@ function M.finish(reason)
   M.cap = nil
   -- the reply to a plain "quest info" (no quest number): every quest you have
   M.questReplyBare = cap.kind == "quest" and tostring(cap.cmd or ""):lower():match("^%s*quest%s+info%s*$") ~= nil
-  -- the reply to "quest request" (any abbreviation, "que req"): the quest you were just given
+  -- the reply to "quest request" (any abbreviation, "que req"): the quest you were just given;
+  -- after "quest complete", check the quest log quietly: a quest that's gone from it was turned in
   do
     local v, a = tostring(cap.cmd or ""):lower():match("^%s*(%a+)%s+(%a+)")
-    M.questReplyRequest = cap.kind == "quest" and v ~= nil and #v >= 3 and ("quest"):sub(1, #v) == v
-      and #a >= 3 and ("request"):sub(1, #a) == a
+    local isQuest = cap.kind == "quest" and v ~= nil and #v >= 3 and ("quest"):sub(1, #v) == v and #a >= 3
+    M.questReplyRequest = isQuest and ("request"):sub(1, #a) == a
+    if isQuest and ("complete"):sub(1, #a) == a and not cap.quiet then
+      tempTimer(1, function() M.questTurnInCheck = true; M.quietQuest = true; send("quest info", false) end)
+    end
   end
   if cap.idleTimer then killTimer(cap.idleTimer) end
   if cap.maxTimer then killTimer(cap.maxTimer) end
@@ -5942,7 +5947,21 @@ function M.finish(reason)
   if cap.quiet and cap.quietKind == "quest" then
     -- tracker refresh: update the quest, draw nothing
     if reason == "prompt" and not M.cfg.bar then deleteLine() end
-    pcall(function() M.rememberQuests(M.parseQuests(cap.plain), M.questReplyBare) end)
+    local q = M.parseQuests(cap.plain)
+    pcall(function() M.rememberQuests(q, M.questReplyBare) end)
+    -- after quest complete, a log with no quests at all: every finished pinned quest was turned in
+    if M.questTurnInCheck and M.questReplyBare and #q.list == 0 and not q.detail then
+      for id in pairs(M.cfg.questPins or {}) do
+        local Q = M.quests[id]
+        if Q and questFinished(Q) then
+          M.cfg.questPins[id] = nil
+          Q.active = false
+          M.notifyQuest((Q.name or ("#" .. id)) .. " turned in - unpinned")
+        end
+      end
+      M.saveSettings(); pcall(M.drawQuestTracker)
+    end
+    M.questTurnInCheck = nil
     if M.cfg.samples and #cap.plain > 0 then writeSample(cap) end
     local nxt = table.remove(M.queue, 1)
     if nxt then M.start(nxt[1], nxt[2], nxt[3]) end

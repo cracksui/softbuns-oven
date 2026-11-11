@@ -118,7 +118,8 @@ corner, `sbo quest hud opacity 0-100` how see-through it is): click **pin** unde
 (done ones greyed out, the next one marked ▶; they update as you finish them) - `sbo quest hud blurb on` adds the quest's description, which often
 holds hints - updates whenever the game shows that quest, and re-checks quietly when you click it
 (or `sbo quest refresh`). When Oven can place the next step - an NPC it has seen, a creature you've
-killed somewhere, or a room on the map by name - the HUD shows where, and **`sbo quest go`** runs you there. A finished quest shows ✓ complete - click it to clear it from the HUD. Abandoned quests unpin themselves as soon as the game reports it.
+killed somewhere, or a room on the map by name - the HUD shows where, and **`sbo quest go`** runs you there. A finished quest shows ✓ complete (and who to return to) and stays until you turn it in with `quest
+complete` - then it comes off the HUD by itself (or click it to clear it sooner). Abandoned quests unpin themselves as soon as the game reports it.
 
 ## Comparing gear
 
