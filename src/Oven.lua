@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.38.1"
+M.version = "0.38.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5573,17 +5573,31 @@ M.addChatPattern("hint", function(l)
   local kind, msg = l:match("^(%u%l+ Hint): (.+)$")
   if kind then return "HINT", kind, msg end
 end)
+-- quest givers Oven knows (from quest info and "Return to X ..."): NPCs, even with one-word names
+local function questGiver(who)
+  who = who:lower()
+  for _, Q in pairs(M.quests or {}) do
+    for _, n in ipairs({ Q.master, Q.turnIn }) do
+      if n and (n:lower() == who or n:lower():gsub("^the ", "") == who) then return true end
+    end
+  end
+end
+M.questGiver = questGiver
+
 -- tells, to and from you. Several-word names ("An old druid tells you") are creatures, not players.
 M.addChatPattern("tell", function(l)
-  local who, msg = l:match("^(%u[%w%-']*) tells you '(.*)'%s*$")
-  if who then return "Tells", who, msg end
+  local who, msg = l:match("^(%u[%w%-']*) tells you,? '(.*)'%s*$")
+  if who then
+    if questGiver(who) then return end
+    return "Tells", who, msg
+  end
   who, msg = l:match("^You tell (%u[%w%-']*),? '(.*)'%s*$")
   if who then return "Tells", "you → " .. who, msg end
 end)
 -- says, from players (one-word names) and you
 M.addChatPattern("say", function(l)
   local who, msg = l:match("^(%u[%w%-']*) says?, '(.*)'%s*$")
-  if who and who ~= "You" then return "Say", who, msg end
+  if who and who ~= "You" and not questGiver(who) then return "Say", who, msg end
   msg = l:match("^You say,? '(.*)'%s*$")
   if msg then return "Say", "you", msg end
 end)

@@ -768,6 +768,25 @@ def quest_turn_in_real():
 
 
 @test
+def quest_givers_any_npc():
+    o = Oven()
+    o.lua('''sbo.cfg.promptPattern = "<%d+hp"; SENT = {}; send = function(c) SENT[#SENT + 1] = c end
+      sbo.quests = { ["3098"] = { name = "Training in the Forest", done = 6, total = 6, master = "The head park keeper", active = true },
+                     ["90"] = { name = "Bridge Trial", done = 2, total = 2, active = true } }
+      sbo.cfg.questPins = { ["3098"] = true, ["90"] = true }''')
+    o.feed("All parts of your quest 'Bridge Trial' are complete.", "Return to Samara in time to receive your reward!", "<270hp>")
+    eq(o.ev("sbo.quests['90'].turnIn"), "Samara", "any quest giver")
+    o.feed("You inform the head park keeper you have completed your quest 'Training in the Forest'.", "<270hp>")
+    eq(o.ev("sbo.cfg.questPins['3098']"), None, "turned in to the head park keeper")
+    o.feed("You inform Samara you have completed your quest 'Bridge Trial'.",
+           "Samara tells you, 'Congratulations on the completion of thy quest, Hero!'", "<270hp>")
+    eq(o.ev("sbo.cfg.questPins['90']"), None, "turned in to Samara")
+    eq(o.ev("#sbo.chat.lines"), 0, "a one-word quest giver's tell isn't chat")
+    o.feed("Wren tells you 'nice one'", "<270hp>")
+    eq(o.ev("#sbo.chat.lines"), 1, "a player's tell still is")
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40
