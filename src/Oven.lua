@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.37.1"
+M.version = "0.37.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2357,7 +2357,10 @@ local function questCardHtml(id, Q)
     .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar,
     ulen(name) + ulen(id) + 4 + (Q.total and 13 or 0) + (finished and 2 or 0))
   if finished then
-    add(span(C.plus, " complete") .. span(C.dim, " · click to clear"), 28)
+    -- who to turn it in to: "Return to Lord Agrippa in time to receive your reward!" (else the quest master)
+    local who = Q.turnIn or Q.master
+    local tail = (who and (" · return to " .. who) or "") .. " · click to clear"
+    add(span(C.plus, " complete") .. span(C.dim, tail), 9 + ulen(tail))
   elseif Q.phases then
     local first = true
     for _, ph in ipairs(Q.phases) do
@@ -2558,6 +2561,7 @@ function M.questMarkComplete(name)
       M.cfg.quests = M.quests
       M.saveSettings()
       M.drawQuestTracker()
+      M.questJustDone = id
       if M.cfg.questPins and M.cfg.questPins[id] then
         M.notifyQuest(name .. " complete - turn it in, then click it to clear")
       end
@@ -5796,7 +5800,24 @@ function M.onLine()
   end
   local doneQuest = line:match("^%s*All parts of your quest '(.+)' are complete%.?%s*$")
   if doneQuest then pcall(M.questMarkComplete, doneQuest)
-  else pcall(M.noteQuestProgress, line) end
+  else
+    -- the line after it: "Return to Lord Agrippa in time to receive your reward!"
+    local who = M.questJustDone and line:match("^%s*Return to (.-) in time to receive your reward")
+    if who then
+      local id = M.questJustDone
+      local Q = M.quests[id]
+      M.questJustDone = nil
+      if Q then
+        Q.turnIn = who
+        M.cfg.quests = M.quests; M.saveSettings()
+        pcall(M.drawQuestTracker)
+        if (M.cfg.questPins or {})[id] then M.notifyQuest((Q.name or ("#" .. id)) .. " complete - return to " .. who .. " for your reward") end
+      end
+    elseif trim(line) ~= "" then
+      M.questJustDone = nil
+      pcall(M.noteQuestProgress, line)
+    end
+  end
   -- sbo mirror chat off: chat goes to the Chat tab only (while the window is there to show it)
   if M.cfg.mirror.chat == false and not cap and M.cfg.tabs and M.cfg.window and M.container
       and not isPromptLine() and M.chatFind(line) then

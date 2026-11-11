@@ -712,6 +712,14 @@ def quest_step_done_real():
     o.lua('sbo.questGmcpAt = {}')
     o.feed("You have completed a part of quest #52, 'Jail Time'!", "Your next task is Phase 4: Defeat a sickly prisoner [Lowangen].")
     o.L.execute("runTimers()")
+    # the last step
+    o.feed("All parts of your quest 'Jail Time' are complete.", "Return to Lord Agrippa in time to receive your reward!")
+    eq((o.ev("sbo.quests['52'].complete"), o.ev("sbo.quests['52'].turnIn")), (True, "Lord Agrippa"), "complete, and who to return to")
+    card = o.ev('sbo.questCardHtml("52", sbo.quests["52"])')
+    card = "\n".join(card[0].values())   # (lines, width)
+    assert "return to Lord Agrippa" in card, card
+    o.lua('SENT = {}')
+    o.L.execute("runTimers()")
     eq(list(o.ev("SENT").values()), ["quest info 52"], "no GMCP with it: quest info 52, quietly")
 
 
