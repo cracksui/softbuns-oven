@@ -1,0 +1,30 @@
+##### fixture: chat lines in the game's formats (names and messages made up); and lines that aren't chat
+===== 2026-01-01 00:00:00 | cmd= | room=945939
+[CLAN] Moss: 'anyone up for the graveyard?'
+(Mount: 2415st)
+[Mail]<270hp 501sp 401st> 
+===== 2026-01-01 00:00:01 | cmd= | room=945939
+A lost demon is jabbed on the torso with Pip's pierce causing lethal damage. [CRIT]
+[CLAN] Pip has been slain in A Fetid Lane!
+[CLAN] Bramble: '*Hat* welcome to the clan, it's a long way to the top if you want to rock and roll'
+[Mail]<270hp 501sp 401st> 
+===== 2026-01-01 00:00:02 | cmd=l | room=945939
+ A Fetid Lane                                           -      -      -
+(-------------------------------------------------)     W <---(M)---> E
+                                                        -      -      -
+  Something is here.  
+[Clan 164] Pip a st00pid n00b... is here.
+[Quest] An exhausted man in a bloodstained tuxedo sits here.
+An icy lich says, 'Your filth taints the pristine ice of my domain.'
+An old druid tells you 'The spirits? You must move with caution!'
+'Ah, Hero.' the incarnation of death says. 'I've been looking for you.'
+[AFFECTS-LIST-ALL]
+[Mail][Library][SAFE]<270hp 550sp 401st> 
+===== 2026-01-01 00:00:03 | cmd=help clantalk | room=945939
+[2333 ] CLANTALK
+[CLAN] Example: 'a line inside a help page'
+[Mail]<270hp 550sp 401st> 
+===== 2026-01-01 00:00:04 | cmd= | room=945939
+Wren tells you 'meet at the fountain'
+[Mail]<270hp 550sp 401st> 
+##### end

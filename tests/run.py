@@ -361,7 +361,7 @@ def quest_info_typed_updates_pins():
 def inspector_tabs():
     o = Oven()
     o.lua('''sbo.cfg.window = true
-      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log" }) do if WIDGETS["ovenTabPage_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end''')
+      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log", "chat" }) do if WIDGETS["ovenTabs2Page_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end''')
     o.lua('sbo.viewAdd({ lines = { { { "white", "an item" } } }, links = {} })')
     eq(o.ev("FRONT()"), "view", "an item: Inspector tab")
     o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES", "Character classes in Alyria are as follows:" })')
@@ -371,15 +371,41 @@ def inspector_tabs():
     o.lua('sbo.command("session")')
     eq(o.ev("FRONT()"), "log", "session: Log tab")
     o.lua('sbo.command("kills")'); eq(o.ev("FRONT()"), "log", "kills: Log tab")
-    o.lua('WIDGETS.ovenTab_view.click()'); eq(o.ev("FRONT()"), "view", "clicking a tab")
+    o.lua('WIDGETS.ovenTabs2_view.click()'); eq(o.ev("FRONT()"), "view", "clicking a tab")
     o.lua('sbo.command("tab help")'); eq(o.ev("FRONT()"), "help", "sbo tab help")
-    eq(o.ev("WIDGETS.ovenTab_help.css").count("e6c35c"), 1, "the front tab is highlighted")
+    eq(o.ev("WIDGETS.ovenTabs2_help.css").count("e6c35c"), 1, "the front tab is highlighted")
     o.lua('sbo.command("tabs off")')
-    eq(o.ev("WIDGETS.ovenTabBox.shown"), False, "tabs off hides the bar")
+    eq(o.ev("WIDGETS.ovenTabs2Box.shown"), False, "tabs off hides the bar")
     o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES" })')
     assert o.ev("sbo.helpContainer") is not None, "tabs off: help gets its own window again"
     bad = [m for m in o.ev("CREATED").values() if "MAIN SCREEN" in m]
     assert not bad, bad
+
+
+@test
+def chat_tab():
+    o = Oven()
+    o.lua('sbo.cfg.window = true; sbo.viewAdd({ lines = { { { "white", "an item" } } }, links = {} })')
+    o.replay(fixture("chat.txt"))
+    got = [(e["ch"], e.get("who")) for e in (dict(x.items()) for x in o.ev("sbo.chat.lines").values())]
+    eq(got, [("CLAN", "Moss"), ("CLAN", None), ("CLAN", "Bramble"), ("Tells", "Wren")],
+       "chat lines (a notice once CLAN is known; no NPC talk, room lines, help pages)")
+    eq(list(o.ev("sbo.cfg.chatChannels").values()), ["CLAN", "Tells"], "channels learned in order")
+    eq(o.ev("WIDGETS.ovenTabs2Page_view.shown"), True, "chat doesn't take the window's focus")
+    eq(o.ev("WIDGETS.ovenTabs2_chat.text"), "<center>Chat 4</center>", "unread count on the tab")
+    o.lua('sbo.command("tab chat")')
+    eq(o.ev("WIDGETS.ovenTabs2_chat.text"), "<center>Chat</center>", "read once the tab is open")
+    text = o.ev("WIDGETS.ovenChatConsole.text")
+    assert "Bramble" in text and "Wren" in text, text
+    o.lua('sbo.chatFilter("Tells")')
+    text = o.ev("WIDGETS.ovenChatConsole.text")
+    assert "Wren" in text and "Moss" not in text, f"filter: {text}"
+    o.lua('sbo.command("chat mute clan"); sbo.chatFilter("All")')
+    text = o.ev("WIDGETS.ovenChatConsole.text")
+    assert "Moss" not in text and "Wren" in text, f"muted: {text}"
+    assert "line-through" in o.ev("WIDGETS.ovenChatChip2.css"), "muted chip is struck through"
+    o.lua('sbo.chatFilter("CLAN")')
+    assert "Moss" in o.ev("WIDGETS.ovenChatConsole.text"), "a muted channel can still be read on its own"
 
 
 @test

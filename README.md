@@ -83,9 +83,15 @@ Drag it by its title bar and resize it from its edges; it remembers where you pu
 
 Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipment`…).
 
-Results open in the **Inspector** window, which has three tabs: **Inspector** (eq, items, score, comparisons,
-with ◀ older / newer ▶), **Help** (game help pages and `sbo`'s command list) and **Log** (`sbo session`, `kills`,
-`loot`, `deaths`, with links between them). Whatever arrives brings its tab to the front; click a tab to switch.
+Results open in the **Inspector** window, which has four tabs: **Inspector** (eq, items, score, comparisons,
+with ◀ older / newer ▶), **Help** (game help pages and `sbo`'s command list), **Log** (`sbo session`, `kills`,
+`loot`, `deaths`, with links between them) and **Chat**. Whatever arrives brings its tab to the front - except
+chat, which never takes the window from you: the tab counts what you haven't read (`Chat 3`).
+
+**Chat** collects channel talk (`[CLAN] Name: '...'` and the channel's news), tells and says, in the game's own
+colours, with the time. A row of chips along the top - `All · CLAN 2 · Tells` - picks what to show; each channel
+gets its chip the first time it speaks, and its count is what you haven't read. Right-click a chip (or
+`sbo chat mute clan`) to keep a channel out of All; click it to read it on its own. The main screen is unchanged.
 
 | Command | Becomes |
 |---|---|
@@ -160,8 +166,9 @@ sbo on|off                turn formatting on / off
 sbo main replace|keep     replace the raw text in the main window, or leave it alone
                           (keep = formatted output only in the Inspector)
 sbo window on|off         show / hide the Inspector window
-sbo tabs on|off           Inspector | Help | Log as tabs in that window (off: help gets its own window)
-sbo tab inspector|help|log  bring a tab to the front (or click it)
+sbo tabs on|off           Inspector | Help | Log | Chat as tabs in that window (off: help gets its own window)
+sbo tab inspector|help|log|chat  bring a tab to the front (or click it)
+sbo chat [channel|all]    the Chat tab, showing one channel or all · mute|unmute <channel> · clear · forget <channel>
 sbo clear                 clear the Inspector's history
 sbo font [size]           Inspector / help window font size (leave the number off for the default)
 sbo raw                   reprint the last output exactly as the game sent it

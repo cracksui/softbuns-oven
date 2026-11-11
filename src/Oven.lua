@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.28.1"
+M.version = "0.29.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3024,7 +3024,9 @@ end
 
 -- Tabs along the top of the Inspector window. Each tab is its own page; whatever arrives for a
 -- tab (an item, a help page, the session) brings it to the front.
-M.TABS = { { key = "view", title = "Inspector" }, { key = "help", title = "Help" }, { key = "log", title = "Log" } }
+M.TABS = { { key = "view", title = "Inspector" }, { key = "help", title = "Help" }, { key = "log", title = "Log" },
+           { key = "chat", title = "Chat" } }
+local TABS_ID = "ovenTabs2"   -- new widget names whenever the set of tabs changes (an update mid-session)
 local tabStyle = [[
   QLabel { background-color: rgba(24,24,32,255); color: #808080; border: 1px solid #333; border-bottom: none;
            border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 10px; margin-right: 2px; }
@@ -3034,22 +3036,25 @@ local tabOnStyle = [[
            border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 10px; margin-right: 2px; }]]
 
 function M.buildTabs()
-  if M.tabBox then return end
-  M.tabBox = Geyser.VBox:new({ name = "ovenTabBox", x = 0, y = 0, width = "100%", height = "100%" }, M.container)
-  M.tabBar = Geyser.HBox:new({ name = "ovenTabBar", height = 24, v_policy = Geyser.Fixed }, M.tabBox)
-  M.tabBody = Geyser.Container:new({ name = "ovenTabBody" }, M.tabBox)
+  if M.tabBox and M.tabsId == TABS_ID then return end
+  if M.tabBox then pcall(function() M.tabBox:hide() end) end   -- tabs from before an update
+  M.tabsId = TABS_ID
+  M.tabBox = Geyser.VBox:new({ name = TABS_ID .. "Box", x = 0, y = 0, width = "100%", height = "100%" }, M.container)
+  M.tabBar = Geyser.HBox:new({ name = TABS_ID .. "Bar", height = 24, v_policy = Geyser.Fixed }, M.tabBox)
+  M.tabBody = Geyser.Container:new({ name = TABS_ID .. "Body" }, M.tabBox)
   M.tabLabels, M.tabPages = {}, {}
   for _, t in ipairs(M.TABS) do
     local key = t.key
-    local lab = Geyser.Label:new({ name = "ovenTab_" .. key, width = 96, h_policy = Geyser.Fixed }, M.tabBar)
+    local lab = Geyser.Label:new({ name = TABS_ID .. "_" .. key, width = 96, h_policy = Geyser.Fixed }, M.tabBar)
     lab:echo("<center>" .. t.title .. "</center>")
     pcall(function() lab:setCursor("PointingHand") end)
     lab:setClickCallback(function() M.tabShow(key) end)
     M.tabLabels[key] = lab
-    M.tabPages[key] = Geyser.Container:new({ name = "ovenTabPage_" .. key, x = 0, y = 0, width = "100%", height = "100%" }, M.tabBody)
+    M.tabPages[key] = Geyser.Container:new({ name = TABS_ID .. "Page_" .. key, x = 0, y = 0, width = "100%", height = "100%" }, M.tabBody)
   end
+  pcall(M.buildChat, M.tabPages.chat)
   -- the rest of the bar stays empty
-  M.tabFill = Geyser.Label:new({ name = "ovenTabFill" }, M.tabBar)
+  M.tabFill = Geyser.Label:new({ name = TABS_ID .. "Fill" }, M.tabBar)
   M.tabFill:setStyleSheet("background-color: rgba(20,20,28,0); border-bottom: 1px solid #555;")
 end
 
@@ -3090,6 +3095,7 @@ function M.tabShow(key, quiet)
   if not quiet then
     if key == "view" and not M.viewShown then M.viewShow()
     elseif key == "log" and not M.logShown then M.logAdd(M.sessionLines(M.pageCols(M.logPg)), M.logLinks())
+    elseif key == "chat" then M.chatSeen()
     elseif key == "help" and not M.helpShown then
       M.helpPage("Help", { "<128,128,128>Game help pages open here - try help classes, or sbo for Oven's commands." }, "decho")
     end
@@ -5009,6 +5015,12 @@ function M.recordLine(l, prompt)
   cur.fg = cur.fg or {}
   local okF, fg = pcall(M.lineFg, l)
   cur.fg[#cur.lines] = okF and fg or false
+  -- the full colours of anything that may be chat, so the Chat tab shows it as the game did
+  if (l:find("'", 1, true) or l:match("^%[%u")) and M.chatFind(l) then
+    cur.decho = cur.decho or {}
+    local okD, d = pcall(selectionDecho)
+    cur.decho[#cur.lines] = okD and d or nil
+  end
   -- a block ends at the prompt; if no prompt has come for a long while (it isn't recognised yet),
   -- a blank line ends it, so kills and loot are still read promptly
   if not prompt and #cur.lines < REC_BLOCK_LINES and not (#cur.lines >= 60 and not l:match("%S")) then return end
@@ -5018,10 +5030,11 @@ function M.recordLine(l, prompt)
   if cur.savedLines then
     local rest = {}
     local restFg = {}
-    for i = cur.savedLines + 1, #cur.lines do rest[#rest + 1] = cur.lines[i]; restFg[#rest] = (cur.fg or {})[i] end
-    cur.lines, cur.cmds, cur.fg = rest, {}, restFg
+    local restD = {}
+    for i = cur.savedLines + 1, #cur.lines do rest[#rest + 1] = cur.lines[i]; restFg[#rest] = (cur.fg or {})[i]; restD[#rest] = (cur.decho or {})[i] end
+    cur.lines, cur.cmds, cur.fg, cur.decho = rest, {}, restFg, restD
   end
-  local b = { seq = W.seq, t = os.time(), cmds = cur.cmds, lines = cur.lines, fg = cur.fg or {},
+  local b = { seq = W.seq, t = os.time(), cmds = cur.cmds, lines = cur.lines, fg = cur.fg or {}, decho = cur.decho,
               room = M.currentRoom and M.currentRoom(), gmcp = gmcpChanges() }
   M.recCur = { lines = {}, cmds = {} }
   b.prompt = prompt
@@ -5189,6 +5202,229 @@ M.addBlockReader("room_npcs", "room", function(b, seg)
     end
   end
 end)
+
+---------------------------------------------------------------------------
+-- Chat: channel talk, tells and says, gathered into the Chat tab with a row of channel chips
+-- (All · CLAN 2 · Tells…). Channels are learned as they appear - nothing is listed in advance.
+-- Lines keep the game's colours; the main screen is left as it is.
+---------------------------------------------------------------------------
+M.chat = M.chat or { lines = {}, unread = {}, filter = "All" }
+local CHAT_KEEP = 500
+
+-- recognisers: a line -> channel, who, message (nil if it isn't chat). Add more with M.addChatPattern.
+M.chatPatterns = {}
+function M.addChatPattern(name, find) M.chatPatterns[#M.chatPatterns + 1] = { name = name, find = find } end
+
+local function knownChannel(tag) for _, c in ipairs(M.cfg.chatChannels or {}) do if c == tag then return true end end end
+
+-- "[CLAN] Yakumo: 'sup nac'"  - a channel: a tag of letters, one name, then the message in quotes
+M.addChatPattern("channel", function(l)
+  local tag, who, msg = l:match("^%[(%a[%a ]-)%] (%u[%w%-']*): '(.*)'%s*$")
+  if tag then return tag, who, msg end
+end)
+-- "[CLAN] Roarke has been slain in A Fetid Lane!" - news on a channel already seen talking
+M.addChatPattern("notice", function(l)
+  local tag, rest = l:match("^%[(%u[%u ]-)%] (%u.+)$")
+  if tag and knownChannel(tag) then return tag, nil, rest end
+end)
+-- tells, to and from you. Several-word names ("An old druid tells you") are creatures, not players.
+M.addChatPattern("tell", function(l)
+  local who, msg = l:match("^(%u[%w%-']*) tells you '(.*)'%s*$")
+  if who then return "Tells", who, msg end
+  who, msg = l:match("^You tell (%u[%w%-']*),? '(.*)'%s*$")
+  if who then return "Tells", "you → " .. who, msg end
+end)
+-- says, from players (one-word names) and you
+M.addChatPattern("say", function(l)
+  local who, msg = l:match("^(%u[%w%-']*) says?, '(.*)'%s*$")
+  if who and who ~= "You" then return "Say", who, msg end
+  msg = l:match("^You say,? '(.*)'%s*$")
+  if msg then return "Say", "you", msg end
+end)
+
+function M.chatFind(l)
+  if not l:find("'", 1, true) and not l:match("^%[%u") then return end
+  for _, p in ipairs(M.chatPatterns) do
+    local ok, ch, who, msg = pcall(p.find, l)
+    if ok and ch then return ch, who, msg end
+  end
+end
+
+-- chat in a block: every line but the prompt, never inside a help page
+M.addBlockReader("chat", "*", function(b, kinds)
+  if kinds.help then return end
+  local last = #b.lines - (b.prompt and 1 or 0)
+  for i = 1, last do
+    local l = b.lines[i]
+    local ch, who, msg = M.chatFind(l)
+    if ch then M.chatAdd(ch, l, b.decho and b.decho[i], b.t, who, msg) end
+  end
+end)
+
+function M.chatAdd(ch, plain, decho, t, who, msg)
+  local C = M.chat
+  M.cfg.chatChannels = M.cfg.chatChannels or {}
+  if not knownChannel(ch) then
+    table.insert(M.cfg.chatChannels, ch)
+    M.saveSettings()
+  end
+  local e = { ch = ch, plain = plain, decho = decho, t = t or os.time(), who = who, msg = msg }
+  C.lines[#C.lines + 1] = e
+  while #C.lines > CHAT_KEEP do table.remove(C.lines, 1) end
+  local muted = (M.cfg.chatMuted or {})[ch]
+  local seen = M.tabOn == "chat" and M.container and (C.filter == "All" or C.filter == ch)
+  if not muted and not seen then C.unread[ch] = (C.unread[ch] or 0) + 1 end
+  if M.chatConsole and (C.filter == "All" and not muted or C.filter == ch) then M.chatEcho(e) end
+  pcall(M.chatChips)
+end
+
+local function chatLine(e)
+  local d = e.decho or ("<192,192,192>" .. e.plain)
+  return "<90,90,100>" .. os.date("%H:%M", e.t) .. " " .. d
+end
+function M.chatEcho(e)
+  pcall(function() M.chatConsole:decho(chatLine(e) .. "\n") end)
+end
+
+-- redraw the console for the chosen chip
+function M.chatRender()
+  if not M.chatConsole then return end
+  local C, muted = M.chat, M.cfg.chatMuted or {}
+  pcall(function() M.chatConsole:clear() end)
+  local any = false
+  for _, e in ipairs(C.lines) do
+    if (C.filter == "All" and not muted[e.ch]) or C.filter == e.ch then M.chatEcho(e); any = true end
+  end
+  if not any then
+    pcall(function() M.chatConsole:decho("<90,90,100>" .. (#C.lines == 0
+      and "Channel talk, tells and says collect here as they happen - each channel gets its own chip above."
+      or "Nothing on " .. C.filter .. " yet.") .. "\n") end)
+  end
+end
+
+local chipStyle = [[QLabel { color: %s; background-color: %s; border: 1px solid %s; border-radius: 9px;
+  padding: 0 8px; margin: 2px 2px; %s } QLabel::hover { color: #ffffff; }]]
+local function chipCss(on, muted, hot)
+  if muted then return string.format(chipStyle, "#555555", "rgba(0,0,0,0)", "#2a2a2a", "text-decoration: line-through;") end
+  if on then return string.format(chipStyle, "#e6c35c", "rgba(40,36,20,255)", "#8a7430", "") end
+  return string.format(chipStyle, hot and "#e0e0e0" or "#909090", "rgba(24,24,32,255)", "#333333", "")
+end
+
+-- chips: All, then each channel in the order it first spoke; counts are unread lines
+function M.chatChips()
+  if not M.chatBar then return end
+  local C, muted = M.chat, M.cfg.chatMuted or {}
+  local names = { "All" }
+  for _, c in ipairs(M.cfg.chatChannels or {}) do names[#names + 1] = c end
+  local total = 0
+  for ch, n in pairs(C.unread) do if not muted[ch] then total = total + n end end
+  M.chatChipLabels = M.chatChipLabels or {}
+  local relayout = false
+  for i, name in ipairs(names) do
+    local n = name == "All" and total or (C.unread[name] or 0)
+    local text = name .. ((n > 0) and (" " .. n) or "")
+    local w = math.max(44, 22 + 8 * ulen(text))
+    local lab = M.chatChipLabels[i]
+    if not lab then
+      lab = Geyser.Label:new({ name = "ovenChatChip" .. i, width = w, h_policy = Geyser.Fixed }, M.chatBar)
+      pcall(function() lab:setCursor("PointingHand") end)
+      M.chatChipLabels[i] = lab
+      relayout = true
+    elseif lab.chipW ~= w then
+      pcall(function() lab:resize(w, lab.get_height and lab:get_height() or 24) end)
+      relayout = true
+    end
+    lab.chipW = w
+    lab:echo("<center>" .. (text:gsub("&", "&amp;"):gsub("<", "&lt;")) .. "</center>")
+    lab:setStyleSheet(chipCss(C.filter == name, muted[name], n > 0))
+    pcall(function() lab:setToolTip(name == "All" and "every channel that isn't muted"
+      or ("only " .. name .. " - right-click to " .. (muted[name] and "unmute" or "mute"))) end)
+    lab:setClickCallback(function(ev)
+      if type(ev) == "table" and ev.button == "RightButton" and name ~= "All" then return M.chatMute(name) end
+      M.chatFilter(name)
+    end)
+    lab:show()
+  end
+  for i = #names + 1, #M.chatChipLabels do M.chatChipLabels[i]:hide() end
+  if relayout and M.chatBar.organize then pcall(function() M.chatBar:organize() end) end
+  if M.tabLabels and M.tabLabels.chat then
+    M.tabLabels.chat:echo("<center>Chat" .. (total > 0 and (" " .. total) or "") .. "</center>")
+  end
+end
+
+function M.chatSeen()
+  local C = M.chat
+  if C.filter == "All" then
+    local muted = M.cfg.chatMuted or {}
+    for ch in pairs(C.unread) do if not muted[ch] then C.unread[ch] = nil end end
+  else
+    C.unread[C.filter] = nil
+  end
+  pcall(M.chatChips)
+end
+
+function M.chatFilter(name)
+  M.chat.filter = name
+  M.chatRender()
+  M.chatSeen()
+end
+
+function M.chatMute(name)
+  M.cfg.chatMuted = M.cfg.chatMuted or {}
+  M.cfg.chatMuted[name] = (not M.cfg.chatMuted[name]) or nil
+  if M.cfg.chatMuted[name] then M.chat.unread[name] = nil end
+  M.saveSettings()
+  M.chatRender()
+  pcall(M.chatChips)
+  M.say(name .. (M.cfg.chatMuted[name] and " muted - its lines stay out of All (click its chip to read it)" or " unmuted"))
+end
+
+-- the Chat tab: chips over a console
+function M.buildChat(page)
+  local box = Geyser.VBox:new({ name = "ovenChatBox", x = 0, y = 0, width = "100%", height = "100%" }, page)
+  M.chatBar = Geyser.HBox:new({ name = "ovenChatChips", height = 24, v_policy = Geyser.Fixed }, box)
+  M.chatChipLabels = {}
+  M.chatConsole = Geyser.MiniConsole:new({ name = "ovenChatConsole", color = "black" }, box)
+  local font, size = pageFont()
+  pcall(function() M.chatConsole:setFont(font) end)
+  pcall(function() M.chatConsole:setFontSize(size) end)
+  pcall(function() M.chatConsole:enableAutoWrap() end)
+  pcall(function() M.chatConsole:enableScrollBar() end)
+  M.chatChips()
+  M.chatRender()
+end
+
+function M.chatCommand(b)
+  local a, rest = b:match("^(%S*)%s*(.-)$")
+  a = a:lower()
+  local function find(n)
+    if n:lower() == "all" then return "All" end
+    for _, c in ipairs(M.cfg.chatChannels or {}) do if c:lower() == n:lower() then return c end end
+  end
+  if a == "" then
+    M.createWindow(); M.container:show(); M.tabShow("chat"); return
+  elseif a == "mute" or a == "unmute" then
+    local c = find(rest)
+    if not c or c == "All" then return M.say("no channel called '" .. rest .. "' yet - channels: " .. table.concat(M.cfg.chatChannels or {}, ", ")) end
+    if (a == "mute") ~= ((M.cfg.chatMuted or {})[c] == true) then M.chatMute(c) end
+    return
+  elseif a == "clear" then
+    M.chat.lines, M.chat.unread = {}, {}
+    M.chatRender(); pcall(M.chatChips)
+    return M.say("chat cleared")
+  elseif a == "forget" then
+    local c = find(rest)
+    if not c or c == "All" then return M.say("no channel called '" .. rest .. "'") end
+    for i, x in ipairs(M.cfg.chatChannels) do if x == c then table.remove(M.cfg.chatChannels, i); break end end
+    M.chat.unread[c] = nil
+    if M.chat.filter == c then M.chat.filter = "All" end
+    M.saveSettings(); M.chatRender(); pcall(M.chatChips)
+    return M.say(c .. " forgotten (it comes back if it's used again)")
+  end
+  local c = find(b)
+  if c then M.createWindow(); M.container:show(); M.tabShow("chat"); return M.chatFilter(c) end
+  M.say("sbo chat [channel|all] · sbo chat mute|unmute <channel> · sbo chat clear · sbo chat forget <channel>")
+end
 
 -- what the game sends over GMCP right now, written in full to oven_gmcp.txt
 function M.gmcpDump()
@@ -6577,8 +6813,11 @@ M.helpSections = {
     { "sbo main replace|keep", "formatted text in the main window, or leave the main window alone" },
     { "sbo window on|off", "the Inspector window (drag it by its title, resize from its edges)" },
     { "sbo helpwindow on|off", "game help pages (and this list) in a window instead of the main screen" },
-    { "sbo tabs on|off", "Inspector | Help | Log as tabs in one window (off: help gets its own window)" },
-    { "sbo tab inspector|help|log", "bring a tab to the front (or click it)" },
+    { "sbo tabs on|off", "Inspector | Help | Log | Chat as tabs in one window (off: help gets its own window)" },
+    { "sbo tab inspector|help|log|chat", "bring a tab to the front (or click it)" },
+    { "sbo chat [channel|all]", "the Chat tab: channel talk, tells and says; click a chip to show one channel" },
+    { "sbo chat mute|unmute {channel}", "keep a channel out of All (or right-click its chip)" },
+    { "sbo chat clear  /  forget {channel}", "empty the Chat tab / drop a channel's chip" },
     { "sbo font [size]", "Inspector / help window font size" },
     { "sbo clear", "clear the Inspector's history" },
   } },
@@ -6774,7 +7013,8 @@ function M.command(args)
     M.cfg.tabs = onoff
     if M.container then M.applyTabs(); M.viewShow() end
     say(onoff and "tabs on: Inspector | Help | Log in one window" or "tabs off: help pages get their own window again")
-  elseif a == "tab" and (b == "inspector" or b == "help" or b == "log") then
+  elseif a == "chat" then return M.chatCommand(b)
+  elseif a == "tab" and (b == "inspector" or b == "help" or b == "log" or b == "chat") then
     M.createWindow(); M.container:show()
     M.tabShow(b == "inspector" and "view" or b)
     return

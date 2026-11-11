@@ -110,3 +110,15 @@ Geyser.Container = box("container"); Geyser.VBox = box("vbox"); Geyser.HBox = bo
 Geyser.Fixed, Geyser.Dynamic = "fixed", "dynamic"
 local labelNew = Geyser.Label.new
 Geyser.Label.new = function(self, o, parent) local t = labelNew(self, o, parent); WIDGETS = WIDGETS or {}; WIDGETS[o.name] = t; return t end
+
+-- a mini console that keeps what's echoed into it
+Geyser.MiniConsole = { new = function(self, o, parent)
+  local t = { name = o.name, text = "", shown = true }
+  function t:decho(s) t.text = t.text .. s end
+  function t:clear() t.text = "" end
+  function t:show() t.shown = true end function t:hide() t.shown = false end
+  function t:setFont() end function t:setFontSize() end function t:enableAutoWrap() end function t:enableScrollBar() end
+  function t:move() end function t:resize() end
+  WIDGETS = WIDGETS or {}; WIDGETS[o.name] = t
+  return t
+end }
