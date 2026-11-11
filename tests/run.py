@@ -770,6 +770,36 @@ def signpost_learning():
 
 
 @test
+def shop_lists():
+    shops = open(fixture("shop_list.txt"), encoding="utf-8").read().rstrip("\n").split("\n---\n")
+    o = Oven()
+    o.lua('''sbo.cfg.promptPattern = "<%d+hp"
+      roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
+      getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end''')
+    for room, (cmd, text) in zip((10515, 10557, 10636), (("sh li", shops[0]), ("shop list", shops[1]), ("sh i", shops[2]))):
+        o.lua(f'sbo.mapRoom = {room}; sbo.onSend(nil, "{cmd}")')
+        o.feed(*text.split("\n"), "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq([r["name"] for r in o.rows("SELECT name FROM shops ORDER BY room")],
+       ["the Sushi Bar", "local potion shop", "Ganuk's Express Travels"], "the shops, by room")
+    eq(o.rows("SELECT item, level, amount, cost FROM shop_items WHERE room = 10557 AND no = 13"),
+       [{"item": "A potion of detect illusion", "level": 45, "amount": "No limit", "cost": 890}], "a row")
+    eq(o.rows("SELECT COUNT(*) AS n FROM shop_items")[0]["n"], 13, "every item")
+    # stock changes: the list replaces what that shop had
+    o.lua('sbo.mapRoom = 10515')
+    o.feed("Welcome to the Sushi Bar!", "No.  Item Name                                    Level Amount       Cost",
+           "     1) A tuna roll                                  10    998          [        260 gold]", "<270hp 550sp 401st>")
+    eq(o.rows("SELECT item, cost FROM shop_items WHERE room = 10515"), [{"item": "A tuna roll", "cost": 260}], "restocked")
+    # where to buy
+    out = o.lua('local out, links = sbo.shopLines(80, "potion of cure"); local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end; return table.concat(s), #links')
+    text, nlinks = out
+    assert "cure light wounds" in text and "cure serious wounds" in text and "local potion shop" in text, text
+    assert text.index("cure light") < text.index("cure serious"), "cheapest first"
+    eq(nlinks, 2, "a walk link each")
+    o.lua('sbo.command("shops"); sbo.command("shops token"); sbo.roomCardLines(10557)')
+
+
+@test
 def help_ends_at_see_also():
     # help look during the game's auto-run: the next step arrived before any prompt
     lines = open(fixture("help_then_autorun.txt"), encoding="utf-8").read().rstrip("\n").split("\n")

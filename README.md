@@ -194,6 +194,7 @@ sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
 sbo pickup look on|off                                    look quietly at new items you pick up; says so if one is an upgrade
 sbo signposts [look on|off]                               signpost runs (run rune, run towerofart…): read from signposts, kept per room; walks use them
+sbo shops [text]                                          shops you've listed (shop list / shop i), or which sell something - cheapest first, click to walk
 sbo learn                 look at worn items Oven doesn't know yet (the ? in eq)
 sbo learn inv             the same for everything you carry, and what's inside your containers
 sbo loot [text|all]       what you and your group picked up, from where, and the exact room (sbo loot lance = search)

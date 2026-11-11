@@ -1,0 +1,24 @@
+Welcome to the Sushi Bar!
+You have 1,000 gp on hand, and 2,000 gp in your available bank account.
+No.  Item Name                                    Level Amount       Cost
+     1) A bottle of soy sauce                        10    999          [        250 gold]
+     2) A bowl of rice                               1     999          [         25 gold]
+     3) An avocado roll                              1     999          [      6,025 gold]
+     4) A salmon skin roll                           10    999          [        250 gold]
+     5) A tuna roll                                  10    999          [        250 gold]
+---
+Welcome to your local area potion shop!
+You have 1,000 gp on hand, and 2,000 gp in your available bank account.
+No.  Item Name                                    Level Amount       Cost
+     1) A violet potion                              10    200          [        350 gold]
+     2) A potion of cure light wounds                15    200          [        200 gold]
+     3) A potion of cure serious wounds              20    200          [        500 gold]
+    12) A potion of true sight                       25    199          [        850 gold]
+    13) A potion of detect illusion                  45    No limit     [        890 gold]
+---
+Welcome to Ganuk's Express Travels! (Member of The Travel Cartel of Alyria)
+You have 1,000 gp on hand, and 2,000 gp in your available bank account.
+No.  Item Name                                    Level Amount       Cost
+     1) A token for Lowangen passage                 25    No limit     [      3,625 gold]
+    11) A token for passage to the Mayor's Destinat  25    No limit     [     22,500 gold]
+    12) A token for passage to Irda Isle             25    No limit     [     50,000 gold]

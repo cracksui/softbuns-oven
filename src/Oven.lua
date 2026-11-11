@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.49.2"
+M.version = "0.50.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -174,6 +174,10 @@ local SCHEMA = {
   "CREATE TABLE IF NOT EXISTS room_enters (room INTEGER, cmd TEXT, dest INTEGER, last INTEGER, PRIMARY KEY (room, cmd))",
   "CREATE TABLE IF NOT EXISTS marks (name TEXT PRIMARY KEY, room INTEGER, t INTEGER)",
   -- signposts: the room it stands in, the post's name and its run destinations ("rune=south;towerofart=south")
+  -- shops: what each shop's list showed last time (shop list / shop i), by the room it's in
+  "CREATE TABLE IF NOT EXISTS shops (room INTEGER PRIMARY KEY, name TEXT, last INTEGER)",
+  "CREATE TABLE IF NOT EXISTS shop_items (room INTEGER, no INTEGER, item TEXT, level INTEGER, amount TEXT, cost INTEGER, last INTEGER, PRIMARY KEY (room, item))",
+  "CREATE INDEX IF NOT EXISTS shop_items_item ON shop_items (item)",
   "CREATE TABLE IF NOT EXISTS signposts (room INTEGER PRIMARY KEY, sign TEXT, dests TEXT, exact INTEGER, last INTEGER)",
 }
 
@@ -5805,6 +5809,91 @@ M.addBlockReader("kills_loot", "*", function(b, kinds)
   end
 end)
 
+-- A shop's list ("shop list", "shop i"): kept by room, so you can look up where to buy something.
+-- "Welcome to the Sushi Bar!" / "No.  Item Name   Level Amount   Cost" /
+-- "     1) A bottle of soy sauce                        10    999          [        250 gold]"
+function M.parseShop(lines)
+  local shop, items, header = nil, {}, false
+  for _, l in ipairs(lines) do
+    local t = trim(l)
+    local w = t:match("^Welcome to (.-)!") 
+    if w then shop = w end
+    if t:match("^No%.%s+Item Name%s+Level%s+Amount%s+Cost") then header = true
+    elseif header then
+      local no, name, level, amount, cost = t:match("^(%d+)%)%s+(.-)%s%s+(%d+)%s+(.-)%s+%[%s*([%d,]+) gold%]$")
+      if no then
+        items[#items + 1] = { no = tonumber(no), item = trim(name), level = tonumber(level), amount = trim(amount),
+                              cost = tonumber((cost:gsub(",", ""))) }
+      end
+    end
+  end
+  if header and #items > 0 then
+    -- "the Sushi Bar", "your local area potion shop", "Ganuk's Express Travels! (Member of …)"
+    return { name = shop and shop:gsub("^your local area ", "local ") or nil, items = items }
+  end
+end
+
+function M.recordShop(room, shop)
+  if not room or not shop then return end
+  local t = os.time()
+  M.dbx("INSERT OR REPLACE INTO shops (room, name, last) VALUES (%s, %s, %s)", room, shop.name, t)
+  -- the stock as it is now (what's sold out or gone is dropped from this shop's list)
+  M.dbx("DELETE FROM shop_items WHERE room = %s", room)
+  for _, it in ipairs(shop.items) do
+    M.dbx("INSERT OR REPLACE INTO shop_items (room, no, item, level, amount, cost, last) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+      room, it.no, it.item, it.level, it.amount, it.cost, t)
+  end
+end
+
+M.addBlockReader("shop_list", "*", function(b)
+  local shop = M.parseShop(b.lines)
+  if shop then pcall(M.recordShop, M.mapRoom or b.room, shop) end
+end)
+
+-- sbo shops [text]: the shops Oven knows, or where to buy something (cheapest first)
+function M.shopLines(width, q)
+  q = trim(q or ""):lower()
+  local out, links = {}, {}
+  local function where(room)
+    local nm = (room and roomExists(room) and getRoomName(room)) or "?"
+    local area = room and roomExists(room) and getRoomArea(room)
+    area = area and getRoomAreaName(area) or ""
+    return nm .. (area ~= "" and (" · " .. area) or "") .. "  #" .. tostring(room)
+  end
+  local function walkLink(room, label)
+    if room and roomExists(room) then links[#links + 1] = { label, function() M.mapWalkTo(room) end } end
+  end
+  if q == "" then
+    local rows = M.dbRows([[SELECT s.room, s.name, s.last, COUNT(i.item) AS n FROM shops s
+      LEFT JOIN shop_items i ON i.room = s.room GROUP BY s.room ORDER BY s.name]])
+    out[1] = header("map", "", width, string.format("Shops  (%d)", #rows))
+    if #rows == 0 then out[#out + 1] = { { C.dim, "  none yet - type shop list at a shopkeeper and Oven keeps it" } } end
+    for _, r in ipairs(rows) do
+      local room = tonumber(r.room)
+      out[#out + 1] = { { C.item, "  " .. (r.name or "a shop") }, { C.num, "  " .. r.n .. " items" }, { C.dim, r.last and ("  listed " .. M.shortDur(os.time() - tonumber(r.last)) .. " ago") or "" } }
+      out[#out + 1] = { { C.dim, "    " .. where(room) } }
+      walkLink(room, "walk to " .. (r.name or "#" .. room))
+    end
+    out[#out + 1] = {}
+    out[#out + 1] = { { C.dim, "sbo shops {text}: where to buy something" } }
+    return out, links
+  end
+  local rows = M.dbRows([[SELECT i.room, i.item, i.level, i.amount, i.cost, s.name FROM shop_items i
+    LEFT JOIN shops s ON s.room = i.room WHERE instr(lower(i.item), %s) > 0 ORDER BY i.cost, i.item LIMIT 60]], q)
+  out[1] = header("map", "", width, string.format("Shops selling '%s'  (%d)", q, #rows))
+  if #rows == 0 then out[#out + 1] = { { C.dim, "  no shop Oven has seen sells that" } } end
+  local iw = 0
+  for _, r in ipairs(rows) do iw = math.max(iw, math.min(44, ulen(r.item))) end
+  for _, r in ipairs(rows) do
+    local room = tonumber(r.room)
+    out[#out + 1] = { { C.item, "  " .. pad(r.item, iw + 2) }, { C.num, string.format("%11s gold", M.commaNum(tonumber(r.cost) or 0)) },
+                      { C.dim, string.format("  lvl %s  ·  %s", r.level or "?", r.amount == "No limit" and "no limit" or (tostring(r.amount) .. " left")) } }
+    out[#out + 1] = { { C.dim, "    " .. (r.name or "a shop") .. " · " .. where(room) } }
+    walkLink(room, "walk to " .. (r.name or "#" .. room) .. " (" .. r.item .. ")")
+  end
+  return out, links
+end
+
 -- a quest the game hands you without a command (the daily quest at login):
 -- "You undertake the quest 'Daily Quest - Feeding Hungry Mouths', #3519." then the quest in full
 M.addBlockReader("quest_undertaken", "*", function(b)
@@ -6680,6 +6769,10 @@ function M.roomCardLines(id)
     table.sort(exits)
   end
   row({ C.dim, (areaName ~= "" and (areaName .. "  ·  ") or "") .. (#exits > 0 and ("exits " .. table.concat(exits, " ")) or "no exits mapped") })
+  local okSh, shopRow = pcall(M.dbRow, "SELECT s.name, COUNT(i.item) AS n FROM shops s LEFT JOIN shop_items i ON i.room = s.room WHERE s.room = %s GROUP BY s.room", id)
+  if okSh and shopRow then
+    row({ C.slot, "$ " .. (shopRow.name or "a shop") }, { C.dim, "  " .. tostring(shopRow.n) .. " items (sbo shops)" })
+  end
   local okS, sp = pcall(M.signAt, id)
   if okS and sp then
     local d = {}
@@ -8078,6 +8171,7 @@ M.helpSections = {
     { "sbo map load [file]", "load a map file (default: map/mm_map.dat)" },
   } },
   { key = "log", title = "Kills, loot and progress", rows = {
+    { "sbo shops [text]", "the shops you've listed (shop list / shop i), or which sell something, cheapest first" },
     { "sbo kills [all]", "what you've killed, with counts and exp (reset: this session, clear: all)" },
     { "sbo loot [text]", "what was picked up and the exact room; text searches it (all, clear)" },
     { "sbo session [reset]", "exp gained, exp/hour, time and kills to next level" },
@@ -8411,6 +8505,8 @@ function M.command(args)
   elseif a == "deaths" then
     M.logOut(M.deathLines)
     return
+  elseif a == "shops" or a == "shop" then
+    return M.viewOut(M.shopLines(M.cfg.window and M.viewCols() or columns("main"), b))
   elseif a == "loot" then
     if b == "clear" then M.dbx("DELETE FROM loot"); return say("loot log cleared") end
     local all = b == "all" or b:match("^all%s") ~= nil
