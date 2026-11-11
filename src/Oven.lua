@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.28.0"
+M.version = "0.28.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4965,6 +4965,8 @@ end
 
 function M.recordStart(minutes)
   minutes = tonumber(minutes) or 30
+  -- what's in memory and not yet written goes first, so nothing before the recording is lost
+  pcall(M.windowSave, "before sbo record")
   M.rec = { untilT = os.time() + minutes * 60, n = 0 }
   local f = recOpen()
   if f then
@@ -6797,6 +6799,12 @@ function M.command(args)
     if b == "off" or b == "stop" then
       local n = M.recordStop("off")
       return say(n and ("recording stopped: " .. n .. " blocks saved to oven_record.txt") or "not recording")
+    elseif b:match("^save%s+all") then
+      -- everything still in memory, even what was written before
+      local note = trim(b:gsub("^save%s+all", ""))
+      M.win.savedSeq = 0
+      local n = M.windowSave(note ~= "" and ("sbo record save all: " .. note) or "sbo record save all")
+      return say("saved all " .. n .. " blocks still in memory to oven_record.txt")
     elseif b:match("^save") then
       local note = trim(b:gsub("^save", ""))
       local n = M.windowSave(note ~= "" and ("sbo record save: " .. note) or "sbo record save")
@@ -6817,7 +6825,7 @@ function M.command(args)
       return say("recording every block as it happens, with your commands and GMCP, for " .. mins
         .. " minutes to oven_record.txt (sbo record off stops it). Passwords aren't saved.")
     end
-    return say("sbo record save [note] | sbo record [minutes] | sbo record off | sbo record window N|off")
+    return say("sbo record save [note] | sbo record save all | sbo record [minutes] | sbo record off | sbo record window N|off")
   elseif a == "gmcp" then
     local names = M.gmcpDump()
     if #names == 0 then return say("the game hasn't sent any GMCP yet") end
