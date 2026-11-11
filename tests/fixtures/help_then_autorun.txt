@@ -1,0 +1,102 @@
+[1112 ] LOOK
+NAME
+look - look in a direction, or at or in an object, or at a creature
+
+SYNOPSIS
+ look
+ look <direction>
+ look <creature or player name>
+ look <object name or type>
+ look #.<object name or type>
+ look in <container object name or type>
+
+ look _lore_selection_info <item> - display general item information
+ look _lore_selection_relics <item> - display bound relics
+ look _lore_selection_v_values <item> - show item type-specific context
+ look _lore_selection_requirements <item> - list requirements
+ look _lore_selection_objset <item> - see information about the object set
+ look _lore_selection_description <item> - see only the lore description
+ look _lore_selection_affects <item> - list only affects
+ look _lore_selection_lifespan <item> - see just lifespan information
+ look _lore_selection_plusplusplus <item> - see just the script description
+
+DESCRIPTION
+ This is a very useful informational command that tells you about the room
+or area that you are currently in.  You can also look at other characters,
+look at objects, look inside objects, and look in a specific direction to
+see what's in the adjoining area.  
+
+You can also reference NPCs and items using quotes around the full short
+description instead of just name keywords.  For example, if the item is
+called "a wizard's cloak", you can reference it by typing: look "a wizard's
+cloak".  For an NPC named "a dashing acrobat", you could reference him by
+typing: look "a dashing acrobat".  
+
+If you see an asterisk (*) or a single letter in brackets [S] before a PC or
+NPC's brief description when using LOOK in a room, it means they have a
+special affect on them:
+
+* A dark red asterisk or [L] indicates they are surrounded by a lava
+cloak, and are resilient, taking reduced damage.  
+
+* A magenta asterisk or [R] indicates they are surrounded by a repulsion
+field, and will be difficult to kill with thrown or ranged damage.  
+
+* A cyan asterisk or [P] indicates they will paralyze in combat.  
+
+* A cyan asterisk or [T] indicates they are translucent, affected by a
+'pass door' spell.  
+
+* A green asterisk or [I] indicates they are invisible to others who
+cannot detect invisibility (which you obviously can, or you would not see
+them).  
+
+* A white asterisk or [S] indicates they are surrounded by a glowing
+white aura, a side effect of the 'sanctuary' spell.  
+
+* A red asterisk or [F] indicates they are surrounded by a shield of
+flames, caused by the 'fireshield' spell.  
+
+* A blue asterisk or [L] indicates they are surrounded by an electrical
+shield, most likely from the 'lightning shroud' spell.  
+
+When there are multiple items or NPCs of the same name in the same location,
+whether in your inventory or in your room, you may reference them
+individually by putting the number of the item or NPC and a period before
+the name.  (Look <#>.name) For example:
+
+look 5.balrog 
+
+
+
+SEE ALSO:
+ [1024] set - toggles player settings on or off
+ [1725] survey - does an extended scan of the area to determine major landmarks when lost.
+ [1548] improved invisibility - renders a player invisible, even through combat
+ [1533] sanctuary - defeat evil with improved damage and healing
+ [2219] 256-color - A wider selection of color displayed than standard 16-color ANSI
+ [1098] ansi - render colors and format text
+ [1099] in-game color
+ [1132] description - change your character's description
+
+You take note of the directions on a weatherbeaten signpost at the site of the Old Bazaar, and head northwest.
+You travel northwestward on a restless horse.
+
+ The Great North Road                                   NW     N     NE
+(-------------------------------------------------)     W <---(M)---> E
+                                                        SW     S     SE
+
+        **.....#....*..
+     ---**.....#.......*..
+   ----***.....#.........*..
+  ----****.....#...........*.
+ -----****.....#..............
+-^---******....#............*..
+----*******....@.............**
+---********.....#..............
+ --********.....##............
+  **********......#..........
+   *********......#.........
+     *******......#.......
+        ****..*....##O.
+Pip runs in from the southeast on a restless horse.

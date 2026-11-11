@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.32.0"
+M.version = "0.32.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5590,6 +5590,17 @@ function M.onLine()
     return
   end
   if not cap then return end
+  -- a help page is over once its SEE ALSO list has ended: whatever comes after a blank line that
+  -- isn't another link (the next step of an auto-run, before any prompt) is the game going on
+  if cap.kind == "help" then
+    local t = trim(line)
+    if cap.seeAlso and cap.afterBlank and t ~= "" and not line:match("^%s+%[%s*%d+%s*%]") then
+      M.finish("help-end")
+      return
+    end
+    if t:match("^SEE ALSO:?$") then cap.seeAlso = true end
+    cap.afterBlank = cap.seeAlso and t == "" or false
+  end
   if not M.belongs(cap, line) then return end   -- someone else's activity: leave it where it is
   if #cap.plain == 0 and trim(line) == "" then
     if cap.gag then deleteLine() end

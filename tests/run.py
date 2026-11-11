@@ -569,6 +569,25 @@ def learn_inventory_and_containers():
 
 
 @test
+def help_ends_at_see_also():
+    # help look during the game's auto-run: the next step arrived before any prompt
+    lines = open(fixture("help_then_autorun.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
+    o = Oven()
+    o.lua('''sbo.cfg.window = true; sbo.cfg.promptPattern = "<%d+hp"; GAGGED = {}
+      deleteLine = function() GAGGED[#GAGGED + 1] = line end''')
+    o.lua('sbo.onSend(nil, "help look")')
+    o.feed(*lines)
+    o.feed("<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    gagged = list(o.ev("GAGGED").values())
+    assert not any("Great North Road" in g or "You travel" in g or "runs in" in g for g in gagged), \
+        f"the auto-run step was taken off the main screen: {[g for g in gagged if 'Road' in g or 'travel' in g]}"
+    assert any("[1132] description" in g for g in gagged), "the help page itself went to the Help tab"
+    page = o.ev("WIDGETS[sbo.helpPg.prefix .. sbo.helpPg.flip .. 'Label'].html") or ""
+    assert "Great North Road" not in page and "LOOK" in page, "the Help tab has only the help page"
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40
