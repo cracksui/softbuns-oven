@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.43.1"
+M.version = "0.44.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3112,6 +3112,7 @@ function M.createWindow()
       adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
       titleTxtColor = "#e6c35c",
     })
+    M.panelPlace("ovenViewer", M.container)
   end
   if M.console then M.console:hide() end   -- console used by versions before 0.10
   M.applyTabs()
@@ -3310,6 +3311,7 @@ function M.createHelpWindow()
       adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
       titleTxtColor = "#e6c35c",
     })
+    M.panelPlace("ovenHelp", M.helpContainer)
   end
   if M.helpConsole then M.helpConsole:hide() end   -- console used by versions before 0.9.3
   if M.helpLabel and not M.helpPg then
@@ -6348,6 +6350,7 @@ function M.createMapPanel()
     adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
     titleTxtColor = "#e6c35c",
   })
+  M.panelPlace("ovenMapPanel", M.mapPanel)
   local box = Geyser.VBox:new({ name = "ovenMapBox", x = 0, y = 0, width = "100%", height = "100%" }, M.mapPanel)
   local header = Geyser.HBox:new({ name = "ovenMapHeader", height = 24, v_policy = Geyser.Fixed }, box)
   M.mapRoomLabel = Geyser.Label:new({ name = "ovenMapRoom" }, header)
@@ -7504,6 +7507,7 @@ M.helpSections = {
     { "sbo window on|off", "the Inspector window (drag it by its title, resize from its edges)" },
     { "sbo helpwindow on|off", "game help pages (and this list) in a window, or on the main screen" },
     { "sbo mirror {tab} on|off", "also show a tab's output on the main screen: inspector help log chat (sbo mirror: what's on)" },
+    { "sbo layout save|restore|reset", "your panels' places: saved by themselves when moved, put back after connecting" },
     { "sbo tabs on|off", "Inspector | Help | Log | Chat as tabs in one window (off: help gets its own window)" },
     { "sbo tab inspector|help|log|chat", "bring a tab to the front (or click it)" },
     { "sbo tabs auto on|off", "whatever arrives brings its tab to the front (off: the tab gets a • instead)" },
@@ -7709,6 +7713,10 @@ function M.command(args)
     M.cfg.tabs = onoff
     if M.container then M.applyTabs(); M.viewShow() end
     say(onoff and "tabs on: Inspector | Help | Log in one window" or "tabs off: help pages get their own window again")
+  elseif a == "layout" and (b == "save" or b == "reset" or b == "restore") then
+    if b == "save" then M.panelsSave(true); return say("panel layout saved - it's also saved by itself a few seconds after you move a panel")
+    elseif b == "restore" then M.panelsRestore(); return say("panels put back where you saved them")
+    else M.panelsReset(); return say("panels back to Oven's default places") end
   elseif a == "chat" then return M.chatCommand(b)
   elseif a == "tab" and (b == "inspector" or b == "help" or b == "log" or b == "chat") then
     M.createWindow(); M.container:show()
@@ -8127,7 +8135,79 @@ end
 ---------------------------------------------------------------------------
 -- Setup (safe to re-run)
 ---------------------------------------------------------------------------
+---------------------------------------------------------------------------
+-- Panel layout: where you put the Inspector, Help and Map windows is saved (a few seconds after you
+-- move or resize one) and put back after every connect, once other UI packages have settled.
+-- Mudlet itself only saves them when you exit, and other packages may rearrange things on connect.
+---------------------------------------------------------------------------
+M.PANEL_DEFAULTS = {
+  ovenViewer   = { x = "-62%", y = "4%", w = "36%", h = "50%" },
+  ovenHelp     = { x = "2%", y = "4%", w = "45%", h = "70%" },
+  ovenMapPanel = { x = "-36%", y = "4%", w = "34%", h = "50%" },
+}
+function M.panelList()
+  return { { "ovenViewer", M.container }, { "ovenHelp", M.helpContainer }, { "ovenMapPanel", M.mapPanel } }
+end
+
+local function panelGeom(c)
+  local ok, x, y, w, h = pcall(function() return c:get_x(), c:get_y(), c:get_width(), c:get_height() end)
+  if ok and tonumber(x) and tonumber(w) then return { x, y, w, h } end
+end
+
+-- as fractions of the main window, so a different window size keeps the arrangement
+function M.panelsSave(force)
+  -- just connected: what's on screen may be another package's doing - wait until ours are put back
+  if M.panelsHold and not force then return end
+  local W, H = getMainWindowSize()
+  if not W or W == 0 then return end
+  M.cfg.panels = M.cfg.panels or {}
+  local changed = false
+  for _, p in ipairs(M.panelList()) do
+    local name, c = p[1], p[2]
+    local g = c and not c.attached and panelGeom(c)
+    if g then
+      local f = { x = g[1] / W, y = g[2] / H, w = g[3] / W, h = g[4] / H }
+      local old = M.cfg.panels[name]
+      local function near(a, b) return a and b and math.abs(a - b) < 0.002 end
+      if force or not (old and near(old.x, f.x) and near(old.y, f.y) and near(old.w, f.w) and near(old.h, f.h)) then
+        M.cfg.panels[name] = f
+        pcall(function() c:save() end)   -- Mudlet's own copy too
+        changed = true
+      end
+    end
+  end
+  if changed then M.saveSettings() end
+  return changed
+end
+
+local function pct(f) return string.format("%.3f%%", f * 100) end
+function M.panelPlace(name, c)
+  local f = (M.cfg.panels or {})[name]
+  if not c or not f or c.attached then return end
+  pcall(function() c:move(pct(f.x), pct(f.y)); c:resize(pct(f.w), pct(f.h)) end)
+end
+function M.panelsRestore()
+  for _, p in ipairs(M.panelList()) do M.panelPlace(p[1], p[2]) end
+end
+
+function M.panelsReset()
+  M.cfg.panels = nil
+  M.saveSettings()
+  for _, p in ipairs(M.panelList()) do
+    local d, c = M.PANEL_DEFAULTS[p[1]], p[2]
+    if c and d then pcall(function() c:move(d.x, d.y); c:resize(d.w, d.h); c:save() end) end
+  end
+end
+
+-- look every few seconds; save once a panel has stopped moving
+function M.panelsWatch()
+  if M.panelTimer then killTimer(M.panelTimer) end
+  M.panelTimer = tempTimer(4, function() pcall(M.panelsSave) end, true)   -- repeating
+end
+
 function M.teardown()
+  if M.panelTimer then killTimer(M.panelTimer); M.panelTimer = nil end
+  pcall(M.panelsSave)
   pcall(M.dbClose)
   if M.handlers then for _, h in ipairs(M.handlers) do killAnonymousEventHandler(h) end end
   if M.lineTrigger then killTrigger(M.lineTrigger) end
@@ -8179,6 +8259,12 @@ function M.init()
   M.loadItems()
   M.gmcpCatchUp()
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysWindowResizeEvent", function() M.layoutBar(); pcall(M.drawBar); pcall(M.layoutQuestHud) end)
+  -- after a connect, once other UI packages have rearranged things: your panels back where you had them
+  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysConnectionEvent", function()
+    M.panelsHold = true
+    tempTimer(3, function() pcall(M.panelsRestore); M.panelsHold = nil end)
+  end)
+  M.panelsWatch()
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadDone", M.onDownload)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadError", M.onDownload)
   for _, v in ipairs({ "LEVEL", "EXPERIENCE", "EXPERIENCE_MAX", "EXPERIENCE_TNL", "EXPERIENCE_TO_LEVEL" }) do

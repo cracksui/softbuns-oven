@@ -919,6 +919,36 @@ def notes_off_the_bar():
 
 
 @test
+def panel_layout_kept():
+    o = Oven(before='''
+      Adjustable.Container.new = function(self, o)
+        local t = { name = o.name, gx = 100, gy = 50, gw = 400, gh = 300, saves = 0 }
+        function t:show() end function t:hide() end
+        function t:get_x() return t.gx end function t:get_y() return t.gy end
+        function t:get_width() return t.gw end function t:get_height() return t.gh end
+        local function px(v, total) if type(v) == "string" then return tonumber(v:match("[%d%.]+")) / 100 * total end return v end
+        function t:move(x, y) t.gx, t.gy = px(x, 1600), px(y, 900) end
+        function t:resize(w, h) t.gw, t.gh = px(w, 1600), px(h, 900) end
+        function t:save() t.saves = t.saves + 1 end
+        return t
+      end''')
+    o.lua('sbo.cfg.window = true; sbo.createWindow(); C = sbo.container')
+    # you drag and resize the Inspector
+    o.lua('C.gx, C.gy, C.gw, C.gh = 800, 90, 640, 450; sbo.panelsSave()')
+    f = dict(o.ev("sbo.cfg.panels.ovenViewer").items())
+    eq((round(f["x"], 3), round(f["w"], 3)), (0.5, 0.4), "saved as parts of the window")
+    eq(o.ev("C.saves") >= 1, True, "Mudlet's own copy saved too")
+    # something else moves it on connect; Oven puts it back
+    o.lua('C.gx, C.gy = 0, 0; handlers["sysConnectionEvent"](); runTimers()')
+    eq((round(o.ev("C.gx")), round(o.ev("C.gy"))), (800, 90), "put back after connecting")
+    # a new session: the window is made in its saved place
+    o.lua('sbo.container = nil; sbo.createWindow()')
+    eq(round(o.ev("sbo.container.gx")), 800, "made where you left it")
+    o.lua('sbo.command("layout reset")')
+    eq(o.ev("sbo.cfg.panels"), None, "reset forgets it")
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

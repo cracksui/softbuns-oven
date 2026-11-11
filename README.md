@@ -179,6 +179,8 @@ sbo on|off                turn formatting on / off
 sbo main replace|keep     replace the raw text in the main window, or leave it alone
                           (keep = formatted output only in the Inspector)
 sbo window on|off         show / hide the Inspector window
+sbo layout save|restore|reset  your panels' places (Inspector, Help, Map): saved by themselves a few
+                          seconds after you move one, put back after every connect; reset = Oven's defaults
 sbo tabs on|off           Inspector | Help | Log | Chat as tabs in that window (off: help gets its own window)
 sbo tab inspector|help|log|chat  bring a tab to the front (or click it)
 sbo tabs auto on|off      whatever arrives brings its tab to the front (off: that tab gets a • instead)
