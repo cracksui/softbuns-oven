@@ -163,9 +163,11 @@ matching resistances on gear count for more.
 ## What Oven reads from the game's data (GMCP)
 
 Materia Magica sends some things as data alongside the text, and Oven uses that wherever it can: your level and
-exp to level (the bar stays current without `score`), HP/SP/ST and attribute maximums, room flags, the exact
+exp to level (the bar stays current without `score`), your HP/SP/ST as they change (the bar's gauges move
+mid-fight, between prompts) and their maximums, attribute maximums, quest steps as you finish them, room flags, the exact
 target room of quest steps (`sbo quest go`), the creature you're fighting (kills are stored with its mob number and
-race, deaths with what you were fighting) and your race's built-in weaknesses.
+race, deaths with what you were fighting) and your race's built-in weaknesses. What GMCP doesn't send - mail,
+your group's lowest health, mount stamina - still comes from the prompt.
 
 ## Commands
 

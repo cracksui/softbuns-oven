@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.40.1"
+M.version = "0.41.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4663,15 +4663,41 @@ function M.drawSessionBar()
   barEcho(M.segsToDecho({ M.sessionSegs() })[1], M.sbar)
 end
 
+-- the prompt as the bar shows it: HP / SP / ST from GMCP (char.vitals, live even between prompts),
+-- the rest (mail, group health, anything GMCP doesn't send) from the last prompt
+local VITALS = { "hp", "sp", "st" }
+function M.barPrompt()
+  local p = M.parsePrompt(M.lastPromptText or "")
+  local v = M.gmcpGet and M.gmcpGet("char.vitals")
+  if type(v) == "table" then
+    local have = {}
+    for i, x in ipairs(p.vals) do have[x[1]] = i end
+    for _, k in ipairs(VITALS) do
+      local n = tonumber(v[k])
+      if n then
+        if have[k] then p.vals[have[k]][2] = n
+        else p.vals[#p.vals + 1] = { k, n } end
+      end
+    end
+    -- keep hp, sp, st first and in that order
+    table.sort(p.vals, function(a, b)
+      local ia, ib = 0, 0
+      for i, k in ipairs(VITALS) do if a[1] == k then ia = i end; if b[1] == k then ib = i end end
+      return (ia == 0 and 99 or ia) < (ib == 0 and 99 or ib)
+    end)
+  end
+  return p
+end
+
 function M.drawBar()
   if not M.bar or not M.bar.rawEcho or not M.lastPromptText then return end
-  if M.cfg.barMode == "raw" or #M.parsePrompt(M.lastPromptText).vals == 0 then
+  local p = M.barPrompt()
+  if M.cfg.barMode == "raw" or #p.vals == 0 then
     -- drop the game's (black) text background so the bar's tint shows through
     local d = (M.lastPromptDecho or M.lastPromptText):gsub("<(%d+,%d+,%d+):[%d,]+>", "<%1>")
     barEcho(d)
     return
   end
-  local p = M.parsePrompt(M.lastPromptText)
   M.cfg.maxes = M.cfg.maxes or {}
   local segs = {}
   if p.group then
@@ -5027,6 +5053,8 @@ function M.gmcpHandlersList()
     -- a new connection: read your aliases again at its first prompt
     registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil end),
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onGmcpStatus) end),
+    -- HP / SP / ST as they change (mid-fight too): redraw the bar
+    registerAnonymousEventHandler("gmcp.char.vitals", function() if M.cfg.bar then pcall(M.drawBar) end end),
     registerAnonymousEventHandler("gmcp.char.maxstats", function() pcall(M.onGmcpMaxStats) end),
     registerAnonymousEventHandler("gmcp.char.worth", function() pcall(M.onGmcpWorth) end),
     registerAnonymousEventHandler("gmcp.char.affect_application_msg", function() pcall(M.onGmcpAffect) end),

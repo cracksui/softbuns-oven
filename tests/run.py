@@ -859,6 +859,22 @@ def mob_formation():
 
 
 @test
+def bar_from_gmcp():
+    o = Oven()
+    o.lua('''sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300, sp = 700, st = 460 }
+      sbo.bar = { rawEcho = function(self, h) BAR = h end }
+      sbo.lastPromptText = "[Mail]<291hp 696sp 457st>"
+      gmcp.char = { vitals = { hp = 120, sp = 650, st = 400 } }
+      sbo.drawBar()''')
+    plain = __import__("re").sub("<[^>]+>", "", o.ev("BAR") or "")
+    assert "120" in plain and "291" not in plain, f"HP from GMCP, not the prompt: {plain}"
+    assert "Mail" in plain, "the prompt's tags stay"
+    o.lua('gmcp.char.vitals.hp = 80; handlers["gmcp.char.vitals"]()')
+    plain = __import__("re").sub("<[^>]+>", "", o.ev("BAR") or "")
+    assert " 80" in plain, f"redrawn when vitals change, no prompt needed: {plain}"
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40
