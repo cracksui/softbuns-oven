@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.46.0"
+M.version = "0.46.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4704,21 +4704,37 @@ function M.drawCombatBar()
     M.applyBarBg()
   end
   if not M.cbarShown then M.cbarShown = true; pcall(M.layoutBar) end
-  local segs = {}
-  for i, F in ipairs(fights) do
-    if i > 1 then segs[#segs + 1] = { C.dim, "   │   " } end
-    local pctv = tonumber(F.lastPct) or 0
-    local col = pctv >= 70 and C.plus or (pctv >= 35 and C.title or C.minus)
-    segs[#segs + 1] = { col, M.pctBar(pctv, 8) }
-    segs[#segs + 1] = { col, string.format(" %3d%%", pctv) }
-    segs[#segs + 1] = { C.item, "  " .. F.name }
-    local tries, takes = F.hit + F.miss + F.parried, F.took + F.missed + F.defended
-    if #fights == 1 then
-      segs[#segs + 1] = { C.dim, string.format("    you hit %d/%d", F.hit, tries) }
-      segs[#segs + 1] = { C.dim, string.format("  ·  it hit %d/%d", F.took, takes) }
-      segs[#segs + 1] = { C.dim, string.format("  ·  round %d", F.rounds) }
-    else
-      segs[#segs + 1] = { C.dim, string.format("  (you %d/%d)", F.hit, tries) }
+  -- the current target (the latest round) in full; the others compressed, lowest health first,
+  -- as many as fit, then "+N more"
+  local cur = fights[1]
+  for _, F in ipairs(fights) do if (F.seq or 0) > (cur.seq or 0) then cur = F end end
+  local function col(p) p = tonumber(p) or 0; return p >= 70 and C.plus or (p >= 35 and C.title or C.minus) end
+  local pctv = tonumber(cur.lastPct) or 0
+  local segs = { { col(pctv), M.pctBar(pctv, 8) }, { col(pctv), string.format(" %3d%%", pctv) }, { C.item, "  " .. cur.name },
+    { C.dim, string.format("    you hit %d/%d", cur.hit, cur.hit + cur.miss + cur.parried) },
+    { C.dim, string.format("  ·  it hit %d/%d", cur.took, cur.took + cur.missed + cur.defended) } }
+  if #fights == 1 then segs[#segs + 1] = { C.dim, string.format("  ·  round %d", cur.rounds) } end
+  local others = {}
+  for _, F in ipairs(fights) do if F ~= cur then others[#others + 1] = F end end
+  table.sort(others, function(a, b) return (tonumber(a.lastPct) or 0) < (tonumber(b.lastPct) or 0) end)
+  if #others > 0 then
+    local okF, cw = pcall(calcFontSize, M.barFontSize(), (pcall(getFont) and getFont()) or nil)
+    cw = (okF and tonumber(cw)) or 8
+    local okW, w = pcall(function() return M.cbar:get_width() end)
+    local cols = math.max(40, math.floor((((okW and tonumber(w)) or 800) - 10) / cw))
+    segs[#segs + 1] = { C.dim, "   │   others: " }
+    local used = segLen(segs)
+    for i, F in ipairs(others) do
+      local txt = F.name .. " " .. (tonumber(F.lastPct) or 0) .. "%"
+      local rest = #others - i
+      local tail = rest > 0 and ulen(" … +" .. rest .. " more") or 0
+      if used + ulen(txt) + 3 + tail > cols and i > 1 then
+        segs[#segs + 1] = { C.dim, " … +" .. (#others - i + 1) .. " more" }
+        break
+      end
+      if i > 1 then segs[#segs + 1] = { C.dim, " · " }; used = used + 3 end
+      segs[#segs + 1] = { col(F.lastPct), txt }
+      used = used + ulen(txt)
     end
   end
   barEcho(M.segsToDecho({ segs })[1], M.cbar)
@@ -5142,7 +5158,8 @@ function M.onCombatRound()
   F.rounds = F.rounds + 1
   F.hit, F.miss, F.parried = F.hit + n("you_hit"), F.miss + n("you_miss"), F.parried + n("opponent_defends")
   F.took, F.missed, F.defended = F.took + n("opponent_hits"), F.missed + n("opponent_misses"), F.defended + n("you_defend")
-  F.lastPct, F.at = n("opponent_hp_percent"), os.time()
+  M.roundSeq = (M.roundSeq or 0) + 1
+  F.lastPct, F.at, F.seq = n("opponent_hp_percent"), os.time(), M.roundSeq
   F.room = F.room or tonumber((G("room.info") or {}).num)
   -- rounds come every few seconds; none for a while = the fight's over (combat mode changed, it ended
   -- some way Oven didn't see). The game doesn't send char.status while you fight, so don't wait on it.

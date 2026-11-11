@@ -1020,9 +1020,15 @@ def combat_bar():
     eq(o.ev("sbo.cbar.y < 900 - 20"), True, "above the prompt bar")
     o.lua('ROUND("a wolf", 30, 0)')
     bar = o.ev("BARS.ovenCombatBarLabel")
-    assert "a mental patient" in bar and "a wolf" in bar and "│" in bar, f"both targets: {bar}"
+    assert bar.index("a wolf") < bar.index("others:") < bar.index("a mental patient 62%"), f"the latest in full, the other compressed: {bar}"
+    # twenty of them: as many as fit, lowest health first, then "+N more"
+    o.lua('for i = 1, 20 do ROUND("a goblin " .. i, 100 - i * 4, 1) end; ROUND("a wolf", 30, 1)')
+    bar = o.ev("BARS.ovenCombatBarLabel")
+    assert "more" in bar and len(bar) < 200, f"fits on one line: {bar}"
+    others = bar.split("others: ")[1]
+    assert others.startswith("a goblin 20 20%"), f"lowest health first: {others}"
     o.feed("A mental patient has been slain!"); o.feed("A wolf has been slain!")
-    o.lua("runTimers()")
+    o.lua("for i = 1, 20 do line = 'A goblin ' .. i .. ' has been slain!'; sbo.onLine() end; runTimers()")
     eq(o.ev("sbo.cbar.shown"), False, "gone once the fights are over")
     o.lua('sbo.command("combat bar off"); ROUND("a rat", 90, 1)')
     eq(o.ev("sbo.cbar.shown"), False, "sbo combat bar off")
