@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.47.0"
+M.version = "0.49.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -41,7 +41,8 @@ M.defaults = {
   questHudOpacity = 100,     -- quest HUD background opacity, 0-100
   questHudBlurb = false,     -- show each quest's description (hints) in the HUD
   questAutoPin = true,       -- a quest you take with quest request goes straight onto the quest HUD
-  pickupLook   = true,       -- look quietly at items you pick up that Oven doesn't know yet
+  pickupLook   = true,
+  signLook     = true,       -- look quietly at a signpost the first time you're in its room (its run names)       -- look quietly at items you pick up that Oven doesn't know yet
   combatLines  = true,       -- combat mode mxp: a line per round (the game shows none) and a summary per fight
   combatBar    = true,       -- combat mode mxp: a line above the prompt bar with your targets' health, while you fight
   map          = false,      -- follow your room (GMCP) on the map and walk where you double-click
@@ -172,6 +173,9 @@ local SCHEMA = {
   "CREATE TABLE IF NOT EXISTS room_flags (room INTEGER PRIMARY KEY, tags TEXT, last INTEGER)",
   "CREATE TABLE IF NOT EXISTS room_enters (room INTEGER, cmd TEXT, dest INTEGER, last INTEGER, PRIMARY KEY (room, cmd))",
   "CREATE TABLE IF NOT EXISTS marks (name TEXT PRIMARY KEY, room INTEGER, t INTEGER)",
+  -- signposts: the post's name, its run destinations ("rune=south;towerofart=south") once looked at, and
+  -- exact = 1 when it stands in that room (0: passed while running, so only near it)
+  "CREATE TABLE IF NOT EXISTS signposts (room INTEGER PRIMARY KEY, sign TEXT, dests TEXT, exact INTEGER, last INTEGER)",
 }
 
 local SCHEMA_ADD = {
@@ -193,6 +197,7 @@ function M.dbOpen()
   for _, s in ipairs(SCHEMA) do conn:execute(s) end
   -- columns added later (an error just means the column is already there)
   for _, s in ipairs(SCHEMA_ADD) do pcall(function() conn:execute(s) end) end
+  if M.signMigrate then pcall(M.signMigrate) end
   return conn
 end
 
@@ -5340,6 +5345,7 @@ function M.onSend(_, cmd)
   pcall(M.recordCommand, cmd)
   pcall(M.noteLootCommand, cmd)
   pcall(M.noteEnterCommand, cmd)
+  pcall(M.noteRunCommand, cmd)
   if not M.cfg.enabled then return end
   local kind, target = M.classify(cmd)
   if not kind then return end
@@ -6478,6 +6484,7 @@ function M.onRoom()
   if not id then return end
   M.mapRoom = id
   if roomExists(id) then M.centerOn(id) end
+  pcall(M.noteWilds, id)
   pcall(M.drawMapHeader)
   -- walking: arrived where the next step should take us?
   local w = M.walk
@@ -6486,7 +6493,7 @@ function M.onRoom()
       w.step = w.step + 1
       if w.step > #w.dirs then
         M.walk = nil
-        M.notifyWalk("arrived")
+        if w.thenRun then M.runStart(w.thenRun, w.target) else M.notifyWalk("arrived") end
       else
         M.walkStep()
       end
@@ -6657,6 +6664,14 @@ function M.roomCardLines(id)
     table.sort(exits)
   end
   row({ C.dim, (areaName ~= "" and (areaName .. "  ·  ") or "") .. (#exits > 0 and ("exits " .. table.concat(exits, " ")) or "no exits mapped") })
+  local okS, sp = pcall(M.signAt, id)
+  if okS and sp then
+    local d = {}
+    for n in pairs(sp.dests) do d[#d + 1] = n end
+    table.sort(d)
+    row({ C.slot, "⊕ " .. (sp.exact and "signpost here" or ("near " .. (sp.sign or "a signpost"))) },
+        { C.dim, #d > 0 and ("  run " .. table.concat(d, " · ")) or (sp.exact and "  (not read yet)" or "") })
+  end
   local marks = M.marksOf(id)
   if #marks > 0 then row({ C.slot, "★ " .. table.concat(marks, ", ") }, { C.dim, "  (sbo run " .. marks[1] .. ")" }) end
   local any = false
@@ -7089,7 +7104,7 @@ function M.mapShow(id)
 end
 
 -- walk to a room the way a double-click on the map does
-function M.mapWalkTo(id)
+function M.mapWalkTo(id, onFoot)
   id = tonumber(id)
   if not id or not roomExists(id) then return say("room #" .. tostring(id) .. " isn't on the map") end
   if not M.mapRoom then return say("Oven doesn't know where you are yet - move one room first") end
@@ -7098,9 +7113,303 @@ function M.mapWalkTo(id)
   local dirs, path = {}, {}
   for i, d in ipairs(speedWalkDir) do dirs[i] = d; path[i] = tonumber(speedWalkPath[i]) end
   if #dirs == 0 then return say("you're already there") end
+  if not onFoot then
+    local okP, plan = pcall(M.runPlan, M.mapRoom, id, dirs, path)
+    if okP and plan then return M.runVia(plan, id, dirs, path) end
+  end
   M.walk = { dirs = dirs, path = path, step = 1 }
   M.notifyWalk(string.format("%d step%s…", #dirs, #dirs == 1 and "" or "s"))
   M.walkStep()
+end
+
+---------------------------------------------------------------------------
+-- Signpost runs: "run <name>" in the wilds runs you along the roads, signpost to signpost, to a town
+-- (run rune, run towerofart). Oven learns the names from signposts you look at and where each run
+-- ends from the runs you make; walks (sbo run, double-clicking the map) then use a run when it saves
+-- a long walk: walk to the wilds, run, walk the rest.
+---------------------------------------------------------------------------
+M.RUN_COST = 25    -- a run counted as this many steps (quick, but it costs stamina and can be cut short)
+M.RUN_SAVES = 30   -- and only used when it saves at least this many more
+
+-- signposts, by room
+local function destsStr(d)
+  local t = {}
+  for n, dir in pairs(d) do t[#t + 1] = n .. "=" .. dir end
+  table.sort(t)
+  return table.concat(t, ";")
+end
+local function destsOf(str)
+  local d = {}
+  for n, dir in tostring(str or ""):gmatch("([^;=]+)=([^;]+)") do d[n] = dir end
+  return d
+end
+M.destsOf = destsOf
+
+function M.signAt(room)
+  local r = room and M.dbRow("SELECT room, sign, dests, exact, last FROM signposts WHERE room = %s", room)
+  if not r then return nil end
+  return { room = tonumber(r.room), sign = r.sign, dests = destsOf(r.dests), looked = (r.dests or "") ~= "",
+           exact = tonumber(r.exact) == 1, last = tonumber(r.last) }
+end
+
+-- one you've looked at (or seen standing here): exact, with its destinations
+function M.signSave(room, sign, dests)
+  if not room then return end
+  local old = M.signAt(room)
+  M.dbx("INSERT OR REPLACE INTO signposts (room, sign, dests, exact, last) VALUES (%s, %s, %s, 1, %s)",
+    room, sign or (old and old.sign), dests and destsStr(dests) or (old and destsStr(old.dests)) or "", os.time())
+end
+
+-- "You take note of the directions on a weatherbeaten signpost near Gilvery, and head northeast."
+-- (while running: the room is where that step of the run ended, near the post)
+function M.signPassed(room, sign)
+  if not room or M.signAt(room) then return end
+  M.dbx("INSERT OR IGNORE INTO signposts (room, sign, dests, exact, last) VALUES (%s, %s, '', 0, %s)", room, sign, os.time())
+end
+
+-- before 0.49 those lines were logged as loot: they move to the signposts
+function M.signMigrate()
+  local rows = M.dbRows("SELECT room, item, t FROM loot WHERE item LIKE 'note of the directions on %%'")
+  if #rows == 0 then return end
+  for _, r in ipairs(rows) do
+    local sign = tostring(r.item):match("^note of the directions on (.-), and head %a+$")
+    local room = tonumber(r.room)
+    if sign and room then
+      M.dbx("INSERT OR IGNORE INTO signposts (room, sign, dests, exact, last) VALUES (%s, %s, '', 0, %s)", room, sign, tonumber(r.t) or os.time())
+    end
+  end
+  M.dbx("DELETE FROM loot WHERE item LIKE 'note of the directions on %%'")
+end
+
+function M.runData()
+  M.cfg.runs = M.cfg.runs or {}
+  local r = M.cfg.runs
+  r.names, r.ends, r.wilds = r.names or {}, r.ends or {}, r.wilds or {}
+  return r
+end
+
+-- the map areas that are the wilds (GMCP room.info says wilds = "true" when you're in one)
+function M.noteWilds(id)
+  local info = M.gmcpGet("room.info")
+  if type(info) ~= "table" or tonumber(info.num) ~= id or tostring(info.wilds) ~= "true" then return end
+  if not roomExists(id) then return end
+  local a = getRoomArea(id)
+  local r = M.runData()
+  if a and not r.wilds[tostring(a)] then r.wilds[tostring(a)] = true; M.saveSettings() end
+end
+
+function M.isWilds(id)
+  if not id then return false end
+  local info = M.gmcpGet("room.info")
+  if type(info) == "table" and tonumber(info.num) == id then return tostring(info.wilds) == "true" end
+  if not roomExists(id) then return false end
+  local a = getRoomArea(id)
+  return a ~= nil and M.runData().wilds[tostring(a)] == true
+end
+
+-- "Item 'a weatherbeaten signpost outside New Rigel's south gate' is type roadsign" then "* towerofart is south."
+function M.noteSignpost(sign)
+  pcall(M.signSave, M.mapRoom, sign.item, sign.dests)
+  local r, new = M.runData(), 0
+  for n in pairs(sign.dests) do
+    if not r.names[n] then r.names[n] = { first = sign.item }; new = new + 1 end
+  end
+  if new > 0 then
+    M.saveSettings()
+    say(string.format("%d new signpost run%s (run <name> in the wilds) - sbo signposts lists them", new, new == 1 and "" or "s"))
+  end
+end
+
+function M.runNames()
+  local out = {}
+  for n in pairs(M.runData().names) do out[n] = true end
+  for _, row in ipairs(M.dbRows("SELECT dests FROM signposts WHERE dests != ''")) do
+    for n in pairs(destsOf(row.dests)) do out[n] = true end
+  end
+  return out
+end
+
+-- a signpost in the room you're in that Oven hasn't read: look at it quietly, once you're idle
+M.signTried = M.signTried or {}
+function M.signAutoLook(room, promptLine)
+  if not M.cfg.signLook or not room or M.signTried[room] or room ~= M.mapRoom then return end
+  local known = M.signAt(room)
+  if known and known.looked then return end
+  if M.cap or M.learning or M.learnQueue or M.quietNext or M.walk or M.running or M.fighting() or not M.inGame(promptLine) then return end
+  M.signTried[room] = true
+  M.quietly("look signpost", "item", function() end)
+end
+
+-- a run you typed (or an alias for one)
+function M.noteRunCommand(cmd)
+  local name = trim(cmd or ""):lower():match("^run%s+(%S+)$")
+  if not name then return end
+  local R = M.running
+  if R and R.ours and R.name == name and not R.sentSeen then R.sentSeen = true; return end
+  M.running = { name = name, at = now(), from = M.mapRoom }
+end
+
+function M.runStart(name, target)
+  if M.running and M.running.timer then pcall(killTimer, M.running.timer) end
+  M.running = { name = name, target = target, at = now(), from = M.mapRoom, ours = true }
+  local mine = M.running
+  send("run " .. name, false)
+  mine.timer = tempTimer(6, function()
+    if M.running == mine and not mine.started then M.runFailed("the game didn't start the run") end
+  end)
+end
+
+function M.runFailed(why)
+  local R = M.running
+  M.running = nil
+  if not R then return end
+  if R.timer then pcall(killTimer, R.timer) end
+  if R.target then
+    M.notifyWalk("run " .. R.name .. ": " .. why .. " - walking instead")
+    M.mapWalkTo(R.target, true)
+  end
+end
+
+function M.runStopped(atSign)
+  local R = M.running
+  M.running = nil
+  if not R then return end
+  if R.timer then pcall(killTimer, R.timer) end
+  local here = M.mapRoom
+  -- a run ends at a signpost; anywhere else it was cut short
+  if atSign and R.started and here then
+    local r = M.runData()
+    local old = r.ends[R.name]
+    r.names[R.name] = r.names[R.name] or {}
+    if old ~= here then
+      r.ends[R.name] = here
+      M.saveSettings()
+      if not old then
+        say(string.format("run %s ends at %s #%d - Oven's walks will use it", R.name,
+          (roomExists(here) and getRoomName(here)) or "this room", here))
+      end
+    end
+  end
+  if not R.target then return end
+  if here == R.target then return M.notifyWalk("arrived") end
+  if atSign then return M.mapWalkTo(R.target, true) end   -- the rest on foot
+  M.notifyWalk("stopped: the run was cut short" .. (here and (" at #" .. here) or "") .. " - sbo run again to go on")
+end
+
+M.addBlockReader("signpost_runs", "*", function(b)
+  local sign, atSign
+  for _, l in ipairs(b.lines) do
+    local t = trim(l)
+    local item = t:match("^Item '(.-)' is type roadsign")
+    if item then sign = { item = item, dests = {} } end
+    if sign then
+      local n, d = t:match("^%* (%l+) is (%a+)%.$")
+      if n then sign.dests[n] = d end
+    end
+    if t:match("signpost is firmly planted here%.$") then atSign = true end
+    local passed = t:match("^You take note of the directions on (.-), and head %a+%.$")
+    if passed then pcall(M.signPassed, M.mapRoom, passed) end
+    local R = M.running
+    if R then
+      if t == "You start running." then R.started = true end
+      if t == "That only works in the wilds!" then M.runFailed("only works in the wilds") end
+      if t == "You stop running." then M.runStopped(atSign) end
+    end
+  end
+  if sign and next(sign.dests) then M.noteSignpost(sign) end
+  if atSign and b.prompt and M.mapRoom then
+    local room, p = M.mapRoom, b.lines[#b.lines]
+    tempTimer(0.5, function() pcall(M.signAutoLook, room, p) end)
+  end
+end)
+
+-- the run named after the area a room is in: "Towne of Rune" -> rune, "Tower of Art" -> towerofart
+function M.runForArea(id)
+  local a = id and roomExists(id) and getRoomArea(id)
+  local an = a and getRoomAreaName(a)
+  if not an or an == "" then return nil end
+  local words = {}
+  for w in an:lower():gmatch("%a+") do words[#words + 1] = w end
+  local full = table.concat(words)
+  -- "Towne of Rune", "City of X", "The X": the name without the lead-in
+  local short = full
+  local lead = { "towneof", "townof", "cityof", "villageof", "the" }
+  for _, l in ipairs(lead) do if short:sub(1, #l) == l and #short > #l + 2 then short = short:sub(#l + 1); break end end
+  local names = M.runNames()
+  if names[full] then return full end
+  if names[short] then return short end
+end
+
+-- the quickest way from here to target using one run, when it beats walking by enough
+function M.runPlan(here, target, dirs, path)
+  local r = M.runData()
+  local direct = #dirs
+  -- where a run can start: here in the wilds, or the first wilds room on the way
+  local k
+  if M.isWilds(here) then k = 0 else
+    for i, p in ipairs(path) do if M.isWilds(p) then k = i; break end end
+  end
+  if not k then return end
+  local best
+  -- a run whose end isn't known yet, to the town the target is in: run there, walk the rest from
+  -- wherever it stops (and its end is learned on the way)
+  local town = M.runForArea(target)
+  if town and not r.ends[town] and direct >= M.RUN_COST + M.RUN_SAVES + k then
+    best = { name = town, cost = k + M.RUN_COST, k = k, after = 0, unknown = true }
+  end
+  for name, e in pairs(r.ends) do
+    local n
+    if e == target then n = 0 elseif roomExists(e) and getPath(e, target) then n = #speedWalkDir end
+    if n then
+      local cost = k + M.RUN_COST + n
+      if cost + M.RUN_SAVES <= direct and (not best or cost < best.cost) then
+        best = { name = name, cost = cost, k = k, after = n, endRoom = e }
+      end
+    end
+  end
+  return best
+end
+
+function M.runVia(plan, target, dirs, path)
+  local parts = {}
+  if plan.k > 0 then parts[#parts + 1] = string.format("%d step%s", plan.k, plan.k == 1 and "" or "s") end
+  parts[#parts + 1] = "run " .. plan.name
+  if plan.unknown then parts[#parts + 1] = "walk the rest"
+  elseif plan.after > 0 then parts[#parts + 1] = string.format("%d step%s", plan.after, plan.after == 1 and "" or "s") end
+  M.notifyWalk(table.concat(parts, ", then ") .. string.format("  (instead of %d steps)", #dirs))
+  if plan.k == 0 then return M.runStart(plan.name, target) end
+  local d, p = {}, {}
+  for i = 1, plan.k do d[i], p[i] = dirs[i], path[i] end
+  M.walk = { dirs = d, path = p, step = 1, thenRun = plan.name, target = target }
+  M.walkStep()
+end
+
+-- sbo signposts
+function M.runList()
+  local r = M.runData()
+  local names = {}
+  for n in pairs(M.runNames()) do names[#names + 1] = n end
+  table.sort(names)
+  local cnt = M.dbRow("SELECT COUNT(*) AS n, SUM(CASE WHEN dests != '' THEN 1 ELSE 0 END) AS read FROM signposts") or {}
+  local posts = string.format("%d signpost%s known, %d read", tonumber(cnt.n) or 0, tonumber(cnt.n) == 1 and "" or "s", tonumber(cnt.read) or 0)
+  if #names == 0 then return say("no signpost run names yet (" .. posts .. ") - stand at a weatherbeaten signpost in the wilds and Oven reads it") end
+  local width = M.cfg.window and M.viewCols() or 80
+  local out = { header("map", "", width, string.format("Signpost runs  (%d)", #names)) }
+  out[#out + 1] = { { C.dim, "run <name> in the wilds; walks run to a town's name and learn where it ends  ·  " .. posts } }
+  out[#out + 1] = {}
+  local links, w = {}, 0
+  for _, n in ipairs(names) do w = math.max(w, ulen(n)) end
+  for _, n in ipairs(names) do
+    local e = r.ends[n]
+    if e then
+      out[#out + 1] = { { C.item, "  " .. pad(n, w + 2) }, { C.plus, "ends at " }, { C.key, (roomExists(e) and getRoomName(e)) or "?" }, { C.dim, "  #" .. e } }
+      links[#links + 1] = { "run " .. n, function() M.mapRun(n) end }
+    else
+      out[#out + 1] = { { C.item, "  " .. pad(n, w + 2) }, { C.dim, "end not known yet - learned the first time it's run" } }
+      links[#links + 1] = { "run " .. n, function() M.mapRun(n) end }
+    end
+  end
+  M.viewOut(out, links)
 end
 
 -- sbo run <what>: run to the nearest room that has it - an NPC tag or name ([Trainer], [Shop],
@@ -7228,6 +7537,12 @@ function M.mapRun(arg)
   if q == "" then return say("usage: sbo run <trainer|shop|quest|… or part of a name or room # >  (sbo run all <what> lists them)") end
   if q == "stop" then return M.command("map stop") end
   if tonumber(q) then return M.mapWalkTo(tonumber(q)) end
+  local sign = not all and M.runNames()[q:lower()] and q:lower()
+  if sign then
+    local e = M.runData().ends[sign]
+    if e and M.cfg.map and M.mapRoom and roomExists(e) then return M.mapWalkTo(e) end
+    return M.runStart(sign)
+  end
   if not M.cfg.map then return say("map following is off - sbo map on first") end
   local here = M.mapRoom or M.currentRoom()
   if not here or not roomExists(here) then return say("Oven doesn't know where you are on the map yet - move one room first") end
@@ -7741,6 +8056,8 @@ M.helpSections = {
     { "sbo map find {text}", "find rooms by name; click a result to show it or walk there" },
     { "sbo run {what}", "run to the nearest trainer, shop, quest, boss, NPC name, or room name" },
     { "sbo run all {what}", "every match, nearest first, to pick from" },
+    { "sbo signposts", "the signpost run names (run towerofart…) and where each ends; walks use them when it's quicker" },
+    { "sbo signposts look on|off", "look quietly at a signpost the first time you're in its room" },
     { "sbo mark {name}", "bookmark the room you're in (sbo run name goes back; sbo mark lists them)" },
     { "sbo unmark {name}", "remove a bookmark" },
     { "sbo map walk {room #}", "walk to a room" },
@@ -8023,6 +8340,13 @@ function M.command(args)
     M.cfg.slotNames = b; say("slot names: " .. b)
   elseif a == "learn" then return M.learn(b)
   elseif a == "run" then return M.mapRun(b)
+  elseif a == "signposts" or a == "signpost" or a == "runs" then
+    local v = b:lower():match("^look%s+(%a+)$")
+    if v == "on" or v == "off" then
+      M.cfg.signLook = (v == "on"); M.saveSettings()
+      return say("looking at new signposts: " .. v)
+    end
+    return M.runList()
   elseif a == "build" then return M.buildCommand(b)
   elseif a == "upgrades" or a == "upgrade" then
     local n = tonumber(b:match("^compare%s+(%d+)$") or "")
@@ -8125,6 +8449,7 @@ function M.command(args)
     elseif b == "off" then
       M.cfg.map = false; M.saveSettings(); M.mapStop(); return say("map following and click-to-walk off")
     elseif b == "stop" then
+      if M.running and M.running.target then M.running.target = nil; M.walk = nil; return say("walk cancelled (the run itself goes on until it stops)") end
       if M.walk then M.walk = nil; return say("walk cancelled") end
       return say("not walking")
     elseif b:match("^find%s") or b:match("^search%s") then
