@@ -859,6 +859,21 @@ def quest_request_pins():
 
 
 @test
+def quest_login_daily_pins():
+    # the daily quest handed out at login: no command typed
+    lines = open(fixture("quest_login_daily.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
+    for setting, want in (("on", True), ("off", None)):
+        o = Oven()
+        o.lua(f'sbo.cfg.promptPattern = "<%d+hp"; sbo.command("quest autopin {setting}")')
+        o.feed(*lines)
+        o.feed("<281hp 696sp 457st>")
+        o.L.execute("runTimers()")
+        eq(o.ev("(sbo.cfg.questPins or {})['3519']"), want, f"pinned with autopin {setting}")
+        eq(o.ev("sbo.quests['3519'] and sbo.quests['3519'].name"), "Daily Quest - Feeding Hungry Mouths", "read")
+        eq(o.ev("sbo.quests['3519'].total"), 1, "its one phase")
+
+
+@test
 def quest_steps_update():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     o = Oven()

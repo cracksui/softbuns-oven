@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.49.1"
+M.version = "0.49.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5802,6 +5802,24 @@ M.addBlockReader("kills_loot", "*", function(b, kinds)
   if M.pickupPending and b.prompt then
     local p = b.lines[#b.lines]   -- the prompt line itself
     tempTimer(0.5, function() pcall(M.pickupFlush, p) end)
+  end
+end)
+
+-- a quest the game hands you without a command (the daily quest at login):
+-- "You undertake the quest 'Daily Quest - Feeding Hungry Mouths', #3519." then the quest in full
+M.addBlockReader("quest_undertaken", "*", function(b)
+  for i, l in ipairs(b.lines) do
+    if trim(l):match("^You undertake the quest '.-', #%d+%.?$") then
+      local rest = {}
+      for j = i + 1, #b.lines - (b.prompt and 1 or 0) do rest[#rest + 1] = b.lines[j] end
+      local q = M.parseQuests(rest)
+      if q.detail and q.detail.id then
+        M.questReplyRequest = true
+        M.rememberQuests({ list = {}, detail = q.detail }, false)
+        M.questReplyRequest = nil
+      end
+      return
+    end
   end
 end)
 

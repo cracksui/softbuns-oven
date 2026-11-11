@@ -1,0 +1,21 @@
+Materia Magica 5.0.30
+There are currently 66 players online and 52 connections.
+You choke as your lungs adjust to underwater breathing.
+[CLAN] Pip has entered Materia Magica.
+You undertake the quest 'Daily Quest - Feeding Hungry Mouths', #3519.
+This quest [3519] is called 'Daily Quest - Feeding Hungry Mouths',
+for Adventurers levels 20 to 250.
+This is a DAILY quest, which you can only receive one of per day, and everyone receives the same one.
+People are hungry!  Give them food!  The people need food, and you are
+Adventurer, an upstanding communitymember- provide your compatriots with the
+sustenance they need to thrive.  
+Upon successful completion of this quest you can receive:
+*Up to 25 quest points, 20 practice points, 0 experience points,
+0 build points, 0 piety, and 25,000 gold pieces.
+*The item 'a velocity token'.
+*The item 'a dusty curious coin'.
+You have 1984 Alyrian minute remaining to complete this quest.
+Daily Quest - Feeding Hungry Mouths consists of:
+Phase 1: Locate and deliver sprutter spritz [Cooking Adventurers] to a bag lady [Towne of Rune].
+
+[Mail]<281hp 696sp 457st> MCCP 2 ENABLED.
