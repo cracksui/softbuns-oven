@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.50.2"
+M.version = "0.50.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2378,7 +2378,9 @@ local function hudWrap(text, n, ind)
   return lines
 end
 
-local HUD_WRAP = 64
+-- the quest HUD is HUD_COLS characters wide; its text wraps a few short of that, so a font that draws a
+-- little wider than Mudlet's measure of it still fits
+local HUD_WRAP, HUD_COLS = 60, 68
 
 -- one quest's lines (html) and their widest width in characters:
 -- the name and progress, every step still to do (the next one marked), and optionally the blurb
@@ -2451,7 +2453,7 @@ local function questCardHtml(id, Q)
       elseif l:match("%S%s%s%s+%S") or l:match("^%s%s%s%s+%S") or l:match("^%s*[%*%-] ") or trim(l):match(":$") then
         flush()   -- list lines and "You can find:" headings keep their own line, spacing and all
         local line = rtrim(l)
-        if ulen(line) <= HUD_WRAP + 12 then
+        if ulen(line) <= HUD_WRAP + 4 then
           add(span(C.dim, " " .. line:gsub(" ", "\194\160")), ulen(line) + 1)
         else
           for _, w in ipairs(hudWrap(line, HUD_WRAP, 4)) do add(span(C.dim, " " .. w), ulen(w) + 1) end
@@ -2526,9 +2528,8 @@ function M.drawQuestTracker()
   end
   for i = #ids + 1, #M.questCards do M.questCards[i]:hide() end
   M.questCardLayout = layout
-  -- calcFontSize gives whole pixels and the text is drawn at fractional widths (and █ ▶ ✓ may come
-  -- from a wider fallback font), so leave a little room: 4% more than measured, plus the card's padding
-  M.questHudSize = { w = math.min(600, math.ceil(widest * cw * 1.04) + 28), h = total }
+  -- a fixed width (wider only for a line that doesn't wrap, like a long quest name)
+  M.questHudSize = { w = math.min(600, math.max(HUD_COLS, widest + 3) * cw + 24), h = total }
   M.layoutQuestHud()
   M.questHud:show()
   for i = 1, #ids do M.questCards[i]:show() end
