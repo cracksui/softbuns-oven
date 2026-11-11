@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.39.2"
+M.version = "0.40.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2383,8 +2383,12 @@ local function questCardHtml(id, Q)
           -- where the next step is, when Oven can place it
           local ok, room, why = pcall(M.questTarget, ph, id)
           if ok and room then
-            local where = "→ " .. (getRoomName(room) or ("#" .. room)) .. "  · sbo quest go " .. id
-            add("   " .. span(C.dim, where), ulen(where) + 3)
+            -- green: the room the game named for this step; orange: one Oven found (an NPC seen,
+            -- where you've killed it, a room by that name on the map) - a good guess, not certain
+            local exact = why == M.QUEST_ROOM_EXACT
+            local nm = getRoomName(room) or ("#" .. room)
+            local go = "  · sbo quest go " .. id
+            add("   " .. span(C.dim, "→ ") .. span(exact and C.plus or C.flag, nm) .. span(C.dim, go), ulen(nm) + ulen(go) + 5)
           end
         end
         first = false
@@ -2656,12 +2660,13 @@ function M.questStepNames(text)
 end
 
 M.questTargetCache = M.questTargetCache or {}
+M.QUEST_ROOM_EXACT = "the quest's target room"
 function M.questTarget(ph, qid)
   if not ph or not ph.text then return end
   -- the game's quest log names the room for many steps
   if qid and ph.n then
     local r = M.gmcpQuestRoom(qid, ph.n)
-    if r then return r, "the quest's target room" end
+    if r then return r, M.QUEST_ROOM_EXACT end
   end
   local ck = ph.text .. "|" .. tostring(ph.area)
   local c = M.questTargetCache[ck]

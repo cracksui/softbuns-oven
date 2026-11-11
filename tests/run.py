@@ -830,6 +830,21 @@ def game_aliases():
 
 
 @test
+def quest_target_colours():
+    o = Oven(before='''gmcp = { char = { quests = { q52 = { goals = { { phase_number = 1, room_target = 10733 } } } } } }
+      roomExists = function() return true end; getRoomName = function(id) return ({ [10733] = "The Entrance to Rune Prison", [77] = "The Edible Loaf" })[id] end
+      getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end
+      searchRoom = function(n) if n:lower():find("edible loaf") then return { ["77"] = "The Edible Loaf" } end return {} end''')
+    o.lua('''sbo.quests = { ["52"] = { name = "Jail Time", total = 1, done = 0, phases = { { n = 1, text = "Journey to The Entrance to Rune Prison", area = "Towne of Rune" } } },
+                            ["1547"] = { name = "War and Peace", total = 1, done = 0, phases = { { n = 1, text = "Journey to The Edible Loaf", area = "Towne of Rune" } } } }
+      color_table.pale_green = { 152, 251, 152 }; color_table.orange = { 255, 165, 0 }''')
+    exact = "\n".join(o.ev('sbo.questCardHtml("52", sbo.quests["52"])')[0].values())
+    guess = "\n".join(o.ev('sbo.questCardHtml("1547", sbo.quests["1547"])')[0].values())
+    assert "rgb(152,251,152)\">The Entrance to Rune Prison" in exact, exact
+    assert "rgb(255,165,0)\">The Edible Loaf" in guess, guess
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40
