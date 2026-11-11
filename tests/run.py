@@ -875,6 +875,20 @@ def bar_from_gmcp():
 
 
 @test
+def bar_leaves_questions():
+    o = Oven()
+    o.lua('''sbo.cfg.bar = true; sbo.cfg.promptPattern = "[<?]"; GONE = {}
+      sbo.bar = { rawEcho = function(self, h) BAR = h end }
+      deleteLine = function() GONE[#GONE + 1] = line end''')
+    o.feed("[Mail]<291hp 696sp 457st>")
+    eq(list(o.ev("GONE").values()), ["[Mail]<291hp 696sp 457st>"], "your prompt goes to the bar")
+    o.lua("GONE = {}")
+    o.feed("Do you really want to quit (y/N)?")
+    eq(list(o.ev("GONE").values()), [], "a question stays in the game text")
+    eq(o.ev("sbo.lastPromptText"), "[Mail]<291hp 696sp 457st>", "the bar keeps your last prompt")
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

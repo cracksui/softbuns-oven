@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.42.0"
+M.version = "0.42.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6005,7 +6005,11 @@ function M.onLine()
   end
   if isPromptLine() then
     if cap and #cap.plain > 0 then M.finish("prompt") end
-    if M.cfg.bar then
+    -- a question the game asks the way it sends a prompt ("Do you really want to quit (y/N)?") isn't
+    -- your status: it stays in the game text to be answered. Your prompt has values (<291hp ...>).
+    local status = #M.parsePrompt(line).vals > 0
+    if status then M.promptHasVals = true end
+    if M.cfg.bar and (status or not M.promptHasVals) then
       local d = selectionDecho() or line
       if not promptLogged then
         promptLogged = true
