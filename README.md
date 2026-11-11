@@ -81,7 +81,9 @@ Drag it by its title bar and resize it from its edges; it remembers where you pu
 
 ## What gets baked
 
-Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipment`…).
+Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipment`…), and through your own
+aliases in the game (`alias qr quest request`): Oven reads your alias list quietly once per session and follows
+your `alias` / `unalias` changes, so `qr` is a quest request to Oven too.
 
 Results open in the **Inspector** window, which has four tabs: **Inspector** (eq, items, score, comparisons,
 with ◀ older / newer ▶), **Help** (game help pages and `sbo`'s command list), **Log** (`sbo session`, `kills`,
