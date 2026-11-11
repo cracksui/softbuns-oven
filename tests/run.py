@@ -618,6 +618,13 @@ def upgrades_from_what_you_carry():
     assert "a bagged hauberk" in o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html"), "...and in the Inspector"
     o.lua('sbo.command("mirror inspector off"); MAIN = {}; sbo.command("upgrades")')
     assert "a bagged hauberk" not in "".join(o.ev("MAIN").values()), "mirror inspector off: only in the Inspector"
+    assert "+4 strength" in mine, f"why: the stats that make the difference: {mine}"
+    eq(o.ev("#sbo.viewHist[#sbo.viewHist].links") >= 1, True, "a link per upgrade")
+    o.lua('sbo.command("upgrades compare 1")')
+    page = o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html")
+    assert "Score breakdown" in page and "a bagged hauberk" in page, "sbo upgrades compare 1: the full comparison"
+    o.lua('sbo.viewHist[#sbo.viewHist - 1].links[1][2]()')   # the link on the list does the same
+    assert "Score breakdown" in o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html")
 
 
 @test

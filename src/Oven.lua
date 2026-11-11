@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.34.0"
+M.version = "0.35.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3892,6 +3892,8 @@ function M.upgradeLines(width, all)
   end
   if #wearing == 0 then out[#out + 1] = { { C.dim, "type eq and look at your gear first (sbo learn does it in one go)" } }; return out end
   local shown = 0
+  local links = {}
+  M.lastUpgrades = {}
   for _, cur in ipairs(wearing) do
    if weakest[cur.worn] and weakest[cur.worn].it == cur then
     local cs = M.gearScore(cur, w)
@@ -3905,11 +3907,25 @@ function M.upgradeLines(width, all)
     end
     if best then
       shown = shown + 1
-      out[#out + 1] = { { C.slot, pad(cur.worn, 24) }, { C.item, cur.name }, { C.dim, "  " .. cs } }
+      local bestIt = M.items[best]
+      M.lastUpgrades[shown] = { cur = cur.name, best = best }
+      out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name }, { C.dim, "  " .. cs } }
       local row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
       local where = carried and carried[best]
       if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where } end
       out[#out + 1] = row
+      -- why: the stats that make the difference, from the score breakdown
+      local why = M.upgradeWhy(cur, bestIt, w)
+      if #why > 0 then
+        local r = { { C.dim, pad("", 26) } }
+        for k, x in ipairs(why) do
+          if k > 1 then r[#r + 1] = { C.dim, " · " } end
+          r[#r + 1] = { x.d > 0 and C.plus or C.minus, x.text }
+        end
+        out[#out + 1] = r
+      end
+      local n, a, z = shown, cur.name, best
+      links[#links + 1] = { string.format("%d. compare %s → %s", n, a, z), function() M.compareNames(a, z) end }
     end
    end
   end
@@ -3923,6 +3939,29 @@ function M.upgradeLines(width, all)
   else
     out[#out + 1] = { { C.dim, "what you carry (as of your last i" .. (M.cfg.carried.at and (", " .. M.shortDur(os.time() - M.cfg.carried.at) .. " ago") or "")
       .. ") and have looked at · sbo upgrades all for everything you've seen · sbo learn inv" } }
+  end
+  if shown > 0 then
+    out[#out + 1] = { { C.dim, "click one below (or sbo upgrades compare <number>) for the full comparison" } }
+  end
+  return out, links
+end
+
+-- the few stats that make the difference between what you wear and an upgrade: "+6 ar"
+function M.upgradeWhy(cur, best, w)
+  local pa, pb = M.scoreParts(cur, w) or {}, M.scoreParts(best, w) or {}
+  local d = {}
+  for _, p in ipairs(pa) do d[p.stat] = (d[p.stat] or 0) - p.points end
+  for _, p in ipairs(pb) do d[p.stat] = (d[p.stat] or 0) + p.points end
+  local list = {}
+  for st, v in pairs(d) do if math.abs(v) >= 0.05 then list[#list + 1] = { stat = st, d = v } end end
+  table.sort(list, function(x, y) if math.abs(x.d) ~= math.abs(y.d) then return math.abs(x.d) > math.abs(y.d) end return x.stat < y.stat end)
+  local out = {}
+  for i = 1, math.min(3, #list) do
+    local x = list[i]
+    local r = math.floor(x.d * 10 + 0.5) / 10
+    if r == math.floor(r) then r = math.floor(r) end
+    x.text = (x.d > 0 and "+" or "−") .. tostring(math.abs(r)) .. " " .. x.stat
+    out[#out + 1] = x
   end
   return out
 end
@@ -7096,6 +7135,7 @@ M.helpSections = {
     { "sbo autocompare on|off", "compare each looked-at item with what you wear in that slot" },
     { "sbo items", "list the items Oven remembers" },
     { "sbo upgrades [all]", "for each slot, the best item you carry that beats what you wear (all: anything you've seen)" },
+    { "sbo upgrades compare {n}", "the full comparison for upgrade number n (or click it)" },
     { "sbo build [name]", "the weights behind the gear score; switch or make builds (set STAT WEIGHT, reset, auto)" },
     { "", "" },
     { "sbo eqstats on|off", "AR and affects column in eq" },
@@ -7389,6 +7429,12 @@ function M.command(args)
   elseif a == "run" then return M.mapRun(b)
   elseif a == "build" then return M.buildCommand(b)
   elseif a == "upgrades" or a == "upgrade" then
+    local n = tonumber(b:match("^compare%s+(%d+)$") or "")
+    if n then
+      local u = (M.lastUpgrades or {})[n]
+      if not u then return say("no upgrade #" .. n .. " - type sbo upgrades first") end
+      return M.compareNames(u.cur, u.best)
+    end
     M.viewOut(M.upgradeLines(M.cfg.window and M.viewCols() or columns("main"), b == "all"))
     return
   elseif a == "mark" then if b == "" then return M.listMarks() end return M.markRoom(b)
