@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.33.0"
+M.version = "0.33.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3150,6 +3150,16 @@ function M.logAdd(lines, links)
   M.pageShow(M.logPg, segsToDecho(lines), "decho", all)
   tabEnd("log", prev, true)   -- only ever from an sbo command you typed
 end
+-- an Oven report for the Inspector (upgrades, build, compare, map find, marks): in the Inspector,
+-- and on the main screen too while sbo mirror inspector is on (or when there's no window)
+function M.viewOut(lines, links)
+  if M.cfg.window then
+    M.viewAdd({ lines = lines, links = links or {} })
+    if M.cfg.mirror.view == false then return end
+  end
+  render("main", lines)
+end
+
 -- a Log report: make(width) -> lines, links. In the Log tab (and on the main screen too with
 -- sbo mirror log on), or on the main screen when the window is off
 function M.logOut(make)
@@ -3981,7 +3991,7 @@ end
 function M.buildCommand(b)
   b = trim(b or "")
   local w = M.cfg.window and M.viewCols() or columns("main")
-  local function show(lines) if M.cfg.window then M.viewAdd({ lines = lines, links = {} }) else render("main", lines) end end
+  local function show(lines) M.viewOut(lines) end
   if b == "" then return show(M.buildLines(w)) end
   local stat, val = b:match("^set%s+(%S+)%s+(%-?[%d%.]+)$")
   if stat then
@@ -4052,7 +4062,7 @@ function M.compare(a, b, entry)
     entry.lines[#entry.lines + 1] = {}
     addAll(entry.lines, M.compareLines(a, b, M.viewCols()))
   elseif M.cfg.window then
-    M.viewAdd({ lines = M.compareLines(a, b, M.viewCols()), links = {} })
+    M.viewOut(M.compareLines(a, b, M.viewCols()))
   else
     render("main", M.compareLines(a, b, columns("main")))
   end
@@ -6441,8 +6451,7 @@ function M.mapFind(q)
     links[#links + 1] = { "show #" .. id .. " " .. nm, function() M.mapShow(id) end }
     links[#links + 1] = { "walk to #" .. id .. " " .. nm, function() M.mapWalkTo(id) end }
   end
-  if M.cfg.window then M.viewAdd({ lines = out, links = links })
-  else render("main", out) end
+  M.viewOut(out, links)
   if rows[1] and #rows == 1 then M.mapShow(rows[1].id) end
 end
 
@@ -6511,7 +6520,7 @@ function M.listMarks()
   end
   out[#out + 1] = {}
   out[#out + 1] = { { C.dim, "sbo run <name> to go there · sbo unmark <name> to remove one" } }
-  if M.cfg.window then M.viewAdd({ lines = out, links = links }) else render("main", out) end
+  M.viewOut(out, links)
 end
 
 -- Deaths: where, at what level, and the lines that led up to it
@@ -6639,7 +6648,7 @@ function M.mapRun(arg)
       local id = t.id
       links[#links + 1] = { "run to #" .. id .. " " .. (getRoomName(id) or ""), function() M.mapWalkTo(id) end }
     end
-    if M.cfg.window then M.viewAdd({ lines = out, links = links }) else render("main", out) end
+    M.viewOut(out, links)
     return
   end
   if not best then return say("you're already at the only " .. q .. " Oven knows of") end
@@ -7316,8 +7325,7 @@ function M.command(args)
   elseif a == "run" then return M.mapRun(b)
   elseif a == "build" then return M.buildCommand(b)
   elseif a == "upgrades" or a == "upgrade" then
-    local lines = M.upgradeLines(M.cfg.window and M.viewCols() or columns("main"), b == "all")
-    if M.cfg.window then M.viewAdd({ lines = lines, links = {} }) else render("main", lines) end
+    M.viewOut(M.upgradeLines(M.cfg.window and M.viewCols() or columns("main"), b == "all"))
     return
   elseif a == "mark" then if b == "" then return M.listMarks() end return M.markRoom(b)
   elseif a == "marks" then return M.listMarks()

@@ -610,6 +610,14 @@ def upgrades_from_what_you_carry():
     assert "a shop breastplate" not in mine and "a dropped tunic" not in mine, f"only what you carry: {mine}"
     every = o.ev("UP(true)")
     assert "a shop breastplate" in every, f"sbo upgrades all: the best of everything seen: {every}"
+    # the command: in the Inspector and (sbo mirror inspector on, the default) on the main screen
+    o.lua('''sbo.cfg.window = true; MAIN = {}
+      echo = function(w, t) if t == nil then t = w; w = "main" end if w == "main" then MAIN[#MAIN+1] = t end end
+      sbo.command("upgrades")''')
+    assert "a bagged hauberk" in "".join(o.ev("MAIN").values()), "sbo upgrades on the main screen"
+    assert "a bagged hauberk" in o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html"), "...and in the Inspector"
+    o.lua('sbo.command("mirror inspector off"); MAIN = {}; sbo.command("upgrades")')
+    assert "a bagged hauberk" not in "".join(o.ev("MAIN").values()), "mirror inspector off: only in the Inspector"
 
 
 @test
