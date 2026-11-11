@@ -192,6 +192,7 @@ sbo clear                 clear the Inspector's history
 sbo font [size]           Inspector / help window font size (leave the number off for the default)
 sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
+sbo pickup look on|off                                    look quietly at new items you pick up; says so if one is an upgrade
 sbo learn                 look at worn items Oven doesn't know yet (the ? in eq)
 sbo learn inv             the same for everything you carry, and what's inside your containers
 sbo loot [text|all]       what you and your group picked up, from where, and the exact room (sbo loot lance = search)

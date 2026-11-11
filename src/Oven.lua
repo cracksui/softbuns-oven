@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.46.1"
+M.version = "0.47.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -41,6 +41,7 @@ M.defaults = {
   questHudOpacity = 100,     -- quest HUD background opacity, 0-100
   questHudBlurb = false,     -- show each quest's description (hints) in the HUD
   questAutoPin = true,       -- a quest you take with quest request goes straight onto the quest HUD
+  pickupLook   = true,       -- look quietly at items you pick up that Oven doesn't know yet
   combatLines  = true,       -- combat mode mxp: a line per round (the game shows none) and a summary per fight
   combatBar    = true,       -- combat mode mxp: a line above the prompt bar with your targets' health, while you fight
   map          = false,      -- follow your room (GMCP) on the map and walk where you double-click
@@ -5791,7 +5792,11 @@ M.addBlockReader("kills_loot", "*", function(b, kinds)
     local n = expGain(l)
     if n and n > 0 then pcall(M.creditKillExp, n) end
     local okL, loot = pcall(M.parseLoot, l)
-    if okL and loot then pcall(M.recordLoot, loot) end
+    if okL and loot then pcall(M.recordLoot, loot); pcall(M.notePickup, loot) end
+  end
+  if M.pickupPending and b.prompt then
+    local p = b.lines[#b.lines]   -- the prompt line itself
+    tempTimer(0.5, function() pcall(M.pickupFlush, p) end)
   end
 end)
 
@@ -7370,7 +7375,8 @@ end
 -- "You get ..." lines that aren't items
 local NOT_LOOT = { "^the feeling", "^a feeling", "^the sense", "^a sense", "^the impression", "^the idea",
                    "^nothing", "^hungry", "^thirsty", "^tired", "^up", "^dressed", "^undressed",
-                   "^better", "^worse", "^lost", "^a chance", "^the chance", "^ready", "^experience" }
+                   "^better", "^worse", "^lost", "^a chance", "^the chance", "^ready", "^experience",
+                   "^note of " }   -- "You take note of the directions on a weatherbeaten signpost…"
 
 function M.parseLoot(l)
   l = trim(l)
@@ -7510,9 +7516,9 @@ end
 -- sbo learn: look at every worn item Oven doesn't know yet (the "?" in eq), quietly.
 -- sbo learn inv: the same for what you carry, and what's inside your containers.
 -- Each entry is { name, cmd, inside = container name or nil }; done() runs when the queue is empty.
-function M.learnStart(entries, what, done)
+function M.learnStart(entries, what, done, silent)
   M.learnQueue, M.learnStats, M.learnDone = entries, M.learnStats or { ok = 0, fail = 0 }, done
-  if #entries > 0 then say("looking at " .. #entries .. " " .. what .. (#entries == 1 and "" or "s") .. "…") end
+  if #entries > 0 and not silent then say("looking at " .. #entries .. " " .. what .. (#entries == 1 and "" or "s") .. "…") end
   M.learnNext()
 end
 
@@ -7633,6 +7639,63 @@ function M.learnResult(entry, ok)
 end
 
 
+-- Picking something up: GMCP doesn't describe items, so Oven looks at a new one quietly (once you're
+-- out of the fight and the game is idle), then says so in the main window if it beats what you wear.
+local function pickupName(item)
+  local n = trim(item or ""):gsub("^%d+ of ", "")
+  if n:match("^[%d,]+ gold coins?$") or n:match("^[%d,]+ coins?$") or n == "" then return nil end
+  return n
+end
+
+function M.notePickup(loot)
+  if loot.who ~= "you" or not M.cfg.pickupLook then return end
+  local n = pickupName(loot.item)
+  if not n then return end
+  -- it's carried now, for sbo upgrades
+  local c = M.cfg.carried
+  if c and c.inv then
+    local have = false
+    for _, x in ipairs(c.inv) do if x == n then have = true end end
+    if not have then c.inv[#c.inv + 1] = n end
+  end
+  if M.items[n] then return M.pickupVerdict(M.items[n]) end
+  M.pickupPending = M.pickupPending or {}
+  for _, e in ipairs(M.pickupPending) do if e.name == n then return end end
+  M.pickupPending[#M.pickupPending + 1] = { name = n, pickup = true }
+end
+
+function M.fighting()
+  if next(M.fights or {}) then return true end
+  local st = M.gmcpGet and M.gmcpGet("char.status")
+  return type(st) == "table" and ((st.position == "fighting") or (st.enemy and st.enemy ~= "_empty" and st.enemy ~= "")) or false
+end
+
+function M.pickupFlush(promptLine)
+  local q = M.pickupPending
+  if not q or #q == 0 then M.pickupPending = nil return end
+  -- only between commands, never mid-fight, never before you're playing
+  if M.cap or M.learning or M.learnQueue or M.quietNext or M.fighting() or not M.inGame(promptLine) then return end
+  M.pickupPending = nil
+  M.learnStats = { ok = 0, fail = 0 }
+  local names = {}
+  for _, e in ipairs(q) do names[#names + 1] = e.name end
+  M.learnStart(q, "picked-up item", function()
+    for _, n in ipairs(names) do if M.items[n] then pcall(M.pickupVerdict, M.items[n]) end end
+  end, true)
+end
+
+-- one line, only for an upgrade: "picked up a sturdy staff: gear score 23.5, +5.5 over a bo staff (sbo compare)"
+function M.pickupVerdict(it)
+  local _, w = M.activeBuild()
+  local worn = M.wornLike(it, w)
+  if not worn then return end
+  local sc, ws = M.gearScore(it, w), M.gearScore(worn, w)
+  if not sc or not ws or sc <= ws then return end
+  local d = math.floor((sc - ws) * 10 + 0.5) / 10
+  M.pickupLast = { it.name, worn.name }
+  say(string.format("picked up %s: gear score %s, +%s over your %s (sbo compare %s vs %s)", it.name, sc, d, worn.name, it.name, worn.name))
+end
+
 -- the command list, grouped by what you want to do; `sbo help <section>` shows one section
 M.helpSections = {
   { key = "start", title = "Getting started", rows = {
@@ -7648,6 +7711,7 @@ M.helpSections = {
     { "sbo compare {a} vs {b}", "compare two remembered items by part of their names" },
     { "sbo pin {name}  /  unpin", "compare everything you look at against one item (handy in shops)" },
     { "sbo autocompare on|off", "compare each looked-at item with what you wear in that slot" },
+    { "sbo pickup look on|off", "look quietly at new items you pick up; says so when one is an upgrade" },
     { "sbo items", "list the items Oven remembers" },
     { "sbo upgrades [all]", "for each slot, the best item you carry that beats what you wear (all: anything you've seen)" },
     { "sbo upgrades compare {n}", "the full comparison for upgrade number n (or click it)" },
@@ -8100,6 +8164,10 @@ function M.command(args)
   elseif a == "empty" and onoff ~= nil then
     M.cfg.showEmpty = onoff; say("empty slots in eq: " .. b)
   elseif a == "autocompare" and onoff ~= nil then M.cfg.autocompare = onoff; say("auto-compare " .. b)
+  elseif a == "pickup" then
+    local v = trim(b or ""):lower():gsub("^look%s*", "")
+    if v == "on" or v == "off" then M.cfg.pickupLook = (v == "on"); M.saveSettings() end
+    say("looking at new items you pick up: " .. (M.cfg.pickupLook and "on" or "off") .. "  (sbo pickup look on|off)")
   elseif a == "items" then
     say(#M.recent .. " remembered items (most recent last):")
     for _, n in ipairs(M.recent) do

@@ -570,6 +570,61 @@ def learn_inventory_and_containers():
 
 
 @test
+def pickup_looks_quietly():
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end')
+    o.lua(GAME)
+    o.set_gmcp("char.status", '{ state = "playing", position = "standing", enemy = "_empty" }')
+    o.lua('sbo.items["a sword"] = nil; sbo.items["a bag"] = nil')
+    o.feed("You take a sword from the corpse of a goblin.", "You get 12 gold coins from the corpse of a goblin.",
+           "You take note of the directions on a weatherbeaten signpost near Lasler, and head north.",
+           "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    sent = list(o.ev("SENT").values())
+    eq(sent, ['look "a sword"'], "the new item is looked at, the gold and the signpost aren't")
+    assert not any("signpost" in r["item"] for r in o.rows("SELECT item FROM loot")), "a signpost isn't loot"
+    assert o.ev('sbo.items["a sword"] ~= nil'), "and remembered"
+    assert not any("looking at" in m for m in o.ev("SAYS").values()), "quietly"
+    # mid-fight: waits for the fight to end
+    o.lua('SENT = {}; sbo.fights = { x = { key = "x" } }')
+    o.feed("You get a bag.", "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq(len(o.ev("SENT")), 0, "not during a fight")
+    o.lua('sbo.fights = {}')
+    o.feed("<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq(list(o.ev("SENT").values()), ['look "a bag"'], "after it")
+    # known items aren't looked at again; others' pickups aren't ours; off is off
+    o.lua('SENT = {}')
+    o.feed("You get a sword.", "Moss gets a lime green vial.", "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq(len(o.ev("SENT")), 0, "known, or someone else's")
+    o.lua('sbo.command("pickup look off"); sbo.items["a lime green vial"] = nil')
+    o.feed("You get 2 of a lime green vial.", "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq(len(o.ev("SENT")), 0, "switched off")
+    o.lua('sbo.command("pickup look on")')
+    o.feed("You get 2 of a lime green vial.", "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq(list(o.ev("SENT").values()), ['look "a lime green vial"'], "a stack is looked at by its name")
+    # not before you're playing
+    o.lua('SENT = {}; sbo.items["a ring"] = nil')
+    o.set_gmcp("char.status", '{ state = "login" }')
+    o.feed("You get a ring.", "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq(len(o.ev("SENT")), 0, "never before you're in the game")
+    # an upgrade says so
+    o.lua('''SAYS = {}
+      local function it(n, str) return { name = n, worn = "on body", level = 1, affects = { { "strength", tostring(str) } }, ar = 1, raw = {} } end
+      sbo.remember(it("a worn vest", 1)); sbo.remember(it("a fine vest", 9)); sbo.remember(it("a poor vest", 0))
+      sbo.eqNames = { "a worn vest" }
+      sbo.pickupVerdict(sbo.items["a fine vest"]); sbo.pickupVerdict(sbo.items["a poor vest"])''')
+    says = list(o.ev("SAYS").values())
+    eq(len(says), 1, f"only the upgrade is mentioned: {says}")
+    assert "a fine vest" in says[0] and "a worn vest" in says[0], says
+
+
+@test
 def help_ends_at_see_also():
     # help look during the game's auto-run: the next step arrived before any prompt
     lines = open(fixture("help_then_autorun.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
