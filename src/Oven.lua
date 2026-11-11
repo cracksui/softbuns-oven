@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.41.0"
+M.version = "0.42.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3601,8 +3601,11 @@ end
 -- A key ending in * covers a family (damage-* = every damage-... stat).
 ---------------------------------------------------------------------------
 M.buildPresets = {
-  monk     = { strength = 3, agility = 3, vitality = 1.5, ar = 3, hp = 0.2, ["hp-regen"] = 0.5, wisdom = 0.5,
-               ["spell-points"] = 0.05, ["sp-regen"] = 0.2, ["damage-*"] = 0.3, ["weapon-damage"] = 0, ["weapon-accuracy"] = 0, ["weapon-crit"] = 0 },
+  -- help monk: a hybrid - spells (cause light, cure light, faerie fire, pressure points) and martial arts,
+  -- with nunchaku and staff; its primary attribute (knowledge) is put on top once that page is read
+  monk     = { strength = 2.5, agility = 2.5, knowledge = 3, wisdom = 1.5, vitality = 1.5, ar = 3, hp = 0.2, ["hp-regen"] = 0.5,
+               ["spell-points"] = 0.15, ["sp-regen"] = 0.8, ["damage-*"] = 0.3,
+               ["weapon-damage"] = 2.5, ["weapon-accuracy"] = 1.5, ["weapon-crit"] = 1.5 },
   melee    = { strength = 3, agility = 2.5, vitality = 1.5, ar = 3, hp = 0.2, ["hp-regen"] = 0.5, ["damage-*"] = 0.3,
                ["weapon-damage"] = 4, ["weapon-accuracy"] = 2, ["weapon-crit"] = 2, wisdom = 0.3, knowledge = 0.3 },
   caster   = { wisdom = 3, knowledge = 3, intelligence = 3, ["spell-points"] = 0.2, ["sp-regen"] = 1, ar = 2, hp = 0.1,
