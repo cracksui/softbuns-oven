@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.26.0"
+M.version = "0.27.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2116,9 +2116,12 @@ function M.rememberQuests(q)
     for _, e in ipairs(q.list) do
       local Q = M.quests[e.id] or {}
       Q.name, Q.done, Q.total, Q.seen = e.name, e.done, e.total, now
+      Q.active = true
       M.quests[e.id] = Q
       active[e.id] = true
     end
+    -- anything else remembered is no longer in your log (finished, turned in or abandoned)
+    for id, Q in pairs(M.quests) do if not active[id] then Q.active = false end end
     -- a pinned quest missing from your active list is finished (or abandoned)
     for id in pairs(M.cfg.questPins or {}) do
       if not active[id] then
@@ -2138,6 +2141,12 @@ function M.rememberQuests(q)
   M.cfg.quests = M.quests     -- kept between sessions
   M.saveSettings()
   M.drawQuestTracker()
+  -- "sbo quest pin all" waiting for the quest list
+  if #q.list > 0 and M.pinAllPending ~= nil then
+    local on = M.pinAllPending
+    M.pinAllPending = nil
+    M.questPin("all", on)
+  end
 end
 
 function M.notifyQuest(msg)
@@ -2237,10 +2246,25 @@ function M.formatters.quest(raw, width)
   return out, title
 end
 
+local questFinished
 function M.questPin(id, on)
   M.cfg.questPins = M.cfg.questPins or {}
-  if id == "all" then
-    for qid, Q in pairs(M.quests) do if Q.done and Q.total and Q.done < Q.total then M.cfg.questPins[qid] = on or nil end end
+  if id == "all" and not on then
+    M.cfg.questPins = {}
+  elseif id == "all" then
+    -- only quests in your quest log right now; until Oven has seen the log, ask the game for it
+    local known = false
+    for _, Q in pairs(M.quests) do if Q.active then known = true; break end end
+    if not known then
+      M.pinAllPending = on
+      send("quest", false)
+      return
+    end
+    local n = 0
+    for qid, Q in pairs(M.quests) do
+      if Q.active and not questFinished(Q) then M.cfg.questPins[qid] = true; n = n + 1 end
+    end
+    M.notifyQuest(n == 0 and "no active quests to pin" or ("pinned " .. n .. " active quest" .. (n == 1 and "" or "s")))
   else
     M.cfg.questPins[tostring(id)] = on or nil
   end
@@ -2260,7 +2284,7 @@ local function rgb(c)
 end
 local function span(col, txt) return string.format("<span style=\"color:%s\">%s</span>", rgb(col), hudEsc(txt)) end
 
-local function questFinished(Q)
+function questFinished(Q)
   return Q.complete or (Q.total and Q.total > 0 and (Q.done or 0) >= Q.total)
 end
 M.questFinished = questFinished
@@ -4473,8 +4497,47 @@ function M.gmcpRoomFlags(id)
   return out
 end
 
+-- char.quests: the game tells you when a quest in your log changes - abandoned quests come off
+-- the quest HUD, completed ones are marked, new ones are known as active
+function M.onGmcpQuests()
+  local all = G("char.quests")
+  if type(all) ~= "table" then return end
+  local changed = false
+  for key, q in pairs(all) do
+    local id = tostring(key):match("^q(%d+)$")
+    local info = type(q) == "table" and q.quest_info
+    if id and type(info) == "table" then
+      local Q = M.quests[id] or {}
+      M.quests[id] = Q
+      if info.name and not Q.name then Q.name = info.name end
+      local pinned = M.cfg.questPins and M.cfg.questPins[id]
+      if info.abandoned == true then
+        if Q.active ~= false or pinned then changed = true end
+        Q.active = false
+        if pinned then
+          M.cfg.questPins[id] = nil
+          M.notifyQuest((Q.name or ("#" .. id)) .. " abandoned - unpinned")
+        end
+      elseif info.completed == true then
+        if not Q.complete then
+          changed = true
+          if Q.name then M.questMarkComplete(Q.name) else Q.complete = true end
+        end
+      elseif Q.active ~= true then
+        Q.active, changed = true, true
+      end
+    end
+  end
+  if changed then
+    M.cfg.quests = M.quests
+    M.saveSettings()
+    pcall(M.drawQuestTracker)
+  end
+end
+
 function M.gmcpHandlersList()
   return {
+    registerAnonymousEventHandler("gmcp.char.quests", function() pcall(M.onGmcpQuests) end),
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onGmcpStatus) end),
     registerAnonymousEventHandler("gmcp.char.maxstats", function() pcall(M.onGmcpMaxStats) end),
     registerAnonymousEventHandler("gmcp.char.worth", function() pcall(M.onGmcpWorth) end),
