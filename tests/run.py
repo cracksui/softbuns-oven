@@ -648,7 +648,7 @@ def compare_score_breakdown():
 @test
 def quest_request_pins():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
-    for cmd, setting, want in (("quest request", "on", True), ("que req", "on", True), ("quest request", "off", None), ("quest info 1547", "on", None)):
+    for cmd, setting, want in (("quest request", "on", True), ("que req", "on", True), ("qr", "on", True), ("quest request", "off", None), ("quest info 1547", "on", None)):
         o = Oven()
         o.lua(f'sbo.cfg.promptPattern = "<%d+hp"; sbo.command("quest autopin {setting}"); sbo.onSend(nil, "{cmd}")')
         o.feed(*reply, "<270hp 550sp 401st>")

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.38.2"
+M.version = "0.38.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5050,8 +5050,17 @@ function M.start(kind, target, cmd)
   M.cap.maxTimer = tempTimer(M.cfg.maxTime, function() M.finish("maxtime") end)
 end
 
+-- the game's own short forms, read as what they stand for ("qr" -> "quest request")
+M.commandAliases = { qr = "quest request" }
+function M.expandAlias(cmd)
+  local first, rest = tostring(cmd or ""):match("^%s*(%S+)(.*)$")
+  local full = first and M.commandAliases[first:lower()]
+  return full and (full .. rest) or cmd
+end
+
 function M.onSend(_, cmd)
   pcall(M.recordCommand, cmd)
+  cmd = M.expandAlias(cmd)
   pcall(M.noteLootCommand, cmd)
   pcall(M.noteEnterCommand, cmd)
   if not M.cfg.enabled then return end
