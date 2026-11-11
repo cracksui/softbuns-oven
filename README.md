@@ -197,7 +197,9 @@ sbo eqstats on|off        AR / affects column in eq (look at an item once to fil
 sbo empty on|off          show empty slots in eq
 sbo donation on|off       show / hide empty donation-only slots (amulet, face, aura)
 sbo slots short|full      short slot names in eq tables, or the game's full ones
-sbo helpwindow on|off|both  game help pages (and the sbo command list) in a window, the main screen, or both
+sbo helpwindow on|off     game help pages (and the sbo command list) in a window, or on the main screen
+sbo mirror <tab> on|off   also show a tab's output on the main screen - inspector (on), help, log, chat (on);
+                          chat off takes chat off the main screen. `sbo mirror` shows what's on
 sbo bar on|off            prompt bar
 sbo bar gauges|raw        prompt bar as gauges, or the prompt exactly as the game sends it
 sbo bar session on|off    session time, kills/deaths and exp per hour - on the bar when it fits, else their own line

@@ -467,11 +467,53 @@ def help_both_places():
     o.lua('''sbo.cfg.window = true; MAIN = {}
       decho = function(w, t) if t == nil then t = w; w = "main" end if w == "main" then MAIN[#MAIN+1] = t end end
       cecho = decho''')
-    main = ask("both")
+    main = ask("both")   # still accepted: same as sbo mirror help on
     assert "Character classes" in main and "→ help window" not in main, f"both: {main}"
     assert "Character classes" in o.ev("WIDGETS[sbo.helpPg.prefix .. sbo.helpPg.flip .. 'Label'].html"), "both: and in the Help tab"
     main = ask("on")
     assert "Character classes" not in main and "→ help window" in main, f"on: {main}"
+    o.lua('sbo.command("mirror help on")'); main = ask("on")
+    assert "→ help window" in main, "helpwindow on turns help mirroring off"
+    o.lua('sbo.command("mirror help on"); MAIN = {}')
+    o.lua('''sbo.onSend(nil, "help x"); sbo.cap.decho = { "<1,1,1>[1 ] X", "<1,1,1>a help line" }; sbo.cap.plain = { "[1 ] X", "a help line" }
+             sbo.finish("prompt"); runTimers()''')
+    assert "a help line" in "".join(o.ev("MAIN").values()), "sbo mirror help on"
+
+
+@test
+def mirror_tabs():
+    o = Oven()
+    o.lua('''sbo.cfg.window = true; sbo.cfg.promptPattern = "<%d+hp"; MAIN = {}
+      local function keep(w, t) if t == nil then t = w; w = "main" end if w == "main" then MAIN[#MAIN+1] = t end end
+      decho = keep; cecho = keep; echo = keep
+      sbo.viewAdd({ lines = { { { "white", "x" } } }, links = {} })''')
+    eq(dict(o.ev("sbo.cfg.mirror").items()), {"view": True, "help": False, "log": False, "chat": True}, "defaults")
+    # log
+    o.lua('MAIN = {}; sbo.command("session")')
+    assert "Session" not in "".join(o.ev("MAIN").values()), "log off: session only in the Log tab"
+    o.lua('sbo.command("mirror log on"); MAIN = {}; sbo.command("session")')
+    assert "Session" in "".join(o.ev("MAIN").values()), "log on: session on the main screen too"
+    assert "Session" in o.ev("WIDGETS[sbo.logPg.prefix .. sbo.logPg.flip .. 'Label'].html"), "...and in the Log tab"
+    # inspector: a score through the capture
+    def score():
+        o.lua('''MAIN = {}; sbo.onSend(nil, "eq")
+          sbo.cap.plain = { "You are using:", "<worn on head>       a cap (new)", "<worn on neck>       nothing" }
+          sbo.cap.decho = sbo.cap.plain; sbo.finish("prompt"); runTimers()''')
+        return "".join(o.ev("MAIN").values())
+    assert "cap" in score(), "inspector on: layout on the main screen"
+    o.lua('sbo.command("mirror inspector off")')
+    assert "cap" not in score(), "inspector off: only in the Inspector"
+    assert "cap" in o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html"), "...which still has it"
+    # chat
+    o.lua('DELETED_LINES = 0; deleteLine = function() DELETED_LINES = DELETED_LINES + 1 end')
+    o.feed("[CLAN] Moss: 'hi'")
+    eq(o.ev("DELETED_LINES"), 0, "chat on: stays on the main screen")
+    o.lua('sbo.command("mirror chat off")')
+    o.feed("[CLAN] Moss: 'hi again'", "Moss waves.")
+    eq(o.ev("DELETED_LINES"), 1, "chat off: chat taken off the main screen, other lines kept")
+    o.feed("[Mail]<270hp 550sp 401st>")
+    eq([dict(x.items())["msg"] for x in o.ev("sbo.chat.lines").values()], ["hi", "hi again"], "both in the Chat tab")
+    o.lua('sbo.command("mirror bogus on")')
 
 
 @test

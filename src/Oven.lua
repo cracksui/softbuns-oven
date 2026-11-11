@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.30.1"
+M.version = "0.31.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -52,7 +52,9 @@ M.defaults = {
   barSessionStyle = "full",  -- full: time · k/d · xp/hr   short: just xp/hr
   barBlank     = true,       -- with the bar on, also drop the blank line before each prompt
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
-  helpBoth     = false,      -- ...and also stays on the main screen
+  -- which tabs also show on the main screen: Inspector results (Oven's layout), help pages (as sent),
+  -- the Log tab's reports, chat lines (off: chat is taken off the main screen, kept in the Chat tab)
+  mirror       = { view = true, help = false, log = false, chat = true },
   tabs         = true,       -- the Inspector window has tabs: Inspector | Help | Log (help pages open there)
   tabAuto      = true,       -- whatever arrives brings its tab to the front (off: the tab gets a • instead)
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
@@ -87,6 +89,12 @@ function M.loadSettings()
   for k, v in pairs(M.defaults) do
     if t[k] == nil then t[k] = v end
   end
+  -- mirror: its own table per profile, with any tab added later filled in
+  local m = {}
+  for k, v in pairs(M.defaults.mirror) do m[k] = v end
+  for k, v in pairs(type(t.mirror) == "table" and t.mirror or {}) do m[k] = v end
+  if t.helpBoth then m.help = true end   -- 0.30.1's sbo helpwindow both
+  t.mirror, t.helpBoth = m, nil
   M.cfg = t
 end
 function M.saveSettings() table.save(M.settingsFile, M.cfg) end
@@ -3142,6 +3150,16 @@ function M.logAdd(lines, links)
   M.pageShow(M.logPg, segsToDecho(lines), "decho", all)
   tabEnd("log", prev, true)   -- only ever from an sbo command you typed
 end
+-- a Log report: make(width) -> lines, links. In the Log tab (and on the main screen too with
+-- sbo mirror log on), or on the main screen when the window is off
+function M.logOut(make)
+  if M.cfg.window then
+    local lines, links = make(M.logCols())
+    M.logAdd(lines, links)
+    if not M.cfg.mirror.log then return end
+  end
+  render("main", (make(columns("main"))))
+end
 function M.logCols() return (M.cfg.tabs and M.logPg) and math.min(M.pageCols(M.logPg), 110) or M.viewCols() end
 
 function M.viewCols()
@@ -5521,6 +5539,12 @@ function M.onLine()
   end
   local doneQuest = line:match("^%s*All parts of your quest '(.+)' are complete%.?%s*$")
   if doneQuest then pcall(M.questMarkComplete, doneQuest) end
+  -- sbo mirror chat off: chat goes to the Chat tab only (while the window is there to show it)
+  if M.cfg.mirror.chat == false and not cap and M.cfg.tabs and M.cfg.window and M.container
+      and not isPromptLine() and M.chatFind(line) then
+    deleteLine()
+    return
+  end
   local mount = line:match("^%s*%(Mount:%s*(%d+)%s*st%)%s*$")
   if mount then
     M.mountPending = tonumber(mount)
@@ -5669,7 +5693,7 @@ function M.finish(reason)
         if getCurrentLine("main") ~= "" then echo("main", "\n") end
         if nonBlank >= 2 then
           M.showHelp(cap.target, cap.decho)
-          if M.cfg.helpBoth then
+          if M.cfg.mirror.help then
             for _, d in ipairs(cap.decho) do decho("main", d .. "\n") end
           else
             cecho("main", "<dim_grey>[sbo] help" .. (cap.target ~= "" and (" " .. cap.target) or "") ..
@@ -5686,8 +5710,11 @@ function M.finish(reason)
     if replace then
       moveCursorEnd("main")
       if getCurrentLine("main") ~= "" then echo("main", "\n") end
-      local lines = worth and M.format(cap.kind, cap.target, cap.plain, columns("main"), cap.decho)
-      if lines then
+      local windowOnly = worth and M.cfg.window and M.cfg.mirror.view == false
+      local lines = worth and not windowOnly and M.format(cap.kind, cap.target, cap.plain, columns("main"), cap.decho)
+      if windowOnly then
+        -- in the Inspector only
+      elseif lines then
         render("main", lines)
       else
         for _, d in ipairs(cap.decho) do decho("main", d .. "\n") end
@@ -6880,7 +6907,8 @@ M.helpSections = {
     { "sbo on|off", "turn formatting on / off" },
     { "sbo main replace|keep", "formatted text in the main window, or leave the main window alone" },
     { "sbo window on|off", "the Inspector window (drag it by its title, resize from its edges)" },
-    { "sbo helpwindow on|off|both", "game help pages (and this list) in a window, the main screen, or both" },
+    { "sbo helpwindow on|off", "game help pages (and this list) in a window, or on the main screen" },
+    { "sbo mirror {tab} on|off", "also show a tab's output on the main screen: inspector help log chat (sbo mirror: what's on)" },
     { "sbo tabs on|off", "Inspector | Help | Log | Chat as tabs in one window (off: help gets its own window)" },
     { "sbo tab inspector|help|log|chat", "bring a tab to the front (or click it)" },
     { "sbo tabs auto on|off", "whatever arrives brings its tab to the front (off: the tab gets a • instead)" },
@@ -7091,11 +7119,25 @@ function M.command(args)
     M.createWindow(); M.container:show()
     M.tabShow(b == "inspector" and "view" or b)
     return
+  elseif a == "mirror" then
+    local MIRROR = { inspector = "view", view = "view", help = "help", log = "log", chat = "chat" }
+    local what, v = b:lower():match("^(%a+)%s+(%a+)$")
+    local key = what and MIRROR[what]
+    if key and (v == "on" or v == "off") then
+      M.cfg.mirror[key] = (v == "on")
+      if key == "help" and v == "on" then M.cfg.helpWindow = true end
+    elseif b ~= "" then
+      return say("sbo mirror inspector|help|log|chat on|off")
+    end
+    local m = M.cfg.mirror
+    local function st(x) return x and "on" or "off" end
+    say("also on the main screen - inspector " .. st(m.view) .. " · help " .. st(m.help) .. " · log " .. st(m.log)
+      .. " · chat " .. st(m.chat) .. "  (sbo mirror <tab> on|off)")
   elseif a == "helpwindow" and b == "both" then
-    M.cfg.helpWindow, M.cfg.helpBoth = true, true
-    say("help pages: in the help window and on the main screen")
+    M.cfg.helpWindow, M.cfg.mirror.help = true, true
+    say("help pages: in the help window and on the main screen (same as sbo mirror help on)")
   elseif a == "helpwindow" and onoff ~= nil then
-    M.cfg.helpBoth = false
+    M.cfg.mirror.help = false
     M.cfg.helpWindow = onoff
     if not onoff and M.helpContainer then M.helpContainer:hide() end
     say("help window " .. b)
@@ -7148,23 +7190,18 @@ function M.command(args)
     if #names == 0 then return say("the game hasn't sent any GMCP yet") end
     return say("GMCP packages: " .. table.concat(names, ", ") .. " - written in full to oven_gmcp.txt")
   elseif a == "deaths" then
-    local w = M.cfg.window and M.logCols() or columns("main")
-    local lines, links = M.deathLines(w)
-    if M.cfg.window then M.logAdd(lines, links) else render("main", lines) end
+    M.logOut(M.deathLines)
     return
   elseif a == "loot" then
     if b == "clear" then M.dbx("DELETE FROM loot"); return say("loot log cleared") end
     local all = b == "all" or b:match("^all%s") ~= nil
     local q = all and b:gsub("^all%s*", "") or b
-    local w = M.cfg.window and M.logCols() or columns("main")
-    local lines, links = M.lootLines(w, q, all)
-    if M.cfg.window then M.logAdd(lines, links) else render("main", lines) end
+    M.logOut(function(w) return M.lootLines(w, q, all) end)
     return
   elseif a == "kills" then
     if b == "reset" then M.sess.killBook = {}; return say("this session's kill list cleared")
     elseif b == "clear" then M.dbx("DELETE FROM kills"); return say("all-time kill list cleared") end
-    local lines = M.killLines(M.cfg.window and M.logCols() or columns("main"), b == "all")
-    if M.cfg.window then M.logAdd(lines) else render("main", lines) end
+    M.logOut(function(w) return M.killLines(w, b == "all") end)
     return
   elseif a == "quest" or a == "quests" then
     local sub, val = b:match("^(%S*)%s*(.-)$")
@@ -7228,8 +7265,7 @@ function M.command(args)
       .. "  (sbo map on|off|stop|load [file])")
   elseif a == "session" then
     if b == "reset" then M.sess = { start = os.time(), gained = 0 }; say("session counters reset"); return end
-    if M.cfg.window then M.logAdd(M.sessionLines(M.logCols()))
-    else render("main", M.sessionLines(columns("main"))) end
+    M.logOut(M.sessionLines)
     return
   elseif a == "gamecolors" and onoff ~= nil then
     M.cfg.gameColors = onoff; say("game colours on item names " .. b)
