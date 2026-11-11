@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.24.0"
+M.version = "0.25.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4046,7 +4046,6 @@ function M.observe(l)
       n = tonumber((n:gsub(",", "")))
       if n and n > 0 then
         -- kills give "You receive 2,704 experience points."; other exp says "You gain ..."
-        if t:match("^You receive") or t:match("^You gain") then pcall(M.creditKillExp, n) end
         M.sess.gained = (M.sess.gained or 0) + n
         if M.sess.exp0 then M.sess.gainedAfterScore = (M.sess.gainedAfterScore or 0) + n end
         local c = M.cfg.char or {}
@@ -4824,7 +4823,9 @@ function M.recordLine(l, prompt)
   cur.fg = cur.fg or {}
   local okF, fg = pcall(M.lineFg, l)
   cur.fg[#cur.lines] = okF and fg or false
-  if not prompt and #cur.lines < REC_BLOCK_LINES then return end
+  -- a block ends at the prompt; if no prompt has come for a long while (it isn't recognised yet),
+  -- a blank line ends it, so kills and loot are still read promptly
+  if not prompt and #cur.lines < REC_BLOCK_LINES and not (#cur.lines >= 60 and not l:match("%S")) then return end
   pcall(M.gmcpWatch)
   local W = M.win
   W.seq = W.seq + 1
@@ -4871,7 +4872,7 @@ function M.onBlock(b)
     if ok and seg then b.kinds[k.name] = seg end
   end
   for _, r in ipairs(M.blockReaders) do
-    local seg = b.kinds[r.kind]
+    local seg = r.kind == "*" and b.kinds or b.kinds[r.kind]
     if seg then
       local ok, err = pcall(r.read, b, seg)
       if not ok and M.cfg.samples then M.log("<dim_grey>[sbo] " .. r.name .. ": " .. tostring(err) .. "<reset>") end
@@ -4939,6 +4940,46 @@ M.addBlockKind("help", function(b)
     end
   end
   for _, c in ipairs(b.cmds) do if c:lower():match("^%s*help%s") then return { topic = c } end end
+  if M.cap and M.cap.kind == "help" then return { topic = M.cap.target or "" } end
+end)
+
+-- help pages teach Oven about classes and races: `help classes` (which group each class is in),
+-- a class's page (its primary attribute), a race's page (weapon bonuses, maximum stats).
+-- Only help pages are read, so the same words elsewhere (chat, a quest text) aren't taken for them.
+M.addBlockReader("help_learn", "help", function(b)
+  local last = #b.lines - (b.prompt and 1 or 0)
+  for i = 1, last do
+    local l = b.lines[i]
+    pcall(M.noteClassHelp, l); pcall(M.noteRaceHelp, l); pcall(M.noteClassPrimary, l)
+  end
+end)
+-- a page can run over several blocks (the game's pager); the first block that isn't help ends it,
+-- closing any table that ran to the end of the page
+M.addBlockReader("help_end", "*", function(b, kinds)
+  if kinds.help then return end
+  if M.raceHelp then pcall(M.noteRaceHelp, "") end
+  if M.classHelp then pcall(M.noteClassHelp, "") end
+  M.classHelp, M.raceHelp = nil, nil
+end)
+
+-- kills, the exp they give, and pickups - in the order they happened; never from a help page
+local function expGain(l)
+  if l:find("need", 1, true) then return end
+  local n = l:match("^%s*You receive ([%d,]+) experience") or l:match("^%s*You gain ([%d,]+) experience")
+  return n and tonumber((n:gsub(",", "")))
+end
+M.addBlockReader("kills_loot", "*", function(b, kinds)
+  if kinds.help then return end
+  local last = #b.lines - (b.prompt and 1 or 0)
+  for i = 1, last do
+    local l = b.lines[i]
+    local slain = l:match("^%s*(.-) has been slain!%s*$")
+    if slain and slain ~= "" then pcall(M.recordKill, slain) end
+    local n = expGain(l)
+    if n and n > 0 then pcall(M.creditKillExp, n) end
+    local okL, loot = pcall(M.parseLoot, l)
+    if okL and loot then pcall(M.recordLoot, loot) end
+  end
 end)
 
 -- who's here, tagged: saved to the room
@@ -4983,17 +5024,10 @@ function M.onLine()
   pcall(M.observe, line)
   pcall(M.recordLine, line, isPromptLine())
   pcall(M.noteRoomLine, line)
-  pcall(M.noteClassHelp, line)
-  pcall(M.noteRaceHelp, line)
-  pcall(M.noteClassPrimary, line)
   pcall(M.noteKillContext, line)
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
   -- It goes on the bar; it's never part of a command's output.
-  local slain = line:match("^%s*(.-) has been slain!%s*$")
-  if slain and slain ~= "" then pcall(M.recordKill, slain) end
   pcall(M.noteLootContext, line)
-  local okL, loot = pcall(M.parseLoot, line)
-  if okL and loot then pcall(M.recordLoot, loot) end
   if line:find("^%s*The Powers take pity on you and restore your soul to your body") then
     M.sess.deathsLive = (M.sess.deathsLive or 0) + 1
     pcall(M.noteRoomDeath)
