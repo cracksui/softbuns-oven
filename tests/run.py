@@ -814,6 +814,12 @@ def game_aliases():
     eq((o.ev("sbo.cfg.gameAliases.qr"), o.ev("sbo.cfg.gameAliases.cl")), ("quest request", "cast 'cure serious'"), "added and changed")
     eq(o.ev('sbo.expandAlias("qr")'), "quest request", "qr is a quest request to Oven")
     eq(o.ev('(sbo.classify(sbo.expandAlias("qr")))'), "quest", "")
+    # an alias for help: the block is a help page, so nothing in it is read as kills, loot or chat
+    o.lua("sbo.cfg.gameAliases.h = 'help'")
+    o.lua('sbo.onSend(nil, "h slay")')
+    eq(o.ev("sbo.recCur.cmds[#sbo.recCur.cmds]"), "help slay", "the chunk knows the command as help")
+    o.feed("The dragon has been slain!", "<270hp>")
+    eq(o.ev("sbo.dbRow('SELECT COUNT(*) AS c FROM kills').c"), 0, "no kill read from that help page")
     o.lua('SENT = {}; send("unalias feed"); runTimers()')
     eq(list(o.ev("SENT").values()), ["unalias feed", "alias"], "after unalias: the list again")
     eq(o.ev("sbo.cfg.gameAliases.feed"), None, "removed")

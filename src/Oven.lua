@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.39.0"
+M.version = "0.39.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5064,8 +5064,9 @@ function M.expandAlias(cmd)
 end
 
 function M.onSend(_, cmd)
-  pcall(M.recordCommand, cmd)
+  -- everything below sees what an alias stands for ("qr" -> "quest request"), recordings too
   cmd = M.expandAlias(cmd)
+  pcall(M.recordCommand, cmd)
   pcall(M.noteLootCommand, cmd)
   pcall(M.noteEnterCommand, cmd)
   if not M.cfg.enabled then return end
