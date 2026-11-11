@@ -680,15 +680,39 @@ def quest_steps_update():
     assert "Journey to The Edible Loaf" in html and "waybread" in html, f"done and open steps both on the HUD: {html}"
     done_line = [l for l in html.split("\n") if "Edible Loaf" in l][0]
     assert "▶" not in done_line, "the next-step marker moves past the done step"
-    # a completion line in the game's text: a quiet re-check of that quest
-    o.lua('SENT = {}; send = function(c) SENT[#SENT + 1] = c end')
-    o.feed("You have completed part 2 of your quest 'War and Peace'!")
+    # a completion line without GMCP: a quiet re-check of that quest
+    o.lua('SENT = {}; send = function(c) SENT[#SENT + 1] = c end; sbo.questGmcpAt = {}')
+    o.feed("You have completed a part of quest #1547, 'War and Peace'!")
     o.L.execute("runTimers()")
     eq(list(o.ev("SENT").values()), ["quest info 1547"], "re-checks the quest")
     o.lua('SENT = {}')
     o.feed("Moss says, 'I completed my quest 'Other Thing' yesterday'")
     o.L.execute("runTimers()")
     eq(list(o.ev("SENT").values()), [], "not for quests you don't have pinned")
+
+
+@test
+def quest_step_done_real():
+    # finishing step 1 of Jail Time, as recorded: GMCP with the new state, and the game's line
+    o = Oven()
+    o.lua('''sbo.cfg.promptPattern = "<%d+hp"; sbo.cfg.questPins = { ["52"] = true }
+      sbo.quests = { ["52"] = { name = "Jail Time", done = 0, total = 4, active = true, phases = {
+        { n = 1, text = "Journey to The Entrance to Rune Prison", area = "Towne of Rune" }, { n = 2, text = "Journey to Prison Entrance", area = "Lowangen" },
+        { n = 3, text = "Visit the prison captain" }, { n = 4, text = "Defeat a sickly prisoner", area = "Lowangen" } } } }
+      SENT = {}; send = function(c) SENT[#SENT + 1] = c end''')
+    b = read_recording(fixture("quest_step_done.txt"))[0]
+    for n, v in b["gmcp"]:
+        o.set_gmcp(n, v)
+    o.lua("sbo.onGmcpQuests()")
+    o.feed(*b["lines"])
+    o.L.execute("runTimers()")
+    eq((o.ev("sbo.quests['52'].done"), o.ev("sbo.quests['52'].phases[1].done"), o.ev("sbo.quests['52'].phases[2].done == true")), (1, True, False), "step 1 done")
+    eq(list(o.ev("SENT").values()), [], "GMCP brought it: no extra quest info")
+    eq(o.ev("(sbo.noteQuestProgress(\"You have completed a part of quest #52, 'Jail Time'!\"))"), "52", "the game's line is recognised")
+    o.lua('sbo.questGmcpAt = {}')
+    o.feed("You have completed a part of quest #52, 'Jail Time'!", "Your next task is Phase 4: Defeat a sickly prisoner [Lowangen].")
+    o.L.execute("runTimers()")
+    eq(list(o.ev("SENT").values()), ["quest info 52"], "no GMCP with it: quest info 52, quietly")
 
 
 @test

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.37.0"
+M.version = "0.37.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4890,7 +4890,10 @@ function M.onGmcpQuests()
         Q.active, changed = true, true
       end
       -- each step: done or not, and its text once it's no longer hidden
-      if not info.abandoned and type(q.goals) == "table" and M.questGoals(id, Q, q.goals) then changed = true end
+      if not info.abandoned and type(q.goals) == "table" then
+        M.questGmcpAt[id] = os.time()
+        if M.questGoals(id, Q, q.goals) then changed = true end
+      end
     end
   end
   if changed then
@@ -4941,17 +4944,25 @@ end
 
 -- a line about one of your quests being (partly) done: re-check that quest quietly, so the HUD
 -- shows the game's own record of which steps are done, whatever the wording
+-- "You have completed a part of quest #52, 'Jail Time'!" - GMCP normally brings the new state at the
+-- same moment; if it hasn't within a couple of seconds, ask the game quietly (quest info 52)
+M.questGmcpAt = M.questGmcpAt or {}
 function M.noteQuestProgress(l)
-  if M.cap then return end
-  local name = l:match("[Qq]uest '(.-)'")
-  if not name or not l:lower():find("complet", 1, true) then return end
-  for id, Q in pairs(M.quests or {}) do
-    if Q.name and Q.name:lower() == name:lower() and (M.cfg.questPins or {})[id] then
-      if M.questProgressTimer then killTimer(M.questProgressTimer) end
-      M.questProgressTimer = tempTimer(1, function() M.questProgressTimer = nil; M.questRefresh(id) end)
-      return id
-    end
+  if M.cap or not l:lower():find("complet", 1, true) then return end
+  local id = l:match("[Qq]uest #(%d+)")
+  local name = l:match("[Qq]uest #%d+,? '(.-)'") or l:match("[Qq]uest '(.-)'")
+  if not id and name then
+    for qid, Q in pairs(M.quests or {}) do if Q.name and Q.name:lower() == name:lower() then id = qid; break end end
   end
+  if not id or not (M.cfg.questPins or {})[id] then return end
+  local t0 = os.time()
+  if M.questProgressTimer then killTimer(M.questProgressTimer) end
+  M.questProgressTimer = tempTimer(2, function()
+    M.questProgressTimer = nil
+    if (M.questGmcpAt[id] or 0) >= t0 - 2 then return end   -- GMCP already brought it
+    M.questRefresh(id)
+  end)
+  return id
 end
 
 function M.gmcpHandlersList()

@@ -1,0 +1,26 @@
+##### fixture: finishing step 1 of a quest (from a recording; another player renamed)
+===== 2026-01-01 00:00:00 | cmd= | room=10733
+@gmcp char.quests = {["q52"]={["quest_info"]={["completed"]=false,["display_rewards"]=true,["vnum"]=52,["abandoned"]=false,["timer"]=1794386851,["name"]="Jail Time",["version"]=1,["quest_type"]=1},["goals"]={{["radius"]=0,["map_id"]=1,["phase_number"]=1,["phase_complete"]=true,["x_pos"]=705,["y_pos"]=763,["area_id"]=29,["room_target"]=10733,["goal_string"]="*Phase 1: *Journey to The Entrance to Rune Prison [Towne of Rune].\n\r"},{["radius"]=0,["map_id"]=1,["phase_number"]=2,["phase_complete"]=false,["x_pos"]=1159,["y_pos"]=421,["area_id"]=22,["room_target"]=15981,["goal_string"]="Phase 2: Journey to Prison Entrance [Lowangen].\n\r"},{["radius"]=4,["map_id"]=1,["phase_number"]=3,["phase_complete"]=false,["x_pos"]=1159,["y_pos"]=421,["area_id"]=22,["room_target"]=15981,["goal_string"]="Phase 3: Visit the prison captain.\n\r"},{["radius"]=4,["map_id"]=1,["phase_number"]=4,["phase_complete"]=false,["x_pos"]=1159,["y_pos"]=421,["area_id"]=22,["room_target"]=15964,["goal_string"]="Phase 4: Defeat a sickly prisoner [Lowangen].\n\r"}},["rewards"]={["quest_points"]=27,["exp"]=18000,["gold_pieces"]=5000,["favor_points"]=1,["items"]={},["archon_points"]=0,["build_points"]=0,["mark_reward"]="",["faction_points"]=0,["piety"]=0,["practice_points"]=3,["alignment"]=1}}}
+
+Pip rides south.
+You follow Pip.
+You have completed a part of quest #52, 'Jail Time'!
+Your next task is Phase 2: Journey to Prison Entrance [Lowangen].
+
+
+ The Entrance to Rune Prison                            -      N      -
+(-------------------------------------------------)     - <---(M)-#-> #
+                                                        -      -      -
+
+  You stand at the entrance to Rune Prison, an unimaginative, but
+functional building, designed to hold even the most violent and powerful of
+prisoners.  A large rat darts among the shadows, making you shudder at the
+thought of somebody actually being thrown in here.  There are no windows,
+which makes this prison very gloomy indeed.  Yew Court is off to the north. 
+Reinforced iron doors lead east and downward.  
+[Clan 164] Pip a st00pid n00b... is here, mounted on an aging war horse.
+
+(Mount: 1179st)
+[Mail]<285hp 650sp 440st> 
+
+##### end
