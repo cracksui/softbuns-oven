@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.42.1"
+M.version = "0.43.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2212,10 +2212,12 @@ function M.rememberQuests(q, bare)
   end
 end
 
+-- quest notes go on the quest HUD for a while (where you look for quests), else a line in the game text
 function M.notifyQuest(msg)
-  if M.cfg.bar and M.bar and M.bar.rawEcho then
-    M.walkNote = msg; pcall(M.drawBar)
-    tempTimer(8, function() if M.walkNote == msg then M.walkNote = nil; pcall(M.drawBar) end end)
+  if next(M.cfg.questPins or {}) then
+    M.hudNote = msg
+    pcall(M.drawQuestTracker)
+    tempTimer(10, function() if M.hudNote == msg then M.hudNote = nil; pcall(M.drawQuestTracker) end end)
   else
     M.log("<dim_grey>[sbo] " .. msg .. "<reset>")
   end
@@ -2496,6 +2498,11 @@ function M.drawQuestTracker()
     end
     hudCallbacks(card, id)
     local html, w = questCardHtml(id, M.quests[id] or {})
+    -- a quest note ("step 1 done") at the top of the HUD for a few seconds
+    if i == 1 and M.hudNote then
+      table.insert(html, 1, span(C.title, "» " .. M.hudNote))
+      w = math.max(w, ulen(M.hudNote) + 2)
+    end
     widest = math.max(widest, w)
     card:setStyleSheet(string.format([[
       background-color: transparent; padding: 4px 8px; qproperty-alignment: 'AlignTop | AlignLeft';
@@ -4789,7 +4796,7 @@ function M.drawBar()
       addAll(main, sess)
     end
   end
-  if M.walkNote then main[#main + 1] = { C.dim, "   walk " }; main[#main + 1] = { C.slot, M.walkNote } end
+
   local tag = M.versionTag()
   if collapsed ~= (M.barCollapsed or false) then
     M.barCollapsed = collapsed
@@ -6274,13 +6281,9 @@ function M.onRoom()
   end
 end
 
+-- walk notes: a line in the game text (the prompt bar has no room to spare)
 function M.notifyWalk(msg)
-  if M.cfg.bar and M.bar and M.bar.rawEcho then
-    M.walkNote = msg; pcall(M.drawBar)
-    tempTimer(6, function() if M.walkNote == msg then M.walkNote = nil; pcall(M.drawBar) end end)
-  else
-    say("walk " .. msg)
-  end
+  say("walk " .. msg)
 end
 
 function M.walkStep()

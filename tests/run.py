@@ -891,6 +891,27 @@ def bar_leaves_questions():
 
 
 @test
+def notes_off_the_bar():
+    o = Oven()
+    o.lua('''sbo.cfg.bar = true; LOG = {}; sbo.log = function(m) LOG[#LOG + 1] = m end
+      local nop = function() end
+      sbo.bar = { rawEcho = function(self, h) BAR = h end, move = nop, resize = nop, show = nop, hide = nop, setStyleSheet = nop }
+      sbo.lastPromptText = "[Mail]<291hp 696sp 457st>"
+      sbo.quests = { ["52"] = { name = "Jail Time", total = 4, done = 1, phases = {} } }
+      sbo.cfg.questPins = { ["52"] = true }
+      CARDS = {}
+      local old = Geyser.Label.new
+      Geyser.Label.new = function(self, c, p) local t = old(self, c, p); t.rawEcho = function(x, m) CARDS[c.name] = m end; return t end
+      sbo.notifyQuest("Jail Time: step 1 done (1/4)")
+      sbo.notifyWalk("arrived")
+      sbo.drawBar()''')
+    bar = o.ev("BAR") or ""
+    assert "step 1 done" not in bar and "arrived" not in bar, "nothing on the bar but the prompt"
+    assert "step 1 done" in (o.ev("CARDS.ovenQuestCard1") or ""), "the quest note is on the quest HUD"
+    assert any("walk arrived" in m for m in o.ev("LOG").values()), "the walk note is a line in the game text"
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40
