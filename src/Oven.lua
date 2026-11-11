@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.36.0"
+M.version = "0.37.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2054,6 +2054,14 @@ end
 -- remembered quests: id -> { name, done, total, phases = {{n, text, area, done}}, levels, master, rewards, limit }
 M.quests = M.quests or {}
 
+-- "*Defeat 5/5 of a lost demon [Rune Forest] [Group]." -> text, area, done (a leading * means done)
+function M.phaseFromText(ptext)
+  local isDone = ptext:sub(1, 1) == "*"
+  ptext = ptext:gsub("^%*", ""):gsub("%.$", "")
+  local text, area = ptext:match("^(.-)%s*%[(.-)%]$")
+  return { text = text or ptext, area = area, done = isDone }
+end
+
 function M.parseQuests(raw)
   local list, detail, other = {}, nil, {}
   local inPhases = false
@@ -2086,10 +2094,9 @@ function M.parseQuests(raw)
         elseif t:match("time limit") then detail.limit = t:gsub("%.$", "")
         elseif t:match(" consists of:$") then inPhases = true
         elseif pn then
-          local isDone = ptext:sub(1, 1) == "*"
-          ptext = ptext:gsub("^%*", ""):gsub("%.$", "")
-          local text, area = ptext:match("^(.-)%s*%[(.-)%]$")
-          detail.phases[#detail.phases + 1] = { n = tonumber(pn), text = text or ptext, area = area, done = isDone }
+          local ph = M.phaseFromText(ptext)
+          ph.n = tonumber(pn)
+          detail.phases[#detail.phases + 1] = ph
         elseif t ~= "" and not inPhases then
           detail.desc[#detail.desc + 1] = rtrim(l)   -- keep indentation (lists, continuation lines)
         elseif t ~= "" then
@@ -2354,7 +2361,13 @@ local function questCardHtml(id, Q)
   elseif Q.phases then
     local first = true
     for _, ph in ipairs(Q.phases) do
-      if not ph.done then
+      if ph.done then
+        -- done: stays in its place, greyed out
+        local label = string.format("%d. %s", ph.n, ph.text) .. (ph.area and (" · " .. ph.area) or "")
+        for _, l in ipairs(hudWrap(label, HUD_WRAP, ulen(tostring(ph.n)) + 2)) do
+          add("   " .. span(C.dim, l), ulen(l) + 3)
+        end
+      else
         local label = string.format("%d. %s", ph.n, ph.text) .. (ph.area and (" · " .. ph.area) or "")
         for i, l in ipairs(hudWrap(label, HUD_WRAP, ulen(tostring(ph.n)) + 2)) do
           local mark = (i == 1) and (first and span(M.REC or C.title, " ▶ ") or "   ") or "   "
@@ -2411,6 +2424,7 @@ local function hudCallbacks(label, id)
 end
 
 -- the HUD: a frame, with one card per pinned quest inside it (each its own click area)
+M.questCardHtml = questCardHtml
 function M.drawQuestTracker()
   if M.questContainer then M.questContainer:hide() end   -- the framed window of 0.14.0
   local pins = M.cfg.questPins or {}
@@ -4875,12 +4889,68 @@ function M.onGmcpQuests()
       elseif Q.active ~= true then
         Q.active, changed = true, true
       end
+      -- each step: done or not, and its text once it's no longer hidden
+      if not info.abandoned and type(q.goals) == "table" and M.questGoals(id, Q, q.goals) then changed = true end
     end
   end
   if changed then
     M.cfg.quests = M.quests
     M.saveSettings()
     pcall(M.drawQuestTracker)
+  end
+end
+
+-- GMCP goals -> the quest's steps. Returns true if anything changed.
+function M.questGoals(id, Q, goals)
+  Q.phases = Q.phases or {}
+  local byN, changed, newlyDone = {}, false, nil
+  for _, ph in ipairs(Q.phases) do byN[ph.n] = ph end
+  for _, g in ipairs(goals) do
+    local n = tonumber(g.phase_number)
+    if n then
+      local raw = tostring(g.goal_string or ""):match("^[^\r\n]*") or ""
+      raw = trim(raw:gsub("^%*", ""):gsub("^Phase %d+:%s*", ""))
+      local fresh = raw ~= "" and M.phaseFromText(raw) or nil
+      local ph = byN[n]
+      if not ph then
+        ph = fresh or { text = "(step " .. n .. ")" }
+        ph.n = n
+        Q.phases[#Q.phases + 1] = ph
+        byN[n] = ph
+        changed = true
+      elseif fresh and ph.text and ph.text:match("^%(Hidden") then
+        ph.text, ph.area, changed = fresh.text, fresh.area, true
+      end
+      local done = g.phase_complete == true
+      if (ph.done and true or false) ~= done then
+        if done then newlyDone = ph end
+        ph.done, changed = done, true
+      end
+    end
+  end
+  if changed then
+    table.sort(Q.phases, function(a, b) return a.n < b.n end)
+    Q.total, Q.done = #Q.phases, 0
+    for _, ph in ipairs(Q.phases) do if ph.done then Q.done = Q.done + 1 end end
+    if newlyDone and (M.cfg.questPins or {})[id] then
+      M.notifyQuest((Q.name or ("#" .. id)) .. ": step " .. newlyDone.n .. " done (" .. Q.done .. "/" .. Q.total .. ")")
+    end
+  end
+  return changed
+end
+
+-- a line about one of your quests being (partly) done: re-check that quest quietly, so the HUD
+-- shows the game's own record of which steps are done, whatever the wording
+function M.noteQuestProgress(l)
+  if M.cap then return end
+  local name = l:match("[Qq]uest '(.-)'")
+  if not name or not l:lower():find("complet", 1, true) then return end
+  for id, Q in pairs(M.quests or {}) do
+    if Q.name and Q.name:lower() == name:lower() and (M.cfg.questPins or {})[id] then
+      if M.questProgressTimer then killTimer(M.questProgressTimer) end
+      M.questProgressTimer = tempTimer(1, function() M.questProgressTimer = nil; M.questRefresh(id) end)
+      return id
+    end
   end
 end
 
@@ -5714,7 +5784,8 @@ function M.onLine()
     pcall(M.drawBar)
   end
   local doneQuest = line:match("^%s*All parts of your quest '(.+)' are complete%.?%s*$")
-  if doneQuest then pcall(M.questMarkComplete, doneQuest) end
+  if doneQuest then pcall(M.questMarkComplete, doneQuest)
+  else pcall(M.noteQuestProgress, line) end
   -- sbo mirror chat off: chat goes to the Chat tab only (while the window is there to show it)
   if M.cfg.mirror.chat == false and not cap and M.cfg.tabs and M.cfg.window and M.container
       and not isPromptLine() and M.chatFind(line) then

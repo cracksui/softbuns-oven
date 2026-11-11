@@ -658,6 +658,40 @@ def quest_request_pins():
 
 
 @test
+def quest_steps_update():
+    reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.onSend(nil, "quest request")')
+    o.feed(*reply, "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq((o.ev("sbo.quests['1547'].done"), o.ev("sbo.quests['1547'].total")), (0, 5), "from the request")
+    # the game's GMCP after step 1 (goal_string as it sends it: * for done, a newline after)
+    o.lua('''gmcp.char = { quests = { q1547 = { quest_info = { vnum = 1547, name = "War and Peace", completed = false, abandoned = false },
+      goals = { { phase_number = 1, phase_complete = true, goal_string = "*Phase 1: *Journey to The Edible Loaf [Towne of Rune].\\r\\n" },
+                { phase_number = 2, phase_complete = false, goal_string = "Phase 2: Locate and deliver a waybread [Towne of Rune] to a stray dog [Towne of Rune].\\r\\n" },
+                { phase_number = 5, phase_complete = false, goal_string = "Phase 5: Visit Lord Agrippa [Towne of Rune].\\r\\n" } } } } }
+      sbo.onGmcpQuests()''')
+    eq(o.ev("sbo.quests['1547'].done"), 1, "step 1 done from GMCP")
+    eq(o.ev("sbo.quests['1547'].phases[1].done"), True, "")
+    eq(o.ev("sbo.quests['1547'].phases[5].text"), "Visit Lord Agrippa", "a hidden step's text once revealed")
+    # the HUD keeps the done step, greyed
+    o.lua('sbo.cfg.questPins = { ["1547"] = true }; H = sbo.questCardHtml("1547", sbo.quests["1547"])')
+    html = o.ev("type(H) == 'table' and table.concat(H, '\\n') or H")
+    assert "Journey to The Edible Loaf" in html and "waybread" in html, f"done and open steps both on the HUD: {html}"
+    done_line = [l for l in html.split("\n") if "Edible Loaf" in l][0]
+    assert "▶" not in done_line, "the next-step marker moves past the done step"
+    # a completion line in the game's text: a quiet re-check of that quest
+    o.lua('SENT = {}; send = function(c) SENT[#SENT + 1] = c end')
+    o.feed("You have completed part 2 of your quest 'War and Peace'!")
+    o.L.execute("runTimers()")
+    eq(list(o.ev("SENT").values()), ["quest info 1547"], "re-checks the quest")
+    o.lua('SENT = {}')
+    o.feed("Moss says, 'I completed my quest 'Other Thing' yesterday'")
+    o.L.execute("runTimers()")
+    eq(list(o.ev("SENT").values()), [], "not for quests you don't have pinned")
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40
