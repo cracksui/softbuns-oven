@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.50.0"
+M.version = "0.50.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2526,7 +2526,9 @@ function M.drawQuestTracker()
   end
   for i = #ids + 1, #M.questCards do M.questCards[i]:hide() end
   M.questCardLayout = layout
-  M.questHudSize = { w = math.min(600, widest * cw + 24), h = total }
+  -- calcFontSize gives whole pixels and the text is drawn at fractional widths (and █ ▶ ✓ may come
+  -- from a wider fallback font), so leave room: 8% more than measured, plus the card's padding
+  M.questHudSize = { w = math.min(760, math.ceil(widest * cw * 1.08) + 36), h = total }
   M.layoutQuestHud()
   M.questHud:show()
   for i = 1, #ids do M.questCards[i]:show() end
