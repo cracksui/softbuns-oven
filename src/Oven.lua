@@ -5577,7 +5577,8 @@ end)
 local function questGiver(who)
   who = who:lower()
   for _, Q in pairs(M.quests or {}) do
-    for _, n in ipairs({ Q.master, Q.turnIn }) do
+    for _, k in ipairs({ "master", "turnIn" }) do   -- (either may be missing)
+      local n = Q[k]
       if n and (n:lower() == who or n:lower():gsub("^the ", "") == who) then return true end
     end
   end
