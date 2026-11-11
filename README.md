@@ -86,7 +86,7 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 Results open in the **Inspector** window, which has four tabs: **Inspector** (eq, items, score, comparisons,
 with ◀ older / newer ▶), **Help** (game help pages and `sbo`'s command list), **Log** (`sbo session`, `kills`,
 `loot`, `deaths`, with links between them) and **Chat**. Whatever arrives brings its tab to the front - except
-chat, which never takes the window from you: the tab counts what you haven't read (`Chat 3`).
+chat, which never takes the window from you: the tab counts what you haven't read (`Chat (3)`).
 
 **Chat** collects channel talk (`[CLAN] Name: '...'` and the channel's news, NOVICE), yells, shouts,
 announcements, hints (`Local Hint: ...`), tells and says, in the game's own colours, with the time. Type

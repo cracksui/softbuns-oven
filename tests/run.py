@@ -395,7 +395,7 @@ def chat_tab():
     eq(o.ev("sbo.cfg.chatGameChannels.SHOUT"), True, "the channel list is read")
     eq(o.ev("sbo.cfg.chatGameChannels.AUCTION"), False, "off channels too")
     eq(o.ev("WIDGETS.ovenTabs2Page_view.shown"), True, "chat doesn't take the window's focus")
-    eq(o.ev("WIDGETS.ovenTabs2_chat.text"), "<center>Chat 8</center>", "unread count on the tab")
+    eq(o.ev("WIDGETS.ovenTabs2_chat.text"), "<center>Chat (8)</center>", "unread count on the tab")
     o.lua('sbo.command("tab chat")')
     eq(o.ev("WIDGETS.ovenTabs2_chat.text"), "<center>Chat</center>", "read once the tab is open")
     text = o.ev("WIDGETS.ovenChatConsole.text")

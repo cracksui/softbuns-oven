@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.29.1"
+M.version = "0.29.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5381,7 +5381,7 @@ function M.chatChips()
   for i = #names + 1, #M.chatChipLabels do M.chatChipLabels[i]:hide() end
   if relayout and M.chatBar.organize then pcall(function() M.chatBar:organize() end) end
   if M.tabLabels and M.tabLabels.chat then
-    M.tabLabels.chat:echo("<center>Chat" .. (total > 0 and (" " .. total) or "") .. "</center>")
+    M.tabLabels.chat:echo("<center>Chat" .. (total > 0 and (" (" .. total .. ")") or "") .. "</center>")
   end
 end
 
