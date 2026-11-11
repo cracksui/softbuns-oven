@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.27.0"
+M.version = "0.27.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2145,7 +2145,9 @@ function M.rememberQuests(q)
   if #q.list > 0 and M.pinAllPending ~= nil then
     local on = M.pinAllPending
     M.pinAllPending = nil
-    M.questPin("all", on)
+    M.pinAllFromList = true
+    pcall(M.questPin, "all", on)
+    M.pinAllFromList = nil
   end
 end
 
@@ -2252,12 +2254,11 @@ function M.questPin(id, on)
   if id == "all" and not on then
     M.cfg.questPins = {}
   elseif id == "all" then
-    -- only quests in your quest log right now; until Oven has seen the log, ask the game for it
-    local known = false
-    for _, Q in pairs(M.quests) do if Q.active then known = true; break end end
-    if not known then
+    -- only the quests "quest info" lists right now: ask the game quietly, pin when it answers
+    if not M.pinAllFromList then
       M.pinAllPending = on
-      send("quest", false)
+      M.quietQuest = true
+      send("quest info", false)
       return
     end
     local n = 0

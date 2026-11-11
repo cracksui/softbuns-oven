@@ -296,19 +296,22 @@ def quest_pin_all_only_active():
       SENT = {}; send = function(c) SENT[#SENT + 1] = c end
       sbo.quests = { ["100"] = { name = "Old Gone", done = 1, total = 4 }, ["200"] = { name = "Current", done = 0, total = 3 } }
       sbo.command("quest pin all")''')
-    eq(o.ev("SENT[1]"), "quest", "asks for the quest log first")
+    eq(o.ev("SENT[1]"), "quest info", "asks the game for the current quests")
     eq(o.ev("next(sbo.cfg.questPins)"), None, "nothing pinned before the log is seen")
     o.lua('''sbo.rememberQuests({ list = { { id = "200", name = "Current", done = 0, total = 3 },
                                            { id = "300", name = "New", done = 1, total = 2 } }, other = {} })''')
     pins = sorted(o.ev("sbo.cfg.questPins").keys())
     eq(pins, ["200", "300"], "pin all, once the log arrives: only quests in it")
-    o.lua('sbo.command("quest pin all")')
-    eq(sorted(o.ev("sbo.cfg.questPins").keys()), ["200", "300"], "pin all again doesn't bring back a dropped quest")
+    o.lua('''sbo.cfg.questPins = {}; sbo.command("quest pin all")
+             sbo.rememberQuests({ list = { { id = "300", name = "New", done = 1, total = 2 } }, other = {} })''')
+    eq(sorted(o.ev("sbo.cfg.questPins").keys()), ["300"], "a quest gone from quest info isn't pinned")
+    o.lua('sbo.questPin("200", true)')
     o.lua('''gmcp.char = { quests = { q300 = { quest_info = { vnum = 300, name = "New", abandoned = true, completed = false } } } }
              sbo.onGmcpQuests()''')
     eq(sorted(o.ev("sbo.cfg.questPins").keys()), ["200"], "abandoning a quest unpins it")
-    o.lua('sbo.command("quest pin all")')
-    eq(sorted(o.ev("sbo.cfg.questPins").keys()), ["200"], "an abandoned quest isn't pinned again")
+    o.lua('''sbo.cfg.questPins = {}; sbo.command("quest pin all")
+             sbo.rememberQuests({ list = { { id = "200", name = "Current", done = 0, total = 3 } }, other = {} })''')
+    eq(sorted(o.ev("sbo.cfg.questPins").keys()), ["200"], "pin all after abandoning")
     o.lua('''gmcp.char.quests = { q200 = { quest_info = { vnum = 200, name = "Current", abandoned = false, completed = true } } }
              sbo.onGmcpQuests()''')
     eq(o.ev("sbo.quests['200'].complete"), True, "completion from GMCP")
