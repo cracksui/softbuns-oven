@@ -980,6 +980,19 @@ def combat_mxp_lines():
     o.lua('OUT = {}; round = nil; gmcp.char.combat_mxp.opponent_name = "a rat"; handlers["gmcp.char.combat_mxp"](); runTimers()')
     out = list(o.ev("OUT").values())
     assert len(out) == 2 and "a rat" in out[1] and "1 round" in out[1], out
+    # two at once, rounds alternating: no summary until each one is done
+    o.lua('''OUT = {}
+      local function round(name, hit) gmcp.char.combat_mxp = { opponent_hp_percent = 50, opponent_hits = 1, your_hp_percent = 90, your_weapon_range = 2,
+        you_defend = 0, opponent_misses = 0, opponent_name = name, opponent_defends = 0, you_hit = hit, you_miss = 1 - hit, distance_to_opponent = 1 }
+        handlers["gmcp.char.combat_mxp"]() end
+      round("a goblin", 1); round("a wolf", 0); round("a goblin", 1); round("a wolf", 1)''')
+    eq(len(list(o.ev("OUT").values())), 4, "four round lines, no summaries in between")
+    o.feed("A goblin has been slain!")
+    o.lua("runTimers()")
+    out = list(o.ev("OUT").values())
+    summ = [x for x in out if "rounds" in x or "round " in x and "·" in x]
+    assert any("a goblin" in x and "slain" in x and "2 rounds" in x and "you hit 2/2" in x for x in out), out
+    assert any("a wolf" in x and "2 rounds" in x and "you hit 1/2" in x for x in out), "the wolf's own summary (its rounds stopped)"
     o.lua('OUT = {}; sbo.command("combat off"); gmcp.char.combat_mxp.opponent_name = "a rat"; handlers["gmcp.char.combat_mxp"]()')
     eq(list(o.ev("OUT").values()), [], "sbo combat off")
 

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.45.1"
+M.version = "0.45.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5074,12 +5074,15 @@ function M.onCombatRound()
   local r = G("char.combat_mxp")
   if type(r) ~= "table" or not r.opponent_name then return end
   local n = function(k) return tonumber(r[k]) or 0 end
-  local F = M.fight
-  if not F or F.name ~= r.opponent_name then
-    if F then M.fightSummary() end
-    F = { name = r.opponent_name, rounds = 0, hit = 0, miss = 0, parried = 0, took = 0, missed = 0, defended = 0 }
-    M.fight = F
+  -- one fight per opponent: a round against someone else doesn't end this one
+  M.fights = M.fights or {}
+  local key = r.opponent_name:lower()
+  local F = M.fights[key]
+  if not F then
+    F = { key = key, name = r.opponent_name, rounds = 0, hit = 0, miss = 0, parried = 0, took = 0, missed = 0, defended = 0 }
+    M.fights[key] = F
   end
+  M.fight = F
   F.rounds = F.rounds + 1
   F.hit, F.miss, F.parried = F.hit + n("you_hit"), F.miss + n("you_miss"), F.parried + n("opponent_defends")
   F.took, F.missed, F.defended = F.took + n("opponent_hits"), F.missed + n("opponent_misses"), F.defended + n("you_defend")
@@ -5087,8 +5090,8 @@ function M.onCombatRound()
   F.room = F.room or tonumber((G("room.info") or {}).num)
   -- rounds come every few seconds; none for a while = the fight's over (combat mode changed, it ended
   -- some way Oven didn't see). The game doesn't send char.status while you fight, so don't wait on it.
-  if M.fightTimer then killTimer(M.fightTimer) end
-  M.fightTimer = tempTimer(10, function() M.fightTimer = nil; if M.fight == F then M.fightSummary() end end)
+  if F.timer then killTimer(F.timer) end
+  F.timer = tempTimer(10, function() F.timer = nil; if M.fights[key] == F then M.fightSummary(nil, F) end end)
   if not M.cfg.combatLines then return end
   -- "⚔ a mental patient ██▌░░ 27%   you hit 1 · it missed 1   you 100%"
   local segs = { { C.dim, "⚔ " }, { C.item, r.opponent_name .. " " },
@@ -5128,10 +5131,12 @@ function M.combatEcho(segs)
 end
 
 -- the fight is over (it died, or you stopped fighting): one line for the whole fight
-function M.fightSummary(how)
-  local F = M.fight
-  M.fight = nil
-  if M.fightTimer then killTimer(M.fightTimer); M.fightTimer = nil end
+function M.fightSummary(how, F)
+  F = F or M.fight
+  if not F then return end
+  if (M.fights or {})[F.key] == F then M.fights[F.key] = nil end
+  if M.fight == F then M.fight = nil end
+  if F.timer then killTimer(F.timer); F.timer = nil end
   if not F or F.rounds == 0 or not M.cfg.combatLines then return end
   local function rate(a, b) return (a + b) > 0 and string.format(" (%d%%)", math.floor(a * 100 / (a + b) + 0.5)) or "" end
   M.combatEcho({ { C.dim, "⚔ " }, { C.item, F.name }, { C.dim, how and ("  " .. how) or "" },
@@ -5143,27 +5148,35 @@ end
 
 -- "X has been slain!" for the one you're fighting, or no longer fighting: the fight's over
 function M.noteFightEnd(l)
-  local F = M.fight
-  if not F then return end
   local who = l:match("^%s*(.-) has been slain!")
-  if who and who:lower():gsub("^the ", ""):gsub("^an? ", "") == F.name:lower():gsub("^the ", ""):gsub("^an? ", "") then
-    -- after the line has been drawn (echoing while a line is being read would join the two)
-    if M.fightTimer then killTimer(M.fightTimer); M.fightTimer = nil end
-    tempTimer(0, function() M.fightSummary("slain") end)
-    F.ended = true
+  if not who then return end
+  local function bare(x) return (x:lower():gsub("^the ", ""):gsub("^an? ", "")) end
+  for _, F in pairs(M.fights or {}) do
+    if bare(who) == bare(F.name) then
+      -- after the line has been drawn (echoing while a line is being read would join the two)
+      if F.timer then killTimer(F.timer); F.timer = nil end
+      tempTimer(0, function() M.fightSummary("slain", F) end)
+      return
+    end
   end
 end
 -- you left the room (fled, walked out): the fight's over
 function M.onFightRoom()
-  local F = M.fight
   local id = tonumber((G("room.info") or {}).num)
-  if F and F.room and id and id ~= F.room then M.fightSummary("you left") end
+  if not id then return end
+  local done = {}
+  for _, F in pairs(M.fights or {}) do if F.room and id ~= F.room then done[#done + 1] = F end end
+  for _, F in ipairs(done) do M.fightSummary("you left", F) end
 end
 function M.onFightStatus()
   local s = G("char.status")
-  if M.fight and type(s) == "table" and s.position and s.position ~= "fighting" then
+  if M.fights and next(M.fights) and type(s) == "table" and s.position and s.position ~= "fighting" then
     -- a moment later, so "has been slain" (text) gets to say how it ended first
-    tempTimer(1, function() if M.fight and os.time() - (M.fight.at or 0) >= 1 then M.fightSummary() end end)
+    tempTimer(1, function()
+      local done = {}
+      for _, F in pairs(M.fights or {}) do if os.time() - (F.at or 0) >= 1 then done[#done + 1] = F end end
+      for _, F in ipairs(done) do M.fightSummary(nil, F) end
+    end)
   end
 end
 
@@ -6080,7 +6093,7 @@ function M.onLine()
     pcall(M.noteRoomDeath)
     pcall(M.drawBar)
   end
-  if M.fight then pcall(M.noteFightEnd, line) end
+  if M.fights and next(M.fights) then pcall(M.noteFightEnd, line) end
   local doneQuest = line:match("^%s*All parts of your quest '(.+)' are complete%.?%s*$")
   -- "You inform Lord Agrippa you have completed your quest 'Jail Time'." - turned in
   local turnedIn = not doneQuest and line:match("^%s*You inform .- you have completed your quest '(.+)'%.?%s*$")
