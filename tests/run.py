@@ -588,6 +588,31 @@ def help_ends_at_see_also():
 
 
 @test
+def upgrades_from_what_you_carry():
+    o = Oven()
+    o.lua('''
+      local function it(n, ar, str) return { name = n, worn = "on body", level = 1, affects = { { "strength", tostring(str) } }, ar = ar, raw = {} } end
+      sbo.remember(it("a worn vest", 1, 1))
+      sbo.remember(it("a shop breastplate", 1, 9))     -- looked at in a shop
+      sbo.remember(it("a bagged hauberk", 1, 5))       -- in your backpack
+      sbo.remember(it("a dropped tunic", 1, 7))        -- in a bag you no longer have
+      sbo.eqNames = { "a worn vest" }
+      function UP(all) local t = {} for _, r in ipairs(sbo.upgradeLines(100, all)) do local x = {} for _, seg in ipairs(r) do x[#x+1] = seg[2] end t[#t+1] = table.concat(x) end return table.concat(t, "\\n") end''')
+    eq("type i" in o.ev("UP(false)"), True, "before any inventory: asks for one")
+    def contents(cmd, lines):
+        o.lua(f'sbo.onSend(nil, "{cmd}")')
+        o.lua("sbo.cap.plain = {" + ",".join(repr(l).replace("\\'", "'") for l in lines) + "}; sbo.cap.decho = sbo.cap.plain; sbo.finish('prompt'); runTimers()")
+    contents("i", [" You are carrying:", "     a leather backpack (new)", "A total of 1 items weighing 1 stones, 0 pebbles (0pb gold weight)"])
+    contents("l in backpack", ["A leather backpack contains:", "     a bagged hauberk (new)", "A total of 1 (30 max) items weighing 0 st, 5 pbs (5 sts, 0 pbs max)."])
+    contents("l in pouch", ["A small pouch contains:", "     a dropped tunic (new)", "A total of 1 (30 max) items weighing 0 st, 5 pbs (5 sts, 0 pbs max)."])
+    mine = o.ev("UP(false)")
+    assert "a bagged hauberk" in mine and "in a leather backpack" in mine, mine
+    assert "a shop breastplate" not in mine and "a dropped tunic" not in mine, f"only what you carry: {mine}"
+    every = o.ev("UP(true)")
+    assert "a shop breastplate" in every, f"sbo upgrades all: the best of everything seen: {every}"
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

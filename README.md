@@ -143,7 +143,8 @@ Green marks the better value in each row.
 **Gear score.** Every worn item gets a score from your **build**: each stat times how much it matters
 to you (+1 strength might count 3, +1 hp 0.2). Looking at an item shows its score against what you wear
 there (`+5.5 (+31%) upgrade`), comparisons start with it, and `sbo upgrades` lists, slot by slot, the
-best item you've seen that beats your gear. The build starts from your class (Materia Magica's 16 classes each map to monk, melee, caster, healer,
+best item you carry (your last `i`, and inside the bags you've looked in) that beats your gear - `sbo upgrades
+all` searches every item you've ever looked at, shops included. The build starts from your class (Materia Magica's 16 classes each map to monk, melee, caster, healer,
 thief, tank or paladin - and Oven reads `help classes` to place any it doesn't know by their group); `sbo build` shows the weights, `sbo build set strength 4` changes one, `sbo build pvp`
 makes and switches to a new build, `sbo build reset` / `sbo build auto` go back. Stats already at their
 maximum in `score` (Strength 20/20) count a quarter, since more of them is mostly wasted; `sbo build` shows

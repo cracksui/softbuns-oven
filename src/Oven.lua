@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.32.1"
+M.version = "0.33.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3804,10 +3804,51 @@ function M.scoreLine(it)
 end
 
 -- sbo upgrades: for each place you wear something, the best item Oven knows for it
-function M.upgradeLines(width)
+-- What you carry: the last inventory list, and the last look inside each container. Kept between
+-- sessions; a container's contents only count while the container is in your inventory.
+function M.updateCarried(cap)
+  if cap.kind ~= "contents" then return end
+  local names = M.listNames(cap.plain)
+  local first = trim(cap.plain[1] or "")
+  local c = M.cfg.carried or { inv = {}, bags = {} }
+  M.cfg.carried = c
+  local isInv = cap.target == "inventory"
+  for _, l in ipairs(cap.plain) do if trim(l):match("^You are carrying:?$") then isInv = true end end
+  if isInv then
+    c.inv, c.at = names, os.time()
+  else
+    local bag
+    for _, l in ipairs(cap.plain) do
+      bag = trim(l):match("^(.-) contains:?$")
+      if bag then break end
+    end
+    if not bag then return end
+    c.bags[bag:lower()] = names
+  end
+  M.saveSettings()
+end
+
+-- name -> "" (carried) or the container it's in
+function M.carriedItems()
+  local c = M.cfg.carried
+  if not c or not c.at then return nil end
+  local out = {}
+  for _, n in ipairs(c.inv or {}) do out[n] = "" end
+  for _, n in ipairs(c.inv or {}) do
+    for _, x in ipairs((c.bags or {})[n:lower()] or {}) do if out[x] == nil then out[x] = n end end
+  end
+  return out
+end
+
+function M.upgradeLines(width, all)
   local bname, w = M.activeBuild()
   local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
-  local out = { header("gear", "", width, "Upgrades  (" .. bname .. " build)") }
+  local out = { header("gear", "", width, "Upgrades  (" .. bname .. " build" .. (all and ", everything seen" or "") .. ")") }
+  local carried = not all and M.carriedItems() or nil
+  if not all and not carried then
+    out[#out + 1] = { { C.dim, "type i (and look in your bags) so Oven knows what you carry - or sbo upgrades all for everything you've seen" } }
+    return out
+  end
   local byWorn = {}
   for _, r in ipairs(M.dbRows("SELECT name, worn, level FROM items WHERE worn IS NOT NULL AND worn != ''")) do
     byWorn[r.worn] = byWorn[r.worn] or {}
@@ -3833,7 +3874,7 @@ function M.upgradeLines(width)
     local best, bs
     for _, r in ipairs(byWorn[cur.worn] or {}) do
       local tooHigh = lvl and tonumber(r.level) and tonumber(r.level) > lvl
-      if not isWorn[r.name] and not tooHigh then
+      if not isWorn[r.name] and not tooHigh and (all or carried[r.name]) then
         local s = M.gearScore(M.items[r.name], w)
         if s and s > cs and (not bs or s > bs) then best, bs = r.name, s end
       end
@@ -3841,13 +3882,24 @@ function M.upgradeLines(width)
     if best then
       shown = shown + 1
       out[#out + 1] = { { C.slot, pad(cur.worn, 24) }, { C.item, cur.name }, { C.dim, "  " .. cs } }
-      out[#out + 1] = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
+      local row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
+      local where = carried and carried[best]
+      if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where } end
+      out[#out + 1] = row
     end
    end
   end
-  if shown == 0 then out[#out + 1] = { { C.dim, "nothing Oven has seen beats what you wear (for this build, at your level)" } } end
+  if shown == 0 then
+    out[#out + 1] = { { C.dim, all and "nothing Oven has seen beats what you wear (for this build, at your level)"
+      or "nothing you carry beats what you wear (for this build, at your level)" } }
+  end
   out[#out + 1] = {}
-  out[#out + 1] = { { C.dim, "only items you've looked at count · sbo build to see or change the weights" } }
+  if all then
+    out[#out + 1] = { { C.dim, "everything you've looked at, anywhere · sbo upgrades for only what you carry" } }
+  else
+    out[#out + 1] = { { C.dim, "what you carry (as of your last i" .. (M.cfg.carried.at and (", " .. M.shortDur(os.time() - M.cfg.carried.at) .. " ago") or "")
+      .. ") and have looked at · sbo upgrades all for everything you've seen · sbo learn inv" } }
+  end
   return out
 end
 
@@ -5670,6 +5722,7 @@ function M.finish(reason)
     -- a reply Oven asked for itself (sbo learn inv): hand it over, draw nothing
     if reason == "prompt" and not M.cfg.bar then deleteLine() end
     local fn = cap.quietFn
+    pcall(M.updateCarried, cap)
     tempTimer(0.3, function() pcall(fn, cap.plain) end)
     local nxt = table.remove(M.queue, 1)
     if nxt then M.start(nxt[1], nxt[2], nxt[3]) end
@@ -5756,6 +5809,7 @@ function M.finish(reason)
       M.pendingLinks = nil
     end
     if cap.kind == "eq" then M.updateEqNames(cap.plain) end
+    if cap.kind == "contents" then pcall(M.updateCarried, cap) end
     if cap.kind == "score" then M.updateMaxes(cap.plain); M.drawBar() end
     if cap.kind == "item" then M.afterItem(cap.plain, entry) end
     if entry then M.viewAdd(entry) end
@@ -6968,7 +7022,7 @@ M.helpSections = {
     { "sbo pin {name}  /  unpin", "compare everything you look at against one item (handy in shops)" },
     { "sbo autocompare on|off", "compare each looked-at item with what you wear in that slot" },
     { "sbo items", "list the items Oven remembers" },
-    { "sbo upgrades", "for each slot, the best item you've seen that beats what you wear" },
+    { "sbo upgrades [all]", "for each slot, the best item you carry that beats what you wear (all: anything you've seen)" },
     { "sbo build [name]", "the weights behind the gear score; switch or make builds (set STAT WEIGHT, reset, auto)" },
     { "", "" },
     { "sbo eqstats on|off", "AR and affects column in eq" },
@@ -7262,7 +7316,7 @@ function M.command(args)
   elseif a == "run" then return M.mapRun(b)
   elseif a == "build" then return M.buildCommand(b)
   elseif a == "upgrades" or a == "upgrade" then
-    local lines = M.upgradeLines(M.cfg.window and M.viewCols() or columns("main"))
+    local lines = M.upgradeLines(M.cfg.window and M.viewCols() or columns("main"), b == "all")
     if M.cfg.window then M.viewAdd({ lines = lines, links = {} }) else render("main", lines) end
     return
   elseif a == "mark" then if b == "" then return M.listMarks() end return M.markRoom(b)
