@@ -621,6 +621,24 @@ def upgrades_from_what_you_carry():
 
 
 @test
+def compare_score_breakdown():
+    o = Oven()
+    o.lua('''
+      local function it(n, aff) return { name = n, worn = "on body", level = 1, affects = aff, raw = {} } end
+      A = it("a vest", { { "strength", "1" }, { "hp", "20" } })
+      B = it("a hauberk", { { "strength", "4" } })
+      local t = {} for _, r in ipairs(sbo.compareLines(A, B, 90)) do local x = {} for _, seg in ipairs(r) do x[#x+1] = seg[2] end t[#t+1] = table.concat(x) end
+      TEXT = table.concat(t, "\\n")
+      PA, PB = sbo.scoreParts(A), sbo.scoreParts(B)''')
+    text = o.ev("TEXT")
+    assert "Score breakdown" in text, text
+    total = lambda p: round(sum(x.points for x in p.values()), 1)
+    eq((total(o.ev("PA")), total(o.ev("PB"))), (o.ev("sbo.gearScore(A)"), o.ev("sbo.gearScore(B)")), "the parts add up to the score")
+    row = [l for l in text.split("\n") if l.startswith("strength") and "×" in l]
+    assert row and "+1×" in row[0] and "+4×" in row[0], row
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.33.1"
+M.version = "0.34.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3758,21 +3758,35 @@ function M.statCapped(stat)
   return st and st.cur and st.max and st.cur >= st.max
 end
 
-function M.gearScore(it, w)
+-- each stat's part of an item's gear score: { stat, value, weight, capped, boost, points }
+function M.scoreParts(it, w)
   if not it then return nil end
   if not w then local _; _, w = M.activeBuild() end
-  local total = 0
   local boost = 1
   if it.weapon then
     for _, b in ipairs(M.weaponBonuses(w)) do
       if M.weaponIs(it, b.kind) then boost = boost + (tonumber(b.pct) or 0) / 100 end
     end
   end
+  local parts = {}
   for stat, v in pairs(M.itemStats(it)) do
-    local x = v * weightOf(w, stat) * (M.statCapped(stat) and CAPPED or 1)
-    if stat:match("^weapon%-") then x = x * boost end
-    total = total + x
+    local capped = M.statCapped(stat) and true or false
+    local wt = weightOf(w, stat)
+    local b = stat:match("^weapon%-") and boost or 1
+    parts[#parts + 1] = { stat = stat, value = v, weight = wt, capped = capped, boost = b,
+                          points = v * wt * (capped and CAPPED or 1) * b }
   end
+  table.sort(parts, function(x, y)
+    if math.abs(x.points) ~= math.abs(y.points) then return math.abs(x.points) > math.abs(y.points) end
+    return x.stat < y.stat
+  end)
+  return parts
+end
+
+function M.gearScore(it, w)
+  if not it then return nil end
+  local total = 0
+  for _, p in ipairs(M.scoreParts(it, w)) do total = total + p.points end
   return math.floor(total * 10 + 0.5) / 10
 end
 
@@ -4051,7 +4065,57 @@ function M.compareLines(a, b, width)
     out[#out + 1] = { { C.key, pad(cut(r[1], 15), 16) }, { acol, pad(cut(r[2]), cw + 2) },
                       { bcol, pad(cut(r[3]), cw + 2) }, { dcol, r[4] } }
   end
+  pcall(M.scoreBreakdown, out, a, b, cw, cut)
   return out
+end
+
+-- under a comparison: where each item's gear score comes from, stat by stat
+-- ("strength   9  +3×3     15  +5×3     +6")
+local function num1(x)
+  local r = math.floor(x * 10 + 0.5) / 10
+  return (r == math.floor(r)) and tostring(math.floor(r)) or tostring(r)
+end
+function M.scoreBreakdown(out, a, b, cw, cut)
+  local bname, w = M.activeBuild()
+  local pa, pb = M.scoreParts(a, w), M.scoreParts(b, w)
+  if not pa or not pb or (#pa == 0 and #pb == 0) then return end
+  local byA, byB, order, seen = {}, {}, {}, {}
+  for _, p in ipairs(pa) do byA[p.stat] = p end
+  for _, p in ipairs(pb) do byB[p.stat] = p end
+  -- biggest difference first
+  for _, p in ipairs(pa) do if not seen[p.stat] then seen[p.stat] = true; order[#order + 1] = p.stat end end
+  for _, p in ipairs(pb) do if not seen[p.stat] then seen[p.stat] = true; order[#order + 1] = p.stat end end
+  local function pts(p) return p and p.points or 0 end
+  table.sort(order, function(x, y)
+    local dx, dy = math.abs(pts(byB[x]) - pts(byA[x])), math.abs(pts(byB[y]) - pts(byA[y]))
+    if dx ~= dy then return dx > dy end
+    return x < y
+  end)
+  local anyCap, anyBoost = false, false
+  local function cell(p)
+    if not p then return "-" end
+    local how = string.format("%+d", p.value):gsub("^%+%-", "-") .. "×" .. num1(p.weight)
+    if p.capped then how = how .. "¼"; anyCap = true end
+    if p.boost ~= 1 then how = how .. "↑"; anyBoost = true end
+    return num1(p.points) .. "  " .. how
+  end
+  out[#out + 1] = {}
+  out[#out + 1] = { { C.key, "Score breakdown" }, { C.dim, "  (" .. bname .. " build)  points = value × weight" } }
+  for _, st in ipairs(order) do
+    local x, y = byA[st], byB[st]
+    local d = pts(y) - pts(x)
+    if pts(x) ~= 0 or pts(y) ~= 0 then
+      local dcol = d > 0.05 and C.plus or (d < -0.05 and C.minus or C.dim)
+      out[#out + 1] = { { C.slot, pad(cut(st, 15), 16) }, { x and C.num or C.dim, pad(cut(cell(x)), cw + 2) },
+                        { y and C.num or C.dim, pad(cut(cell(y)), cw + 2) },
+                        { dcol, math.abs(d) < 0.05 and "=" or ((d > 0 and "+" or "") .. num1(d)) } }
+    end
+  end
+  local notes = {}
+  if anyCap then notes[#notes + 1] = "¼ = already at your maximum, counts a quarter" end
+  if anyBoost then notes[#notes + 1] = "↑ = your race's bonus with this kind of weapon" end
+  notes[#notes + 1] = "stats your build doesn't weigh count 0 · sbo build to see or change the weights"
+  out[#out + 1] = { { C.dim, table.concat(notes, " · ") } }
 end
 
 
