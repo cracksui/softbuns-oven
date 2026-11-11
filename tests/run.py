@@ -516,6 +516,58 @@ def mirror_tabs():
     o.lua('sbo.command("mirror bogus on")')
 
 
+GAME = r'''
+  SENT = {}
+  local function item(n, kind) return { "Item '" .. n .. "' is type " .. kind .. ", alignment 0, made of steel (in (new) condition),",
+    "has keywords 'x'.", "This item weighs 1 stones and 0 pebbles, and is valued at 10 gold." } end
+  REPLY = {
+    ["inventory"] = { " You are carrying:", "     a sword (new)", "(  2) a lime green vial (new)", "     a bag (new)",
+                      "A total of 4 items weighing 2 stones, 0 pebbles (0pb gold weight)" },
+    ['look "a sword"'] = item("a sword", "weapon"),
+    ['look "a lime green vial"'] = item("a lime green vial", "potion"),
+    ['look "a bag"'] = item("a bag", "container"),
+    ['look in "a bag"'] = { "A bag contains:", "     a ring (new)", "     a cloak (new)", "A total of 2 (30 max) items weighing 0 st, 5 pbs (5 sts, 0 pbs max)." },
+  }
+  if INSIDE_OK then
+    REPLY['look "a ring" in "a bag"'] = item("a ring", "jewelry")
+    REPLY['look "a cloak" in "a bag"'] = item("a cloak", "armor")
+  end
+  send = function(c)
+    SENT[#SENT + 1] = c
+    sbo.onSend(nil, c)
+    -- the game answers at once (the tests' timers all fire together, so a later reply would be too late)
+    local r = REPLY[c] or { "You don't see that here." }
+    for _, l in ipairs(r) do line = l; sbo.onLine() end
+    line = "<270hp 550sp 401st>"; sbo.onLine()
+  end
+'''
+
+
+@test
+def learn_inventory_and_containers():
+    for inside_ok in (True, False):
+        o = Oven()
+        o.lua(f'sbo.cfg.promptPattern = "<%d+hp"; INSIDE_OK = {"true" if inside_ok else "false"}; SAYS = {{}}; sbo.log = function(m) SAYS[#SAYS+1] = m end')
+        o.lua(GAME)
+        o.lua('sbo.items["a sword"] = nil; sbo.command("learn inv"); runTimers()')
+        sent = list(o.ev("SENT").values())
+        known = [n for n in ("a sword", "a lime green vial", "a bag", "a ring", "a cloak") if o.ev(f'sbo.items["{n}"] ~= nil')]
+        says = list(o.ev("SAYS").values())
+        if inside_ok:
+            eq(known, ["a sword", "a lime green vial", "a bag", "a ring", "a cloak"], "everything carried and in the bag")
+            assert 'look "a cloak" in "a bag"' in sent, sent
+        else:
+            eq(known, ["a sword", "a lime green vial", "a bag"], "carried items; the bag's can't be looked at")
+            assert 'look "a cloak" in "a bag"' not in sent, f"stops after the first refusal: {sent}"
+            assert any("inside a container" in m for m in says), says
+        eq(sent[0], "inventory", "starts from the inventory")
+        eq(sent[-1], "inventory", "shows the inventory at the end")
+        assert any("learned" in m for m in says), says
+    # nothing new the second time
+    o.lua('SENT = {}; sbo.command("learn inv"); runTimers()')
+    assert not any(c.startswith('look "a sword"') for c in o.ev("SENT").values()), "known items aren't looked at again"
+
+
 @test
 def update_follows_main():
     o = Oven()

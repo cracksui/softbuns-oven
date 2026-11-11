@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.31.0"
+M.version = "0.32.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4762,7 +4762,10 @@ function M.start(kind, target, cmd)
     M.cap.quiet, M.cap.gag, M.cap.quietKind = true, true, "quest"
     M.quietQuest = nil
   end
-  if M.learning and kind == "item" then
+  if M.quietNext and kind == M.quietNext.kind then
+    M.cap.quiet, M.cap.gag, M.cap.quietKind, M.cap.quietFn = true, true, "fn", M.quietNext.fn
+    M.quietNext = nil
+  elseif M.learning and kind == "item" then
     -- sbo learn: record the item, show nothing
     M.cap.quiet, M.cap.gag = true, true
     M.learning.started = true
@@ -5652,14 +5655,26 @@ function M.finish(reason)
     if nxt then M.start(nxt[1], nxt[2], nxt[3]) end
     return
   end
+  if cap.quiet and cap.quietKind == "fn" then
+    -- a reply Oven asked for itself (sbo learn inv): hand it over, draw nothing
+    if reason == "prompt" and not M.cfg.bar then deleteLine() end
+    local fn = cap.quietFn
+    tempTimer(0.3, function() pcall(fn, cap.plain) end)
+    local nxt = table.remove(M.queue, 1)
+    if nxt then M.start(nxt[1], nxt[2], nxt[3]) end
+    return
+  end
   if cap.quiet then
     -- sbo learn: remember the item, draw nothing, keep the prompt out of the log too
     if reason == "prompt" and not M.cfg.bar then deleteLine() end
     local ok, it = pcall(M.parseItem, cap.plain)
-    if ok and it and it.name then M.remember(it); M.learnStats.ok = M.learnStats.ok + 1
+    local good = ok and it and it.name and true or false
+    if good then M.remember(it); M.learnStats.ok = M.learnStats.ok + 1
     else M.learnStats.fail = M.learnStats.fail + 1 end
     if M.cfg.samples and #cap.plain > 0 then writeSample(cap) end
+    local entry = M.learning and M.learning.entry
     M.learning = nil
+    pcall(M.learnResult, entry, good)
     tempTimer(0.3, function() M.learnNext() end)
     local nxt = table.remove(M.queue, 1)
     if nxt then M.start(nxt[1], nxt[2], nxt[3]) end
@@ -6800,41 +6815,129 @@ function M.lootLines(width, q, all)
   return out, links
 end
 
--- sbo learn: look at every worn item Oven doesn't know yet (the "?" in eq), quietly
-function M.learn()
-  if #M.eqNames == 0 then return say("type eq first, so Oven knows what you're wearing") end
-  M.learnQueue, M.learnStats = {}, { ok = 0, fail = 0 }
-  local seen = {}
-  for _, n in ipairs(M.eqNames) do
-    if not M.items[n] and not seen[n] then seen[n] = true; M.learnQueue[#M.learnQueue + 1] = n end
-  end
-  if #M.learnQueue == 0 then return say("every item you're wearing is already known") end
-  say("looking at " .. #M.learnQueue .. " worn item" .. (#M.learnQueue == 1 and "" or "s") .. "…")
+-- sbo learn: look at every worn item Oven doesn't know yet (the "?" in eq), quietly.
+-- sbo learn inv: the same for what you carry, and what's inside your containers.
+-- Each entry is { name, cmd, inside = container name or nil }; done() runs when the queue is empty.
+function M.learnStart(entries, what, done)
+  M.learnQueue, M.learnStats, M.learnDone = entries, M.learnStats or { ok = 0, fail = 0 }, done
+  if #entries > 0 then say("looking at " .. #entries .. " " .. what .. (#entries == 1 and "" or "s") .. "…") end
   M.learnNext()
+end
+
+function M.learn(arg)
+  arg = trim(arg or ""):lower()
+  if arg == "inv" or arg == "inventory" or arg == "i" then return M.learnInv() end
+  if #M.eqNames == 0 then return say("type eq first, so Oven knows what you're wearing") end
+  local q, seen = {}, {}
+  for _, n in ipairs(M.eqNames) do
+    if not M.items[n] and not seen[n] then seen[n] = true; q[#q + 1] = { name = n } end
+  end
+  if #q == 0 then return say("every item you're wearing is already known") end
+  M.learnStats = { ok = 0, fail = 0 }
+  M.learnStart(q, "worn item", function() M.learnReport(); send("eq") end)
+end
+
+function M.learnReport(extra)
+  local st = M.learnStats or { ok = 0, fail = 0 }
+  say(string.format("learned %d item%s%s%s", st.ok, st.ok == 1 and "" or "s",
+    st.fail > 0 and string.format(" (%d couldn't be looked at)", st.fail) or "", extra or ""))
+end
+
+-- a reply read quietly and handed to fn(lines): the next command of that kind
+function M.quietly(cmd, kind, fn)
+  M.quietNext = { kind = kind, fn = fn }
+  send(cmd, false)
+  -- no reply of that kind? give up on it
+  local mine = M.quietNext
+  tempTimer(6, function() if M.quietNext == mine then M.quietNext = nil; pcall(fn, nil) end end)
+end
+
+-- the item names in an inventory or container list ("(  2) a lime green vial (new)" -> a lime green vial)
+function M.listNames(lines)
+  local out, seen = {}, {}
+  for _, l in ipairs(lines or {}) do
+    local t = trim(l)
+    local rest = t:match("^%(%s*%d+%)%s*(.+)$") or t
+    if l:match("^%s%s%s%s%s%S") or t:match("^%(%s*%d+%)") then
+      local n = trim((stripConds(rest)))
+      if n ~= "" and not seen[n] then seen[n] = true; out[#out + 1] = n end
+    end
+  end
+  return out
+end
+
+local function isContainer(n)
+  local it = M.items[n]
+  return it and ((it.type or ""):lower():match("container") or it.contents) and true or false
+end
+
+function M.learnInv()
+  M.learnStats = { ok = 0, fail = 0 }
+  M.quietly("inventory", "contents", function(lines)
+    if not lines then return say("the game didn't answer inventory - try again") end
+    local names = M.listNames(lines)
+    if #names == 0 then return say("you aren't carrying anything") end
+    local q = {}
+    for _, n in ipairs(names) do if not M.items[n] then q[#q + 1] = { name = n } end end
+    -- then what's inside each container (some are only known to be containers once looked at)
+    M.learnStart(q, "carried item", function() M.learnContainers(names, 1) end)
+  end)
+end
+
+function M.learnContainers(names, i)
+  while names[i] and not isContainer(names[i]) do i = i + 1 end
+  local bag = names[i]
+  if not bag or M.learnNoInside then
+    M.learnNoInside = nil
+    M.learnReport()
+    return send("inventory")
+  end
+  M.quietly('look in "' .. bag .. '"', "contents", function(lines)
+    local q = {}
+    for _, n in ipairs(M.listNames(lines)) do
+      if not M.items[n] then q[#q + 1] = { name = n, inside = bag, cmd = 'look "' .. n .. '" in "' .. bag .. '"' } end
+    end
+    M.learnStart(q, "item in " .. bag, function() M.learnContainers(names, i + 1) end)
+  end)
 end
 
 function M.learnNext()
   if not M.learnQueue then return end
-  local name = table.remove(M.learnQueue, 1)
-  if not name then
-    local st = M.learnStats
+  local e = table.remove(M.learnQueue, 1)
+  if not e then
     M.learnQueue = nil
-    say(string.format("learned %d item%s%s", st.ok, st.ok == 1 and "" or "s",
-      st.fail > 0 and string.format(" (%d couldn't be looked at)", st.fail) or ""))
-    send("eq")   -- show the filled-in table
+    local done = M.learnDone
+    M.learnDone = nil
+    if done then done() end
     return
   end
-  M.learning = { name = name }
+  M.learning = { name = e.name, entry = e, ok0 = M.learnStats.ok }
   local mine = M.learning
-  send('look "' .. name .. '"', false)
+  send(e.cmd or ('look "' .. e.name .. '"'), false)
   -- no reply at all? move on
   tempTimer(5, function()
     if M.learning == mine and not mine.started then
       M.learning = nil
       M.learnStats.fail = M.learnStats.fail + 1
+      pcall(M.learnResult, e, false)
       M.learnNext()
     end
   end)
+end
+
+-- the first item looked at inside a container decides whether the game allows it at all
+function M.learnResult(entry, ok)
+  if not entry or not entry.inside then return end
+  if ok then M.learnInsideOk = true return end
+  if M.learnInsideOk then return end
+  -- the game won't show items in containers: drop the rest, say so once
+  local kept = {}
+  for _, e in ipairs(M.learnQueue or {}) do
+    if e.inside then M.learnStats.fail = M.learnStats.fail + 1 else kept[#kept + 1] = e end
+  end
+  M.learnQueue = kept
+  M.learnNoInside = true
+  say("the game won't let Oven look at items while they're inside a container - take them out (or look at them in the bag yourself) to add them")
 end
 
 
@@ -6848,6 +6951,7 @@ M.helpSections = {
   } },
   { key = "gear", title = "Gear and items", rows = {
     { "sbo learn", "look at worn items Oven doesn't know yet (the ? in eq)" },
+    { "sbo learn inv", "look at everything you carry Oven doesn't know yet, and inside your containers" },
     { "sbo compare", "compare the last two items you looked at" },
     { "sbo compare {a} vs {b}", "compare two remembered items by part of their names" },
     { "sbo pin {name}  /  unpin", "compare everything you look at against one item (handy in shops)" },
@@ -7143,7 +7247,7 @@ function M.command(args)
     say("help window " .. b)
   elseif a == "slots" and (b == "short" or b == "full") then
     M.cfg.slotNames = b; say("slot names: " .. b)
-  elseif a == "learn" then return M.learn()
+  elseif a == "learn" then return M.learn(b)
   elseif a == "run" then return M.mapRun(b)
   elseif a == "build" then return M.buildCommand(b)
   elseif a == "upgrades" or a == "upgrade" then

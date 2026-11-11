@@ -134,6 +134,9 @@ in each room are kept in a database in your profile folder (`oven.db`), so nothi
 - `sbo items` lists what Oven remembers.
 - `sbo learn` looks at every worn item Oven doesn't know yet (the `?` in `eq`) in one go, quietly,
   then shows your `eq` again with their stats filled in.
+- `sbo learn inv` does the same for everything you carry, then looks inside each container (bags,
+  backpacks) and at what's in them, and shows your inventory again. If the game won't let Oven look at an
+  item while it's in a container, it says so after the first try and skips the rest.
 
 Green marks the better value in each row.
 
@@ -176,6 +179,7 @@ sbo font [size]           Inspector / help window font size (leave the number of
 sbo raw                   reprint the last output exactly as the game sent it
 sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
 sbo learn                 look at worn items Oven doesn't know yet (the ? in eq)
+sbo learn inv             the same for everything you carry, and what's inside your containers
 sbo loot [text|all]       what you and your group picked up, from where, and the exact room (sbo loot lance = search)
 sbo kills [all]           what you've killed, with counts and exp - this session and all time
 sbo deaths                your last deaths: where, at what level, and the lines leading up to each
