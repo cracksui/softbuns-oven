@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.29.3"
+M.version = "0.30.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -53,6 +53,7 @@ M.defaults = {
   barBlank     = true,       -- with the bar on, also drop the blank line before each prompt
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
   tabs         = true,       -- the Inspector window has tabs: Inspector | Help | Log (help pages open there)
+  tabAuto      = true,       -- whatever arrives brings its tab to the front (off: the tab gets a • instead)
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
   showEmpty    = true,       -- list empty equipment slots in eq
   showDonation = true,       -- include empty donation-only slots (amulets, face, aura)
@@ -3083,13 +3084,19 @@ function M.applyTabs()
   end
 end
 
+M.tabNew = M.tabNew or {}
 function M.tabShow(key, quiet)
   if not M.cfg.tabs or not M.tabPages or not M.tabPages[key] then return end
   M.tabOn = key
+  M.tabNew[key] = nil
   for _, t in ipairs(M.TABS) do
     local on = t.key == key
     if on then M.tabPages[t.key]:show() else M.tabPages[t.key]:hide() end
     M.tabLabels[t.key]:setStyleSheet(on and tabOnStyle or tabStyle)
+    -- a tab with something new in it that you haven't looked at (chat keeps its own count)
+    if t.key ~= "chat" then
+      M.tabLabels[t.key]:echo("<center>" .. t.title .. (M.tabNew[t.key] and " •" or "") .. "</center>")
+    end
   end
   -- a tab nothing has been shown in yet
   if not quiet then
@@ -3102,6 +3109,16 @@ function M.tabShow(key, quiet)
   end
   if M.raiseQuestHud then M.raiseQuestHud() end
 end
+
+-- putting something in a tab: draw it with the tab in front, then leave it there - or, with
+-- sbo tabs auto off, go back to the tab you were on and mark this one
+local function tabBegin(key) local prev = M.tabOn; M.tabShow(key, true); return prev end
+local function tabEnd(key, prev, asked)
+  if asked or M.cfg.tabAuto ~= false or not prev or prev == key then return M.tabShow(key) end
+  M.tabNew[key] = true
+  M.tabShow(prev, true)
+end
+M.tabBegin, M.tabEnd = tabBegin, tabEnd
 
 -- Log tab: session, kills, loot, deaths - with links between them
 function M.logLinks()
@@ -3120,9 +3137,9 @@ function M.logAdd(lines, links)
   local all = {}
   for _, l in ipairs(links or {}) do all[#all + 1] = l end
   for _, l in ipairs(M.logLinks()) do all[#all + 1] = l end
-  M.tabShow("log", true)
+  local prev = tabBegin("log")
   M.pageShow(M.logPg, segsToDecho(lines), "decho", all)
-  M.tabShow("log")
+  tabEnd("log", prev, true)   -- only ever from an sbo command you typed
 end
 function M.logCols() return (M.cfg.tabs and M.logPg) and math.min(M.pageCols(M.logPg), 110) or M.viewCols() end
 
@@ -3155,9 +3172,9 @@ function M.viewShow()
   if pos < #h then
     links[#links + 1] = { "newer ▶  (" .. (#h - pos) .. " more)", function() M.viewPos = pos + 1; M.viewShow() end }
   end
-  M.tabShow("view", true)
+  local prev = M.cfg.tabs and tabBegin("view")
   M.pageShow(M.viewPg, segsToDecho(e.lines), "decho", links)
-  M.tabShow("view")
+  if M.cfg.tabs then tabEnd("view", prev) end
   if M.raiseQuestHud then M.raiseQuestHud() end
 end
 
@@ -3205,7 +3222,7 @@ function M.helpPage(title, lines, fmt, links)
   if M.cfg.tabs then
     M.container:show()
     M.helpShown = true
-    M.tabShow("help", true)
+    M.helpPrev = tabBegin("help")
   else
     M.helpContainer:show()
   end
@@ -3213,7 +3230,7 @@ function M.helpPage(title, lines, fmt, links)
   local all = { segsToDecho({ header("help", "", math.min(cols, 100), title) })[1] }
   for _, l in ipairs(lines) do all[#all + 1] = (fmt == "cecho") and M.cechoToDecho(l) or l end
   M.pageShow(M.helpPg, all, "decho", links)
-  if M.cfg.tabs then M.tabShow("help") end
+  if M.cfg.tabs then tabEnd("help", M.helpPrev) end
   if M.raiseQuestHud then M.raiseQuestHud() end
 end
 
@@ -6861,6 +6878,7 @@ M.helpSections = {
     { "sbo helpwindow on|off", "game help pages (and this list) in a window instead of the main screen" },
     { "sbo tabs on|off", "Inspector | Help | Log | Chat as tabs in one window (off: help gets its own window)" },
     { "sbo tab inspector|help|log|chat", "bring a tab to the front (or click it)" },
+    { "sbo tabs auto on|off", "whatever arrives brings its tab to the front (off: the tab gets a • instead)" },
     { "sbo chat [channel|all]", "the Chat tab: channel talk, tells and says; click a chip to show one channel" },
     { "sbo chat mute|unmute {channel}", "keep a channel out of All (or right-click its chip)" },
     { "sbo chat clear  /  forget {channel}", "empty the Chat tab / drop a channel's chip" },
@@ -7055,6 +7073,10 @@ function M.command(args)
     return
   elseif a == "pin" then return M.pin(b ~= "" and b or nil)
   elseif a == "unpin" then M.pinned = nil; M.saveItems(); say("unpinned"); return
+  elseif a == "tabs" and (b == "auto on" or b == "auto off") then
+    M.cfg.tabAuto = (b == "auto on")
+    say(M.cfg.tabAuto and "tabs switch by themselves: whatever arrives comes to the front"
+      or "tabs stay where you put them: a tab with something new gets a • (sbo commands like sbo kills still switch)")
   elseif a == "tabs" and onoff ~= nil then
     M.cfg.tabs = onoff
     if M.container then M.applyTabs(); M.viewShow() end

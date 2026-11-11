@@ -434,6 +434,28 @@ def bar_group_health():
 
 
 @test
+def tabs_auto_off():
+    o = Oven()
+    o.lua('''sbo.cfg.window = true
+      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log", "chat" }) do if WIDGETS["ovenTabs2Page_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end
+      sbo.viewAdd({ lines = { { { "white", "an item" } } }, links = {} })
+      sbo.command("tabs auto off")''')
+    eq(o.ev("sbo.cfg.tabAuto"), False, "setting saved")
+    o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES", "Character classes" })')
+    eq(o.ev("FRONT()"), "view", "a help page doesn't take the window")
+    eq(o.ev("WIDGETS.ovenTabs2_help.text"), "<center>Help •</center>", "the Help tab is marked")
+    assert "(in window)" in o.ev("CREATED[#CREATED]"), "the page was still drawn in its tab"
+    o.lua('sbo.command("tab help")')
+    eq((o.ev("FRONT()"), o.ev("WIDGETS.ovenTabs2_help.text")), ("help", "<center>Help</center>"), "looking clears the mark")
+    o.lua('sbo.viewAdd({ lines = { { { "white", "another" } } }, links = {} })')
+    eq((o.ev("FRONT()"), o.ev("WIDGETS.ovenTabs2_view.text")), ("help", "<center>Inspector •</center>"), "an item while reading help")
+    o.lua('sbo.command("kills")')
+    eq(o.ev("FRONT()"), "log", "sbo kills, typed, still switches")
+    o.lua('sbo.command("tabs auto on"); sbo.showHelp("x", { "[1 ] X" })')
+    eq(o.ev("FRONT()"), "help", "auto on again")
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

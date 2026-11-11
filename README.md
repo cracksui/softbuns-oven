@@ -85,8 +85,8 @@ Commands work with the same abbreviations the game accepts (`eq`, `equ`, `equipm
 
 Results open in the **Inspector** window, which has four tabs: **Inspector** (eq, items, score, comparisons,
 with ◀ older / newer ▶), **Help** (game help pages and `sbo`'s command list), **Log** (`sbo session`, `kills`,
-`loot`, `deaths`, with links between them) and **Chat**. Whatever arrives brings its tab to the front - except
-chat, which never takes the window from you: the tab counts what you haven't read (`Chat (3)`).
+`loot`, `deaths`, with links between them) and **Chat**. Whatever arrives brings its tab to the front (`sbo tabs auto off`
+leaves you where you are and marks the tab with a •) - except chat, which never takes the window from you: the tab counts what you haven't read (`Chat (3)`).
 
 **Chat** collects channel talk (`[CLAN] Name: '...'` and the channel's news, NOVICE), yells, shouts,
 announcements, hints (`Local Hint: ...`), tells and says, in the game's own colours, with the time. Type
@@ -169,6 +169,7 @@ sbo main replace|keep     replace the raw text in the main window, or leave it a
 sbo window on|off         show / hide the Inspector window
 sbo tabs on|off           Inspector | Help | Log | Chat as tabs in that window (off: help gets its own window)
 sbo tab inspector|help|log|chat  bring a tab to the front (or click it)
+sbo tabs auto on|off      whatever arrives brings its tab to the front (off: that tab gets a • instead)
 sbo chat [channel|all]    the Chat tab, showing one channel or all · mute|unmute <channel> · clear · forget <channel>
 sbo clear                 clear the Inspector's history
 sbo font [size]           Inspector / help window font size (leave the number off for the default)
