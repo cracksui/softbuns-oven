@@ -456,6 +456,25 @@ def tabs_auto_off():
 
 
 @test
+def help_both_places():
+    o = Oven()
+    def ask(setting):
+        o.lua(f'''sbo.command("helpwindow {setting}"); MAIN = {{}}; sbo.onSend(nil, "help classes")
+          sbo.cap.decho = {{ "<192,192,192>[1065 ] CLASSES", "<192,192,192>Character classes in Alyria" }}
+          sbo.cap.plain = {{ "[1065 ] CLASSES", "Character classes in Alyria" }}
+          sbo.finish("prompt"); runTimers()''')
+        return "".join(o.ev("MAIN").values())
+    o.lua('''sbo.cfg.window = true; MAIN = {}
+      decho = function(w, t) if t == nil then t = w; w = "main" end if w == "main" then MAIN[#MAIN+1] = t end end
+      cecho = decho''')
+    main = ask("both")
+    assert "Character classes" in main and "→ help window" not in main, f"both: {main}"
+    assert "Character classes" in o.ev("WIDGETS[sbo.helpPg.prefix .. sbo.helpPg.flip .. 'Label'].html"), "both: and in the Help tab"
+    main = ask("on")
+    assert "Character classes" not in main and "→ help window" in main, f"on: {main}"
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

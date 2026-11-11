@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.30.0"
+M.version = "0.30.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -52,6 +52,7 @@ M.defaults = {
   barSessionStyle = "full",  -- full: time · k/d · xp/hr   short: just xp/hr
   barBlank     = true,       -- with the bar on, also drop the blank line before each prompt
   helpWindow   = true,       -- game `help` (and `sbo`) output goes to its own window
+  helpBoth     = false,      -- ...and also stays on the main screen
   tabs         = true,       -- the Inspector window has tabs: Inspector | Help | Log (help pages open there)
   tabAuto      = true,       -- whatever arrives brings its tab to the front (off: the tab gets a • instead)
   slotNames    = "short",    -- short | full  (equipment slot names in eq / creature tables)
@@ -5668,8 +5669,12 @@ function M.finish(reason)
         if getCurrentLine("main") ~= "" then echo("main", "\n") end
         if nonBlank >= 2 then
           M.showHelp(cap.target, cap.decho)
-          cecho("main", "<dim_grey>[sbo] help" .. (cap.target ~= "" and (" " .. cap.target) or "") ..
-            " → help window<reset>\n")
+          if M.cfg.helpBoth then
+            for _, d in ipairs(cap.decho) do decho("main", d .. "\n") end
+          else
+            cecho("main", "<dim_grey>[sbo] help" .. (cap.target ~= "" and (" " .. cap.target) or "") ..
+              " → help window<reset>\n")
+          end
         else
           for _, d in ipairs(cap.decho) do decho("main", d .. "\n") end
         end
@@ -6875,7 +6880,7 @@ M.helpSections = {
     { "sbo on|off", "turn formatting on / off" },
     { "sbo main replace|keep", "formatted text in the main window, or leave the main window alone" },
     { "sbo window on|off", "the Inspector window (drag it by its title, resize from its edges)" },
-    { "sbo helpwindow on|off", "game help pages (and this list) in a window instead of the main screen" },
+    { "sbo helpwindow on|off|both", "game help pages (and this list) in a window, the main screen, or both" },
     { "sbo tabs on|off", "Inspector | Help | Log | Chat as tabs in one window (off: help gets its own window)" },
     { "sbo tab inspector|help|log|chat", "bring a tab to the front (or click it)" },
     { "sbo tabs auto on|off", "whatever arrives brings its tab to the front (off: the tab gets a • instead)" },
@@ -7086,7 +7091,11 @@ function M.command(args)
     M.createWindow(); M.container:show()
     M.tabShow(b == "inspector" and "view" or b)
     return
+  elseif a == "helpwindow" and b == "both" then
+    M.cfg.helpWindow, M.cfg.helpBoth = true, true
+    say("help pages: in the help window and on the main screen")
   elseif a == "helpwindow" and onoff ~= nil then
+    M.cfg.helpBoth = false
     M.cfg.helpWindow = onoff
     if not onoff and M.helpContainer then M.helpContainer:hide() end
     say("help window " .. b)
