@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.38.0"
+M.version = "0.38.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2566,6 +2566,24 @@ function M.questMarkComplete(name)
       if M.cfg.questPins and M.cfg.questPins[id] then
         M.notifyQuest(name .. " complete - turn it in with quest complete")
       end
+      return id
+    end
+  end
+end
+
+-- a quest handed in: off the HUD, and out of the active ones
+function M.questTurnedIn(name)
+  M.questTurnedInAt = os.time()
+  for id, Q in pairs(M.quests or {}) do
+    if Q.name and Q.name:lower() == name:lower() then
+      Q.complete, Q.active, Q.turnedIn = true, false, os.time()
+      M.cfg.quests = M.quests
+      if (M.cfg.questPins or {})[id] then
+        M.cfg.questPins[id] = nil
+        M.notifyQuest(Q.name .. " turned in - unpinned")
+      end
+      M.saveSettings()
+      pcall(M.drawQuestTracker)
       return id
     end
   end
@@ -5800,7 +5818,10 @@ function M.onLine()
     pcall(M.drawBar)
   end
   local doneQuest = line:match("^%s*All parts of your quest '(.+)' are complete%.?%s*$")
-  if doneQuest then pcall(M.questMarkComplete, doneQuest)
+  -- "You inform Lord Agrippa you have completed your quest 'Jail Time'." - turned in
+  local turnedIn = not doneQuest and line:match("^%s*You inform .- you have completed your quest '(.+)'%.?%s*$")
+  if turnedIn then pcall(M.questTurnedIn, turnedIn)
+  elseif doneQuest then pcall(M.questMarkComplete, doneQuest)
   else
     -- the line after it: "Return to Lord Agrippa in time to receive your reward!"
     local who = M.questJustDone and line:match("^%s*Return to (.-) in time to receive your reward")
@@ -5917,7 +5938,11 @@ function M.finish(reason)
     local isQuest = cap.kind == "quest" and v ~= nil and #v >= 3 and ("quest"):sub(1, #v) == v and #a >= 3
     M.questReplyRequest = isQuest and ("request"):sub(1, #a) == a
     if isQuest and ("complete"):sub(1, #a) == a and not cap.quiet then
-      tempTimer(1, function() M.questTurnInCheck = true; M.quietQuest = true; send("quest info", false) end)
+      tempTimer(1, function()
+        -- the game said so itself ("You inform ... you have completed your quest"): nothing to check
+        if M.questTurnedInAt and os.time() - M.questTurnedInAt < 10 then return end
+        M.questTurnInCheck = true; M.quietQuest = true; send("quest info", false)
+      end)
     end
   end
   if cap.idleTimer then killTimer(cap.idleTimer) end

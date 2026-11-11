@@ -750,6 +750,24 @@ def quest_stays_until_turned_in():
 
 
 @test
+def quest_turn_in_real():
+    o = Oven()
+    o.lua('''sbo.cfg.promptPattern = "<%d+hp"; SENT = {}
+      sbo.quests = { ["52"] = { name = "Jail Time", done = 4, total = 4, complete = true, active = true } }
+      sbo.cfg.questPins = { ["52"] = true }
+      send = function(c) SENT[#SENT + 1] = c end
+      sbo.onSend(nil, "quest com")''')
+    o.feed("You inform Lord Agrippa you have completed your quest 'Jail Time'.",
+           "Lord Agrippa tells you, 'Congratulations on the completion of thy quest, Hero!'",
+           "Lord Agrippa tells you, 'As a reward for thy valor, I am awarding you 27 quest points, 18,000 experience points, 1 alignment, 3 practices, and 5,000 gold pieces.'",
+           "<270hp>")
+    o.L.execute("runTimers()")
+    eq(o.ev("sbo.cfg.questPins['52']"), None, "unpinned straight away")
+    eq(list(o.ev("SENT").values()), [], "no quest info needed")
+    eq([e for e in (dict(x.items()) for x in o.ev("sbo.chat.lines").values())], [], "the quest master's tells aren't chat")
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40
