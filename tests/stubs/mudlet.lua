@@ -11,7 +11,15 @@ function echo(w,t) if t==nil then t=w end io.write(t) end
 function decho(w,t) if t==nil then t=w end io.write("[D]"..t) end
 cecho=decho
 function getWindowWrap() return 100 end function getColumnCount() return 130 end
-function registerAnonymousEventHandler(e,f) handlers=handlers or {}; handlers[e]=f; return 1 end
+-- several handlers per event, as in Mudlet: handlers[e](...) runs them all
+HANDLER_LISTS = {}
+function registerAnonymousEventHandler(e,f)
+  handlers = handlers or {}
+  HANDLER_LISTS[e] = HANDLER_LISTS[e] or {}
+  table.insert(HANDLER_LISTS[e], f)
+  handlers[e] = function(...) for _, h in ipairs(HANDLER_LISTS[e]) do h(...) end end
+  return 1
+end
 function tempRegexTrigger(r,f) lineFn=f; return 1 end
 function tempAlias(r,f) return 1 end
 function moveCursorEnd() end function getCurrentLine() return "" end
