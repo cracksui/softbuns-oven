@@ -166,7 +166,9 @@ Materia Magica sends some things as data alongside the text, and Oven uses that 
 exp to level (the bar stays current without `score`), your HP/SP/ST as they change (the bar's gauges move
 mid-fight, between prompts) and their maximums, attribute maximums, quest steps as you finish them, room flags, the exact
 target room of quest steps (`sbo quest go`), the creature you're fighting (kills are stored with its mob number and
-race, deaths with what you were fighting) and your race's built-in weaknesses. What GMCP doesn't send - mail,
+race, deaths with what you were fighting) and your race's built-in weaknesses. With the game's `combat mode mxp` (combat text replaced by data, see `help combat`),
+Oven draws one line per round - who's on how much health, your hits and misses and theirs, out of reach - and a
+summary when the fight ends (`sbo combat off` to stop). What GMCP doesn't send - mail,
 your group's lowest health, mount stamina - still comes from the prompt.
 
 ## Commands

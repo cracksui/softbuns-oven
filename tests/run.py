@@ -949,6 +949,28 @@ def panel_layout_kept():
 
 
 @test
+def combat_mxp_lines():
+    o = Oven()
+    o.lua('''OUT = {}
+      decho = function(w, t) if t == nil then t = w end OUT[#OUT + 1] = (t:gsub("<[^>]+>", "")) end
+      local function round(t) gmcp.char = gmcp.char or {}; gmcp.char.combat_mxp = t; handlers["gmcp.char.combat_mxp"]() end
+      -- as recorded: "a mental patient", a round where you hit and it missed
+      round({ opponent_hp_percent = 27, opponent_hits = 0, your_hp_percent = 100, your_weapon_range = 2, you_defend = 0,
+              opponent_misses = 1, opponent_name = "a mental patient", opponent_defends = 0, you_hit = 1, you_miss = 0, distance_to_opponent = 2 })
+      round({ opponent_hp_percent = 5, opponent_hits = 1, your_hp_percent = 92, your_weapon_range = 2, you_defend = 1,
+              opponent_misses = 0, opponent_name = "a mental patient", opponent_defends = 1, you_hit = 2, you_miss = 1, distance_to_opponent = 3 })''')
+    o.feed("A mental patient has been slain!")
+    o.L.execute("runTimers()")
+    out = list(o.ev("OUT").values())
+    eq(len(out), 3, f"two rounds and a summary: {out}")
+    assert "a mental patient" in out[0] and "27%" in out[0] and "you 1 hit" in out[0] and "it 1 missed" in out[0], out[0]
+    assert "out of reach" in out[1], out[1]
+    assert "slain" in out[2] and "2 rounds" in out[2] and "you hit 3/5" in out[2] and "it hit 1/3" in out[2], out[2]
+    o.lua('OUT = {}; sbo.command("combat off"); gmcp.char.combat_mxp.opponent_name = "a rat"; handlers["gmcp.char.combat_mxp"]()')
+    eq(list(o.ev("OUT").values()), [], "sbo combat off")
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

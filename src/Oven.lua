@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.44.0"
+M.version = "0.45.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -41,6 +41,7 @@ M.defaults = {
   questHudOpacity = 100,     -- quest HUD background opacity, 0-100
   questHudBlurb = false,     -- show each quest's description (hints) in the HUD
   questAutoPin = true,       -- a quest you take with quest request goes straight onto the quest HUD
+  combatLines  = true,       -- combat mode mxp: a line per round (the game shows none) and a summary per fight
   map          = false,      -- follow your room (GMCP) on the map and walk where you double-click
   mapPanel     = false,      -- the map in its own Oven window
   autocompare  = true,       -- compare looked-at items with what you wear in that slot
@@ -5059,9 +5060,105 @@ function M.noteQuestProgress(l)
   return id
 end
 
+-- combat mode mxp: the game prints no combat text and sends char.combat_mxp each round instead
+-- (counts of hits, misses and defences both ways, both sides' health, distance and your range).
+-- Oven draws one line per round, and a summary when the fight ends.
+local function pctBar(p, n)
+  p = math.max(0, math.min(100, tonumber(p) or 0))
+  local k = math.floor(n * p / 100 + 0.5)
+  return string.rep("█", k) .. string.rep("░", n - k)
+end
+local function hpCol(p) p = tonumber(p) or 0; return p >= 70 and C.plus or (p >= 35 and C.title or C.minus) end
+
+function M.onCombatRound()
+  local r = G("char.combat_mxp")
+  if type(r) ~= "table" or not r.opponent_name then return end
+  local n = function(k) return tonumber(r[k]) or 0 end
+  local F = M.fight
+  if not F or F.name ~= r.opponent_name then
+    if F then M.fightSummary() end
+    F = { name = r.opponent_name, rounds = 0, hit = 0, miss = 0, parried = 0, took = 0, missed = 0, defended = 0 }
+    M.fight = F
+  end
+  F.rounds = F.rounds + 1
+  F.hit, F.miss, F.parried = F.hit + n("you_hit"), F.miss + n("you_miss"), F.parried + n("opponent_defends")
+  F.took, F.missed, F.defended = F.took + n("opponent_hits"), F.missed + n("opponent_misses"), F.defended + n("you_defend")
+  F.lastPct, F.at = n("opponent_hp_percent"), os.time()
+  if not M.cfg.combatLines then return end
+  -- "⚔ a mental patient ██▌░░ 27%   you hit 1 · it missed 1   you 100%"
+  local segs = { { C.dim, "⚔ " }, { C.item, r.opponent_name .. " " },
+                 { hpCol(r.opponent_hp_percent), pctBar(r.opponent_hp_percent, 8) }, { hpCol(r.opponent_hp_percent), string.format(" %d%%", n("opponent_hp_percent")) } }
+  local mine, theirs = {}, {}
+  local function add(list, k, word, col) if n(k) > 0 then list[#list + 1] = { col, n(k) .. " " .. word } end end
+  add(mine, "you_hit", "hit", C.plus); add(mine, "you_miss", "missed", C.dim); add(mine, "opponent_defends", "blocked", C.dim)
+  add(theirs, "opponent_hits", "hit", C.minus); add(theirs, "opponent_misses", "missed", C.dim); add(theirs, "you_defend", "defended", C.plus)
+  local function list(label, l)
+    if #l == 0 then return end
+    segs[#segs + 1] = { C.dim, "   " .. label .. " " }
+    for i, x in ipairs(l) do
+      if i > 1 then segs[#segs + 1] = { C.dim, " · " } end
+      segs[#segs + 1] = x
+    end
+  end
+  list("you", mine); list("it", theirs)
+  segs[#segs + 1] = { C.dim, "   you " }
+  segs[#segs + 1] = { hpCol(r.your_hp_percent), n("your_hp_percent") .. "%" }
+  -- out of reach: say so
+  if n("distance_to_opponent") > n("your_weapon_range") and n("your_weapon_range") > 0 then
+    segs[#segs + 1] = { C.flag, string.format("   out of reach (%d, your range %d)", n("distance_to_opponent"), n("your_weapon_range")) }
+  end
+  M.combatEcho(segs)
+end
+
+-- a line in the game text, above the prompt
+function M.combatEcho(segs)
+  local t = {}
+  for _, s in ipairs(segs) do
+    local c = type(s[1]) == "table" and s[1] or (color_table and color_table[s[1]]) or { 192, 192, 192 }
+    t[#t + 1] = string.format("<%d,%d,%d>", c[1], c[2], c[3]) .. s[2]
+  end
+  local cur = ""
+  pcall(function() moveCursorEnd("main"); cur = getCurrentLine("main") or "" end)
+  decho("main", ((cur ~= "") and "\n" or "") .. table.concat(t) .. "<r>\n")
+end
+
+-- the fight is over (it died, or you stopped fighting): one line for the whole fight
+function M.fightSummary(how)
+  local F = M.fight
+  M.fight = nil
+  if not F or F.rounds == 0 or not M.cfg.combatLines then return end
+  local function rate(a, b) return (a + b) > 0 and string.format(" (%d%%)", math.floor(a * 100 / (a + b) + 0.5)) or "" end
+  M.combatEcho({ { C.dim, "⚔ " }, { C.item, F.name }, { C.dim, how and ("  " .. how) or "" },
+    { C.dim, string.format("  ·  %d round%s  ·  you hit ", F.rounds, F.rounds == 1 and "" or "s") },
+    { C.plus, F.hit .. "/" .. (F.hit + F.miss + F.parried) }, { C.dim, rate(F.hit, F.miss + F.parried) },
+    { C.dim, "  ·  it hit " }, { C.minus, F.took .. "/" .. (F.took + F.missed + F.defended) }, { C.dim, rate(F.took, F.missed + F.defended) },
+    { C.dim, F.defended > 0 and ("  ·  you defended " .. F.defended) or "" } })
+end
+
+-- "X has been slain!" for the one you're fighting, or no longer fighting: the fight's over
+function M.noteFightEnd(l)
+  local F = M.fight
+  if not F then return end
+  local who = l:match("^%s*(.-) has been slain!")
+  if who and who:lower():gsub("^the ", ""):gsub("^an? ", "") == F.name:lower():gsub("^the ", ""):gsub("^an? ", "") then
+    -- after the line has been drawn (echoing while a line is being read would join the two)
+    tempTimer(0, function() M.fightSummary("slain") end)
+    F.ended = true
+  end
+end
+function M.onFightStatus()
+  local s = G("char.status")
+  if M.fight and type(s) == "table" and s.position and s.position ~= "fighting" then
+    -- a moment later, so "has been slain" (text) gets to say how it ended first
+    tempTimer(1, function() if M.fight and os.time() - (M.fight.at or 0) >= 1 then M.fightSummary() end end)
+  end
+end
+
 function M.gmcpHandlersList()
   return {
     registerAnonymousEventHandler("gmcp.char.quests", function() pcall(M.onGmcpQuests) end),
+    registerAnonymousEventHandler("gmcp.char.combat_mxp", function() pcall(M.onCombatRound) end),
+    registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onFightStatus) end),
     -- a new connection: read your aliases again at its first prompt
     registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil end),
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onGmcpStatus) end),
@@ -5969,6 +6066,7 @@ function M.onLine()
     pcall(M.noteRoomDeath)
     pcall(M.drawBar)
   end
+  if M.fight then pcall(M.noteFightEnd, line) end
   local doneQuest = line:match("^%s*All parts of your quest '(.+)' are complete%.?%s*$")
   -- "You inform Lord Agrippa you have completed your quest 'Jail Time'." - turned in
   local turnedIn = not doneQuest and line:match("^%s*You inform .- you have completed your quest '(.+)'%.?%s*$")
@@ -7507,6 +7605,7 @@ M.helpSections = {
     { "sbo window on|off", "the Inspector window (drag it by its title, resize from its edges)" },
     { "sbo helpwindow on|off", "game help pages (and this list) in a window, or on the main screen" },
     { "sbo mirror {tab} on|off", "also show a tab's output on the main screen: inspector help log chat (sbo mirror: what's on)" },
+    { "sbo combat on|off", "with the game's combat mode mxp: a line per round and a summary per fight" },
     { "sbo layout save|restore|reset", "your panels' places: saved by themselves when moved, put back after connecting" },
     { "sbo tabs on|off", "Inspector | Help | Log | Chat as tabs in one window (off: help gets its own window)" },
     { "sbo tab inspector|help|log|chat", "bring a tab to the front (or click it)" },
@@ -7717,6 +7816,9 @@ function M.command(args)
     if b == "save" then M.panelsSave(true); return say("panel layout saved - it's also saved by itself a few seconds after you move a panel")
     elseif b == "restore" then M.panelsRestore(); return say("panels put back where you saved them")
     else M.panelsReset(); return say("panels back to Oven's default places") end
+  elseif a == "combat" and onoff ~= nil then
+    M.cfg.combatLines = onoff
+    say(onoff and "combat mode mxp: a line per round and a summary per fight" or "no combat lines from Oven")
   elseif a == "chat" then return M.chatCommand(b)
   elseif a == "tab" and (b == "inspector" or b == "help" or b == "log" or b == "chat") then
     M.createWindow(); M.container:show()
