@@ -646,6 +646,18 @@ def compare_score_breakdown():
 
 
 @test
+def quest_request_pins():
+    reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
+    for cmd, setting, want in (("quest request", "on", True), ("que req", "on", True), ("quest request", "off", None), ("quest info 1547", "on", None)):
+        o = Oven()
+        o.lua(f'sbo.cfg.promptPattern = "<%d+hp"; sbo.command("quest autopin {setting}"); sbo.onSend(nil, "{cmd}")')
+        o.feed(*reply, "<270hp 550sp 401st>")
+        o.L.execute("runTimers()")
+        eq(o.ev("(sbo.cfg.questPins or {})['1547']"), want, f"{cmd} with autopin {setting}")
+        eq(o.ev("sbo.quests['1547'] and sbo.quests['1547'].name"), "War and Peace", "the quest is read either way")
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

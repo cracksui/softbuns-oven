@@ -1,0 +1,21 @@
+This quest [1547] is called 'War and Peace',
+for Adventurers levels 20 to 50.
+Lord Agrippa is the master in charge of this quest.
+Lately in the elegant and classy town of Rune, the wild animals have
+become angry with my Knight, Sir Tristan, and me.  The reason for their
+anger towards us, to my knowledge, is because they are not being fed enough!
+Please recover some food from the local bakery and give it to these animals!
+I have heard that the deer like danish, while other animals enjoy eating
+other types of food!  Please recover these food items and give them to the
+animals before they take over Rune and wage war!  
+Upon successful completion of this quest you can receive:
+*Up to 29 quest points, 3 practice points, 17,010 experience points,
+0 build points, 0 piety, 1 alignment, and 4,140 gold pieces.
+This quest has no time limit.
+War and Peace consists of:
+Phase 1: Journey to The Edible Loaf [Towne of Rune].
+Phase 2: Locate and deliver a waybread [Towne of Rune] to a stray dog [Towne of Rune].
+Phase 3: Locate and deliver a blueberry danish to a deer.
+Phase 4: Locate and deliver a baguette [Towne of Rune] to an alley cat [Towne of Rune].
+Phase 5: (Hidden until previous goal is completed)
+'May your journey be a successful one, Hero!' Lord Agrippa exclaims.

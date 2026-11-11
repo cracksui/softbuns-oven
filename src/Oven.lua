@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.35.0"
+M.version = "0.36.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -40,6 +40,7 @@ M.defaults = {
   questHudSide = "right",    -- quest HUD corner: right or left (top of the game text area)
   questHudOpacity = 100,     -- quest HUD background opacity, 0-100
   questHudBlurb = false,     -- show each quest's description (hints) in the HUD
+  questAutoPin = true,       -- a quest you take with quest request goes straight onto the quest HUD
   map          = false,      -- follow your room (GMCP) on the map and walk where you double-click
   mapPanel     = false,      -- the map in its own Oven window
   autocompare  = true,       -- compare looked-at items with what you wear in that slot
@@ -2153,7 +2154,14 @@ function M.rememberQuests(q, bare)
     for k, v in pairs(d) do Q[k] = v end
     if d.total and d.done < d.total then Q.complete = nil end
     Q.seen = now
+    Q.active = true
     M.quests[d.id] = Q
+    if M.questReplyRequest and M.cfg.questAutoPin ~= false and not (M.cfg.questPins or {})[d.id] then
+      M.questReplyRequest = nil
+      M.cfg.questPins = M.cfg.questPins or {}
+      M.cfg.questPins[d.id] = true
+      M.notifyQuest((d.name or ("#" .. d.id)) .. " pinned to the quest HUD (sbo quest autopin off to stop)")
+    end
   end
   M.cfg.quests = M.quests     -- kept between sessions
   M.saveSettings()
@@ -5798,6 +5806,12 @@ function M.finish(reason)
   M.cap = nil
   -- the reply to a plain "quest info" (no quest number): every quest you have
   M.questReplyBare = cap.kind == "quest" and tostring(cap.cmd or ""):lower():match("^%s*quest%s+info%s*$") ~= nil
+  -- the reply to "quest request" (any abbreviation, "que req"): the quest you were just given
+  do
+    local v, a = tostring(cap.cmd or ""):lower():match("^%s*(%a+)%s+(%a+)")
+    M.questReplyRequest = cap.kind == "quest" and v ~= nil and #v >= 3 and ("quest"):sub(1, #v) == v
+      and #a >= 3 and ("request"):sub(1, #a) == a
+  end
   if cap.idleTimer then killTimer(cap.idleTimer) end
   if cap.maxTimer then killTimer(cap.maxTimer) end
 
@@ -7148,6 +7162,7 @@ M.helpSections = {
     { "sbo quest pin {id|all}", "put quests on the quest HUD (or click pin under quest info)" },
     { "sbo quest unpin {id|all}", "take them off (click a finished quest to clear it)" },
     { "sbo quest refresh [id]", "quietly re-check pinned quests (or click the HUD)" },
+    { "sbo quest autopin on|off", "pin the quest you take with quest request (on by default)" },
     { "sbo quest go [id]", "run to the next step of a quest (or of your first pinned quest)" },
     { "sbo quest show|hide", "show / hide the quest HUD" },
     { "sbo quest hud blurb on|off", "add each quest's description, which often holds hints" },
@@ -7494,6 +7509,10 @@ function M.command(args)
     local sub, val = b:match("^(%S*)%s*(.-)$")
     if sub == "pin" and val ~= "" then M.questPin(val, true); return say("pinned " .. val .. " to the quest tracker")
     elseif sub == "unpin" and val ~= "" then M.questPin(val, false); return say("unpinned " .. val)
+    elseif sub == "autopin" and (val == "on" or val == "off") then
+      M.cfg.questAutoPin = (val == "on"); M.saveSettings()
+      return say(val == "on" and "quests you take with quest request are pinned to the quest HUD"
+        or "quest request no longer pins the new quest")
     elseif sub == "refresh" then M.questRefresh(val ~= "" and val or "all"); return
     elseif sub == "go" or sub == "run" then return M.questGo(val)
     elseif sub == "hide" then
