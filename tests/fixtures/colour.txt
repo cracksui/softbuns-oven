@@ -1,0 +1,21 @@
+##### saved test
+===== 2026-01-01 00:00:00 | cmd=s | room=10521
+@gmcp room.info = {["num"]="10521",["name"]="Southern Courtyard"}
+@fg 1=192,192,192 2=192,192,192 3=192,192,192 4=0,128,128 5=0,128,128 6=0,128,128 7=0,128,128 8=0,128,128 9=0,128,128 10=0,128,128 11=128,128,0 12=128,128,0 13=128,128,0 14=192,192,192 15=192,192,192
+
+ Southern Courtyard                                     -      N      -
+(-------------------------------------------------)     - <---(M)---> -
+                                                        -      S      -
+
+  You are at the southern end of a beautiful garden courtyard, which is
+enclosed by a white iron fence.  Flowers of every kind and description grow
+in small plots here, their delicious aroma filling your nostrils.  You can
+make out an immense, black stone castle on a hill far to the north.  The
+town square is to the south, while the courtyard stretches off to the north.
+A janitor is walking around, cleaning up.
+A beautiful woman is standing here, admiring herself in a hand mirror.
+Raksann the Captain of the City Guards is here, patrolling the streets.
+
+[Mail]<270hp 550sp 187st> 
+
+##### end

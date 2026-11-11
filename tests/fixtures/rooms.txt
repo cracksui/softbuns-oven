@@ -1,0 +1,1025 @@
+##### fixture
+===== 2026-01-01 00:00:00 | cmd= | room=10421
+@gmcp char.lasttargeted = {["hp_percent"]=100,["race"]="human",["vnum"]=4712,["short_descr"]="Jambalaya Jake"}
+@gmcp char.status = {["thirst"]=0,["indigestion"]=0,["align"]=22,["enemy"]="_empty",["state"]="playing",["drunk"]=0,["enemypct"]=-1,["position"]="standing",["hunger"]=0,}
+@gmcp room.info = {["num"]="10421",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors, library",["name"]="Magical Training",["exits"]={["door"]={["exit"]="_empty",["door"]="closed"},["w"]="10542",["w_realnum"]=4708},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="normal"}
+
+A voice yells 'The ship Merdraco be docked at Rune! Departure in twenty minutes for Sigil!'
+
+[Mail][Library]<270hp 550sp 401st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10421
+
+A voice yells 'The Riddenmast Ferry is now docked at Rune! Departure in twenty minutes for Sigil!'
+
+[Mail][Library]<270hp 550sp 401st> 
+
+===== 2026-01-01 00:00:00 | cmd=l | room=10421
+
+ Magical Training                                       -      -      -
+(-------------------------------------------------)     # <---(M)---> -
+                                                        -      -      -
+
+  A spacious area below the Guildhall, the walls and floor are heavily
+padded with a padded grayish soft cloth, so as to withstand the mishaps of
+training.  The room is lit by flickering oil lamps set in front of mirrors a
+light magical sheen indicating a protection spell of some kind.  
+[Trainer] A slight man wearing a loose-fitting gray robe stands here.
+
+[Mail][Library]<270hp 550sp 401st> 
+
+===== 2026-01-01 00:00:00 | cmd=w | room=10542
+@gmcp room.info = {["num"]="10542",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors",["name"]="Antechamber",["exits"]={["u_realnum"]=4698,["u"]="10532",["w_realnum"]=4588,["e"]="10421",["e_realnum"]=4587,["w"]="10422",["door"]={}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="cramped"}
+You open the west door.
+
+ Antechamber                                            -      -      -
+(-------------------------------------------------)     # <-U-(M)---> E
+                                                        -      -      -
+
+  This small and cramped antechamber connects two training rooms to the
+east and west of here.  Narrow arches open into each respective room one
+labeled, "Magical Training", and the other labled, "Combat Training".  The
+walls are brick plastered with brown adobe, the steps leading up are
+intricate stonework.  
+
+[Mail]<270hp 550sp 400st> 
+
+===== 2026-01-01 00:00:00 | cmd=e | room=10421
+@gmcp room.info = {["num"]="10421",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors, library",["name"]="Magical Training",["exits"]={["door"]={["exit"]="_empty"},["w"]="10542",["w_realnum"]=4708},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="normal"}
+
+ Magical Training                                       -      -      -
+(-------------------------------------------------)     W <---(M)---> -
+                                                        -      -      -
+
+  A spacious area below the Guildhall, the walls and floor are heavily
+padded with a padded grayish soft cloth, so as to withstand the mishaps of
+training.  The room is lit by flickering oil lamps set in front of mirrors a
+light magical sheen indicating a protection spell of some kind.  
+[Trainer] A slight man wearing a loose-fitting gray robe stands here.
+
+[Mail][Library]<270hp 550sp 399st> 
+
+===== 2026-01-01 00:00:00 | cmd=w | room=10542
+@gmcp room.info = {["num"]="10542",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors",["name"]="Antechamber",["exits"]={["u_realnum"]=4698,["u"]="10532",["w_realnum"]=4588,["e"]="10421",["e_realnum"]=4587,["w"]="10422",["door"]={}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="cramped"}
+
+ Antechamber                                            -      -      -
+(-------------------------------------------------)     # <-U-(M)---> E
+                                                        -      -      -
+
+  This small and cramped antechamber connects two training rooms to the
+east and west of here.  Narrow arches open into each respective room one
+labeled, "Magical Training", and the other labled, "Combat Training".  The
+walls are brick plastered with brown adobe, the steps leading up are
+intricate stonework.  
+
+[Mail]<270hp 550sp 398st> 
+
+===== 2026-01-01 00:00:00 | cmd=w | room=10422
+@gmcp room.info = {["num"]="10422",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors, library",["name"]="Combat Training",["exits"]={["e"]="10542",["e_realnum"]=4708,["door"]={["exit"]="_empty"}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="normal"}
+You open the west door.
+
+ Combat Training                                        -      -      -
+(-------------------------------------------------)     - <---(M)---> E
+                                                        -      -      -
+
+  A spacious area below the Guildhall, the walls and floor are heavily
+padded with a padded grayish soft cloth, so as to withstand the mishaps of
+training.  The room is lit by flickering oil lamps set in front of mirrors a
+light magical sheen indicating a protection spell of some kind.  
+     A bright orange piece of bubble gum has been abandoned on the ground here.
+A cloth and wood practice dummy awaits your attacks.
+[Trainer] A well-muscled woman dressed in a sleeveless tunic stands here.
+
+[Mail][Library]<270hp 550sp 397st> 
+
+===== 2026-01-01 00:00:00 | cmd=l | room=10422
+
+ Combat Training                                        -      -      -
+(-------------------------------------------------)     - <---(M)---> E
+                                                        -      -      -
+
+  A spacious area below the Guildhall, the walls and floor are heavily
+padded with a padded grayish soft cloth, so as to withstand the mishaps of
+training.  The room is lit by flickering oil lamps set in front of mirrors a
+light magical sheen indicating a protection spell of some kind.  
+     A bright orange piece of bubble gum has been abandoned on the ground here.
+A cloth and wood practice dummy awaits your attacks.
+[Trainer] A well-muscled woman dressed in a sleeveless tunic stands here.
+
+[Mail][Library]<270hp 550sp 399st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the head with your scalding water causing superficial damage.
+A practice dummy says 'I have [9966/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 138 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 550sp 357st> 
+
+===== 2026-01-01 00:00:00 | cmd=e | room=10542
+@gmcp room.info = {["num"]="10542",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors",["name"]="Antechamber",["exits"]={["u_realnum"]=4698,["u"]="10532",["w_realnum"]=4588,["e"]="10421",["e_realnum"]=4587,["w"]="10422",["door"]={}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="cramped"}
+You panic, and attempt to flee.
+
+ Antechamber                                            -      -      -
+(-------------------------------------------------)     W <-U-(M)---> E
+                                                        -      -      -
+
+  This small and cramped antechamber connects two training rooms to the
+east and west of here.  Narrow arches open into each respective room one
+labeled, "Magical Training", and the other labled, "Combat Training".  The
+walls are brick plastered with brown adobe, the steps leading up are
+intricate stonework.  
+You pant and gasp, trying to catch your breath.
+
+[Mail]<270hp 550sp 356st> 
+
+===== 2026-01-01 00:00:00 | cmd=w | room=10422
+@gmcp room.info = {["num"]="10422",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors, library",["name"]="Combat Training",["exits"]={["e"]="10542",["e_realnum"]=4708,["door"]={["exit"]="_empty"}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="normal"}
+
+ Combat Training                                        -      -      -
+(-------------------------------------------------)     - <---(M)---> E
+                                                        -      -      -
+
+  A spacious area below the Guildhall, the walls and floor are heavily
+padded with a padded grayish soft cloth, so as to withstand the mishaps of
+training.  The room is lit by flickering oil lamps set in front of mirrors a
+light magical sheen indicating a protection spell of some kind.  
+     A bright orange piece of bubble gum has been abandoned on the ground here.
+A cloth and wood practice dummy awaits your attacks.
+[Trainer] A well-muscled woman dressed in a sleeveless tunic stands here.
+
+[Mail][Library]<270hp 550sp 355st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+You have completed your casting.
+You knowingly apply a small amount of pressure to a practice dummy's skull.
+A practice dummy is zapped on the leg with your harm causing superficial damage.
+A practice dummy is jolted on the leg with your surprise attack causing superficial damage.
+You enter into combat with a practice dummy.
+A practice dummy is scalded on the head with your scalding water causing superficial damage.
+A practice dummy says 'I have [9912/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 88 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 458sp 355st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+The feeling of combat-induced panic subsides.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 460sp 355st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the head with your scalding water causing superficial damage.
+A practice dummy says 'I have [9966/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 61 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 462sp 354st> 
+
+===== 2026-01-01 00:00:00 | cmd=e | room=10542
+@gmcp room.info = {["num"]="10542",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors",["name"]="Antechamber",["exits"]={["u_realnum"]=4698,["u"]="10532",["w_realnum"]=4588,["e"]="10421",["e_realnum"]=4587,["w"]="10422",["door"]={}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="cramped"}
+You panic, and attempt to flee.
+
+ Antechamber                                            -      -      -
+(-------------------------------------------------)     W <-U-(M)---> E
+                                                        -      -      -
+
+  This small and cramped antechamber connects two training rooms to the
+east and west of here.  Narrow arches open into each respective room one
+labeled, "Magical Training", and the other labled, "Combat Training".  The
+walls are brick plastered with brown adobe, the steps leading up are
+intricate stonework.  
+You pant and gasp, trying to catch your breath.
+
+[Mail]<270hp 463sp 353st> 
+
+===== 2026-01-01 00:00:00 | cmd=w | room=10422
+@gmcp room.info = {["num"]="10422",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors, library",["name"]="Combat Training",["exits"]={["e"]="10542",["e_realnum"]=4708,["door"]={["exit"]="_empty"}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="normal"}
+
+ Combat Training                                        -      -      -
+(-------------------------------------------------)     - <---(M)---> E
+                                                        -      -      -
+
+  A spacious area below the Guildhall, the walls and floor are heavily
+padded with a padded grayish soft cloth, so as to withstand the mishaps of
+training.  The room is lit by flickering oil lamps set in front of mirrors a
+light magical sheen indicating a protection spell of some kind.  
+     A bright orange piece of bubble gum has been abandoned on the ground here.
+A cloth and wood practice dummy awaits your attacks.
+[Trainer] A well-muscled woman dressed in a sleeveless tunic stands here.
+
+[Mail][Library]<270hp 466sp 354st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+The feeling of combat-induced panic subsides.
+
+[Mail][Library]<270hp 476sp 356st> 
+
+===== 2026-01-01 00:00:00 | cmd=e | room=10542
+@gmcp room.info = {["num"]="10542",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors",["name"]="Antechamber",["exits"]={["u_realnum"]=4698,["u"]="10532",["w_realnum"]=4588,["e"]="10421",["e_realnum"]=4587,["w"]="10422",["door"]={}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="cramped"}
+
+ Antechamber                                            -      -      -
+(-------------------------------------------------)     W <-U-(M)---> E
+                                                        -      -      -
+
+  This small and cramped antechamber connects two training rooms to the
+east and west of here.  Narrow arches open into each respective room one
+labeled, "Magical Training", and the other labled, "Combat Training".  The
+walls are brick plastered with brown adobe, the steps leading up are
+intricate stonework.  
+
+[Mail]<270hp 483sp 357st> 
+
+===== 2026-01-01 00:00:00 | cmd=w | room=10422
+@gmcp room.info = {["num"]="10422",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors, library",["name"]="Combat Training",["exits"]={["e"]="10542",["e_realnum"]=4708,["door"]={["exit"]="_empty"}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="normal"}
+
+ Combat Training                                        -      -      -
+(-------------------------------------------------)     - <---(M)---> E
+                                                        -      -      -
+
+  A spacious area below the Guildhall, the walls and floor are heavily
+padded with a padded grayish soft cloth, so as to withstand the mishaps of
+training.  The room is lit by flickering oil lamps set in front of mirrors a
+light magical sheen indicating a protection spell of some kind.  
+     A bright orange piece of bubble gum has been abandoned on the ground here.
+A cloth and wood practice dummy awaits your attacks.
+[Trainer] A well-muscled woman dressed in a sleeveless tunic stands here.
+
+[Mail][Library]<270hp 484sp 356st> 
+
+===== 2026-01-01 00:00:00 | cmd=help feeding | room=10422
+[1090 ] FEEDING
+Last Updated [Tue Dec 17 21:30:00 2024]
+*Combat proficiency (1% complexity)
+*(No Specific Target) target, 1 second usage time
+*Cooldown: 60 seconds (2 uses triggers)
+*Classes granted this proficiency: (No player classes)
+*Races granted this proficiency: Sahuagin, Fey
+*Races afflicted by this proficiency: (No player races)
+*Deals pierce/pierce (2.5 base) damage.
+*Skill Power: Every point of skill power correlates to 2% damage when feeding from a panicked target.
+*This proficiency is short ranged.
+*'feeding' is available for practice from the shop: 'Beardstratis' Basic Training - Lasler'.
+*'feeding' is available for practice from the shop: 'Basic Combat Training'.
+*'feeding' is available for practice from the shop: 'a Devious Fey's Faerie Skills - Unseelie Castle'.
+*'feeding' is available for practice from the shop: 'a Faerie's Basic Skills - Lasler'.
+*'feeding' is available for practice from the shop: 'a Long-Finned Battlemaster's Meditations - Darksea'.
+
+NAME
+feed - use special vampiric attack (Sahuagin and Fey only)
+
+SYNOPSIS
+feed [<victim name>]
+
+DESCRIPTION
+Feed is the command Fey and Sahuagin may use to attack their victims with
+their teeth.
+ 
+Feys may feed when not in combat, and if sneaking or shifted will gain a
+bonus to feed accuracy, via cunning strike. If the victim is wearing an
+item that is bane to feys or vampires, it will ward off the attack. 
+
+Depending on the reaction the victim has to the feeding, they may become
+paralyzed for a brief period of time.
+
+Fey may also drink the spilled blood that remains from a recent fight by
+using the 'FEED' command with no arguments in the location containing the
+blood.
+ 
+Sahuagin may only feed during combat and not frequently, as they require a
+cooldown period in order to digest the victim's flesh.  They also react
+very strongly to the scent of blood in the water and if one sahuagin feeds
+on a victim, any other sahuagin will go into a feeding frenzy and bite
+the target as well.
+
+
+SEE ALSO:
+ [2183] exodontia - makes the victim think their teeth have fallen out
+ [1058] shift - transform into the appearance of another creature
+ [1983] cunning strike - a lingering accuracy-boosting after-effect of using certain proficiencies
+ [1136] drink - drink from a container or fountain, drink a potion
+ eat - nourish your character with food or a pill
+ fill - fill an empty container or lamp with liquid
+ empty - empties a container filled with liquid
+ [2151] hemophage - fills its target with bloodlust, dealing more damage when feeding
+ [2074] imbalance - permits a combatant to be caught off guard and attacked in unusual ways
+ [2102] viper strike - boosts weapon damage by feeding-damage
+ [1976] blood dance - surrounds the caster with flying blades, spilling blood on the
+ ground periodically during combat
+ [2287] lingering anti-paralytic - prevents the target from being paralyzed again
+lingering antimagic - prevents the target from being dispelled again
+
+
+
+[Mail][Library]<270hp 523sp 366st> 
+
+===== 2026-01-01 00:00:00 | cmd=kill dummy | room=10422
+You enter into combat with a practice dummy.
+A practice dummy is scalded on the arm with your scalding water causing insignificant damage.
+A practice dummy says 'I have [9980/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 20 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 550sp 373st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the arm with your scalding water causing insignificant damage.
+A practice dummy says 'I have [9980/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 20 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 550sp 373st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the torso with your scalding water causing superficial damage.
+A practice dummy says 'I have [9971/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 23 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 550sp 372st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the torso with your scalding water causing superficial damage.
+A practice dummy says 'I have [9971/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 24 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 550sp 371st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+You fail to hit a practice dummy with your attack.
+A practice dummy says 'I have [10000/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 19 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 550sp 372st> 
+
+===== 2026-01-01 00:00:00 | cmd=e | room=10542
+@gmcp room.info = {["num"]="10542",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors",["name"]="Antechamber",["exits"]={["u_realnum"]=4698,["u"]="10532",["w_realnum"]=4588,["e"]="10421",["e_realnum"]=4587,["w"]="10422",["door"]={}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="cramped"}
+You panic, and attempt to flee.
+
+ Antechamber                                            -      -      -
+(-------------------------------------------------)     W <-U-(M)---> E
+                                                        -      -      -
+
+  This small and cramped antechamber connects two training rooms to the
+east and west of here.  Narrow arches open into each respective room one
+labeled, "Magical Training", and the other labled, "Combat Training".  The
+walls are brick plastered with brown adobe, the steps leading up are
+intricate stonework.  
+You pant and gasp, trying to catch your breath.
+
+[Mail]<270hp 550sp 371st> 
+
+===== 2026-01-01 00:00:00 | cmd=w | room=10422
+@gmcp room.info = {["num"]="10422",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors, library",["name"]="Combat Training",["exits"]={["e"]="10542",["e_realnum"]=4708,["door"]={["exit"]="_empty"}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="normal"}
+
+ Combat Training                                        -      -      -
+(-------------------------------------------------)     - <---(M)---> E
+                                                        -      -      -
+
+  A spacious area below the Guildhall, the walls and floor are heavily
+padded with a padded grayish soft cloth, so as to withstand the mishaps of
+training.  The room is lit by flickering oil lamps set in front of mirrors a
+light magical sheen indicating a protection spell of some kind.  
+     A bright orange piece of bubble gum has been abandoned on the ground here.
+A cloth and wood practice dummy awaits your attacks.
+[Trainer] A well-muscled woman dressed in a sleeveless tunic stands here.
+
+[Mail][Library]<270hp 550sp 370st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+The feeling of combat-induced panic subsides.
+
+[Mail][Library]<270hp 550sp 370st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+Personalized Hint: A little boy is missing his parents, and the head of Tellerium Social Services could use your help finding them. Visit her office one floor above Lord Telleri in Tellerium Town Hall.
+
+[Mail][Library]<270hp 550sp 373st> 
+
+===== 2026-01-01 00:00:00 | cmd=help lightning pursuit | room=10422
+[2481 ] LIGHTNING PURSUIT
+Last Updated [Mon Feb 23 13:46:09 2026]
+*Physiomancy spell (25% complexity)
+*Character (Offensive) target, 2 second cast time
+*Classes granted this spell: Monk
+*Races granted this spell: (No player races)
+*Races afflicted by this spell: Primate
+*Costs 1.9 practices per percent learned.
+*Tags: Buff
+*Spell Points Required: 77
+*When you lightning pursuit, you will apply -6 distance for 5 minutes]
+*When you lightning pursuit, you will apply -3 agility for 5 minutes]
+*This will apply 0 lightning-damage to the caster based on your skillpower.
+*Checks against lightning, none, none.
+*Consumes 4 air reagents, 1 runestone reagent, 2 ethereal reagents when cast.
+*This spell's affect cannot be dispelled.
+*'lightning pursuit' is available for practice from the shop: 'The Ranger's Informational Handbook'.
+
+NAME
+lightning pursuit - close the distance between you and an opponent, reducing your distance from them
+
+SYNOPSIS
+cast 'lightning pursuit' <opponent>
+
+DESCRIPTION
+The heat of battle can cool off quickly when cowards retreat from the 
+battlefield, so the easiest way to maintain the fight's tempo is with lightning
+quick reflexes. When taking advantage of their lightning pursuit, fighters will
+reduce the distance between themselves and their opponent, decreasing their 
+ability to kite the caster around and outranging them.
+
+
+SEE ALSO:
+ [2482] take flight -  take to the skies, decreasing your proximity to the heat of battle
+
+
+
+[Mail][Library]<270hp 550sp 374st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+You have completed your casting.
+Four of an air reagent, a gem reagent, and two of an ethereal reagent flare brightly and vanish!
+You enter into combat with a practice dummy.
+You react to a gap in a practice dummy's defenses, landing a stronger than normal blow.
+A practice dummy is scalded on the torso with your scalding water causing paltry damage. [CRIT]
+A practice dummy says 'I have [9902/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 98 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 473sp 377st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the torso with your scalding water causing trifling damage. [CRIT]
+A practice dummy says 'I have [9937/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 80 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 476sp 376st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+You have completed your casting.
+You knowingly apply a small amount of pressure to a practice dummy's skull.
+A practice dummy is zapped on the torso with your harm causing trivial damage.
+A practice dummy is jolted on the torso with your surprise attack causing trivial damage.
+A practice dummy has several minor scratches.
+
+[Mail][Library]<270hp 388sp 376st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the leg with your scalding water causing insignificant damage.
+A practice dummy says 'I have [9902/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 86 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 388sp 375st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the leg with your scalding water causing insignificant damage.
+A practice dummy says 'I have [9980/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 69 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 392sp 374st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the torso with your scalding water causing superficial damage.
+A practice dummy says 'I have [9971/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 61 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 397sp 373st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+You react to a gap in a practice dummy's defenses, landing a stronger than normal blow.
+A practice dummy is scalded on the torso with your scalding water causing slight damage.
+A practice dummy says 'I have [9930/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 63 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 401sp 372st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+You fail to hit a practice dummy with your attack.
+A practice dummy says 'I have [10000/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 54 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 404sp 372st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the torso with your scalding water causing superficial damage.
+A practice dummy says 'I have [9971/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 50 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 408sp 371st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the torso with your scalding water causing superficial damage.
+A practice dummy says 'I have [9971/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 48 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 413sp 370st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+A practice dummy is scalded on the arm with your scalding water causing insignificant damage.
+A practice dummy says 'I have [9980/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 45 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 417sp 369st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10422
+
+You react to a gap in a practice dummy's defenses, landing a stronger than normal blow.
+A practice dummy is scalded on the arm with your scalding water causing trivial damage.
+A practice dummy says 'I have [9952/10000hp 10000/10000sp 9993/10000st and -250 align]'
+You are doing 45 damage per round.
+A practice dummy is in perfect health.
+
+[Mail][Library]<270hp 422sp 368st> 
+
+===== 2026-01-01 00:00:00 | cmd=e | room=10542
+@gmcp room.info = {["num"]="10542",["zone"]="Towne of Rune",["terrain"]="indoors",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="indoors",["name"]="Antechamber",["exits"]={["u_realnum"]=4698,["u"]="10532",["w_realnum"]=4588,["e"]="10421",["e_realnum"]=4587,["w"]="10422",["door"]={}},["wilds"]="false",["terraininfo"]="sheltered",["shape"]="square",["size"]="cramped"}
+You panic, and attempt to flee.
+
+ Antechamber                                            -      -      -
+(-------------------------------------------------)     W <-U-(M)---> E
+                                                        -      -      -
+
+  This small and cramped antechamber connects two training rooms to the
+east and west of here.  Narrow arches open into each respective room one
+labeled, "Magical Training", and the other labled, "Combat Training".  The
+walls are brick plastered with brown adobe, the steps leading up are
+intricate stonework.  
+You pant and gasp, trying to catch your breath.
+
+[Mail]<270hp 422sp 367st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10542
+
+The feeling of combat-induced panic subsides.
+
+[Mail]<270hp 436sp 370st> 
+
+===== 2026-01-01 00:00:00 | cmd=recall | room=10439
+@gmcp room.info = {["num"]="10439",["zone"]="Towne of Rune",["terrain"]="indoors",["exits"]={["w_realnum"]=4607,["e"]="10438",["e_realnum"]=4604,["w"]="10441",["door"]={["door"]="magic-resistant"}},["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="safe, indoors, no-npcs, reinforced, library",["minlevel"]=6,["name"]="Runic Temple",["maxlevel"]=0,["wilds"]="false",["terraininfo"]="sheltered",["shape"]="rectangular",["size"]="immense"}
+
+A swirling vortex of sound and energy envelops you.
+
+ Runic Temple                                           -      -      -
+(-------------------------------------------------)     W <---(M)---> E
+                                                        -      -      -
+
+  This is the Runic Temple, a large and impressive white marble building. 
+Beautiful murals are painted on the walls, depicting various Powers.  There
+is a marble archway to the west that leads to other areas of the temple,
+such as the Tourist Center, Donation Room and Health Center.  The archway to
+the east leads to the beautiful Garden of Life.  
+     A wooden practice shield is here.
+     There is a practice gambeson here.
+     There is a sword for weapons practice laying here.
+     A miniature obelisk is here, drawing motes of dust towards it.
+     A small orb encrusted with dirt lays here.
+     A pink-and-purple flowerbud has drifted here on the wind.
+     A large, beveled mirror with an ornate wooden frame has been set here.
+     A magical spring flows gently from the ground.
+     There is a sign pointing upwards, to the Bazaar.
+[Clan 1] [Duelist] *Pip the Tester is here.
+[Clan 1] *Wren the Wanderer is here.
+*[Shop] A white-robed cleric is standing here, smiling at all who pass.
+
+[Mail][Library][SAFE]<270hp 550sp 1st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10439
+
+Type 'Shop Bazaar' to visit the Bazaar
+
+[Mail][Library][SAFE]<270hp 550sp 1st> 
+
+===== 2026-01-01 00:00:00 | cmd=get shield | room=10439
+A wooden practice shield: you can not carry that much weight.
+
+[Mail][Library][SAFE]<270hp 550sp 17st> 
+
+===== 2026-01-01 00:00:00 | cmd=get gambeson | room=10439
+A practice gambeson: you can not carry that much weight.
+
+[Mail][Library][SAFE]<270hp 550sp 39st> 
+
+===== 2026-01-01 00:00:00 | cmd=get orb | room=10439
+You take an earth orb.
+
+[Mail][Library][SAFE]<270hp 550sp 49st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10439
+
+Ashby has returned from the void.
+Ashby has reconnected.
+
+[Mail][Library][SAFE]<270hp 550sp 184st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10439
+
+Ashby opens a pouch of plenitude.
+
+[Mail][Library][SAFE]<270hp 550sp 188st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10439
+
+Ashby closes a pouch of plenitude.
+
+[Mail][Library][SAFE]<270hp 550sp 188st> 
+
+===== 2026-01-01 00:00:00 | cmd=e ; s | room=10438
+@gmcp room.info = {["num"]="10438",["zone"]="Towne of Rune",["terrain"]="grassy field",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="high-regen",["name"]="Garden of Life",["exits"]={["s"]="10522",["w_realnum"]=4605,["e"]="10764",["e_realnum"]=4930,["w"]="10439",["s_realnum"]=4688,["n_realnum"]=4611,["door"]={["door"]="magic-resistant"},["n"]="10445"},["wilds"]="false",["terraininfo"]="diggable plains",["shape"]="square",["size"]="spacious"}
+
+ Garden of Life                                         -      N      -
+(-------------------------------------------------)     W <---(M)---> #
+                                                        -      S      -
+
+  This is a large and beautifully appointed garden.  Many types of flowers
+and shrubbery are growing here.  Most of the shrubbery has been clipped and
+trimmed into amazing shapes of warriors and creatures.  The entrance to a
+beautiful marble temple is to the west.  Atop a steep hill to the north is
+an immense, black granite castle.  A gardened courtyard lies to the south.  
+     A white marble bench sits against the east wall of the garden.
+     A large apple tree is here giving off shade and fruit.
+A wandering minstrel is passing through this area.
+*A Minx is here, sniffing about for truffles.
+A vassal of Lord Agrippa is here, putting on noble airs.
+A city guard stands ready to serve and protect the citizens of Rune.
+A small green frog is here, hopping about.
+A deer is wandering about, grazing peacefully.
+*An angel is standing here, humming a hymn of praise.
+'I am about the Lord's business!' the vassal of Lord Agrippa exclaims. 'I don't have time to quibble.'
+
+[Mail]<270hp 550sp 200st> 
+
+===== 2026-01-01 00:00:00 | cmd=s | room=10522
+@gmcp room.info = {["num"]="10522",["zone"]="Towne of Rune",["terrain"]="grassy field",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="high-regen",["name"]="Garden of Life",["exits"]={["s"]="10442",["n_realnum"]=4604,["s_realnum"]=4608,["door"]={},["n"]="10438"},["wilds"]="false",["terraininfo"]="diggable plains",["shape"]="rectangular",["size"]="large"}
+
+ Garden of Life                                         -      N      -
+(-------------------------------------------------)     - <---(M)---> -
+                                                        -      S      -
+
+  This is a large and beautifully appointed garden.  Many types of flowers
+and shrubbery are growing artfully here.  Most of the shrubbery has been
+clipped and trimmed into amazing shapes of warriors and creatures.  Atop a
+steep hill to the north is an immense, black granite castle.  A garden
+courtyard lies to the south.  
+A runaway child glumly loiters here.
+A young thief hides in the shadows, waiting for a new victim.
+A salesman is here, peddling his wares.
+
+[Mail]<270hp 550sp 196st> 
+
+===== 2026-01-01 00:00:00 | cmd=s | room=10442
+@gmcp room.info = {["num"]="10442",["zone"]="Towne of Rune",["terrain"]="city street",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="_empty",["name"]="Northern Courtyard",["exits"]={["s"]="10433",["n_realnum"]=4688,["s_realnum"]=4599,["door"]={},["n"]="10522"},["wilds"]="false",["terraininfo"]="diggable hard",["shape"]="square",["size"]="large"}
+
+ Northern Courtyard                                     -      N      -
+(-------------------------------------------------)     - <---(M)---> -
+                                                        -      S      -
+
+  The northern section of the Rune Courtyard is enclosed to the east and
+west by a white iron fence.  Flowers of every kind and description grow in
+small plots here, their delicious aroma perfuming the air.  Extending to the
+south is more of the courtyard while to the north, the fence opens into
+another garden bristling with life.  
+A city guard stands ready to serve and protect the citizens of Rune.
+An indentured servant is here, working to pay off a debt.
+A filthy beggar wanders aimlessly here.
+A vagabond is here, looking for handouts.
+An alley cat hisses at you.
+A deer is wandering about, grazing peacefully.
+A deer is wandering about, grazing peacefully.
+A deer is wandering about, grazing peacefully.
+A Rune city guard asks, 'What bringeth you to the fair towne of Rune this fine day?'
+
+[Mail]<270hp 550sp 193st> 
+
+===== 2026-01-01 00:00:00 | cmd=s | room=10433
+@gmcp room.info = {["num"]="10433",["zone"]="Towne of Rune",["terrain"]="city street",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="_empty",["name"]="Rune Courtyard",["exits"]={["s"]="10443",["n_realnum"]=4608,["s_realnum"]=4609,["door"]={},["n"]="10442"},["wilds"]="false",["terraininfo"]="diggable hard",["shape"]="square",["size"]="large"}
+
+ Rune Courtyard                                         -      N      -
+(-------------------------------------------------)     - <---(M)---> -
+                                                        -      S      -
+
+  Extending from the south and from the north, this central portion of this
+massive garden courtyard houses hundreds of varieties of flowers and other
+plants for the citizens of Rune.  The perfume of so many flowering plants is
+subtle and rejuvenating, paired with the wild cornucopia of colors.  To the
+north a massive black stone structure peers above the flora and to the south
+additional courtyard.  
+A city guard stands ready to serve and protect the citizens of Rune.
+A city guard stands ready to serve and protect the citizens of Rune.
+A city guard stands ready to serve and protect the citizens of Rune.
+*A Minx is here, sniffing about for truffles.
+
+[Mail]<270hp 550sp 191st> 
+
+===== 2026-01-01 00:00:00 | cmd=s | room=10443
+@gmcp room.info = {["num"]="10443",["zone"]="Towne of Rune",["terrain"]="city street",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="_empty",["name"]="Rune Courtyard",["exits"]={["s"]="10521",["w_realnum"]=4610,["e"]="10525",["e_realnum"]=4691,["w"]="10444",["s_realnum"]=4687,["n_realnum"]=4599,["door"]={},["n"]="10433"},["wilds"]="false",["terraininfo"]="diggable hard",["shape"]="square",["size"]="large"}
+
+ Rune Courtyard                                         -      N      -
+(-------------------------------------------------)     W <---(M)---> E
+                                                        -      S      -
+
+  Rowan Road splits the northern and southern sections of this large and
+beautiful garden courtyard.  Flowers of every kind and description grow in
+small plots here, their delicious armora filling the air.  An immense black
+stone castle peeks above the flora to the north.  
+     A white marble fountain gushes forth here.
+*A tall, lanky, balding man wearing a stethoscope loiters here.
+
+[Mail]<270hp 550sp 189st> 
+
+===== 2026-01-01 00:00:00 | cmd=s | room=10521
+@gmcp room.info = {["num"]="10521",["zone"]="Towne of Rune",["terrain"]="city street",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="_empty",["name"]="Southern Courtyard",["exits"]={["s"]="10456",["n_realnum"]=4609,["s_realnum"]=4622,["door"]={},["n"]="10443"},["wilds"]="false",["terraininfo"]="diggable hard",["shape"]="rectangular",["size"]="large"}
+
+ Southern Courtyard                                     -      N      -
+(-------------------------------------------------)     - <---(M)---> -
+                                                        -      S      -
+
+  You are at the southern end of a beautiful garden courtyard, which is
+enclosed by a white iron fence.  Flowers of every kind and description grow
+in small plots here, their delicious aroma filling your nostrils.  You can
+make out an immense, black stone castle on a hill far to the north.  The
+town square is to the south, while the courtyard stretches off to the north.
+A janitor is walking around, cleaning up.
+A beautiful woman is standing here, admiring herself in a hand mirror.
+Raksann the Captain of the City Guards is here, patrolling the streets.
+
+[Mail]<270hp 550sp 187st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10456
+@gmcp room.info = {["num"]="10456",["zone"]="Towne of Rune",["terrain"]="city street",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="_empty",["name"]="Towne Square North",["exits"]={["s"]="10494",["w_realnum"]=4621,["e"]="10458",["e_realnum"]=4624,["w"]="10455",["s_realnum"]=4660,["d_realnum"]=4552,["n_realnum"]=4687,["d"]="10386",["door"]={["exit"]="_empty"},["n"]="10521"},["wilds"]="false",["terraininfo"]="diggable hard",["shape"]="square",["size"]="spacious"}
+
+ Towne Square North                                     -      N      -
+(-------------------------------------------------)     W <---(M)-D-> E
+                                                        -      S      -
+
+  This is the Towne Square, the hub of all activity and streets in the
+Towne of Rune.  A circular mosaic made of different-colored bits of
+cobblestone depicting the defeat of the Stone Wizards, and thus the claiming
+of the land, is inlaid in the ground beneath your feet.  Main Street runs to
+the west and east, while to the north you can make out a beautiful green
+courtyard.  A crossroads is to the south.  In the center of the Towne Square
+are some old wooden gallows.  
+     A tall clock tower stands in the center of the square.
+A city guard stands ready to serve and protect the citizens of Rune.
+A city guard stands ready to serve and protect the citizens of Rune.
+A filthy beggar wanders aimlessly here.
+A small green frog is here, hopping about.
+A runaway child glumly loiters here.
+A city guard stands ready to serve and protect the citizens of Rune.
+An alley cat hisses at you.
+*A Minx is here, sniffing about for truffles.
+[Boss] **The Towne Crier is here shouting out information for all to hear.
+
+[Mail]<270hp 550sp 187st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10456
+
+A Rune city guard leaves south.
+A Rune city guard leaves south.
+
+[Mail]<270hp 550sp 222st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10456
+
+The Towne Crier exclaims, 'At last survey, Alyria had over 993 unique stores!'
+A Rune city guard leaves east.
+
+[Mail]<270hp 550sp 244st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10456
+
+A small green frog croaks loudly.
+The runaway child sniffs sadly. What do you think is troubling them?
+
+[Mail]<270hp 550sp 262st> 
+
+===== 2026-01-01 00:00:00 | cmd=l | room=10456
+
+ Towne Square North                                     -      N      -
+(-------------------------------------------------)     W <---(M)-D-> E
+                                                        -      S      -
+
+  This is the Towne Square, the hub of all activity and streets in the
+Towne of Rune.  A circular mosaic made of different-colored bits of
+cobblestone depicting the defeat of the Stone Wizards, and thus the claiming
+of the land, is inlaid in the ground beneath your feet.  Main Street runs to
+the west and east, while to the north you can make out a beautiful green
+courtyard.  A crossroads is to the south.  In the center of the Towne Square
+are some old wooden gallows.  
+     A tall clock tower stands in the center of the square.
+A filthy beggar wanders aimlessly here.
+A small green frog is here, hopping about.
+A runaway child glumly loiters here.
+An alley cat hisses at you.
+*A Minx is here, sniffing about for truffles.
+[Boss] **The Towne Crier is here shouting out information for all to hear.
+
+[Mail]<270hp 550sp 263st> 
+
+===== 2026-01-01 00:00:00 | cmd=n ; n | room=10521
+@gmcp room.info = {["num"]="10521",["zone"]="Towne of Rune",["terrain"]="city street",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="_empty",["name"]="Southern Courtyard",["exits"]={["s"]="10456",["n_realnum"]=4609,["s_realnum"]=4622,["door"]={},["n"]="10443"},["wilds"]="false",["terraininfo"]="diggable hard",["shape"]="rectangular",["size"]="large"}
+
+ Southern Courtyard                                     -      N      -
+(-------------------------------------------------)     - <---(M)---> -
+                                                        -      S      -
+
+  You are at the southern end of a beautiful garden courtyard, which is
+enclosed by a white iron fence.  Flowers of every kind and description grow
+in small plots here, their delicious aroma filling your nostrils.  You can
+make out an immense, black stone castle on a hill far to the north.  The
+town square is to the south, while the courtyard stretches off to the north.
+Raksann the Captain of the City Guards is here, patrolling the streets.
+
+[Mail]<270hp 550sp 265st> 
+
+===== 2026-01-01 00:00:00 | cmd=n | room=10443
+@gmcp room.info = {["num"]="10443",["zone"]="Towne of Rune",["terrain"]="city street",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="_empty",["name"]="Rune Courtyard",["exits"]={["s"]="10521",["w_realnum"]=4610,["e"]="10525",["e_realnum"]=4691,["w"]="10444",["s_realnum"]=4687,["n_realnum"]=4599,["door"]={},["n"]="10433"},["wilds"]="false",["terraininfo"]="diggable hard",["shape"]="square",["size"]="large"}
+
+ Rune Courtyard                                         -      N      -
+(-------------------------------------------------)     W <---(M)---> E
+                                                        -      S      -
+
+  Rowan Road splits the northern and southern sections of this large and
+beautiful garden courtyard.  Flowers of every kind and description grow in
+small plots here, their delicious armora filling the air.  An immense black
+stone castle peeks above the flora to the north.  
+     A white marble fountain gushes forth here.
+A city guard stands ready to serve and protect the citizens of Rune.
+A janitor is walking around, cleaning up.
+A beautiful woman is standing here, admiring herself in a hand mirror.
+A city guard stands ready to serve and protect the citizens of Rune.
+A city guard stands ready to serve and protect the citizens of Rune.
+*A tall, lanky, balding man wearing a stethoscope loiters here.
+
+[Mail]<270hp 550sp 263st> 
+
+===== 2026-01-01 00:00:00 | cmd=n | room=10433
+@gmcp room.info = {["num"]="10433",["zone"]="Towne of Rune",["terrain"]="city street",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="_empty",["name"]="Rune Courtyard",["exits"]={["s"]="10443",["n_realnum"]=4608,["s_realnum"]=4609,["door"]={},["n"]="10442"},["wilds"]="false",["terraininfo"]="diggable hard",["shape"]="square",["size"]="large"}
+
+ Rune Courtyard                                         -      N      -
+(-------------------------------------------------)     - <---(M)---> -
+                                                        -      S      -
+
+  Extending from the south and from the north, this central portion of this
+massive garden courtyard houses hundreds of varieties of flowers and other
+plants for the citizens of Rune.  The perfume of so many flowering plants is
+subtle and rejuvenating, paired with the wild cornucopia of colors.  To the
+north a massive black stone structure peers above the flora and to the south
+additional courtyard.  
+*A Minx is here, sniffing about for truffles.
+
+[Mail]<270hp 550sp 261st> 
+
+===== 2026-01-01 00:00:00 | cmd=n | room=10442
+@gmcp room.info = {["num"]="10442",["zone"]="Towne of Rune",["terrain"]="city street",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="_empty",["name"]="Northern Courtyard",["exits"]={["s"]="10433",["n_realnum"]=4688,["s_realnum"]=4599,["door"]={},["n"]="10522"},["wilds"]="false",["terraininfo"]="diggable hard",["shape"]="square",["size"]="large"}
+
+ Northern Courtyard                                     -      N      -
+(-------------------------------------------------)     - <---(M)---> -
+                                                        -      S      -
+
+  The northern section of the Rune Courtyard is enclosed to the east and
+west by a white iron fence.  Flowers of every kind and description grow in
+small plots here, their delicious aroma perfuming the air.  Extending to the
+south is more of the courtyard while to the north, the fence opens into
+another garden bristling with life.  
+A city guard stands ready to serve and protect the citizens of Rune.
+A young thief hides in the shadows, waiting for a new victim.
+An indentured servant is here, working to pay off a debt.
+A filthy beggar wanders aimlessly here.
+A vagabond is here, looking for handouts.
+An alley cat hisses at you.
+A deer is wandering about, grazing peacefully.
+A deer is wandering about, grazing peacefully.
+A deer is wandering about, grazing peacefully.
+
+[Mail]<270hp 550sp 259st> 
+
+===== 2026-01-01 00:00:00 | cmd=n | room=10522
+@gmcp room.info = {["num"]="10522",["zone"]="Towne of Rune",["terrain"]="grassy field",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="high-regen",["name"]="Garden of Life",["exits"]={["s"]="10442",["n_realnum"]=4604,["s_realnum"]=4608,["door"]={},["n"]="10438"},["wilds"]="false",["terraininfo"]="diggable plains",["shape"]="rectangular",["size"]="large"}
+
+ Garden of Life                                         -      N      -
+(-------------------------------------------------)     - <---(M)---> -
+                                                        -      S      -
+
+  This is a large and beautifully appointed garden.  Many types of flowers
+and shrubbery are growing artfully here.  Most of the shrubbery has been
+clipped and trimmed into amazing shapes of warriors and creatures.  Atop a
+steep hill to the north is an immense, black granite castle.  A garden
+courtyard lies to the south.  
+A city guard stands ready to serve and protect the citizens of Rune.
+A vassal of Lord Agrippa is here, putting on noble airs.
+A runaway child glumly loiters here.
+A salesman is here, peddling his wares.
+
+[Mail]<270hp 550sp 256st> 
+
+===== 2026-01-01 00:00:00 | cmd=w | room=10438
+@gmcp room.info = {["num"]="10438",["zone"]="Towne of Rune",["terrain"]="grassy field",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="high-regen",["name"]="Garden of Life",["exits"]={["s"]="10522",["w_realnum"]=4605,["e"]="10764",["e_realnum"]=4930,["w"]="10439",["s_realnum"]=4688,["n_realnum"]=4611,["door"]={["door"]="magic-resistant"},["n"]="10445"},["wilds"]="false",["terraininfo"]="diggable plains",["shape"]="square",["size"]="spacious"}
+
+ Garden of Life                                         -      N      -
+(-------------------------------------------------)     W <---(M)---> #
+                                                        -      S      -
+
+  This is a large and beautifully appointed garden.  Many types of flowers
+and shrubbery are growing here.  Most of the shrubbery has been clipped and
+trimmed into amazing shapes of warriors and creatures.  The entrance to a
+beautiful marble temple is to the west.  Atop a steep hill to the north is
+an immense, black granite castle.  A gardened courtyard lies to the south.  
+     A white marble bench sits against the east wall of the garden.
+     A large apple tree is here giving off shade and fruit.
+A young thief hides in the shadows, waiting for a new victim.
+A wandering minstrel is passing through this area.
+*A Minx is here, sniffing about for truffles.
+A city guard stands ready to serve and protect the citizens of Rune.
+A small green frog is here, hopping about.
+A deer is wandering about, grazing peacefully.
+*An angel is standing here, humming a hymn of praise.
+
+[Mail]<270hp 550sp 252st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10439
+@gmcp room.info = {["num"]="10439",["zone"]="Towne of Rune",["terrain"]="indoors",["exits"]={["w_realnum"]=4607,["e"]="10438",["e_realnum"]=4604,["w"]="10441",["door"]={["door"]="magic-resistant"}},["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="safe, indoors, no-npcs, reinforced, library",["minlevel"]=6,["name"]="Runic Temple",["maxlevel"]=0,["wilds"]="false",["terraininfo"]="sheltered",["shape"]="rectangular",["size"]="immense"}
+
+ Runic Temple                                           -      -      -
+(-------------------------------------------------)     W <---(M)---> E
+                                                        -      -      -
+
+  This is the Runic Temple, a large and impressive white marble building. 
+Beautiful murals are painted on the walls, depicting various Powers.  There
+is a marble archway to the west that leads to other areas of the temple,
+such as the Tourist Center, Donation Room and Health Center.  The archway to
+the east leads to the beautiful Garden of Life.  
+     A wooden practice shield is here.
+     There is a practice gambeson here.
+     There is a sword for weapons practice laying here.
+     A miniature obelisk is here, drawing motes of dust towards it.
+     A pink-and-purple flowerbud has drifted here on the wind.
+     A large, beveled mirror with an ornate wooden frame has been set here.
+     A magical spring flows gently from the ground.
+     There is a sign pointing upwards, to the Bazaar.
+[Clan 1] [Duelist] **Ashby the Sellsword is resting here.
+[Clan 1] [Duelist] *Pip the Tester is here.
+[Clan 1] *Wren the Wanderer is here.
+*[Shop] A white-robed cleric is standing here, smiling at all who pass.
+A white-robed cleric exclaims, 'Welcome to the Runic Temple!'
+
+[Mail][Library][SAFE]<270hp 550sp 250st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10439
+
+Type 'Shop Bazaar' to visit the Bazaar
+
+[Mail][Library][SAFE]<270hp 550sp 252st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10439
+
+The shield of flames surrounding Ashby sputters and goes out.
+
+[Mail][Library][SAFE]<270hp 550sp 272st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10439
+
+Pip looks at you.
+
+[Mail][Library][SAFE]<270hp 550sp 274st> 
+
+===== 2026-01-01 00:00:00 | cmd= | room=10439
+
+Pip thinks, 'Hmmmm.'
+
+[Mail][Library][SAFE]<270hp 550sp 280st> 
+
+##### end

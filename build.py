@@ -4,8 +4,10 @@
     python3 build.py            # uses the repo name in REPO (e.g. cracksui/softbuns-oven)
 
 Writes Oven.mpackage and VERSION (both committed, so `sbo update` can fetch them).
+Runs tests/run.py first and stops if any fail (--no-tests skips them).
+    python3 build.py --check    # is the committed package built from the current source?
 """
-import os, re, zipfile
+import os, re, subprocess, sys, zipfile
 from xml.sax.saxutils import escape
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +45,21 @@ xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 '''
 
 out = os.path.join(here, "Oven.mpackage")
+if "--check" in sys.argv:
+    try:
+        with zipfile.ZipFile(out) as z:
+            same = z.read("config.lua").decode() == config and z.read("Oven.xml").decode() == xml
+        same = same and open(os.path.join(here, "VERSION")).read().strip() == version
+    except Exception as e:
+        same = False
+    print(f"Oven.mpackage is v{version} from the current source" if same else
+          "Oven.mpackage/VERSION weren't rebuilt from src/Oven.lua - run python3 build.py")
+    sys.exit(0 if same else 1)
+
+if "--no-tests" not in sys.argv:
+    if subprocess.run([sys.executable, os.path.join(here, "tests", "run.py")]).returncode != 0:
+        sys.exit("tests failed - not building (python3 build.py --no-tests to build anyway)")
+
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
     z.writestr("config.lua", config)
     z.writestr("Oven.xml", xml)

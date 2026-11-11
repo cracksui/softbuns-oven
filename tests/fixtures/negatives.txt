@@ -1,0 +1,40 @@
+##### saved negatives
+===== 2026-01-01 00:00:00 | cmd=help who | room=10421
+@gmcp room.info = {["num"]="10421",["name"]="Magical Training"}
+[1003 ] WHO
+  [Hunting]     - The character is hunting (tracking) someone.
+  [Guide]       - The character is set as a Guide and is available
+[Trainer] A fake trainer line inside a help page.
+
+[Mail][Library]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd= | room=10421
+[OOC] Bob: [Shop] selling stuff
+[Quest] Someone tells you 'hi'
+
+[Mail][Library]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd=l | room=10421
+ Some Other Room                                        -      -      -
+(-------------------------------------------------)     # <---(M)---> -
+                                                        -      -      -
+
+  A room whose name doesn't match GMCP.  
+[Shop] A shopkeeper who must not be saved here.
+
+[Mail][Library]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd=l | room=10421
+ Magical Training                                       -      -      -
+(-------------------------------------------------)     # <---(M)---> -
+                                                        -      -      -
+
+  A spacious area.  
+[Clan 1] [Duelist] *Pip the Tester is here.
+[Duelist] *Solo the Player is here.
+*[Trainer] A slight man wearing a loose-fitting gray robe stands here.
+[Boss] The Towne Crier exclaims, 'Hear ye!'
+
+[Mail][Library]<270hp 550sp 401st>
+
+##### end

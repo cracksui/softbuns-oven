@@ -246,7 +246,13 @@ caused it, the GMCP that changed and each line's colour). Recognisers registered
 block is (`room`, `help`...); readers registered with `M.addBlockReader(name, kind, fn)` only see blocks of their
 kind - e.g. room NPCs are read only from room views whose name matches GMCP's `room.info`.
 
-Source is `src/Oven.lua`. To release: bump `M.version` in it, run `python3 build.py` (writes
-`Oven.mpackage` and `VERSION`), and commit all three. Players get it with `sbo update`.
+**Tests:** `pip install lupa`, then `python3 tests/run.py`. They load Oven under Lua 5.1 (what Mudlet runs) with
+Mudlet stubbed out and replay recorded game output (`tests/fixtures`) through it: room views, help pages, kills,
+loot, GMCP, the recorder, updates, and an in-session upgrade from the previous version. Fixtures come from
+`sbo record save` recordings with other players renamed and chat and private GMCP left out - never commit a raw
+recording.
+
+**Releasing:** bump `M.version` in `src/Oven.lua`, run `python3 build.py` (runs the tests and won't build if any
+fail, then writes `Oven.mpackage` and `VERSION`), commit all three and push. Players get it with `sbo update`.
 
 MIT licensed — see [LICENSE](LICENSE).

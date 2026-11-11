@@ -1,0 +1,308 @@
+##### saved fixtures
+===== 2026-01-01 00:00:00 | cmd=help classes | room=10421
+[1065 ] CLASSES
+NAME
+classes - the primary different pursuits and disciplines of Adventurers
+
+DESCRIPTION
+Character classes in Alyria are as follows:
+
+FIGHTER          MAGE          CLERIC          THIEF
+Barbarian        Wizard        Priest          Rogue
+Cavalier         Monk          Druid           Bard
+Valkyrie         Ranger        Shaman          Knave
+Paladin          Psionic       Witch
+
+
+SEE ALSO:
+ [1057] clan - view clan information, use clan commands and functions
+ [1042] wizards - a mage class that knows utility and damage spells
+ [1043] priest - a cleric class focused on healing and defense
+ [1044] barbarian - a fighter class that focuses on tanking and dealing damage
+ [1045] paladin - a fighter class that specializes in healing others
+ [1046] rangers - a mage class that receives a wide variety of magic
+ [1047] psionic - a mage class that receives unique magic which targets other Adventurers
+ [1048] monk - mages who have abandoned greater goals and seek personal glory
+ [1049] shaman - a cleric class which focuses on healing and defensive magic
+ [1050] cavalier - a fighter class which relies on its mounts
+ [1051] druid - a cleric class which uses nature magic to perform a variety of tasks
+ [1052] valkyrie - a fighter class which focuses on defense and not dying
+ [1053] bard - a thief class which uses music to provide buffs to their formation
+ [1054] rogue - a thief class which specializes in being unseen and mobile
+ [1106] witch - a cleric class specializing in debuffs, but lacking in healing
+ [2035] knave - a thief class which relies equally on brute force and underhanded trickery
+ [1064] class - deposit, withdraw, or get information on a gemstone account and once the account has enough gemstones, change player classes
+ [2367] class respec - detailed information about the class respec feature and multiclass and class respec tokens
+ [1067] proving grounds - information on this fearsome dungeon maze
+ [1075] tower of riga - information on this infamous tower on Verity Isle
+ [2279] adventurers' badges - grants bonuses to players' class path
+ [1129] who - display a list of player currently online
+----- with colour codes
+[1065 ] CLASSES
+NAME
+classes - the primary different pursuits and disciplines of Adventurers
+
+DESCRIPTION
+Character classes in Alyria are as follows:
+
+FIGHTER          MAGE          CLERIC          THIEF
+Barbarian        Wizard        Priest          Rogue
+Cavalier         Monk          Druid           Bard
+Valkyrie         Ranger        Shaman          Knave
+Paladin          Psionic       Witch
+
+
+SEE ALSO:
+ [1057] clan - view clan information, use clan commands and functions
+ [1042] wizards - a mage class that knows utility and damage spells
+ [1043] priest - a cleric class focused on healing and defense
+ [1044] barbarian - a fighter class that focuses on tanking and dealing damage
+ [1045] paladin - a fighter class that specializes in healing others
+ [1046] rangers - a mage class that receives a wide variety of magic
+ [1047] psionic - a mage class that receives unique magic which targets other Adventurers
+ [1048] monk - mages who have abandoned greater goals and seek personal glory
+ [1049] shaman - a cleric class which focuses on healing and defensive magic
+ [1050] cavalier - a fighter class which relies on its mounts
+ [1051] druid - a cleric class which uses nature magic to perform a variety of tasks
+ [1052] valkyrie - a fighter class which focuses on defense and not dying
+ [1053] bard - a thief class which uses music to provide buffs to their formation
+ [1054] rogue - a thief class which specializes in being unseen and mobile
+ [1106] witch - a cleric class specializing in debuffs, but lacking in healing
+ [2035] knave - a thief class which relies equally on brute force and underhanded trickery
+ [1064] class - deposit, withdraw, or get information on a gemstone account and once the account has enough gemstones, change player classes
+ [2367] class respec - detailed information about the class respec feature and multiclass and class respec tokens
+ [1067] proving grounds - information on this fearsome dungeon maze
+ [1075] tower of riga - information on this infamous tower on Verity Isle
+ [2279] adventurers' badges - grants bonuses to players' class path
+ [1129] who - display a list of player currently online
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd=help dwarf | room=10421
+[1032 ] DWARF
+NAME
+dwarf - a hardy playable race from the underground
+
+SYNOPSIS
+Lorem Ipsum
+
+DESCRIPTION
+Dwarves are short, stocky demi-humans, known for their foul tempers.  They
+often prefer building their cities underground, and enjoy working with the
+earth.  Dwarves are excellent miners, and possess more detailed knowledge on
+gems and metalsmithing than any other race.  They can easily be identified
+by the long beards that both males and females alike wear proudly.  
+
+While Dwarves are not as smart as some of the other races, they are usually
+wiser due to their long lifespans.  Their great physical strength and
+stamina makes them resistant to the effects of poison, disease, and magic,
+and centuries of working underground have given the Dwarves a keen ability
+to see in the dark.  While they are excellent fighters, Dwarves are not very
+dexterous and often distrust the use of magical spells.  
+
+Dwarves' racial ability is to deal 10% more damage with bashing weapons. 
+Dwarves dig more effectively than others, possessing a baseline of +25 dig. 
+While in Underground wildernesses, Dwarves can see 2 distance further.  In
+addition, dwarves' hardiness not only makes them resistant to disease and
+poison, but reduces 10% of critical hits taken to non-critical.  
+
+
+Class availability:
+     Mage: Wizard      Psionic     Monk        Ranger      
+  Warrior: Barbarian   Paladin     Cavalier    
+   Cleric: Priest      Druid       
+    Thief: Rogue       Bard        
+
+Maximum racial stats (before class bonuses):      (average is 17)
+  Strength:           18     Vitality:       19
+  Knowledge:          16     Luck:           16
+  Wisdom:             16     Courage:        20
+  Agility:            16     Sanity:         18
+  Personality:        16
+
+Maximum racial vital attributes:                 (average is 2000)
+  Hit Points:     2250   Spell Points:    1700   Stamina:    2250
+
+Racial skills:
+  enhanced damage - learn specific moves in order to maximize damage inflicted on a target.
+  mace - a short-ranged weapon used to bash
+  flail - a long bashing weapon
+  spiderrider - summons a cluster of arachnids to carry the caster straight into the Underground
+  peek - the ability to discern what exact items a creature is carrying
+  orbiting mass - send a mass of stone into orbit around someone, protecting them
+
+Passive racial skills:
+  infravision - provides faster adaptation to seeing in darkness
+  hardy - tough bodies can resist disease and poison
+  conductive - some beings are subtly vulnerable to lightning damage
+
+
+SEE ALSO:
+ [2378] spiderrider - summons a cluster of arachnids to carry the caster straight into the Underground
+ [1066] races - the many playable races of Alyria
+ [1365] mace - a short-ranged weapon used to bash
+ [1160] dig - dig up ground at a location to look for a buried item or door
+----- with colour codes
+[1032 ] DWARF
+NAME
+dwarf - a hardy playable race from the underground
+
+SYNOPSIS
+Lorem Ipsum
+
+DESCRIPTION
+Dwarves are short, stocky demi-humans, known for their foul tempers.  They
+often prefer building their cities underground, and enjoy working with the
+earth.  Dwarves are excellent miners, and possess more detailed knowledge on
+gems and metalsmithing than any other race.  They can easily be identified
+by the long beards that both males and females alike wear proudly.  
+
+While Dwarves are not as smart as some of the other races, they are usually
+wiser due to their long lifespans.  Their great physical strength and
+stamina makes them resistant to the effects of poison, disease, and magic,
+and centuries of working underground have given the Dwarves a keen ability
+to see in the dark.  While they are excellent fighters, Dwarves are not very
+dexterous and often distrust the use of magical spells.  
+
+Dwarves' racial ability is to deal 10% more damage with bashing weapons. 
+Dwarves dig more effectively than others, possessing a baseline of +25 dig. 
+While in Underground wildernesses, Dwarves can see 2 distance further.  In
+addition, dwarves' hardiness not only makes them resistant to disease and
+poison, but reduces 10% of critical hits taken to non-critical.  
+
+
+Class availability:
+     Mage: Wizard      Psionic     Monk        Ranger      
+  Warrior: Barbarian   Paladin     Cavalier    
+   Cleric: Priest      Druid       
+    Thief: Rogue       Bard        
+
+Maximum racial stats (before class bonuses):      (average is 17)
+  Strength:           18     Vitality:       19
+  Knowledge:          16     Luck:           16
+  Wisdom:             16     Courage:        20
+  Agility:            16     Sanity:         18
+  Personality:        16
+
+Maximum racial vital attributes:                 (average is 2000)
+  Hit Points:     2250   Spell Points:    1700   Stamina:    2250
+
+Racial skills:
+  enhanced damage - learn specific moves in order to maximize damage inflicted on a target.
+  mace - a short-ranged weapon used to bash
+  flail - a long bashing weapon
+  spiderrider - summons a cluster of arachnids to carry the caster straight into the Underground
+  peek - the ability to discern what exact items a creature is carrying
+  orbiting mass - send a mass of stone into orbit around someone, protecting them
+
+Passive racial skills:
+  infravision - provides faster adaptation to seeing in darkness
+  hardy - tough bodies can resist disease and poison
+  conductive - some beings are subtly vulnerable to lightning damage
+
+
+SEE ALSO:
+ [2378] spiderrider - summons a cluster of arachnids to carry the caster straight into the Underground
+ [1066] races - the many playable races of Alyria
+ [1365] mace - a short-ranged weapon used to bash
+ [1160] dig - dig up ground at a location to look for a buried item or door
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd=help barbarian | room=10421
+2 help entries match the specified search criteria. To view a specific
+entry from this list, type HELP .
+ [1044] barbarian - a fighter class that focuses on tanking and dealing damage
+ [3136] a barbarian from a far-off land - half-troll highlander.
+A total of 2 entries.
+----- with colour codes
+2 help entries match the specified search criteria. To view a specific
+entry from this list, type HELP .
+ [1044] barbarian - a fighter class that focuses on tanking and dealing damage
+ [3136] a barbarian from a far-off land - half-troll highlander.
+A total of 2 entries.
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd= | room=10421
+
+[Mail] 
+
+The Powers have noticed thy efforts at betterment, and have rewarded thee!
+You gain 6 hit points, 15 spell points, 7 stamina, and 18 practices!
+You have become more learned at 'cure disease' (3%).
+
+You gain 40,000 experience points!
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd= | room=10421
+[1.5][Mail] 
+
+An insane marauder is jabbed on the torso with Roarke's pierce causing shocking damage.
+Roarke fails to hit an insane marauder with its second attack.
+An insane marauder is jabbed on the torso with Roarke's pierce causing lethal damage.
+An insane marauder has been slain!
+Your blood freezes as you hear an insane marauder's death cry.
+You receive 2,704 experience points.
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd= | room=10421
+[Mail] 
+
+An untamed boar is jabbed on the tail with Roarke's pierce causing extensive damage.
+An untamed boar is jabbed on the torso with Roarke's pierce causing unbearable damage.
+Roarke fails to hit an untamed boar with its third attack.
+An untamed boar is scalded on the torso with your scalding water causing lethal damage.
+An untamed boar has been slain!
+Your blood freezes as you hear an untamed boar's death cry.
+You receive 8,919 experience points.
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd=get axe | room=10421
+You take a battleaxe blessed by Gath.
+A battleaxe blessed by Gath hums softly as it reconfigures itself to suit your experience.
+
+[Mail][Library][SAFE] 
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd=get shield | room=10421
+A wooden practice shield: you can not carry that much weight.
+
+[Mail][Library][SAFE] 
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd=get gambeson | room=10421
+A practice gambeson: you can not carry that much weight.
+
+[Mail][Library][SAFE] 
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd=get orb | room=10421
+You take an earth orb.
+
+[Mail][Library][SAFE] 
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd=help slay | room=10421
+[1200 ] SLAY
+The dragon has been slain!
+You get a bonus to hit.
+You take a sword.
+
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd= | room=10421
+[OOC] Bob: You take a sword.
+Bob says 'A goblin has been slain!'
+
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd=help 1044 | room=10421
+[1044 ] BARBARIAN
+A Barbarian's primary attribute is STRENGTH.
+
+[Mail]<270hp 550sp 401st>
+
+===== 2026-01-01 00:00:00 | cmd=say hi | room=10421
+You say 'A Monk's primary attribute is LUCK.'
+
+[Mail]<270hp 550sp 401st>
+
+##### end

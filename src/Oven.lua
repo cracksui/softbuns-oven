@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.25.0"
+M.version = "0.26.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6925,7 +6925,7 @@ function M.onDownload(event, file, err)
     if event ~= "sysDownloadError" then
       local f = io.open(file, "rb"); local body = f and f:read("*a") or ""; if f then f:close() end
       -- pkt-line: "<4 hex length><40 hex sha> refs/heads/main"
-      local hex = body:match("(%x+) refs/heads/" .. M.BRANCH .. "%f[%z%s]") or body:match("(%x+) refs/heads/" .. M.BRANCH)
+      local hex = body:match("(%x+) refs/heads/" .. M.BRANCH .. "%f[%z%s]") or body:match("(%x+) refs/heads/" .. M.BRANCH .. "$")
       M.updSha = (hex and #hex >= 40) and hex:sub(-40) or nil
     end
     downloadFile(M.dl.version, M.rawUrl("VERSION"))
