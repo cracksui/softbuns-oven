@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.39.1"
+M.version = "0.39.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6007,7 +6007,8 @@ function M.finish(reason)
   -- after "quest complete", check the quest log quietly: a quest that's gone from it was turned in
   do
     local v, a = tostring(cap.cmd or ""):lower():match("^%s*(%a+)%s+(%a+)")
-    local isQuest = cap.kind == "quest" and v ~= nil and #v >= 3 and ("quest"):sub(1, #v) == v and #a >= 3
+    -- the game takes short forms: "que re", "quest com"
+    local isQuest = cap.kind == "quest" and v ~= nil and #v >= 3 and ("quest"):sub(1, #v) == v and #a >= 2
     M.questReplyRequest = isQuest and ("request"):sub(1, #a) == a
     if isQuest and ("complete"):sub(1, #a) == a and not cap.quiet then
       tempTimer(1, function()
