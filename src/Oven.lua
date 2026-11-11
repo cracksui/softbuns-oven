@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.38.3"
+M.version = "0.39.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -352,6 +352,7 @@ M.commands = {
   { word = "train",     min = 3, kind = "skills" },
   -- recorded only (shown as the game sends it) until a layout exists
   { word = "quest",     min = 3, kind = "quest" },
+  { word = "alias",     min = 5, kind = "aliases", needsNoArgs = true },
 }
 
 function M.classify(cmd)
@@ -362,6 +363,7 @@ function M.classify(cmd)
   for _, def in ipairs(M.commands) do
     if #verb >= def.min and def.word:sub(1, #verb) == verb and not (def.except and def.except[verb]) then
       if def.needsArgs and rest == "" then return nil end
+      if def.needsNoArgs and rest ~= "" then return nil end
       if def.word == "look" or def.word == "examine" then
         if directions[rest] then return nil end
         local inside = rest:match("^in%s+(.+)$")
@@ -4991,6 +4993,8 @@ end
 function M.gmcpHandlersList()
   return {
     registerAnonymousEventHandler("gmcp.char.quests", function() pcall(M.onGmcpQuests) end),
+    -- a new connection: read your aliases again at its first prompt
+    registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil end),
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onGmcpStatus) end),
     registerAnonymousEventHandler("gmcp.char.maxstats", function() pcall(M.onGmcpMaxStats) end),
     registerAnonymousEventHandler("gmcp.char.worth", function() pcall(M.onGmcpWorth) end),
@@ -5050,11 +5054,12 @@ function M.start(kind, target, cmd)
   M.cap.maxTimer = tempTimer(M.cfg.maxTime, function() M.finish("maxtime") end)
 end
 
--- the game's own short forms, read as what they stand for ("qr" -> "quest request")
-M.commandAliases = { qr = "quest request" }
+-- Your aliases in the game ("alias qr quest request"): a command is read as what it stands for, so
+-- qr is a quest request to Oven too. The list is read quietly at the start of each session, and kept
+-- up to date from the game's own messages as you add, change and remove them.
 function M.expandAlias(cmd)
   local first, rest = tostring(cmd or ""):match("^%s*(%S+)(.*)$")
-  local full = first and M.commandAliases[first:lower()]
+  local full = first and (M.cfg.gameAliases or {})[first:lower()]
   return full and (full .. rest) or cmd
 end
 
@@ -5538,6 +5543,48 @@ M.addBlockReader("room_npcs", "room", function(b, seg)
         end
       end
     end
+  end
+end)
+
+-- "Currently defined aliases:" / " 1. 'pp' performs action 'cast 'pressure points''" / "A total of 3/100 aliases."
+-- "You have aliased 'lp' to perform action 'cast lightning'."
+-- "Alias 'lp' has been realiased to 'cast 'lightning pursuit'' from 'cast lightning pursuit''."
+function M.readAliases(lines)
+  local list, inList, changed = nil, false, false
+  M.cfg.gameAliases = M.cfg.gameAliases or {}
+  for _, l in ipairs(lines) do
+    local t = trim(l)
+    if t:match("^Currently defined aliases:?$") then list, inList = {}, true
+    elseif inList and t:match("^A total of %d+/%d+ aliases?%.?$") then
+      M.cfg.gameAliases, inList, changed = list, false, true
+    elseif inList then
+      local name, action = t:match("^%d+%. '(%S+)' performs action '(.*)'$")
+      if name then list[name:lower()] = action end
+    else
+      local name, action = t:match("^You have aliased '(%S+)' to perform action '(.*)'%.$")
+      if not name then name, action = t:match("^Alias '(%S+)' has been realiased to '(.*)' from '.*'%.$") end
+      if name then M.cfg.gameAliases[name:lower()] = action; changed = true end
+    end
+  end
+  -- "You have no aliases defined." and the like: a list with nothing in it
+  if inList and list then M.cfg.gameAliases, changed = list, true end
+  if changed then M.aliasesRead = true; M.saveSettings() end
+  return changed
+end
+
+M.addBlockReader("aliases", "*", function(b, kinds)
+  if kinds.help then return end
+  M.readAliases(b.lines)
+  -- unalias: the game's answer isn't known to Oven, so read the list again afterwards
+  for _, c in ipairs(b.cmds or {}) do
+    if c:lower():match("^%s*unalias%s") then
+      tempTimer(0.5, function() M.quietly("alias", "aliases", function(l) if l then M.readAliases(l) end end) end)
+    end
+  end
+  -- once per session (the first prompt after connecting or loading Oven): the list, quietly
+  if b.prompt and not M.aliasesRead and not M.aliasesAsked then
+    M.aliasesAsked = true
+    tempTimer(1, function() M.quietly("alias", "aliases", function(l) if l then M.readAliases(l) end end) end)
   end
 end)
 

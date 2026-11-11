@@ -43,7 +43,8 @@ class Oven:
         if prev:
             self.L.execute(prev)
         self.L.execute(src)
-        self.L.execute("sbo.cfg.samples = false")
+        # as if the session's alias list had been read (game_aliases tests that part)
+        self.L.execute("sbo.cfg.samples = false; sbo.aliasesAsked = true")
         self.sbo = self.L.globals().sbo
 
     def lua(self, code):
@@ -648,7 +649,7 @@ def compare_score_breakdown():
 @test
 def quest_request_pins():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
-    for cmd, setting, want in (("quest request", "on", True), ("que req", "on", True), ("qr", "on", True), ("quest request", "off", None), ("quest info 1547", "on", None)):
+    for cmd, setting, want in (("quest request", "on", True), ("que req", "on", True), ("quest request", "off", None), ("quest info 1547", "on", None)):
         o = Oven()
         o.lua(f'sbo.cfg.promptPattern = "<%d+hp"; sbo.command("quest autopin {setting}"); sbo.onSend(nil, "{cmd}")')
         o.feed(*reply, "<270hp 550sp 401st>")
@@ -784,6 +785,42 @@ def quest_givers_any_npc():
     eq(o.ev("#sbo.chat.lines"), 0, "a one-word quest giver's tell isn't chat")
     o.feed("Wren tells you 'nice one'", "<270hp>")
     eq(o.ev("#sbo.chat.lines"), 1, "a player's tell still is")
+
+
+@test
+def game_aliases():
+    o = Oven()
+    o.lua('''sbo.cfg.promptPattern = "<%d+hp"; SENT = {}; sbo.aliasesAsked = nil
+      REPLY = {
+        ["alias"] = { "Currently defined aliases:", " 1. 'pp' performs action 'cast 'pressure points''",
+                      " 2. 'cl' performs action 'cast 'cure light''", " 3. 'feed' performs action 'cast feeding'", "A total of 3/100 aliases." },
+        ["alias qr quest request"] = { "You have aliased 'qr' to perform action 'quest request'." },
+        ["alias cl cast 'cure serious'"] = { "Alias 'cl' has been realiased to 'cast 'cure serious'' from 'cast 'cure light''." },
+        ["unalias feed"] = { "Alias removed." },
+      }
+      send = function(c)
+        SENT[#SENT + 1] = c
+        sbo.onSend(nil, c)
+        for _, l in ipairs(REPLY[c] or {}) do line = l; sbo.onLine() end
+        line = "<270hp>"; sbo.onLine()
+        if c == "unalias feed" then REPLY["alias"] = { "Currently defined aliases:", " 1. 'pp' performs action 'cast 'pressure points''",
+          " 2. 'cl' performs action 'cast 'cure serious''", " 3. 'qr' performs action 'quest request'", "A total of 3/100 aliases." } end
+      end''')
+    o.feed("Welcome back!", "<270hp>")      # the first prompt of the session
+    o.L.execute("runTimers()")
+    eq(list(o.ev("SENT").values()), ["alias"], "reads the list once, quietly, at the first prompt")
+    eq(o.ev("sbo.cfg.gameAliases.pp"), "cast 'pressure points'", "an alias with quotes in it")
+    o.lua('send("alias qr quest request"); send("alias cl cast \'cure serious\'"); runTimers()')
+    eq((o.ev("sbo.cfg.gameAliases.qr"), o.ev("sbo.cfg.gameAliases.cl")), ("quest request", "cast 'cure serious'"), "added and changed")
+    eq(o.ev('sbo.expandAlias("qr")'), "quest request", "qr is a quest request to Oven")
+    eq(o.ev('(sbo.classify(sbo.expandAlias("qr")))'), "quest", "")
+    o.lua('SENT = {}; send("unalias feed"); runTimers()')
+    eq(list(o.ev("SENT").values()), ["unalias feed", "alias"], "after unalias: the list again")
+    eq(o.ev("sbo.cfg.gameAliases.feed"), None, "removed")
+    o.lua('SENT = {}'); o.feed("<270hp>"); o.L.execute("runTimers()")
+    eq(list(o.ev("SENT").values()), [], "not again in the same session")
+    o.lua('handlers["sysConnectionEvent"]()'); o.feed("<270hp>"); o.L.execute("runTimers()")
+    eq(list(o.ev("SENT").values()), ["alias"], "again after reconnecting")
 
 
 @test
