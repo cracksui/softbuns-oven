@@ -878,7 +878,9 @@ def bar_from_gmcp():
 def bar_leaves_questions():
     o = Oven()
     o.lua('''sbo.cfg.bar = true; sbo.cfg.promptPattern = "[<?]"; GONE = {}
-      sbo.bar = { rawEcho = function(self, h) BAR = h end }
+      local nop = function() end
+      sbo.bar = { rawEcho = function(self, h) BAR = h end, move = nop, resize = nop, show = nop, hide = nop, setStyleSheet = nop }
+      sbo.barRight = getBorderRight()
       deleteLine = function() GONE[#GONE + 1] = line end''')
     o.feed("[Mail]<291hp 696sp 457st>")
     eq(list(o.ev("GONE").values()), ["[Mail]<291hp 696sp 457st>"], "your prompt goes to the bar")
