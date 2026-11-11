@@ -416,6 +416,24 @@ def chat_tab():
 
 
 @test
+def bar_group_health():
+    o = Oven()
+    for prompt in ("([97%]Roarke)[Mail]<270hp 501sp 401st>", "([96%]Bun)[Mail][SAFE]<261hp 504sp 400st>"):
+        p = o.ev(f'sbo.parsePrompt("{prompt}")')
+        g = p.group
+        assert g is not None, prompt
+        eq(list(p.tags.values()), ["Mail"] + (["SAFE"] if "SAFE" in prompt else []), "tags without the group")
+        eq(p.rest, "", "nothing left over for the right side")
+    o.lua('''sbo.bar = { rawEcho = function(self, h) BAR = h end }
+             sbo.lastPromptText = "([97%]Roarke)[Mail]<270hp 501sp 401st>"; sbo.drawBar()''')
+    bar = o.ev("BAR") or ""
+    plain = __import__("re").sub("<[^>]+>", "", bar)
+    i = plain.find("Roarke")
+    assert i >= 0 and plain.find("97%") > i and plain.find("97%") - i < 12, f"name and health together: {plain}"
+    assert i < plain.find("HP"), f"group comes first: {plain}"
+
+
+@test
 def update_follows_main():
     o = Oven()
     a, b = "a" * 40, "b" * 40

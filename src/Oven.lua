@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.29.2"
+M.version = "0.29.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4128,6 +4128,12 @@ local promptLogged = false
 -- "[Library][SAFE]<180hp 325sp 296st>" -> {tags={...}, vals={{"hp",180},...}, rest="..."}
 function M.parsePrompt(t)
   local p = { tags = {}, vals = {} }
+  -- in a group: "([97%]Roarke)" - whoever in the group is lowest on health
+  local gpct, gname = t:match("%(%[(%d+)%%%]%s*(.-)%)")
+  if gpct then
+    p.group = { name = trim(gname), pct = tonumber(gpct) }
+    t = t:gsub("%(%[%d+%%%].-%)", "", 1)
+  end
   for tag in t:gmatch("%[([^%]]+)%]") do p.tags[#p.tags + 1] = tag end
   local inner = t:match("<(.-)>")
   if inner then
@@ -4389,6 +4395,13 @@ function M.drawBar()
   local p = M.parsePrompt(M.lastPromptText)
   M.cfg.maxes = M.cfg.maxes or {}
   local segs = {}
+  if p.group then
+    local g = p.group
+    local col = g.pct >= 70 and C.plus or (g.pct >= 35 and C.title or C.minus)
+    segs[#segs + 1] = { C.item, g.name ~= "" and (g.name .. " ") or "group " }
+    segs[#segs + 1] = { col, g.pct .. "%" }
+    segs[#segs + 1] = { C.dim, #p.tags > 0 and " · " or "   " }
+  end
   for _, tag in ipairs(p.tags) do
     segs[#segs + 1] = { tag == "SAFE" and C.plus or C.key, tag }
     segs[#segs + 1] = { C.dim, " · " }
