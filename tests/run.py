@@ -625,16 +625,17 @@ def pickup_looks_quietly():
 
 
 MAP_GAME = r"""
-  -- a town (area 2: rooms 1-3), the wilds (area 1: 100-160, a signpost at 160), another town (area 3: 161-165)
+  -- a town (area 2: rooms 1-3), the wilds (area 1: 100-250, signposts at 120, 150 and 250), Rune (area 3: 251-255)
   EXITS, AREA = {}, {}
   local function link(a, b) EXITS[a] = EXITS[a] or {}; EXITS[b] = EXITS[b] or {}; EXITS[a].e = b; EXITS[b].w = a end
   local chain = { 1, 2, 3 }
-  for i = 100, 165 do chain[#chain + 1] = i end
+  for i = 100, 255 do chain[#chain + 1] = i end
+  SIGNS = { [120] = true, [150] = true, [250] = true }
   for i = 1, #chain - 1 do link(chain[i], chain[i + 1]) end
-  for _, id in ipairs(chain) do AREA[id] = id <= 3 and 2 or (id <= 160 and 1 or 3) end
+  for _, id in ipairs(chain) do AREA[id] = id <= 3 and 2 or (id <= 250 and 1 or 3) end
   roomExists = function(id) return AREA[tonumber(id)] ~= nil end
   getRoomArea = function(id) return AREA[tonumber(id)] end
-  getRoomName = function(id) return id == 160 and "Runic Highway" or ("Room " .. tostring(id)) end
+  getRoomName = function(id) return id == 250 and "Runic Highway" or ("Room " .. tostring(id)) end
   getRoomAreaName = function(a) return a == 3 and "Towne of Rune" or ("Area " .. tostring(a)) end
   centerview = function() end; highlightRoom = function() end; unHighlightRoom = function() end
   getPath = function(a, b)
@@ -663,17 +664,28 @@ MAP_GAME = r"""
   send = function(c) SENT[#SENT + 1] = c; OUTBOX[#OUTBOX + 1] = c end
   local function lines(...) for _, l in ipairs({ ... }) do line = l; sbo.onLine() end end
   LINES = lines
+  -- the timers waiting now (not ones they start), like time passing once
+  local function tick()
+    local snap, fired = {}, false
+    for id, t in pairs(timers) do snap[id] = t end
+    for id, t in pairs(snap) do if timers[id] then timers[id] = nil; t[2](); fired = true end end
+    return fired
+  end
   PUMP = function()
+    repeat PUMP1() until not tick() and #OUTBOX == 0
+  end
+  PUMP1 = function()
     while #OUTBOX > 0 do
       local c = table.remove(OUTBOX, 1)
       sbo.onSend(nil, c)
       if EXITS[HERE] and EXITS[HERE][c] then at(EXITS[HERE][c]); lines("<270hp 550sp 401st>")
       elseif c == "run rune" then
         if AREA[HERE] ~= 1 then lines("That only works in the wilds!", "<270hp 550sp 401st>")
+        elseif not SIGNS[HERE] then lines("You need a signpost to run from.", "<270hp 550sp 401st>")
         else
           lines("You start running.", "<270hp 550sp 401st>")
-          at(140); lines("You take note of the directions on a weatherbeaten signpost near Townton, and head east.", "You run eastward.", "<270hp 550sp 401st>")
-          at(160); lines("You run eastward.", "     A weatherbeaten signpost is firmly planted here.", "You stop running.",
+          at(200); lines("You take note of the directions on a weatherbeaten signpost near Townton, and head east.", "You run eastward.", "<270hp 550sp 401st>")
+          at(250); lines("You run eastward.", "     A weatherbeaten signpost is firmly planted here.", "You stop running.",
                          "Your travel abruptly comes to a halt.", "<270hp 550sp 401st>")
         end
       elseif c == "look signpost" then
@@ -682,8 +694,6 @@ MAP_GAME = r"""
               "has keywords 'weatherbeaten signpost roadsign sign post Sepharia'.",
               "* rune is east.", "* townton is west.", "A weatherbeaten signpost is firmly planted here.", "<270hp 550sp 401st>")
       else lines("Huh?", "<270hp 550sp 401st>") end
-      -- (the stub's timers all fire at once, so only once the game has gone quiet)
-      if #OUTBOX == 0 then runTimers() end
     end
   end
 """
@@ -706,23 +716,23 @@ def signpost_runs():
     eq(sorted(o.ev("sbo.runData().names").keys()), ["rune", "towerofart", "townton"], "names from the signpost")
     # the user runs: Oven learns where it ends
     o.lua('SENT = {}; OUTBOX = { "run rune" }; PUMP()')
-    eq(o.ev("sbo.runData().ends.rune"), 160, "the run's end is learned")
+    eq(o.ev("sbo.runData().ends.rune"), 250, "the run's end is learned")
     assert not o.ev("sbo.runData().ends.towerofart"), "not one that wasn't run"
-    assert o.ev("sbo.isWilds(100)") and not o.ev("sbo.isWilds(2)"), "the wilds area is known"
-    # a long walk now uses it: out of town, run, the last few steps
-    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(165); PUMP()')
-    eq(list(o.ev("SENT").values()), ["e", "e", "e", "run rune", "e", "e", "e", "e", "e"], "walk, run, walk")
-    eq(o.ev("HERE"), 165, "arrived")
+    # a long walk now uses it: to the signpost, run, the last few steps
+    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(255); PUMP()')
+    eq(list(o.ev("SENT").values()), ["e"] * 23 + ["run rune"] + ["e"] * 5, "walk to the signpost, run, walk")
+    eq(o.ev("HERE"), 255, "arrived")
     assert any("walk arrived" in m for m in o.ev("SAYS").values())
     # a short one doesn't
     o.lua('AT(1); SENT = {}; sbo.mapWalkTo(110); PUMP()')
     assert "run rune" not in list(o.ev("SENT").values()), "short walks stay on foot"
     # sbo run <name>: goes to where that run ends
-    o.lua('AT(150); SENT = {}; sbo.command("run rune"); PUMP()')
-    eq(o.ev("HERE"), 160, "sbo run rune")
-    # the game refuses (not the wilds after all): walks instead
-    o.lua('AREA[100] = 9; AT(2); SENT = {}; sbo.runData().wilds["9"] = true; sbo.mapWalkTo(165); PUMP()')
-    eq(o.ev("HERE"), 165, "fell back to walking")
+    o.lua('AT(140); SENT = {}; sbo.command("run rune"); PUMP()')
+    eq(o.ev("HERE"), 250, "sbo run rune: to the signpost, then the run")
+    eq(list(o.ev("SENT").values())[0], "w", "back to the signpost first")
+    # the game refuses: walks instead
+    o.lua('SIGNS[120] = nil; AT(2); SENT = {}; sbo.mapWalkTo(255); PUMP()')
+    eq(o.ev("HERE"), 255, "fell back to walking")
     assert any("walking instead" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
     o.lua('sbo.command("signposts")')
 
@@ -736,8 +746,7 @@ def signpost_learning():
     # 0.48 and before logged "You take note…" as loot: it moves to the signposts
     o.lua('''sbo.dbx("INSERT INTO loot (t, who, item, n, room) VALUES (1, 'you', 'note of the directions on a weatherbeaten signpost near Townton, and head east', 1, 130)")
       sbo.dbClose(); sbo.dbOpen()''')
-    eq(o.rows("SELECT room, sign, exact FROM signposts"), [{"room": 130, "sign": "a weatherbeaten signpost near Townton", "exact": 0}], "moved")
-    eq(o.rows("SELECT COUNT(*) AS n FROM loot")[0]["n"], 0, "and out of the loot log")
+    eq(o.rows("SELECT COUNT(*) AS n FROM loot")[0]["n"], 0, "the old 'You take note…' rows are cleared")
     # standing at a signpost Oven hasn't read: it looks, quietly
     o.lua('AT(150); SENT = {}')
     o.feed("Room 150", "     A weatherbeaten signpost is firmly planted here.", "<270hp 550sp 401st>")
@@ -752,11 +761,11 @@ def signpost_learning():
     eq(len(o.ev("SENT")), 0, "read once")
     # a run whose end isn't known: to the town the target is in, then walk on - and its end is learned
     assert not o.ev("sbo.runData().ends.rune")
-    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(165); PUMP()')
-    eq(list(o.ev("SENT").values()), ["e", "e", "e", "run rune", "e", "e", "e", "e", "e"], "walk, run to the town's name, walk")
-    eq(o.ev("HERE"), 165, "arrived")
-    eq(o.ev("sbo.runData().ends.rune"), 160, "and learned where it ends")
-    assert o.ev("sbo.signAt(140)") and not o.ev("sbo.signAt(140)").exact, "a signpost passed on the way, as near"
+    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(255); PUMP()')
+    eq(list(o.ev("SENT").values()), ["e"] * 53 + ["run rune"] + ["e"] * 5, "walk to the signpost, run to the town's name, walk")
+    eq(o.ev("HERE"), 255, "arrived")
+    eq(o.ev("sbo.runData().ends.rune"), 250, "and learned where it ends")
+    assert not o.ev("sbo.signAt(200)"), "a signpost only noted in passing isn't kept"
     o.lua('sbo.command("signposts"); sbo.roomCardLines(150)')
 
 
