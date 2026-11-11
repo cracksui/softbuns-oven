@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.29.0"
+M.version = "0.29.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5016,7 +5016,7 @@ function M.recordLine(l, prompt)
   local okF, fg = pcall(M.lineFg, l)
   cur.fg[#cur.lines] = okF and fg or false
   -- the full colours of anything that may be chat, so the Chat tab shows it as the game did
-  if (l:find("'", 1, true) or l:match("^%[%u")) and M.chatFind(l) then
+  if M.chatFind(l) then
     cur.decho = cur.decho or {}
     local okD, d = pcall(selectionDecho)
     cur.decho[#cur.lines] = okD and d or nil
@@ -5215,7 +5215,12 @@ local CHAT_KEEP = 500
 M.chatPatterns = {}
 function M.addChatPattern(name, find) M.chatPatterns[#M.chatPatterns + 1] = { name = name, find = find } end
 
-local function knownChannel(tag) for _, c in ipairs(M.cfg.chatChannels or {}) do if c == tag then return true end end end
+local function knownChannel(tag)
+  for _, c in ipairs(M.cfg.chatChannels or {}) do if c == tag then return true end end
+  -- the game's own list (from the channel command): CLAN, SHOUT, NOVICETALK...
+  local g = M.cfg.chatGameChannels or {}
+  return g[tag] ~= nil or (tag == "NOVICE" and g.NOVICETALK ~= nil)
+end
 
 -- "[CLAN] Yakumo: 'sup nac'"  - a channel: a tag of letters, one name, then the message in quotes
 M.addChatPattern("channel", function(l)
@@ -5226,6 +5231,18 @@ end)
 M.addChatPattern("notice", function(l)
   local tag, rest = l:match("^%[(%u[%u ]-)%] (%u.+)$")
   if tag and knownChannel(tag) then return tag, nil, rest end
+end)
+-- channels that come as a sentence: "A voice yells 'The ship Merdraco be docked at Rune!'",
+-- "A sepulchral voice announces, 'X has been enrolled in Clan Megaleios!'", "Name shouts '...'"
+local SPOKEN = { yells = "YELL", shouts = "SHOUT", announces = "ANNOUNCEMENT" }
+M.addChatPattern("spoken", function(l)
+  local who, verb, msg = l:match("^(%u[^']-) (%l+),? '(.*)'%s*$")
+  if who and SPOKEN[verb] then return SPOKEN[verb], who, msg end
+end)
+-- "Local Hint: ...", "Personalized Hint: ..."
+M.addChatPattern("hint", function(l)
+  local kind, msg = l:match("^(%u%l+ Hint): (.+)$")
+  if kind then return "HINT", kind, msg end
 end)
 -- tells, to and from you. Several-word names ("An old druid tells you") are creatures, not players.
 M.addChatPattern("tell", function(l)
@@ -5243,12 +5260,26 @@ M.addChatPattern("say", function(l)
 end)
 
 function M.chatFind(l)
-  if not l:find("'", 1, true) and not l:match("^%[%u") then return end
+  if not l:find("'", 1, true) and not l:match("^%[%u") and not l:find(" Hint: ", 1, true) then return end
   for _, p in ipairs(M.chatPatterns) do
     local ok, ch, who, msg = pcall(p.find, l)
     if ok and ch then return ch, who, msg end
   end
 end
+
+-- the channel command: "Your current channel settings:" then "CLAN            is ON."
+M.addBlockReader("chat_channels", "*", function(b, kinds)
+  if kinds.help then return end
+  local found
+  for _, l in ipairs(b.lines) do
+    if l:match("^Your current channel settings:") then found = {}
+    elseif found then
+      local name, on = l:match("^(%u+)%s+is (%u+)%.%s*$")
+      if name then found[name] = (on == "ON") end
+    end
+  end
+  if found and next(found) then M.cfg.chatGameChannels = found; M.saveSettings() end
+end)
 
 -- chat in a block: every line but the prompt, never inside a help page
 M.addBlockReader("chat", "*", function(b, kinds)
@@ -5264,7 +5295,9 @@ end)
 function M.chatAdd(ch, plain, decho, t, who, msg)
   local C = M.chat
   M.cfg.chatChannels = M.cfg.chatChannels or {}
-  if not knownChannel(ch) then
+  local listed = false
+  for _, c in ipairs(M.cfg.chatChannels) do if c == ch then listed = true; break end end
+  if not listed then
     table.insert(M.cfg.chatChannels, ch)
     M.saveSettings()
   end

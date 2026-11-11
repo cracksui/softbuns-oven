@@ -388,11 +388,14 @@ def chat_tab():
     o.lua('sbo.cfg.window = true; sbo.viewAdd({ lines = { { { "white", "an item" } } }, links = {} })')
     o.replay(fixture("chat.txt"))
     got = [(e["ch"], e.get("who")) for e in (dict(x.items()) for x in o.ev("sbo.chat.lines").values())]
-    eq(got, [("CLAN", "Moss"), ("CLAN", None), ("CLAN", "Bramble"), ("Tells", "Wren")],
-       "chat lines (a notice once CLAN is known; no NPC talk, room lines, help pages)")
-    eq(list(o.ev("sbo.cfg.chatChannels").values()), ["CLAN", "Tells"], "channels learned in order")
+    eq(got, [("CLAN", "Moss"), ("CLAN", None), ("CLAN", "Bramble"), ("Tells", "Wren"),
+             ("YELL", "A voice"), ("ANNOUNCEMENT", "A sepulchral voice"), ("HINT", "Local Hint"), ("NOVICE", None)],
+       "chat lines (news once a channel is known; no NPC talk, room lines, help pages)")
+    eq(list(o.ev("sbo.cfg.chatChannels").values()), ["CLAN", "Tells", "YELL", "ANNOUNCEMENT", "HINT", "NOVICE"], "channels learned in order")
+    eq(o.ev("sbo.cfg.chatGameChannels.SHOUT"), True, "the channel list is read")
+    eq(o.ev("sbo.cfg.chatGameChannels.AUCTION"), False, "off channels too")
     eq(o.ev("WIDGETS.ovenTabs2Page_view.shown"), True, "chat doesn't take the window's focus")
-    eq(o.ev("WIDGETS.ovenTabs2_chat.text"), "<center>Chat 4</center>", "unread count on the tab")
+    eq(o.ev("WIDGETS.ovenTabs2_chat.text"), "<center>Chat 8</center>", "unread count on the tab")
     o.lua('sbo.command("tab chat")')
     eq(o.ev("WIDGETS.ovenTabs2_chat.text"), "<center>Chat</center>", "read once the tab is open")
     text = o.ev("WIDGETS.ovenChatConsole.text")
@@ -400,6 +403,10 @@ def chat_tab():
     o.lua('sbo.chatFilter("Tells")')
     text = o.ev("WIDGETS.ovenChatConsole.text")
     assert "Wren" in text and "Moss" not in text, f"filter: {text}"
+    o2 = Oven()   # news on a channel nobody has talked on yet, once the channel list is known
+    o2.lua('sbo.cfg.chatGameChannels = { CLAN = true }')
+    eq(o2.ev('(sbo.chatFind("[CLAN] Pip has been slain in A Fetid Lane!"))'), "CLAN", "news from the channel list")
+    eq(o2.ev('(sbo.chatFind("[QUEST] Something"))'), None, "unknown tags aren't channels")
     o.lua('sbo.command("chat mute clan"); sbo.chatFilter("All")')
     text = o.ev("WIDGETS.ovenChatConsole.text")
     assert "Moss" not in text and "Wren" in text, f"muted: {text}"

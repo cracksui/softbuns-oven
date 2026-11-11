@@ -27,4 +27,24 @@ An old druid tells you 'The spirits? You must move with caution!'
 ===== 2026-01-01 00:00:04 | cmd= | room=945939
 Wren tells you 'meet at the fountain'
 [Mail]<270hp 550sp 401st> 
+===== 2026-01-01 00:00:05 | cmd=channel | room=945939
+Your current channel settings:
+AUCTION         is OFF.
+CLAN            is ON.
+SHOUT           is ON.
+ANNOUNCEMENT    is ON.
+YELL            is ON.
+HINT            is ON.
+GAME            is OFF.
+RELIGION        is OFF.
+NOVICETALK      is ON.
+Use CHANNEL <channel> [ON|OFF|TOGGLE|<special>] to change.
+[Mail]<270hp 550sp 401st> 
+===== 2026-01-01 00:00:06 | cmd= | room=945939
+A voice yells 'The ship Merdraco be docked at Rune! Departure in twenty minutes for Sigil!'
+A sepulchral voice announces, 'Hero has been enrolled in Clan Megaleios!'
+Local Hint: Ariala is a beacon of light in a sea of darkness, holding as much back as she can.
+[NOVICE] Fern has gained class level 10, total level 10!
+A Rune city guard asks, 'What bringeth you to the fair towne of Rune this fine day?'
+[Mail]<270hp 550sp 401st> 
 ##### end

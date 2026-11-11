@@ -88,8 +88,9 @@ with ◀ older / newer ▶), **Help** (game help pages and `sbo`'s command list)
 `loot`, `deaths`, with links between them) and **Chat**. Whatever arrives brings its tab to the front - except
 chat, which never takes the window from you: the tab counts what you haven't read (`Chat 3`).
 
-**Chat** collects channel talk (`[CLAN] Name: '...'` and the channel's news), tells and says, in the game's own
-colours, with the time. A row of chips along the top - `All · CLAN 2 · Tells` - picks what to show; each channel
+**Chat** collects channel talk (`[CLAN] Name: '...'` and the channel's news, NOVICE), yells, shouts,
+announcements, hints (`Local Hint: ...`), tells and says, in the game's own colours, with the time. Type
+`channel` once so Oven knows the game's channel names. A row of chips along the top - `All · CLAN 2 · Tells` - picks what to show; each channel
 gets its chip the first time it speaks, and its count is what you haven't read. Right-click a chip (or
 `sbo chat mute clan`) to keep a channel out of All; click it to read it on its own. The main screen is unchanged.
 
