@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.43.0"
+M.version = "0.43.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5616,6 +5616,13 @@ M.addBlockReader("room_npcs", "room", function(b, seg)
   end
 end)
 
+-- playing, not logging in: GMCP char.status says "playing" and the line is your status prompt
+function M.inGame(promptLine)
+  local st = M.gmcpGet and M.gmcpGet("char.status")
+  if type(st) ~= "table" or st.state ~= "playing" then return false end
+  return promptLine ~= nil and #M.parsePrompt(promptLine).vals > 0
+end
+
 -- "Currently defined aliases:" / " 1. 'pp' performs action 'cast 'pressure points''" / "A total of 3/100 aliases."
 -- "You have aliased 'lp' to perform action 'cast lightning'."
 -- "Alias 'lp' has been realiased to 'cast 'lightning pursuit'' from 'cast lightning pursuit''."
@@ -5651,8 +5658,10 @@ M.addBlockReader("aliases", "*", function(b, kinds)
       tempTimer(0.5, function() M.quietly("alias", "aliases", function(l) if l then M.readAliases(l) end end) end)
     end
   end
-  -- once per session (the first prompt after connecting or loading Oven): the list, quietly
-  if b.prompt and not M.aliasesRead and not M.aliasesAsked then
+  -- once per session, quietly - but only once you're in the game: never at the login screen, where a
+  -- "Password:" question looks like a prompt and anything sent would be taken as your password.
+  -- In the game = GMCP says you're playing and this prompt carries your status (<291hp ...>).
+  if b.prompt and not M.aliasesRead and not M.aliasesAsked and M.inGame(b.lines[#b.lines]) then
     M.aliasesAsked = true
     tempTimer(1, function() M.quietly("alias", "aliases", function(l) if l then M.readAliases(l) end end) end)
   end

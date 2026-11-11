@@ -806,9 +806,16 @@ def game_aliases():
         if c == "unalias feed" then REPLY["alias"] = { "Currently defined aliases:", " 1. 'pp' performs action 'cast 'pressure points''",
           " 2. 'cl' performs action 'cast 'cure serious''", " 3. 'qr' performs action 'quest request'", "A total of 3/100 aliases." } end
       end''')
-    o.feed("Welcome back!", "<270hp>")      # the first prompt of the session
+    # logging in: nothing may be sent at the password question, even though it looks like a prompt
+    o.lua('isPrompt = function() return line == "Password:" or line:find("<") ~= nil end')
+    o.feed("By what name do you wish to be known?")
+    o.feed("Password:")
     o.L.execute("runTimers()")
-    eq(list(o.ev("SENT").values()), ["alias"], "reads the list once, quietly, at the first prompt")
+    eq(list(o.ev("SENT").values()), [], "nothing sent at the login screen")
+    o.lua('gmcp.char = gmcp.char or {}; gmcp.char.status = { state = "playing" }')
+    o.feed("Welcome back!", "<270hp>")      # the first prompt in the game
+    o.L.execute("runTimers()")
+    eq(list(o.ev("SENT").values()), ["alias"], "reads the list once, quietly, at the first prompt in the game")
     eq(o.ev("sbo.cfg.gameAliases.pp"), "cast 'pressure points'", "an alias with quotes in it")
     o.lua('send("alias qr quest request"); send("alias cl cast \'cure serious\'"); runTimers()')
     eq((o.ev("sbo.cfg.gameAliases.qr"), o.ev("sbo.cfg.gameAliases.cl")), ("quest request", "cast 'cure serious'"), "added and changed")
