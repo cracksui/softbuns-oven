@@ -200,6 +200,9 @@ sbo go {what}                walk/run to a trainer, shop, quest, NPC, room #,
                              bookmark, or a "where is" feature (food, bank…);
                              signpost runs when quicker
 sbo stop                     stop a walk, or anything Oven is doing for you
+sbo item {text}              find an item: what you have (and in which bag), what you've
+                             looked at, shops that sell it (nearest first, [go]),
+                             where it was picked up, quests that ask for it
 
 sbo eq                       equipment and items (shown in the Inspector)
     compare [{a} vs {b}]     the last two items looked at, or two by name

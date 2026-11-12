@@ -1358,6 +1358,40 @@ def item_sets():
 
 
 @test
+def item_search():
+    o = Oven()
+    o.lua("""sbo.cfg.window = false; OUT = {}
+      sbo.viewOut = function(lines, links) local t = {} for _, r in ipairs(lines) do for _, g in ipairs(r) do t[#t+1] = tostring(g[2] or "") end t[#t+1] = "\\n" end OUT = { table.concat(t), links } end
+      roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
+      getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end
+      getPath = function(a, b) speedWalkDir = {} for i = 1, (b == 10468 and 4 or 40) do speedWalkDir[i] = "e" end return true end
+      sbo.mapRoom = 10500
+      sbo.cfg.carried = { inv = { "a cute little pixie bag" }, bags = { ["a cute little pixie bag"] = { "a hunk of cheese" } }, at = 1 }
+      sbo.remember({ name = "a hunk of cheese", type = "food", level = 1, affects = {}, raw = {} })
+      sbo.dbx("INSERT INTO shops (room, name, last) VALUES (10468, 'local general store', 1)")
+      sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last, currency) VALUES (10468, 1, 'A hunk of cheese', 1, 'No limit', 25, 1, 'gold')")
+      sbo.dbx("INSERT INTO shops (room, name, last) VALUES (900, 'a far store', 1)")
+      sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last, currency) VALUES (900, 1, 'A hunk of cheese', 1, 'No limit', 20, 1, 'gold')")
+      sbo.dbx("INSERT INTO loot (t, who, item, src, n, room) VALUES (1, 'you', 'a hunk of cheese', 'a rat', 1, 10600)")
+      sbo.quests = { ["2682"] = { name = "Cheese and Wine", phases = { { n = 3, text = "Recover and Keep a hunk of cheese", done = true } } } }""")
+    o.lua('sbo.command("it cheese")')
+    text = o.ev("OUT[1]")
+    for want in ("You have", "in a cute little pixie bag", "Known", "Sold at", "local general store", "25 gold",
+                 "Picked up", "from a rat", "Quests", "Cheese and Wine"):
+        assert want in text, (want, text)
+    assert text.index("local general store") < text.index("a far store"), "nearest shop first"
+    links = [l[1] for l in o.ev("OUT[2]").values()]
+    assert any(l.startswith("go to local general store") for l in links), links
+    # short forms: i is still the Inspector, it is item
+    eq(o.ev("sbo.cmdPick(sbo.CMDS, 'i').name"), "inspector", "i stays inspector")
+    eq(o.ev("sbo.cmdPick(sbo.CMDS, 'it').name"), "item", "it is item")
+    # sbo go cheese: the nearest shop that sells it
+    o.lua("WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; sbo.cfg.map = true; sbo.log = function() end")
+    o.lua('sbo.command("go cheese")')
+    eq(o.ev("WALKED"), 10468, "sbo go cheese")
+
+
+@test
 def help_ends_at_see_also():
     # help look during the game's auto-run: the next step arrived before any prompt
     lines = open(fixture("help_then_autorun.txt"), encoding="utf-8").read().rstrip("\n").split("\n")

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.74.1"
+M.version = "0.75.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8613,6 +8613,11 @@ function M.runTargets(q)
       elseif (n.text or ""):lower():find(q, 1, true) then add(id, label, 2) end
     end
   end
+  -- a shop that sells it ("sbo go cheese")
+  for _, r in ipairs(M.dbRows([[SELECT i.room, i.item, s.name FROM shop_items i LEFT JOIN shops s ON s.room = i.room
+      WHERE instr(lower(i.item), %s) > 0]], q)) do
+    add(r.room, (r.name or "a shop") .. " sells " .. r.item, 2.5)
+  end
   for _, r in ipairs(M.dbRows("SELECT room, tags FROM room_flags WHERE instr(lower(tags), %s) > 0", single)) do
     local id = r.room
     for _, t in ipairs(splitTags(r.tags)) do
@@ -9538,6 +9543,8 @@ M.CMDS = {
     { name = "remove", args = "{channel}", desc = "drop a channel's chip", run = function(r) return M.chatCommand("forget " .. r) end },
     { name = "clear", desc = "empty the Chat tab", run = function() return M.chatCommand("clear") end },
   } },
+  { name = "item", min = 2, args = "{text}", desc = "find an item: what you have, know, where it's sold, picked up, quests",
+    run = function(r) return M.itemFind(r) end },
   { name = "notes", desc = "the Notes tab: notes you keep, each with where you were",
     run = function() return M.notesShow() end, subs = {
     { name = "add", args = "{text}", desc = "keep a note (or type it in the tab's box)", run = function(r)
@@ -9591,11 +9598,16 @@ local function pick(list, w)
   w = (w or ""):lower()
   if w == "" then return nil, {} end
   for _, e in ipairs(list) do if e.name == w and not e.listOnly then return e end end
-  local hits = {}
+  -- (min: the fewest letters a newer command answers to, so an older one keeps its short form -
+  -- "i" stays inspector, item needs "it")
+  local hits, qualified = {}, {}
   for _, e in ipairs(list) do
-    if (not e.alias or e.prefixOK) and not e.listOnly and e.name:sub(1, #w) == w then hits[#hits + 1] = e end
+    if (not e.alias or e.prefixOK) and not e.listOnly and e.name:sub(1, #w) == w then
+      hits[#hits + 1] = e
+      if #w >= (e.min or 1) then qualified[#qualified + 1] = e end
+    end
   end
-  if #hits == 1 then return hits[1] end
+  if #qualified == 1 then return qualified[1] end
   local names = {}
   for _, e in ipairs(hits) do names[#names + 1] = e.name end
   return nil, names
@@ -9604,10 +9616,10 @@ M.cmdPick = pick
 
 -- the shortest start of each name that only it has (shown highlighted in the lists)
 local function shortest(list, e)
-  for n = 1, #e.name do
+  for n = e.min or 1, #e.name do
     local pre, ok = e.name:sub(1, n), true
     for _, o in ipairs(list) do
-      if o ~= e and (not o.alias or o.prefixOK) and not o.listOnly and o.name:sub(1, n) == pre then ok = false; break end
+      if o ~= e and (not o.alias or o.prefixOK) and not o.listOnly and o.name:sub(1, n) == pre and n >= (o.min or 1) then ok = false; break end
     end
     if ok then return n end
   end
@@ -9807,6 +9819,104 @@ function M.debugState()
   local f = io.open(getMudletHomeDir() .. "/oven_state.txt", "w")
   if f then f:write(table.concat(lines, "\n"), "\n"); f:close() end
   for _, l in ipairs(lines) do say(l) end
+end
+
+-- sbo item {text}: everything Oven knows about an item, in one place
+function M.itemFind(q)
+  q = trim(q or ""):gsub("^items?%s+", "")
+  if q == "" then return say("sbo item {part of an item's name}") end
+  local ql = q:lower()
+  local width = M.cfg.window and M.viewCols() or columns("main")
+  local out, links = { header("gear", "", width, "Item: " .. q) }, {}
+  local kw = 10
+  local function has(n) return tostring(n or ""):lower():find(ql, 1, true) ~= nil end
+  local function where(room)
+    local nm = (room and roomExists(room) and getRoomName(room)) or nil
+    local area = room and roomExists(room) and getRoomArea(room)
+    area = area and getRoomAreaName(area) or ""
+    return (nm or "?") .. (area ~= "" and (" · " .. area) or "") .. "  #" .. tostring(room)
+  end
+  local any = false
+  -- you have it: worn, carried, in a bag
+  local mine = {}
+  for _, n in ipairs(M.eqNames or {}) do if has(n) then mine[#mine + 1] = { C.plus, n .. " (worn)" } end end
+  for n, bag in pairs(M.carriedItems() or {}) do
+    if has(n) then mine[#mine + 1] = { C.plus, n .. (bag ~= "" and (" (in " .. bag .. ")") or " (carried)") } end
+  end
+  if #mine > 0 then
+    any = true
+    local segs = {}
+    for k, m in ipairs(mine) do if k > 1 then segs[#segs + 1] = { C.dim, " · " } end segs[#segs + 1] = m end
+    kvLine(out, "You have", kw, segs, width)
+  end
+  -- known: looked at (stats remembered)
+  local known = {}
+  for n, it in pairs(M.items or {}) do if has(n) then known[#known + 1] = { n, it } end end
+  table.sort(known, function(a, b) return a[1] < b[1] end)
+  for k, x in ipairs(known) do
+    if k > 6 then kvLine(out, "", kw, { { C.dim, string.format("… and %d more (sbo eq items)", #known - 6) } }, width); break end
+    any = true
+    local it = x[2]
+    local bits = {}
+    if it.type then bits[#bits + 1] = it.type end
+    if it.level then bits[#bits + 1] = "level " .. it.level end
+    if it.worn then bits[#bits + 1] = it.worn end
+    kvLine(out, k == 1 and "Known" or "", kw, { { C.item, x[1] }, { C.dim, #bits > 0 and ("  " .. table.concat(bits, " · ")) or "" } }, width)
+    local n = x[1]
+    links[#links + 1] = { "compare " .. n .. " with what you wear", function() M.compareAgainstWorn(n) end }
+  end
+  -- sold at: nearest first
+  local sold = {}
+  for _, r in ipairs(M.dbRows([[SELECT i.room, i.item, i.cost, ifnull(i.currency, 'gold') AS currency, s.name FROM shop_items i
+      LEFT JOIN shops s ON s.room = i.room WHERE instr(lower(i.item), %s) > 0]], ql)) do
+    local id = tonumber(r.room)
+    local steps = 99999
+    if id and M.mapRoom and roomExists(id) then
+      if id == M.mapRoom then steps = 0 elseif getPath(M.mapRoom, id) then steps = #speedWalkDir end
+    end
+    sold[#sold + 1] = { r = r, id = id, steps = steps }
+  end
+  table.sort(sold, function(a, b) return a.steps < b.steps end)
+  for k, x in ipairs(sold) do
+    if k > 8 then kvLine(out, "", kw, { { C.dim, string.format("… and %d more (sbo map shops %s)", #sold - 8, q) } }, width); break end
+    any = true
+    local r = x.r
+    kvLine(out, k == 1 and "Sold at" or "", kw, { { C.item, r.item }, { C.num, "  " .. M.commaNum(tonumber(r.cost) or 0) .. " " .. r.currency },
+      { C.dim, "  ·  " .. (r.name or "a shop") .. " · " .. where(x.id) .. (x.steps < 99999 and string.format("  (%d steps)", x.steps) or "") } }, width)
+    local id = x.id
+    if id and roomExists(id) then links[#links + 1] = { "go to " .. (r.name or ("#" .. id)) .. " (" .. r.item .. ")", function() M.mapWalkTo(id) end } end
+  end
+  -- picked up: the latest few
+  local got = M.dbRows("SELECT t, who, item, src, room FROM loot WHERE instr(lower(item), %s) > 0 ORDER BY id DESC LIMIT 6", ql)
+  for k, r in ipairs(got) do
+    any = true
+    local id = tonumber(r.room)
+    kvLine(out, k == 1 and "Picked up" or "", kw, { { C.item, r.item }, { C.dim, "  " .. (r.who == "you" and "" or (r.who .. " · ")) ..
+      (r.src and ("from " .. r.src .. " · ") or "") .. (id and where(id) or "room unknown") .. "  " .. M.shortDur(os.time() - (tonumber(r.t) or os.time())) .. " ago" } }, width)
+    if id and roomExists(id) then links[#links + 1] = { "go to where " .. r.item .. " was picked up", function() M.mapWalkTo(id) end } end
+  end
+  -- quests that ask for it
+  local qrow = 0
+  for qid, Q in pairs(M.quests or {}) do
+    for _, ph in ipairs(Q.phases or {}) do
+      if has(ph.text) then
+        any = true
+        qrow = qrow + 1
+        kvLine(out, qrow == 1 and "Quests" or "", kw, { { C.dim, "#" .. qid .. " " }, { C.item, Q.name or "?" },
+          { ph.done and C.dim or C.text, string.format("  step %d: %s%s", ph.n or 0, ph.text, ph.done and " (done)" or "") } }, width)
+      end
+    end
+  end
+  if not any then out[#out + 1] = { { C.dim, "  Oven knows nothing with '" .. q .. "' in it yet - look at one, list a shop that sells it, or pick one up" } } end
+  M.viewOut(out, links)
+end
+
+-- compare an item with what you wear in its place
+function M.compareAgainstWorn(name)
+  local it = M.items[name]
+  local w = it and M.wornLike(it, select(2, M.activeBuild()))
+  if not w then return say("you don't wear anything in that item's place (or Oven doesn't know where it's worn)") end
+  M.compareNames(w.name, name)
 end
 
 -- sbo stop: whatever Oven is doing for you
