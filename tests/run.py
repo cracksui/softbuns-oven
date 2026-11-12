@@ -952,6 +952,9 @@ def shop_listed_on_arrival():
     assert any("new shop: the Sushi Bar · 5 items" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
     eq(o.rows("SELECT COUNT(*) AS n FROM shop_items WHERE room = 10515")[0]["n"], 5, "and saved")
     assert o.ev("GAGGED") >= len([l for l in sushi if l.strip()]), "quietly: off the main screen"
+    o.lua('getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end; getRoomExits = function() return {} end')
+    tagcol = o.lua('for _, r in ipairs(sbo.roomCardLines(10515)) do for _, g in ipairs(r) do if g[2] == "[Shop] " then return g[1] end end end')
+    eq(tagcol, "pale_green", "[Shop] in green: stock known")
     # not again within the hour; not in a room without a shop
     o.lua("SENT = {}; ARRIVE(1); ARRIVE(10515)")
     eq(len(o.ev("SENT")), 0, "once an hour; none elsewhere")
@@ -1054,6 +1057,8 @@ def shop_refuses_you():
     eq(list(o.ev("SENT").values()), ["shop list"], "asked again at a new level")
     card = o.lua('local t = {} for _, r in ipairs(sbo.roomCardLines(111125)) do for _, g in ipairs(r) do t[#t+1] = tostring(g[2] or "") end end return table.concat(t)')
     assert "won't sell to you" in card, card
+    tagcol = o.lua('for _, r in ipairs(sbo.roomCardLines(111125)) do for _, g in ipairs(r) do if g[2] == "[Shop] " then return g[1] end end end')
+    eq(tagcol, "tomato", "[Shop] in red: won't sell to you")
     o.lua('sbo.command("map shops")')
     # the same words from another shopkeeper (the wedding cleric at #10426)
     eq(o.ev("sbo.shopRefusal(\"The wedding cleric tells you 'Sorry, but I cannot sell my wares to someone of your level of experience.'\")") is not None, True, "the cleric too")

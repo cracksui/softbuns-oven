@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.57.0"
+M.version = "0.57.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7040,12 +7040,25 @@ function M.roomCardLines(id)
   if #npcs > 0 then
     any = true
     row(); row({ M.REC or C.title, "▸ Notable here" })
+    -- [Shop]: green = its stock is known, red = won't sell to you (at your level), orange = not listed yet
+    local shopCol = C.flag
+    if M.dbRow("SELECT room FROM shops WHERE room = %s", id) then shopCol = C.plus
+    elseif M.dbRow("SELECT room FROM shop_refusals WHERE room = %s", id) then shopCol = C.minus end
+    local anyShop = false
     for i, n in ipairs(npcs) do
       if i > MAX then row({ C.dim, string.format("  … and %d more", #npcs - MAX) }); break end
       local r = { { C.dim, "  " } }
-      for _, t in ipairs(n.tags or {}) do r[#r + 1] = { C.flag, "[" .. t .. "] " } end
+      for _, t in ipairs(n.tags or {}) do
+        local isShop = t:lower() == "shop"
+        anyShop = anyShop or isShop
+        r[#r + 1] = { isShop and shopCol or C.flag, "[" .. t .. "] " }
+      end
       r[#r + 1] = { C.text, n.text }
       out[#out + 1] = r
+    end
+    if anyShop then
+      row({ C.dim, "  [Shop] " }, { C.plus, "green" }, { C.dim, ": stock known · " }, { C.flag, "orange" },
+          { C.dim, ": not listed yet · " }, { C.minus, "red" }, { C.dim, ": won't sell to you" })
     end
   end
   -- "enter ..." commands that work here
