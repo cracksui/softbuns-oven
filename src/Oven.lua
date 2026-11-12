@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.75.1"
+M.version = "0.75.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5532,7 +5532,9 @@ end
 -- same moment; if it hasn't within a couple of seconds, ask the game quietly (quest info 52)
 M.questGmcpAt = M.questGmcpAt or {}
 function M.noteQuestProgress(l)
-  if M.cap or not l:lower():find("complet", 1, true) then return end
+  -- (also while a reply is being read: "quest identify 2" ends with "You have completed a part of quest #3213!")
+  -- the game's own words for a step done (not a quest list's "(9/10 complete)")
+  if not l:find("completed a part of", 1, true) then return end
   local id = l:match("[Qq]uest #(%d+)")
   local name = l:match("[Qq]uest #%d+,? '(.-)'") or l:match("[Qq]uest '(.-)'")
   if not id and name then

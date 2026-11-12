@@ -1751,6 +1751,22 @@ def quest_request_after_quest_timer():
 
 
 @test
+def quest_step_done_inside_a_reply():
+    o = Oven()
+    o.lua("""sbo.cfg.promptPattern = "<%d+hp"; sbo.log = function() end
+      SENT = {}; send = function(c) SENT[#SENT+1] = c end
+      sbo.quests = { ["3213"] = { name = "Warpstones Tutorial", active = true, total = 4, done = 0, phases = {} } }
+      sbo.cfg.questPins = { ["3213"] = true }""")
+    o.lua('sbo.onSend(nil, "quest identify 2")')
+    o.feed("You ask Lord Agrippa for a description of one of his wares.", "Lord Agrippa tells you:",
+           "Item 'a garnet gemstone' is type warp-stone, alignment 0, made of stone (in (new) condition),[EQDB]",
+           "Lord Agrippa tells you, 'I can sell you this item for 300 questpoints.'",
+           "You have completed a part of quest #3213!", "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    assert "quest info 3213" in list(o.ev("SENT").values()), list(o.ev("SENT").values())
+
+
+@test
 def quest_steps_update():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     o = Oven()
