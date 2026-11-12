@@ -1546,6 +1546,30 @@ def quest_hint_colours():
 
 
 @test
+def quest_done_before_taken_again():
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.log = function() end')
+    # done in the past: complete, turned in, every step done
+    o.lua("""sbo.quests['1348'] = { name = 'Again', active = false, complete = true, turnedIn = 1, turnIn = 'Someone', done = 2, total = 2,
+      phases = { { n = 1, text = 'Visit A', done = true }, { n = 2, text = 'Visit B', done = true } } }""")
+    # taken again
+    o.feed("You undertake the quest 'Again', #1348.", "This quest [1348] is called 'Again',", "for Adventurers levels 1 to 250.",
+           "Again consists of:", "Phase 1: Visit A.", "Phase 2: Visit B.", "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    eq((o.ev("sbo.quests['1348'].complete"), o.ev("sbo.quests['1348'].turnedIn")), (None, None), "not complete any more")
+    eq(o.ev("sbo.questFinished(sbo.quests['1348'])"), False, "in progress")
+    eq(o.ev("(sbo.cfg.questPins or {})['1348']"), True, "pinned")
+    # pin all takes it too, from the list
+    o.lua("sbo.quests['1348'].complete = true; sbo.cfg.questPins = {}")
+    o.lua('sbo.onSend(nil, "quest info")')
+    o.feed("                   Quest #1348 : Again (  0/2  complete).", "A total of [1] quests.", "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("sbo.questFinished(sbo.quests['1348'])"), False, "the list says 0/2: in progress")
+    o.lua("sbo.pinAllFromList = true; sbo.questPin('all', true); sbo.pinAllFromList = nil")
+    eq(list(o.ev("sbo.cfg.questPins").keys()), ["1348"], "pin all")
+
+
+@test
 def quest_steps_update():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     o = Oven()

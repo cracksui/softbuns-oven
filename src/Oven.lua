@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.69.0"
+M.version = "0.69.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2246,6 +2246,16 @@ function M.parseQuests(raw, decho)
   return { list = list, detail = detail, other = other }
 end
 
+-- a quest you're doing (again): what's left from an earlier time through - complete, turned in, who to
+-- return to, a time-up check - goes; fresh = taken anew, so every step starts undone
+function M.questInProgress(Q, fresh)
+  Q.complete, Q.turnedIn, Q.turnIn, Q.timeUpChecked = nil, nil, nil, nil
+  if fresh then
+    Q.done = 0
+    for _, ph in ipairs(Q.phases or {}) do ph.done = false end
+  end
+end
+
 -- keep what we learn about quests, for the tracker
 function M.rememberQuests(q, bare)
   local now = os.time()
@@ -2262,7 +2272,10 @@ function M.rememberQuests(q, bare)
       if not (Q.name and e.name and Q.name:sub(1, #e.name) == e.name) then Q.name = e.name or Q.name end
       Q.seen = now
       if e.deadline then Q.deadline = e.deadline end
-      if e.done then Q.done, Q.total = e.done, e.total end
+      if e.done then
+        Q.done, Q.total = e.done, e.total
+        if e.total and e.done < e.total and (Q.complete or Q.turnedIn) then M.questInProgress(Q) end
+      end
       Q.active = true
       M.quests[e.id] = Q
       active[e.id] = true
@@ -2282,8 +2295,10 @@ function M.rememberQuests(q, bare)
   if q.detail then
     local d = q.detail
     local Q = M.quests[d.id] or {}
+    -- taken again (you undertake / quest request): done before doesn't count
+    if M.questReplyRequest and (Q.complete or Q.turnedIn) then M.questInProgress(Q, true) end
     for k, v in pairs(d) do Q[k] = v end
-    if d.total and d.done < d.total then Q.complete = nil end
+    if d.total and d.done < d.total then M.questInProgress(Q) end
     Q.seen = now
     Q.active = true
     M.quests[d.id] = Q
@@ -5334,8 +5349,9 @@ function M.onGmcpQuests()
           changed = true
           if Q.name then M.questMarkComplete(Q.name) else Q.complete = true end
         end
-      elseif Q.active ~= true then
-        Q.active, changed = true, true
+      else
+        if Q.active ~= true then Q.active, changed = true, true end
+        if Q.complete or Q.turnedIn then M.questInProgress(Q); changed = true end   -- doing it again
       end
       -- each step: done or not, and its text once it's no longer hidden
       if not info.abandoned and type(q.goals) == "table" then
