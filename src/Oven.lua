@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.66.0"
+M.version = "0.66.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8423,6 +8423,16 @@ local NOT_LOOT = { "^the feeling", "^a feeling", "^the sense", "^a sense", "^the
 
 function M.parseLoot(l)
   l = trim(l)
+  -- "A bottle of pesto emits a bright flare of white light as you take it and it binds with you."
+  if l:find(" as you take it", 1, true) then
+    for _, v in ipairs({ "emits", "glows", "flares", "flashes", "shimmers", "sparkles", "hums", "pulses", "vibrates",
+                         "crackles", "tingles", "binds", "bonds", "shudders", "warms", "chills", "flickers", "glimmers" }) do
+      local took = l:match("^(%u.-) " .. v .. " ")
+      if took and ulen(took) <= 60 then
+        return { who = "you", item = took:sub(1, 1):lower() .. took:sub(2), count = 1 }
+      end
+    end
+  end
   local who, rest = l:match("^(You) get (.+)$")
   if not who then who, rest = l:match("^(You) take (.+)$") end
   if not who then who, rest = l:match("^(You) pick up (.+)$") end

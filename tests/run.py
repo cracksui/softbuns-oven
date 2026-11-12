@@ -1227,6 +1227,16 @@ def where_is():
 
 
 @test
+def loot_that_binds():
+    o = Oven()
+    f = lambda l: o.ev(f'(function() local e = sbo.parseLoot([[{l}]]) return e and (e.who .. "|" .. e.item) or "nil" end)()')
+    eq(f("A bottle of pesto emits a bright flare of white light as you take it and it binds with you."), "you|a bottle of pesto", "a binding pickup")
+    eq(f("A pair of boots glows softly as you take it."), "you|a pair of boots", "a name with an -s word")
+    eq(f("A bottle of pesto: you can't carry so much weight."), "nil", "not picked up")
+    eq(f("You get a sword."), "you|a sword", "as before")
+
+
+@test
 def help_ends_at_see_also():
     # help look during the game's auto-run: the next step arrived before any prompt
     lines = open(fixture("help_then_autorun.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
