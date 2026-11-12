@@ -1459,6 +1459,7 @@ def quest_hint_paragraphs_and_folding():
     eq(list(o.ev("sbo.quests['3519'].rewardItems").values()), ["a velocity token", "a dusty curious coin"], "they're rewards")
     o.lua("sbo.cfg.questHintOpen = { ['3519'] = true }")
     panel = " ".join(_re.sub("<[^>]+>", "", x).replace("\xa0", " ") for x in o.lua("return (sbo.questCardHtml('3519', sbo.quests['3519']))").values())
+    panel = _re.sub(r"\s+", " ", panel)   # a phrase can wrap across lines
     assert "you areAdventurer" not in panel and "you are Adventurer" in panel, f"lines don't glue together: {panel}"
     assert "Rewards" in panel and "25,000 gold pieces" in panel and "a velocity token" in panel, panel
     assert "0 piety" not in panel, "rewards of nothing left out"
