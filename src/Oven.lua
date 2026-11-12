@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.76.0"
+M.version = "0.76.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3555,6 +3555,10 @@ function M.buildTabs()
     pcall(function() lab:setCursor("PointingHand") end)
     lab:setClickCallback(function() M.tabPress(key) end)
     pcall(function() lab:setReleaseCallback(function() M.tabRelease(key) end) end)
+    pcall(function() lab:setMoveCallback(function()
+      local d = M.tabDrag
+      if d and d.key == key and not d.moved then d.moved = true; M.tabTrace("moving " .. key) end
+    end) end)
     M.tabLabels[key] = lab
     M.tabPages[key] = Geyser.Container:new({ name = TABS_ID .. "Page_" .. key, x = 0, y = 0, width = "100%", height = "100%" }, M.tabBody)
   end
@@ -3592,7 +3596,7 @@ function M.applyTabs()
     -- no tabs: everything back in one place (they go out again when tabs come back)
     for key, win in pairs(M.tabWins or {}) do
       local pg = M.tabPages and M.tabPages[key]
-      if pg and pg.container == win then
+      if pg and pg.container == winInside(win) then
         pcall(function() pg:changeContainer(M.tabBody); pg:move(0, 0); pg:resize("100%", "100%") end)
         pcall(function() M.tabLabels[key]:resize(96, nil); M.tabLabels[key]:show(); M.tabBar:organize() end)
         win:hide()
@@ -3650,9 +3654,18 @@ M.tabBegin, M.tabEnd = tabBegin, tabEnd
 -- A tab dragged out of the Oven window becomes a window of its own (moved and sized like the others,
 -- and remembered). Its right-click menu, or sbo window dock {tab}, puts it back.
 M.tabWins = M.tabWins or {}
+-- an Adjustable.Container's children go in its Inside (below the title, above its background)
+local function winInside(win) return win and (win.Inside or win) end
 function M.tabIsOut(key)
   return M.cfg.tabs and (M.cfg.tabsOut or {})[key] and M.tabWins[key] and M.tabPages[key]
-    and M.tabPages[key].container == M.tabWins[key] and true or false
+    and M.tabPages[key].container == winInside(M.tabWins[key]) and true or false
+end
+-- what dragging and docking did, for sbo debug state
+M.tabTraceLog = M.tabTraceLog or {}
+function M.tabTrace(msg)
+  local t = M.tabTraceLog
+  t[#t + 1] = os.date("%H:%M:%S") .. "  " .. msg
+  while #t > 25 do table.remove(t, 1) end
 end
 local function tabTitle(key) for _, t in ipairs(M.TABS) do if t.key == key then return t.title end end end
 -- the window a tab's content shows in
@@ -3665,23 +3678,32 @@ end
 function M.tabPress(key)
   local ok, x, y = pcall(getMousePosition)
   M.tabDrag = ok and tonumber(x) and { key = key, x = x, y = y } or nil
+  M.tabTrace("press " .. key .. " at " .. tostring(x) .. "," .. tostring(y))
   M.tabShow(key)
 end
 -- let go outside the Oven window, well away from where it was picked up: its own window there
 function M.tabRelease(key)
   local d = M.tabDrag
   M.tabDrag = nil
-  if not d or d.key ~= key then return end
   local ok, x, y = pcall(getMousePosition)
+  M.tabTrace("release " .. key .. " at " .. tostring(x) .. "," .. tostring(y) .. (d and "" or " (no press seen)"))
+  if not d or d.key ~= key then return end
   if not ok or not tonumber(x) then return end
   if math.abs(x - d.x) + math.abs(y - d.y) < 40 then return end
   local c = M.container
   local okG, cx, cy, cw, ch = pcall(function() return c:get_x(), c:get_y(), c:get_width(), c:get_height() end)
-  if okG and x >= cx and x <= cx + cw and y >= cy and y <= cy + ch then return end
+  if okG and x >= cx and x <= cx + cw and y >= cy and y <= cy + ch then
+    return M.tabTrace(string.format("  inside the window (%s,%s %sx%s)", tostring(cx), tostring(cy), tostring(cw), tostring(ch)))
+  end
   M.tabUndock(key, x, y)
 end
 
 function M.tabUndock(key, x, y)
+  local ok, err = pcall(M.tabUndock1, key, x, y)
+  if not ok then M.tabTrace("undock " .. key .. " failed: " .. tostring(err)); say("couldn't undock " .. key .. ": " .. tostring(err)) end
+end
+function M.tabUndock1(key, x, y)
+  M.tabTrace("undock " .. key .. (x and (" to " .. x .. "," .. y) or ""))
   if not M.cfg.tabs or not M.tabPages or not M.tabPages[key] or M.tabIsOut(key) then return end
   local name = "ovenTab_" .. key
   local win = M.tabWins[key]
@@ -3711,10 +3733,14 @@ function M.tabUndock(key, x, y)
     pcall(function() win:move(math.floor(math.max(0, x - 40)), math.floor(math.max(0, y - 10))) end)
   end
   local pg = M.tabPages[key]
-  pg:changeContainer(win)
+  local okC, errC = pg:changeContainer(winInside(win))
+  if okC == nil and errC then M.tabTrace("  changeContainer: " .. tostring(errC)) end
   pcall(function() pg:move(0, 0); pg:resize("100%", "100%") end)
-  pg:show()
   win:show()
+  pg:show()
+  pcall(function() win:raiseAll() end)
+  M.tabTrace(string.format("  page now in %s · out %s · window at %s,%s", tostring(pg.container and pg.container.name),
+    tostring(M.tabIsOut(key)), tostring((pcall(win.get_x, win)) and win:get_x()), tostring((pcall(win.get_y, win)) and win:get_y())))
   -- its tab leaves the bar
   M.tabLabels[key]:hide()
   pcall(function() M.tabLabels[key]:resize(0, nil); M.tabBar:organize() end)
@@ -3734,8 +3760,10 @@ function M.tabDock(key)
   local was = M.tabIsOut(key)
   if M.cfg.tabsOut then M.cfg.tabsOut[key] = nil; M.saveSettings() end
   if not was then return end
+  M.tabTrace("dock " .. key)
   M.tabPages[key]:changeContainer(M.tabBody)
   pcall(function() M.tabPages[key]:move(0, 0); M.tabPages[key]:resize("100%", "100%") end)
+  pcall(function() M.container:raiseAll() end)
   pcall(function() M.tabLabels[key]:resize(96, nil); M.tabBar:organize() end)
   M.tabLabels[key]:show()
   win:hide()
@@ -9932,6 +9960,7 @@ function M.tabMove(r, out)
   if out then
     if M.tabIsOut(t.key) then M.tabWins[t.key]:show(); return say(t.name .. " already has its own window") end
     M.tabUndock(t.key)
+    if not M.tabIsOut(t.key) then return say(t.name .. " didn't move to its own window - sbo debug state shows why") end
     return say(t.name .. " in its own window - its right-click menu puts it back")
   end
   if not M.tabIsOut(t.key) then return say(t.name .. " is already in the Oven window") end
@@ -9966,6 +9995,9 @@ function M.debugState()
       (function() local n = 0 for _ in pairs(M.fights or {}) do n = n + 1 end return n end)(), tostring(st.enemy),
       tostring(st.position), tostring(st.state), M.live.statusAt and tostring(os.time() - M.live.statusAt) or "never"),
     "shop list " .. tostring(M.cfg.shopList ~= false) .. " · this room a shop: " .. tostring(M.isShopRoom(M.mapRoom)),
+    "", "tabs dragged / docked:", "  out: " .. (function() local t = {} for k in pairs(M.cfg.tabsOut or {}) do
+      t[#t + 1] = k .. (M.tabIsOut(k) and "" or " (not actually out)") end return #t > 0 and table.concat(t, ", ") or "none" end)(),
+    "  " .. (#(M.tabTraceLog or {}) > 0 and table.concat(M.tabTraceLog, "\n  ") or "nothing yet"),
     "", "recent setting changes:",
   }
   for _, r in ipairs(M.dbRows("SELECT t, name, value, how FROM setting_log ORDER BY id DESC LIMIT 12")) do

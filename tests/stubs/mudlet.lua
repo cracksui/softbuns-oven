@@ -81,6 +81,7 @@ Adjustable.Container.new=function(self, o)
   function t:move(x, y) if tonumber(x) then t.x0, t.y0 = x, y end end function t:resize() end
   function t:setTitle(s) t.titleText = s end function t:save() end function t:raiseAll() end
   function t:newCustomItem(n, f) t.items[n] = f end
+  t.Inside = Geyser.Container:new({ name = (o.name or "") .. "InsideContainer" }, t)
   WIDGETS = WIDGETS or {}; if o.name then WIDGETS[o.name] = t end
   return t
 end
