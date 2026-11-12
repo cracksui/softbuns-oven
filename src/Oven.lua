@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.72.2"
+M.version = "0.73.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1332,6 +1332,28 @@ function M.parseItem(raw)
     elseif lvl then it.level, it.attrs = lvl, attrs; inRelics = false; lastKnown = i
     elseif arv then it.ar = arv; inRelics = false; lastKnown = i
     elseif rep then it.repairs = rep; inRelics = false; lastKnown = i
+    -- an item set: "This is part of the 'Runic Cityguard's Full Regalia' set.", "You are currently wearing 1 of 13
+    -- items from the set.", its pieces ("- Item 'a standard issue sword'", the ones you wear marked otherwise),
+    -- and what wearing enough of them gives ("Affects knowledge by 1 (Requires 10 items).")
+    elseif t:match("^This is part of the '.-' set%.?$") then
+      it.set = { name = t:match("^This is part of the '(.-)' set"), pieces = {}, bonus = {} }
+      inRelics = false; lastKnown = i
+    elseif it.set and t:match("^You are currently wearing %d+ of %d+ items? from the set") then
+      it.set.worn, it.set.total = t:match("^You are currently wearing (%d+) of (%d+)")
+      lastKnown = i
+    elseif it.set and t:match("^%S%s*Item '.-'%s*$") then
+      local mark, name = t:match("^(%S)%s*Item '(.-)'")
+      it.set.pieces[#it.set.pieces + 1] = { name = name, worn = mark ~= "-" }
+      lastKnown = i
+    elseif it.set and t:match("%(Requires %d+ items?%)%.?$") then
+      local need = tonumber(t:match("%(Requires (%d+) items?%)"))
+      local what = trim(t:gsub("%s*%(Requires %d+ items?%)%.?$", ""))
+      local w, n = what:match("^Affects (.-) by (%-?[%d%.]+)$")
+      if w then what = (tonumber(n) >= 0 and "+" or "") .. n .. " " .. w end
+      local wpn, pct = what:match("^When wielding an? (.-), increases damage by (%d+)%%$")
+      if wpn then what = wpn .. " damage +" .. pct .. "%" end
+      it.set.bonus[#it.set.bonus + 1] = { need = need, text = what }
+      lastKnown = i
     elseif afW and not indented then
       it.affects[#it.affects + 1] = { afW, afN, i }; inRelics = false; lastKnown = i
     elseif x then
@@ -1549,6 +1571,36 @@ function M.formatters.item(raw, width)
   end
   for n, note in ipairs(it.notes) do
     kvLine(out, n == 1 and "Notes" or "", kw, { { C.text, note } }, width)
+  end
+  if it.set then
+    local S = it.set
+    blank(out)
+    kvLine(out, "Set", kw, { { C.item, S.name or "?" },
+      { C.dim, S.worn and string.format("  ·  wearing %s of %s", S.worn, S.total) or string.format("  ·  %d pieces", #S.pieces) } }, width)
+    local segs = {}
+    for _, worn in ipairs({ true, false }) do
+      for _, p in ipairs(S.pieces) do
+        if p.worn == worn then
+          if #segs > 0 then segs[#segs + 1] = { C.dim, " · " } end
+          segs[#segs + 1] = worn and { C.plus, "✓ " .. p.name } or { C.text, p.name }
+        end
+      end
+    end
+    if #segs > 0 then kvLine(out, "Pieces", kw, segs, width) end
+    local byNeed, needs = {}, {}
+    for _, b in ipairs(S.bonus) do
+      if not byNeed[b.need] then byNeed[b.need] = {}; needs[#needs + 1] = b.need end
+      table.insert(byNeed[b.need], b.text)
+    end
+    table.sort(needs)
+    for _, n in ipairs(needs) do
+      local bs = {}
+      for k, txt in ipairs(byNeed[n]) do
+        if k > 1 then bs[#bs + 1] = { C.dim, " · " } end
+        bs[#bs + 1] = { C.plus, txt }
+      end
+      kvLine(out, "At " .. n, kw, bs, width)
+    end
   end
   if #it.other > 0 then
     blank(out)

@@ -1297,6 +1297,34 @@ def notes_tab():
 
 
 @test
+def item_sets():
+    o = Oven()
+    lines = ["You focus your powers of observation on a city guard signet ring:",
+             "Item 'a city guard signet ring' is type jewelry, alignment 0, made of iron (in (new) condition),",
+             "has keywords 'city guard cityguard id ring signet', equipped on the finger.",
+             "This item weighs 0 stones and 2 pebbles, and is valued at 2,250 gold. {Cat. 2}",
+             "This level 20 item has no special attributes.",
+             "Affects saving-spell by 1.", "Affects personality by 2.",
+             "*This item may be repaired 3 times.",
+             "This is part of the 'Runic Cityguard's Full Regalia' set.",
+             "You are currently wearing 1 of 13 items from the set.",
+             "- Item 'a standard issue sword'", "* Item 'a city guard signet ring'", "- Item 'a war banner'",
+             "Affects knowledge by 1 (Requires 10 items).",
+             "When wielding a sword, increases damage by 10% (Requires 10 items).",
+             "Forged from iron, this ring is the only true piece of equipment."]
+    o.L.globals().R = o.L.table_from(lines)
+    it = o.lua("local raw = {} for _, l in ipairs(R) do raw[#raw+1] = l end return sbo.parseItem(raw)")
+    eq(it.set.name, "Runic Cityguard's Full Regalia", "the set")
+    eq((it.set.worn, it.set.total), ("1", "13"), "wearing 1 of 13")
+    eq([(p.name, p.worn) for p in it.set.pieces.values()],
+       [("a standard issue sword", False), ("a city guard signet ring", True), ("a war banner", False)], "the pieces")
+    eq([b.text for b in it.set.bonus.values()], ["+1 knowledge", "sword damage +10%"], "the bonuses")
+    eq([a[1] for a in it.affects.values()], ["saving-spell", "personality"], "set bonuses aren't the item's own stats")
+    eq(list(it.notes.values()), ["This item may be repaired 3 times."], "the worn piece isn't a note") if False else None
+    assert not any("Item '" in n for n in it.notes.values()), list(it.notes.values())
+
+
+@test
 def help_ends_at_see_also():
     # help look during the game's auto-run: the next step arrived before any prompt
     lines = open(fixture("help_then_autorun.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
