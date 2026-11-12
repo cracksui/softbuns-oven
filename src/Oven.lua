@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.61.0"
+M.version = "0.61.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8814,7 +8814,7 @@ M.CMDS = {
     { name = "mark", args = "[{name}]", desc = "bookmark this room; no name: list them",
       run = function(r) return legacy("mark " .. r) end },
     { name = "unmark", args = "{name}", desc = "remove a bookmark", run = function(r) return legacy("unmark " .. r) end },
-    { name = "highlight", args = "[{what}]", desc = "light up every room with it (a traveler's path, trainers…); nothing: clear",
+    { name = "highlight", args = "[{what}]", desc = "light up every room with it (trainers; a traveler's path; \"trainer in rune\"); nothing: clear",
       run = function(r) return M.mapHighlightAll(r) end },
     { name = "load", args = "[{file}]", desc = "load a map file (map/mm_map.dat)", run = function(r) return legacy("map load " .. r) end },
   } },
@@ -9108,26 +9108,59 @@ function M.mapHighlightAll(q)
   M.mapHighlights = {}
   q = trim(q or "")
   if q == "" then return say("map highlights cleared") end
-  local okT, targets = pcall(M.runTargets, q)
-  if not okT or type(targets) ~= "table" or #targets == 0 then return say("no rooms Oven knows with '" .. q .. "'") end
+  -- "trainer in rune": only rooms in an area whose name has "rune" in it
+  local what, area = q:match("^(.-)%s+in%s+(.+)$")
+  what = what or q
+  local okT, targets = pcall(M.runTargets, what)
+  if not okT or type(targets) ~= "table" then targets = {} end
+  if area then
+    local kept = {}
+    for _, t in ipairs(targets) do
+      local a = getRoomArea(t.id)
+      local an = a and getRoomAreaName(a) or ""
+      if an:lower():find(area:lower(), 1, true) then kept[#kept + 1] = t end
+    end
+    targets = kept
+  end
+  if #targets == 0 then return say("no rooms Oven knows with '" .. q .. "'") end
   local best = math.huge
   for _, t in ipairs(targets) do best = math.min(best, t.rank or 9) end
-  local latest, latestAt
+  local lit = {}
   for _, t in ipairs(targets) do
     if (t.rank or 9) == best then
       pcall(highlightRoom, t.id, 255, 165, 0, 255, 215, 0, 1.2, 220, 80)
       M.mapHighlights[#M.mapHighlights + 1] = t.id
-      local r = M.dbRow("SELECT MAX(last) AS last FROM room_npcs WHERE room = %s AND instr(lower(text), %s) > 0", t.id, q:lower())
-      local at = r and tonumber(r.last) or 0
-      if not latestAt or at > latestAt then latest, latestAt = t.id, at end
+      lit[#lit + 1] = t.id
     end
   end
-  if latest then
+  -- where to centre: one NPC seen in several rooms (a traveling seller) - where it was seen last;
+  -- several different matches (trainers…) - the nearest to you
+  local keys = {}
+  for _, r in ipairs(M.dbRows("SELECT DISTINCT key FROM room_npcs WHERE instr(lower(text), %s) > 0", what:lower())) do keys[#keys + 1] = r.key end
+  local centre, note
+  if #keys == 1 then
+    local r = M.dbRow("SELECT room, last FROM room_npcs WHERE key = %s ORDER BY last DESC LIMIT 1", keys[1])
+    if r then
+      centre = tonumber(r.room)
+      note = " · centred on the latest sighting, " .. M.shortDur(os.time() - (tonumber(r.last) or os.time())) .. " ago"
+    end
+  end
+  if not centre then
+    local here, nearest, steps = M.mapRoom, nil, nil
+    for _, id in ipairs(lit) do
+      local n
+      if id == here then n = 0 elseif here and getPath(here, id) then n = #speedWalkDir end
+      if n and (not steps or n < steps) then nearest, steps = id, n end
+    end
+    centre = nearest or lit[1]
+    note = steps and string.format(" · centred on the nearest, %d step%s away", steps, steps == 1 and "" or "s") or ""
+  end
+  if centre then
     if M.mapPanel and M.cfg.mapPanel then pcall(M.showMapPanel, true) end
-    pcall(M.centerOn, latest)
+    pcall(M.centerOn, centre)
   end
   say(string.format("%d room%s lit up on the map for '%s'%s  (sbo map highlight clears them)", #M.mapHighlights,
-    #M.mapHighlights == 1 and "" or "s", q, (latestAt and latestAt > 0) and (" · centred on the latest sighting, " .. M.shortDur(os.time() - latestAt) .. " ago") or ""))
+    #M.mapHighlights == 1 and "" or "s", q, note or ""))
 end
 
 -- sbo map find: a room number centres the map; otherwise NPCs, tags and rooms, nearest first

@@ -1134,7 +1134,18 @@ def traveling_sellers():
     eq(o.ev("CENTRE"), 10477, "centred on where he was last seen")
     o.lua('sbo.command("map hi")')
     eq(len(o.ev("LIT")), 0, "cleared")
+    # many different matches: centred on the nearest to you; "in {area}" narrows it
+    o.lua('''sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (900, 'tmpl', 'A Templeton trainer.', 'Trainer', 1, 99999)")
+      sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (10560, 'rune', 'A Rune trainer.', 'Trainer', 1, 1)")
+      getRoomArea = function(id) return id == 900 and 2 or 1 end
+      getRoomAreaName = function(a) return a == 2 and "Templeton" or "Towne of Rune" end
+      sbo.mapRoom = 10500
+      getPath = function(a, b) speedWalkDir = {} for i = 1, (b == 900 and 300 or 4) do speedWalkDir[i] = "e" end return true end''')
     o.lua('sbo.command("map highlight trainer")')
+    eq(sorted(o.ev("LIT").keys()), [900, 10560], "every trainer")
+    eq(o.ev("CENTRE"), 10560, "centred on the nearest, not the latest seen")
+    o.lua('sbo.command("map highlight trainer in rune")')
+    eq(sorted(o.ev("LIT").keys()), [10560], "only Rune's")
 
 
 @test

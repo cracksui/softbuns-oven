@@ -215,8 +215,8 @@ sbo map                      the map panel, centred on you
     signposts                signpost runs and where each ends
     mark [{name}]            bookmark this room; no name: list them
     unmark {name}
-    highlight [{what}]       light up every room with it (a traveler's path,
-                             trainers…) and centre on the latest; nothing: clear
+    highlight [{what}]       light up every room with it (a traveler's path, trainers…);
+                             "trainer in rune" narrows to an area; nothing: clear
     load [{file}]            load a map file
 
 sbo inspector                the Inspector tab
