@@ -982,6 +982,16 @@ def quest_login_daily_pins():
         eq(o.ev("(sbo.cfg.questPins or {})['3519']"), want, f"pinned with autopin {setting}")
         eq(o.ev("sbo.quests['3519'] and sbo.quests['3519'].name"), "Daily Quest - Feeding Hungry Mouths", "read")
         eq(o.ev("sbo.quests['3519'].total"), 1, "its one phase")
+        ph = o.ev("sbo.quests['3519'].phases[1]")
+        eq((ph.text, ph.area), ("Locate and deliver sprutter spritz [Cooking Adventurers] to a bag lady", "Towne of Rune"),
+           "the area is the last bracket; the item's bracket stays in the text")
+    # [Group] is a tag, not an area; and steps saved wrong by 0.52.0 are read again
+    p = o.ev('sbo.phaseFromText("*Defeat 5/5 of a lost demon [Rune Forest] [Group].")')
+    eq((p.text, p.area, list(p.tags.values()), p.done), ("Defeat 5/5 of a lost demon", "Rune Forest", ["Group"], True), "tags")
+    o.lua('''sbo.quests["9"] = { name = "x", phases = { { n = 1, text = "Defeat 5/5 of a lost demon", area = "Rune Forest] [Group" } } }
+      sbo.fixQuestPhases()''')
+    eq((o.ev('sbo.quests["9"].phases[1].area'), o.ev('sbo.phaseLabel(sbo.quests["9"].phases[1])')),
+       ("Rune Forest", "1. Defeat 5/5 of a lost demon · Rune Forest · Group"), "fixed on load")
 
 
 @test

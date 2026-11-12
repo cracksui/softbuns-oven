@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.52.0"
+M.version = "0.52.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2093,12 +2093,39 @@ end
 -- remembered quests: id -> { name, done, total, phases = {{n, text, area, done}}, levels, master, rewards, limit }
 M.quests = M.quests or {}
 
--- "*Defeat 5/5 of a lost demon [Rune Forest] [Group]." -> text, area, done (a leading * means done)
+-- "*Defeat 5/5 of a lost demon [Rune Forest] [Group]." -> text, area, tags, done (a leading * means done).
+-- The area is the last [bracket] (after tags like [Group]); brackets earlier in the step belong to its text:
+-- "Locate and deliver sprutter spritz [Cooking Adventurers] to a bag lady [Towne of Rune]."
+local PHASE_TAGS = { group = true }
 function M.phaseFromText(ptext)
   local isDone = ptext:sub(1, 1) == "*"
-  ptext = ptext:gsub("^%*", ""):gsub("%.$", "")
-  local text, area = ptext:match("^(.-)%s*%[(.-)%]$")
-  return { text = text or ptext, area = area, done = isDone }
+  local text = trim(ptext:gsub("^%*", ""):gsub("%.$", ""))
+  local area, tags = nil, nil
+  while true do
+    local before, last = text:match("^(.-)%s*%[([^%[%]]+)%]$")
+    if not before then break end
+    if PHASE_TAGS[last:lower()] then
+      tags = tags or {}
+      table.insert(tags, 1, last)
+      text = before
+    else
+      area, text = last, before
+      break
+    end
+  end
+  return { text = text, area = area, tags = tags, done = isDone }
+end
+
+-- steps saved by 0.52.0 and older with two brackets read as one area ("Rune Forest] [Group"): read again
+function M.fixQuestPhases()
+  for _, Q in pairs(M.quests or {}) do
+    for _, ph in ipairs(Q.phases or {}) do
+      if ph.area and ph.area:find("[%[%]]") then
+        local fresh = M.phaseFromText(ph.text .. " [" .. ph.area .. "]")
+        ph.text, ph.area, ph.tags = fresh.text, fresh.area, fresh.tags
+      end
+    end
+  end
 end
 
 function M.parseQuests(raw)
@@ -2305,6 +2332,7 @@ function M.formatters.quest(raw, width)
         local row = { mark, { C.dim, string.format("%d. ", p.n) },
                       { p.done and C.dim or (p == np and C.item or C.text), p.text } }
         if p.area then row[#row + 1] = { C.dim, "  [" .. p.area .. "]" } end
+        for _, tg in ipairs(p.tags or {}) do row[#row + 1] = { C.dim, " [" .. tg .. "]" } end
         out[#out + 1] = row
       end
     end
@@ -2384,6 +2412,12 @@ local HUD_WRAP, HUD_COLS = 60, 68
 
 -- one quest's lines (html) and their widest width in characters:
 -- the name and progress, every step still to do (the next one marked), and optionally the blurb
+-- "2. Defeat 4/5 of a lost demon · Rune Forest · Group"
+function M.phaseLabel(ph)
+  return string.format("%d. %s", ph.n, ph.text) .. (ph.area and (" · " .. ph.area) or "")
+    .. (ph.tags and (" · " .. table.concat(ph.tags, " · ")) or "")
+end
+
 local function questCardHtml(id, Q)
   local html, widest = {}, 0
   local function add(h, w) html[#html + 1] = h; widest = math.max(widest, w) end
@@ -2410,12 +2444,12 @@ local function questCardHtml(id, Q)
     for _, ph in ipairs(Q.phases) do
       if ph.done then
         -- done: stays in its place, greyed out
-        local label = string.format("%d. %s", ph.n, ph.text) .. (ph.area and (" · " .. ph.area) or "")
+        local label = M.phaseLabel(ph)
         for _, l in ipairs(hudWrap(label, HUD_WRAP, ulen(tostring(ph.n)) + 2)) do
           add("   " .. span(C.dim, l), ulen(l) + 3)
         end
       else
-        local label = string.format("%d. %s", ph.n, ph.text) .. (ph.area and (" · " .. ph.area) or "")
+        local label = M.phaseLabel(ph)
         for i, l in ipairs(hudWrap(label, HUD_WRAP, ulen(tostring(ph.n)) + 2)) do
           local mark = (i == 1) and (first and span(M.REC or C.title, " ▶ ") or "   ") or "   "
           add(mark .. span(first and C.item or C.text, l), ulen(l) + 3)
@@ -5099,7 +5133,7 @@ function M.questGoals(id, Q, goals)
         byN[n] = ph
         changed = true
       elseif fresh and ph.text and ph.text:match("^%(Hidden") then
-        ph.text, ph.area, changed = fresh.text, fresh.area, true
+        ph.text, ph.area, ph.tags, changed = fresh.text, fresh.area, fresh.tags, true
       end
       local done = g.phase_complete == true
       if (ph.done and true or false) ~= done then
@@ -9318,6 +9352,7 @@ function M.init()
   -- 0.20.5 and older saved help-page tag legends ("[Guide] - The character is...") as NPCs
   pcall(M.dbx, "DELETE FROM room_npcs WHERE substr(text, 1, 1) NOT GLOB '[A-Za-z0-9\"'']'")
   M.quests = M.cfg.quests or M.quests or {}
+  pcall(M.fixQuestPhases)
   M.handlers = {
     registerAnonymousEventHandler("sysDataSendRequest", M.onSend),
     registerAnonymousEventHandler("sysExitEvent", function() pcall(M.dbClose) end),
