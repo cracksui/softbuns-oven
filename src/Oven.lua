@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.77.1"
+M.version = "0.77.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7133,8 +7133,36 @@ function M.chatAdd(ch, plain, decho, t, who, msg)
   local muted = (M.cfg.chatMuted or {})[ch]
   local seen = M.tabOn == "chat" and M.container and (C.filter == "All" or C.filter == ch)
   if not muted and not seen then C.unread[ch] = (C.unread[ch] or 0) + 1 end
-  if M.chatConsole and (C.filter == "All" and not muted or C.filter == ch) then M.chatEcho(e) end
+  local live = M.chatLive and M.chatLive[plain]
+  if live then   -- already copied in, links and all, as it arrived (M.chatGrab)
+    M.chatLive[plain] = live > 1 and live - 1 or nil
+  elseif M.chatConsole and (C.filter == "All" and not muted or C.filter == ch) then
+    M.chatEcho(e)
+  end
   pcall(M.chatChips)
+end
+
+-- A chat line copied into the Chat tab the moment it arrives, the way Mudlet copies a line, so the
+-- game's links in it (auction bids...) still work there. (Mudlet doesn't let Oven read what a link
+-- does, so a line drawn again later - switching chips - is text and colours only.)
+function M.chatGrab(l)
+  if not M.chatConsole then return end
+  local ch = M.chatFind(l)
+  if not ch then return end
+  local C, muted = M.chat, (M.cfg.chatMuted or {})[ch]
+  if not (C.filter == "All" and not muted or C.filter == ch) then return end
+  if type(copy) ~= "function" or type(appendBuffer) ~= "function" then return end
+  local ok = pcall(function()
+    selectCurrentLine()
+    copy()
+    deselect()
+    M.chatConsole:decho("<90,90,100>" .. os.date("%H:%M") .. " ")
+    appendBuffer(M.chatConsole.name)
+  end)
+  if ok then
+    M.chatLive = M.chatLive or {}
+    M.chatLive[l] = (M.chatLive[l] or 0) + 1
+  end
 end
 
 local function chatLine(e)
@@ -7419,6 +7447,7 @@ end
 function M.onLineWork()
   local cap = M.cap
   pcall(M.observe, line)
+  pcall(M.chatGrab, line)
   pcall(M.recordLine, line, isPromptLine())
   if isPromptLine() and #M.parsePrompt(line).vals > 0 then M.lastStatusPrompt = line end
   pcall(M.noteRoomLine, line)

@@ -414,6 +414,15 @@ def chat_tab():
     assert "line-through" in o.ev("WIDGETS.ovenChatChip3.css"), "muted chip is struck through"
     o.lua('sbo.chatFilter("CLAN")')
     assert "Moss" in o.ev("WIDGETS.ovenChatConsole.text"), "a muted channel can still be read on its own"
+    # a line arriving is copied in whole (its links still work), not drawn again from its text
+    o.lua("""COPIED = nil; copy = function() COPIED = line end
+      appendBuffer = function(w) WIDGETS[w].text = WIDGETS[w].text .. "{BUF:" .. COPIED .. "}\\n" end
+      sbo.chatFilter("All")""")
+    o.feed("[AUCTION] Pip is auctioning a gnarled staff (min 500 gold).")
+    o.block(["[AUCTION] Pip is auctioning a gnarled staff (min 500 gold).", "<281hp 696sp 457st> "])
+    text = o.ev("WIDGETS.ovenChatConsole.text")
+    assert "{BUF:[AUCTION] Pip is auctioning" in text, text
+    eq(text.count("gnarled staff"), 1, "copied once, not drawn again")
     # the auction channel, however it's written
     for l in ["[AUCTION] Pip is auctioning a gnarled staff (min 500 gold).", "AUCTION: Pip bids 600 gold.",
               "Auction: the staff is sold to Wren.", "(Auction) Going once..."]:
