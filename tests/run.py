@@ -957,7 +957,7 @@ def shop_listed_on_arrival():
     eq(col, "light_sky_blue|$ the Sushi Bar", "a shop with its stock: the usual $ line")
     # not again within the hour; not in a room without a shop
     o.lua("SENT = {}; ARRIVE(1); ARRIVE(10515)")
-    eq(len(o.ev("SENT")), 0, "once an hour; none elsewhere")
+    eq(len(o.ev("SENT")), 0, "once; none elsewhere")
     # not while walking through, not when switched off
     o.lua("SENT = {}; sbo.shopTried = {}; sbo.dbx('DELETE FROM shops'); sbo.running = { name = 'rune', started = true }; ARRIVE(1); ARRIVE(10515); sbo.running = nil")
     eq(len(o.ev("SENT")), 0, "not while running past")
@@ -971,8 +971,9 @@ def shop_listed_on_arrival():
     o.lua("SAYS = {}")
     o.feed(*sushi, "<270hp 550sp 401st>")
     assert not any("shop" in m for m in o.ev("SAYS").values()), "a known shop you list yourself: no line"
-    o.lua("SAYS = {}; sbo.shopTried = {}; sbo.dbx('UPDATE shops SET last = 1'); sbo.shopCheckedRoom = nil; ARRIVE(1); ARRIVE(10515)")
-    assert any("shop updated: the Sushi Bar" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    # listed once: never again by itself, however long ago (your own lists keep it up to date)
+    o.lua("SENT = {}; sbo.shopTried = {}; sbo.dbx('UPDATE shops SET last = 1'); sbo.shopCheckedRoom = nil; ARRIVE(1); ARRIVE(10515)")
+    eq(len(o.ev("SENT")), 0, "a known shop isn't listed again")
     eq(o.ev("sbo.classify('shout hello')"), None, "shout isn't shop")
     # fighting: an enemy named just now, not a stale position
     eq(o.ev("sbo.fighting()"), False, "stale 'fighting' with no enemy")

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.57.2"
+M.version = "0.58.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6014,7 +6014,7 @@ M.addBlockReader("shop_refusal", "*", function(b)
   end
 end)
 
--- Going into a shop: Oven lists it quietly (once an hour at most), so its stock stays known. Straight
+-- Going into a shop Oven hasn't listed: it lists it quietly, once (your own lists keep it up to date). Straight
 -- away, so popping in and out works (the game answers in order, from the shop); not in shops an Oven
 -- walk or a signpost run only passes through (the walk's last room counts: it's over by then).
 -- A shop is a room whose NPC the game tags [Shop], or one you've listed before.
@@ -6052,11 +6052,11 @@ function M.shopAutoList(room, promptLine)
   if why then return M.noteAuto("shop", room, "skipped: " .. why) end
   local t = os.time()
   if M.shopTried[room] and t - M.shopTried[room] < 3600 then return M.noteAuto("shop", room, "skipped: tried in the last hour") end
-  local r = M.dbRow("SELECT last FROM shops WHERE room = %s", room)
-  if r and tonumber(r.last) and t - tonumber(r.last) < 3600 then return M.noteAuto("shop", room, "skipped: listed in the last hour") end
+  -- once per shop: after the first list, the lists you type keep it up to date
+  if M.dbRow("SELECT room FROM shops WHERE room = %s", room) then return M.noteAuto("shop", room, "skipped: already listed") end
   local no = M.dbRow("SELECT level FROM shop_refusals WHERE room = %s", room)
   if no and tonumber(no.level) == M.myLevel() then return M.noteAuto("shop", room, "skipped: won't sell to you at this level") end
-  M.shopTried[room] = t          -- once an hour, even when the game says no ("There isn't a shopkeeper present.")
+  M.shopTried[room] = t          -- not listed yet and no answer (no shopkeeper there just now): try again in an hour
   M.noteAuto("shop", room, "shop list sent")
   M.shopAsked = { room = room, at = t }
   M.quietly("shop list", "shop", function(lines)
