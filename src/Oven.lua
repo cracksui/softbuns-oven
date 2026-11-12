@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.73.0"
+M.version = "0.73.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2371,6 +2371,7 @@ function M.rememberQuests(q, bare)
   end
   if q.detail then
     local d = q.detail
+    local new = M.quests[d.id] == nil   -- no record: a quest you've just taken (finished ones are forgotten)
     local Q = M.quests[d.id] or {}
     -- taken again (you undertake / quest request): done before doesn't count
     if M.questReplyRequest and (Q.complete or Q.turnedIn) then M.questInProgress(Q, true) end
@@ -2379,7 +2380,7 @@ function M.rememberQuests(q, bare)
     Q.seen = now
     Q.active = true
     M.quests[d.id] = Q
-    if M.questReplyRequest and M.cfg.questAutoPin ~= false and not (M.cfg.questPins or {})[d.id] then
+    if (M.questReplyRequest or (new and not bare and not M.questReplyInfo)) and M.cfg.questAutoPin ~= false and not (M.cfg.questPins or {})[d.id] then
       M.questReplyRequest = nil
       M.cfg.questPins = M.cfg.questPins or {}
       M.cfg.questPins[d.id] = true
@@ -5768,6 +5769,7 @@ end
 
 function M.onSend(_, cmd)
   local own = M.ownCmds and M.ownCmds[cmd]
+  M.typedSend = not (own and own > 0)
   if own and own > 0 then M.ownCmds[cmd] = (own > 1) and (own - 1) or nil
   else M.lastUserCmdAt = now() end
   -- everything below sees what an alias stands for ("qr" -> "quest request"), recordings too
@@ -5779,6 +5781,13 @@ function M.onSend(_, cmd)
   -- (formatting off: replies are still read - quests, items, eq - just left as the game sends them)
   local kind, target = M.classify(cmd)
   if not kind then return end
+  -- still waiting on an earlier command of yours that got nothing back (its reply wasn't one Oven reads,
+  -- "quest timer"): that wait is over - otherwise this command's reply would be read as the old one's
+  if M.cap and #M.cap.plain == 0 and not M.cap.quiet and M.typedSend then
+    if M.cap.idleTimer then killTimer(M.cap.idleTimer) end
+    if M.cap.maxTimer then killTimer(M.cap.maxTimer) end
+    M.cap = nil
+  end
   if M.cap then
     M.queue[#M.queue + 1] = { kind, target, cmd }
   else
@@ -7328,6 +7337,8 @@ function M.finish(reason)
     -- the game takes short forms: "que re", "quest com"
     local isQuest = cap.kind == "quest" and v ~= nil and #v >= 3 and ("quest"):sub(1, #v) == v and #a >= 2
     M.questReplyRequest = isQuest and ("request"):sub(1, #a) == a
+    -- looking a quest up (quest info / quest status) never pins it
+    M.questReplyInfo = isQuest and (("info"):sub(1, #a) == a or ("status"):sub(1, #a) == a)
     if isQuest and ("complete"):sub(1, #a) == a and not cap.quiet then
       tempTimer(1, function()
         -- the game said so itself ("You inform ... you have completed your quest"): nothing to check

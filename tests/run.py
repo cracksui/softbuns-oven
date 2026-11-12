@@ -1662,6 +1662,26 @@ def quest_go_prefers_a_shop_with_the_item():
 
 
 @test
+def quest_request_after_quest_timer():
+    # quest timer's reply isn't one Oven reads; the request typed after it must still be read as the request
+    reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.log = function() end; sbo.notifyQuest = function() end')
+    o.lua('sbo.onSend(nil, "quest timer")')
+    o.feed("You are unburdened by any timer and may request a new quest.", "<281hp 696sp 457st>")
+    o.lua('sbo.onSend(nil, "quest req")')
+    o.feed("You ask Lord Agrippa for a quest.", *reply, "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("(sbo.cfg.questPins or {})['1547']"), True, "the request's quest is pinned")
+    # and a quest Oven had no record of, brought up some other way, is pinned too; quest info isn't
+    o.lua("sbo.cfg.questPins = {}; sbo.quests = {}")
+    o.lua('sbo.onSend(nil, "quest info 1547")')
+    o.feed(*reply, "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("(sbo.cfg.questPins or {})['1547']"), None, "looking a quest up doesn't pin it")
+
+
+@test
 def quest_steps_update():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     o = Oven()
