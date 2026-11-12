@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.71.1"
+M.version = "0.71.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -9629,6 +9629,21 @@ function M.mapPanelShow()
   if not M.cfg.mapPanel then return say("the map panel is off: sbo config map.panel on") end
   M.showMapPanel(true)
   if M.mapRoom then pcall(M.centerOn, M.mapRoom) end
+  pcall(function() M.mapPanel:raise() end)
+  -- off the screen (a smaller window than when it was placed): back into view
+  local moved = false
+  pcall(function()
+    local W, H = getMainWindowSize()
+    local x, y = M.mapPanel:get_x(), M.mapPanel:get_y()
+    local w, h = M.mapPanel:get_width(), M.mapPanel:get_height()
+    if x > W - 40 or y > H - 40 or x + w < 40 or y + h < 40 then
+      M.mapPanel:move(math.max(0, W - w - 20), 40)
+      moved = true
+    end
+  end)
+  local here = M.mapRoom
+  local nm = here and roomExists(here) and getRoomName(here) or nil
+  say("map panel" .. (nm and (" · centred on " .. nm .. " #" .. here) or "") .. (moved and " · it was off the screen, so it's moved back into view" or ""))
 end
 
 -- the window tab by any start of its name
