@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.72.0"
+M.version = "0.72.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -186,6 +186,8 @@ local SCHEMA = {
   "CREATE TABLE IF NOT EXISTS where_rooms (area TEXT, feature TEXT, room INTEGER, start INTEGER, dirs TEXT, t INTEGER, PRIMARY KEY (area, feature))",
   -- your notes (the Notes tab), each with where you were when you wrote it
   "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, t INTEGER, text TEXT, room INTEGER, room_name TEXT, area TEXT)",
+  -- every setting change: when, what, and how (typed, or clicked / by Oven itself)
+  "CREATE TABLE IF NOT EXISTS setting_log (id INTEGER PRIMARY KEY, t INTEGER, name TEXT, value TEXT, how TEXT)",
   "CREATE TABLE IF NOT EXISTS signposts (room INTEGER PRIMARY KEY, sign TEXT, dests TEXT, exact INTEGER, last INTEGER)",
 }
 
@@ -9075,7 +9077,10 @@ function M.legacyCommand(args)
   if b == "on" then onoff = true elseif b == "off" then onoff = false end
   if a == "" then return M.help()
   elseif a == "help" then return M.help(b)
-  elseif a == "on" or a == "off" then M.cfg.enabled = (a == "on"); say("capturing " .. a)
+  elseif a == "on" or a == "off" then
+    M.cfg.enabled = (a == "on")
+    pcall(M.settingLogged, "formatting", a)
+    say("formatting " .. a .. (a == "off" and " - the game's text is left as it is (sbo on turns it back on)" or ""))
   elseif a == "main" and (b == "replace" or b == "keep" or b == "off") then
     M.cfg.main = (b == "off") and "keep" or b; say("main window: " .. M.cfg.main)
   elseif a == "window" and onoff ~= nil then
@@ -9692,6 +9697,12 @@ function M.windowTab(r)
   return legacy("tab " .. t.name)
 end
 
+-- a setting changed: kept with the time and how (typed by you, or a click / Oven itself)
+function M.settingLogged(name, value)
+  M.dbx("INSERT INTO setting_log (t, name, value, how) VALUES (%s, %s, %s, %s)", os.time(), name, tostring(value),
+    M.typing and "typed" or "clicked or by Oven")
+end
+
 -- sbo debug state: busy flags and recent automatic decisions, shown and written to oven_state.txt
 function M.debugState()
   local st = M.gmcpGet("char.status") or {}
@@ -9706,8 +9717,12 @@ function M.debugState()
       (function() local n = 0 for _ in pairs(M.fights or {}) do n = n + 1 end return n end)(), tostring(st.enemy),
       tostring(st.position), tostring(st.state), M.live.statusAt and tostring(os.time() - M.live.statusAt) or "never"),
     "shop list " .. tostring(M.cfg.shopList ~= false) .. " · this room a shop: " .. tostring(M.isShopRoom(M.mapRoom)),
-    "", "recent automatic decisions:",
+    "", "recent setting changes:",
   }
+  for _, r in ipairs(M.dbRows("SELECT t, name, value, how FROM setting_log ORDER BY id DESC LIMIT 12")) do
+    lines[#lines + 1] = string.format("  %s  %s = %s  (%s)", os.date("%m-%d %H:%M:%S", tonumber(r.t) or 0), r.name, r.value, r.how)
+  end
+  for _, l in ipairs({ "", "recent automatic decisions:" }) do lines[#lines + 1] = l end
   for _, n in ipairs(M.autoNotes or {}) do lines[#lines + 1] = "  " .. n end
   local f = io.open(getMudletHomeDir() .. "/oven_state.txt", "w")
   if f then f:write(table.concat(lines, "\n"), "\n"); f:close() end
@@ -9966,6 +9981,7 @@ function M.config(r)
   end
   if v == "default" then v = "" end
   s[5](v)
+  if s[1] ~= "formatting" then pcall(M.settingLogged, s[1], v ~= "" and v or "default") end   -- (formatting logs itself)
   M.saveSettings()
 end
 

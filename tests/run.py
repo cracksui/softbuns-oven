@@ -896,6 +896,10 @@ def command_tree():
     eq(o.ev("sbo.cfg.questHudOpacity"), 80, "config q.op 80")
     says("set eq.stats of")
     eq(o.ev("sbo.cfg.eqStats"), False, "set eq.stats of(f)")
+    eq([(r["name"], r["value"], r["how"]) for r in o.rows("SELECT name, value, how FROM setting_log ORDER BY id DESC LIMIT 1")],
+       [("eq.stats", "off", "typed")], "setting changes are logged, with how")
+    says("off"); says("on")
+    eq([r["value"] for r in o.rows("SELECT value FROM setting_log WHERE name = 'formatting' ORDER BY id")], ["off", "on"], "formatting too")
     assert "could be" in says("co"), "co: compare or config"
     assert "could be" in says("g"), "g: go or (0.51's) gear"
     assert "bar.session is" in says("config b.s"), "matched part by part: b.s = bar.session"
