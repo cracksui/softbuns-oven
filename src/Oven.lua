@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.55.2"
+M.version = "0.55.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -402,6 +402,12 @@ local function trim(s) s = s:gsub("^%s+", ""); s = s:gsub("%s+$", ""); return s 
 -- print an Oven line in the main window: a line break first only when the last line
 -- already has text on it (a prompt, say), so there's never an empty line before it
 function M.log(text)
+  -- while a game line is being handled, a message waits until it's done: printing moves the cursor,
+  -- and the prompt bar's deleteLine() would then delete the message instead of the prompt
+  if M.inLine then
+    tempTimer(0, function() M.log(text) end)
+    return
+  end
   local cur = ""
   pcall(function() moveCursorEnd("main"); cur = getCurrentLine("main") or "" end)
   cecho("main", ((cur ~= "") and "\n" or "") .. text .. "\n")
@@ -6438,7 +6444,15 @@ function M.gmcpDump()
   return names
 end
 
+-- every game line: the work is in onLineWork; while it runs, Oven's own messages wait (see M.log)
 function M.onLine()
+  M.inLine = true
+  local ok, err = pcall(M.onLineWork)
+  M.inLine = false
+  if not ok then error(err, 0) end
+end
+
+function M.onLineWork()
   local cap = M.cap
   pcall(M.observe, line)
   pcall(M.recordLine, line, isPromptLine())

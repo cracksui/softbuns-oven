@@ -1298,6 +1298,25 @@ def in_game_rule():
 
 
 @test
+def messages_survive_the_bar():
+    # Mudlet deletes the line the cursor is on: a message printed while the prompt is handled was
+    # deleted along with the prompt (the bar takes it). Messages wait until the line is done.
+    sushi = open(fixture("shop_list.txt"), encoding="utf-8").read().split("\n---\n")[0].split("\n")
+    o = Oven()
+    o.lua("""sbo.cfg.promptPattern = "<%d+hp"; sbo.cfg.bar = true
+      sbo.bar = setmetatable({}, { __index = function() return function() end end })
+      SHOWN = {}
+      cecho = function(w, t) if t == nil then t = w end SHOWN[#SHOWN + 1] = t end
+      deleteLine = function() table.remove(SHOWN) end
+      sbo.mapRoom = 10515""")
+    o.lua('sbo.onSend(nil, "sh li")')
+    o.feed(*sushi, "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    shown = "".join(o.ev("SHOWN").values())
+    assert "new shop: the Sushi Bar" in shown, f"the message was deleted with the prompt: {shown[-300:]}"
+
+
+@test
 def quest_target_colours():
     o = Oven(before='''gmcp = { char = { quests = { q52 = { goals = { { phase_number = 1, room_target = 10733 } } } } } }
       roomExists = function() return true end; getRoomName = function(id) return ({ [10733] = "The Entrance to Rune Prison", [77] = "The Edible Loaf" })[id] end
