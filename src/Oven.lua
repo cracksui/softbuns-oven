@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.58.1"
+M.version = "0.59.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -188,6 +188,7 @@ local SCHEMA_ADD = {
   "ALTER TABLE kills ADD COLUMN vnum INTEGER",    -- 0.24.0: the mob's number and race, from GMCP
   "ALTER TABLE kills ADD COLUMN race TEXT",
   "ALTER TABLE deaths ADD COLUMN killer TEXT",    -- 0.24.0: what you were fighting
+  "ALTER TABLE shop_items ADD COLUMN currency TEXT", -- 0.59.0: "gold", "rewardunits", …
 }
 
 function M.dbOpen()
@@ -5512,6 +5513,7 @@ M.shapes = {
   shop = function(t)
     return t:match("^Welcome to ") or t:match("^You have [%d,]+ gp on hand") or t:match("^No%.%s+Item Name")
       or t:match("^%d+%)%s") or t:match("^There isn't a shopkeeper") or t:match("^You can't do that")
+      or t:match("^You have [%d,]+ [%a ]+ available") or t:match("^%* Type %u")
       or (M.shopRefusal(t) ~= nil)
   end,
   quest = function(t, l, cap)
@@ -5942,10 +5944,11 @@ function M.parseShop(lines)
     if w then shop = w end
     if t:match("^No%.%s+Item Name%s+Level%s+Amount%s+Cost") then header = true
     elseif header then
-      local no, name, level, amount, cost = t:match("^(%d+)%)%s+(.-)%s%s+(%d+)%s+(.-)%s+%[%s*([%d,]+) gold%]$")
+      -- the price in gold, or another currency: "[   25 rewardunits]"
+      local no, name, level, amount, cost, cur = t:match("^(%d+)%)%s+(.-)%s%s+(%d+)%s+(.-)%s+%[%s*([%d,]+)%s+([%a][%a ]-)%s*%]$")
       if no then
         items[#items + 1] = { no = tonumber(no), item = trim(name), level = tonumber(level), amount = trim(amount),
-                              cost = tonumber((cost:gsub(",", ""))) }
+                              cost = tonumber((cost:gsub(",", ""))), currency = trim(cur):lower() }
       end
     end
   end
@@ -5971,8 +5974,8 @@ function M.recordShop(room, shop)
   -- the stock as it is now (what's sold out or gone is dropped from this shop's list)
   M.dbx("DELETE FROM shop_items WHERE room = %s", room)
   for _, it in ipairs(shop.items) do
-    M.dbx("INSERT OR REPLACE INTO shop_items (room, no, item, level, amount, cost, last) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-      room, it.no, it.item, it.level, it.amount, it.cost, t)
+    M.dbx("INSERT OR REPLACE INTO shop_items (room, no, item, level, amount, cost, last, currency) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+      room, it.no, it.item, it.level, it.amount, it.cost, t, it.currency or "gold")
   end
 end
 
@@ -6111,15 +6114,17 @@ function M.shopLines(width, q)
     out[#out + 1] = { { C.dim, "sbo map shops {item}: who sells it" } }
     return out, links
   end
-  local rows = M.dbRows([[SELECT i.room, i.item, i.level, i.amount, i.cost, s.name FROM shop_items i
-    LEFT JOIN shops s ON s.room = i.room WHERE instr(lower(i.item), %s) > 0 ORDER BY i.cost, i.item LIMIT 60]], q)
+  local rows = M.dbRows([[SELECT i.room, i.item, i.level, i.amount, i.cost, ifnull(i.currency, 'gold') AS currency, s.name
+    FROM shop_items i LEFT JOIN shops s ON s.room = i.room WHERE instr(lower(i.item), %s) > 0
+    ORDER BY (ifnull(i.currency, 'gold') <> 'gold'), ifnull(i.currency, 'gold'), i.cost, i.item LIMIT 60]], q)
   out[1] = header("map", "", width, string.format("Shops selling '%s'  (%d)", q, #rows))
   if #rows == 0 then out[#out + 1] = { { C.dim, "  no shop Oven has seen sells that" } } end
   local iw = 0
   for _, r in ipairs(rows) do iw = math.max(iw, math.min(44, ulen(r.item))) end
   for _, r in ipairs(rows) do
     local room = tonumber(r.room)
-    out[#out + 1] = { { C.item, "  " .. pad(r.item, iw + 2) }, { C.num, string.format("%11s gold", M.commaNum(tonumber(r.cost) or 0)) },
+    out[#out + 1] = { { C.item, "  " .. pad(r.item, iw + 2) }, { C.num, string.format("%11s ", M.commaNum(tonumber(r.cost) or 0)) },
+                      { C.dim, pad(r.currency or "gold", 5) },
                       { C.dim, string.format("  lvl %s  ·  %s", r.level or "?", r.amount == "No limit" and "no limit" or (tostring(r.amount) .. " left")) } }
     out[#out + 1] = { { C.dim, "    " .. (r.name or "a shop") .. " · " .. where(room) } }
     walkLink(room, "walk to " .. (r.name or "#" .. room) .. " (" .. r.item .. ")")
@@ -8239,10 +8244,10 @@ end
 
 -- a reply read quietly and handed to fn(lines): the next command of that kind
 function M.quietly(cmd, kind, fn)
-  M.quietNext = { kind = kind, fn = fn }
+  local mine = { kind = kind, fn = fn }
+  M.quietNext = mine
   M.sendOwn(cmd, false)
-  -- no reply of that kind? give up on it
-  local mine = M.quietNext
+  -- no reply of that kind? give up on it (mine is taken before sending: the reply can be picked up at once)
   tempTimer(6, function() if M.quietNext == mine then M.quietNext = nil; pcall(fn, nil) end end)
 end
 

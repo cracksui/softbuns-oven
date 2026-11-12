@@ -22,3 +22,12 @@ No.  Item Name                                    Level Amount       Cost
      1) A token for Lowangen passage                 25    No limit     [      3,625 gold]
     11) A token for passage to the Mayor's Destinat  25    No limit     [     22,500 gold]
     12) A token for passage to Irda Isle             25    No limit     [     50,000 gold]
+---
+Welcome to Van Pelt Reward Units Construction Shoppe!
+You have 0 reward units available.
+No.  Item Name                                    Level Amount       Cost
+     1) A gift voucher for 1 rewardunit              35    No limit     [          1 rewardunits]
+     4) A voucher for a Skiff ship                   30    No limit     [          2 rewardunits]
+    12) A voucher for a Super Dreadnought ship       120   No limit     [        200 rewardunits]
+    17) A voucher for placing a locker-gateway in a  10    No limit     [         54 rewardunits]
+* Type REWARDUNIT for status, and/or HELP REWARDUNIT for more information.

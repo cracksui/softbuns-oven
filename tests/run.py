@@ -822,6 +822,15 @@ def shop_lists():
     eq(o.rows("SELECT item, level, amount, cost FROM shop_items WHERE room = 10557 AND no = 13"),
        [{"item": "A potion of detect illusion", "level": 45, "amount": "No limit", "cost": 890}], "a row")
     eq(o.rows("SELECT COUNT(*) AS n FROM shop_items")[0]["n"], 13, "every item")
+    # prices in another currency (the Van Pelt reward shop)
+    o.lua('sbo.mapRoom = 10789; sbo.onSend(nil, "sh li")')
+    o.feed(*shops[3].split("\n"), "<270hp 550sp 401st>")
+    eq(o.rows("SELECT item, cost, currency FROM shop_items WHERE room = 10789 AND no = 4"),
+       [{"item": "A voucher for a Skiff ship", "cost": 2, "currency": "rewardunits"}], "reward units")
+    eq(o.rows("SELECT COUNT(*) AS n FROM shop_items WHERE room = 10789")[0]["n"], 4, "all of them")
+    eq(o.rows("SELECT DISTINCT currency FROM shop_items WHERE room = 10515"), [{"currency": "gold"}], "gold as before")
+    out = o.lua('local out = sbo.shopLines(80, "voucher"); local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end; return table.concat(s)')
+    assert "rewardunits" in out, out
     # stock changes: the list replaces what that shop had
     o.lua('sbo.mapRoom = 10515')
     o.feed("Welcome to the Sushi Bar!", "No.  Item Name                                    Level Amount       Cost",
@@ -1082,6 +1091,19 @@ def shop_refuses_you():
     eq(o.ev("sbo.shopRefusal(\"The wedding cleric tells you 'Sorry, but I cannot sell my wares to someone of your level of experience.'\")") is not None, True, "the cleric too")
     # a player's tell isn't a shop refusal
     eq(o.ev("sbo.shopRefusal(\"Pip tells you 'I won't sell you my sword'\")"), None, "players are one word")
+
+
+@test
+def quiet_reply_once():
+    # the reply is picked up at once: its handler runs once, not again as "no reply" later
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; NOTES = {}; send = function(c) sbo.onSend(nil, c) end')
+    o.lua('sbo.quietly("shop list", "shop", function(l) NOTES[#NOTES+1] = l and ("reply " .. #l) or "no reply" end)')
+    o.feed("There isn't a shopkeeper present.", "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq(list(o.ev("NOTES").values()), ["reply 1"], "once")
+    o.lua('NOTES = {}; send = function() end; sbo.quietly("shop list", "shop", function(l) NOTES[#NOTES+1] = l and "reply" or "no reply" end); runTimers()')
+    eq(list(o.ev("NOTES").values()), ["no reply"], "and no reply when there is none")
 
 
 @test
