@@ -946,6 +946,7 @@ def shop_listed_on_arrival():
       end
       sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (10515, 'kasan', 'Kasan stands here.', 'Shop', 1, 1)")
     """)
+    o.feed("<270hp 550sp 401st>")          # playing: a status prompt seen
     o.lua("ARRIVE(10515)")
     eq(list(o.ev("SENT").values()), ["shop list"], "listed on arrival")
     eq(o.rows("SELECT COUNT(*) AS n FROM shop_items WHERE room = 10515")[0]["n"], 5, "and saved")
@@ -971,6 +972,15 @@ def shop_listed_on_arrival():
     eq(o.ev("sbo.fighting()"), True, "an enemy, just now")
     o.lua("sbo.live.statusAt = os.time() - 120")
     eq(o.ev("sbo.fighting()"), False, "an enemy named two minutes ago and nothing since")
+    # in and straight out: both rooms' GMCP before any of their text - asked the moment it's a shop
+    o.lua("""SENT = {}; sbo.shopTried = {}; sbo.dbx('DELETE FROM shops')
+      sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (10557, 'oldman', 'An old man eyes you greedily.', 'Shop', 1, 1)")
+      local send0 = send; send = function(c) SENT[#SENT + 1] = c end
+      gmcp.room = { info = { num = "10557" } }; sbo.onRoom()
+      gmcp.room = { info = { num = "10556" } }; sbo.onRoom()
+      send = send0""")
+    eq(list(o.ev("SENT").values()), ["shop list"], "asked inside, before stepping out")
+    assert any("shop list sent" in n for n in o.ev("sbo.autoNotes").values()), "noted"
 
 
 @test

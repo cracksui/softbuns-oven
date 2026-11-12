@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.54.3"
+M.version = "0.55.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5995,16 +5995,14 @@ function M.shopAutoList(room, promptLine)
   end)   -- the shop_list reader saves it
 end
 
-M.addBlockReader("shop_auto", "*", function(b)
-  local room = M.mapRoom
-  if not b.prompt or not room or room == M.shopCheckedRoom then return end
-  M.shopCheckedRoom = room
-  local p = b.lines[#b.lines]
-  tempTimer(0.1, function()
-    local ok, err = pcall(M.shopAutoList, room, p)
-    if not ok then M.noteAuto("shop", room, "error: " .. tostring(err)) end
-  end)
-end)
+-- the moment GMCP says you're in a new room (before its text is read): popping in and out of shops
+-- quickly leaves very little time for the game to answer from inside the shop
+function M.shopOnArrive(id)
+  if not id or id == M.shopCheckedRoom then return end
+  M.shopCheckedRoom = id
+  local ok, err = pcall(M.shopAutoList, id, M.lastStatusPrompt or M.lastPromptText)
+  if not ok then M.noteAuto("shop", id, "error: " .. tostring(err)) end
+end
 
 -- sbo shops [text]: the shops Oven knows, or where to buy something (cheapest first)
 function M.shopLines(width, q)
@@ -6431,6 +6429,7 @@ function M.onLine()
   local cap = M.cap
   pcall(M.observe, line)
   pcall(M.recordLine, line, isPromptLine())
+  if isPromptLine() and #M.parsePrompt(line).vals > 0 then M.lastStatusPrompt = line end
   pcall(M.noteRoomLine, line)
   pcall(M.noteKillContext, line)
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
@@ -6763,6 +6762,7 @@ function M.onRoom()
       M.notifyWalk("stopped: ended up somewhere unexpected")
     end
   end
+  pcall(M.shopOnArrive, id)
 end
 
 -- walk notes: a line in the game text (the prompt bar has no room to spare)
@@ -8885,7 +8885,7 @@ function M.debugState()
   local lines = {
     "Oven v" .. M.version .. "  " .. os.date("%Y-%m-%d %H:%M:%S"),
     "room " .. tostring(M.mapRoom) .. " · last prompt " .. tostring(M.lastPromptText),
-    "busy: " .. tostring(M.busyWhy(M.lastPromptText) or "no"),
+    "busy: " .. tostring(M.busyWhy(M.lastStatusPrompt or M.lastPromptText) or "no"),
     string.format("walk %s · running %s · cap %s · learning %s · learnQueue %s · quietNext %s",
       tostring(M.walk ~= nil), tostring(M.running and M.running.name), tostring(M.cap and M.cap.kind),
       tostring(M.learning ~= nil), tostring(M.learnQueue and #M.learnQueue), tostring(M.quietNext and M.quietNext.kind)),
