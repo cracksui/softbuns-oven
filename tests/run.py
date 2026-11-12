@@ -823,6 +823,10 @@ def run_stops_at_a_signpost_on_the_way():
     eq(o.ev("HERE"), 255, "arrived")
     eq(o.ev("sbo.runData().ends.rune"), 250, "the end is the real end, not the junction")
     assert any("running on" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    # a junction saved as the end by an older Oven: running on corrects it
+    o.lua("sbo.runData().ends.rune = 150; HALTED = false; AT(1); SENT = {}; sbo.mapWalkTo(255); PUMP()")
+    eq(o.ev("HERE"), 255, "arrived")
+    eq(o.ev("sbo.runData().ends.rune"), 250, "the wrong end corrected")
 
 
 @test

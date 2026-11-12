@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.74.0"
+M.version = "0.74.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8326,12 +8326,13 @@ function M.runStopped(atSign)
   if R.timer then pcall(killTimer, R.timer) end
   local here = M.mapRoom
   -- stopped at a signpost on the way (a junction), the destination still far off: run on from here.
-  -- Not when it's the run's known end, nor when running again didn't move you (that's the end).
+  -- Even at the run's saved end (an older Oven saved junctions as ends): running again either moves you on
+  -- (it wasn't the end) or doesn't (it is - then it's kept as the end and the rest is walked).
   if atSign and R.started and here and R.target and here ~= R.target then
     local r = M.runData()
     local far = 0
     if roomExists(here) and roomExists(R.target) and getPath(here, R.target) then far = #speedWalkDir end
-    if here ~= r.ends[R.name] and here ~= R.lastStop and far > M.RUN_SAVES and (R.restarts or 0) < 6 then
+    if here ~= R.lastStop and far > M.RUN_SAVES and (R.restarts or 0) < 6 then
       M.notifyWalk(string.format("run %s stopped at a signpost on the way (%d steps to go) - running on", R.name, far))
       return M.runStart(R.name, R.target, { restarts = (R.restarts or 0) + 1, lastStop = here })
     end
