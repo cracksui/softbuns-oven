@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.58.0"
+M.version = "0.58.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6165,6 +6165,26 @@ M.addBlockReader("room_npcs", "room", function(b, seg)
       end
     end
   end
+end)
+
+-- a shop on your first visit: its keeper's [Shop] tag is only known once the room's text has been read,
+-- after GMCP's arrival check (which catches the shops Oven already knew). Ask now, while you're still there.
+M.addBlockReader("shop_first_visit", "room", function(b, seg)
+  local room = seg.room
+  if not room or room ~= M.mapRoom then return end
+  local tagged = false
+  for _, x in ipairs(seg.here) do
+    local tags = M.npcTags(x)
+    for _, t in ipairs(tags or {}) do if t:lower() == "shop" then tagged = true end end
+  end
+  if not tagged then return end
+  if M.dbRow("SELECT room FROM shops WHERE room = %s", room) then return end
+  if M.shopTried[room] and os.time() - M.shopTried[room] < 3600 then return end   -- asked on arrival already
+  local p = M.lastStatusPrompt or b.lines[#b.lines]
+  tempTimer(0, function()
+    local ok, err = pcall(M.shopAutoList, room, p)
+    if not ok then M.noteAuto("shop", room, "error: " .. tostring(err)) end
+  end)
 end)
 
 -- playing, not logging in: the line is your status prompt (<291hp 696sp 457st>), and GMCP says so -

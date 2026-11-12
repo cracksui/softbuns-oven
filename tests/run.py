@@ -991,6 +991,23 @@ def shop_listed_on_arrival():
       send = send0""")
     eq(list(o.ev("SENT").values()), ["shop list"], "asked inside, before stepping out")
     assert any("shop list sent" in n for n in o.ev("sbo.autoNotes").values()), "noted"
+    # a first visit: nothing known about the room until its text shows the keeper's [Shop] tag
+    o.lua("""runTimers(); SENT = {}; sbo.shopTried = {}
+      gmcp.room = { info = { num = "10690", name = "Thumper Van Pelt's Reward Emporium" } }; sbo.onRoom()
+      for _, l in ipairs({ "",
+          " Thumper Van Pelt's Reward Emporium                     -      [      -",
+          "(-------------------------------------------------)     W <---(M)---> E",
+          "                                                        -      -      -",
+          "",
+          "  All glittering gems, tokens and exotic weapons, the obsidian countertop",
+          "here is covered in riches and wealth and beautiful, beautiful money.  ",
+          "     A vast mural covers the northern wall.",
+          "*[Shop] A tree-sized ogre stares at you passively, avoiding a fight.",
+          "'You want be Legend, Pip?' Thumper Van Pelt asks. 'Or Duelist?'",
+          "",
+          "<270hp 550sp 401st>" }) do line = l; sbo.onLine() end
+      runTimers()""")
+    eq(list(o.ev("SENT").values()), ["shop list"], "asked once the keeper's tag is read")
 
 
 @test
