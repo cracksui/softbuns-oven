@@ -800,6 +800,76 @@ def shop_lists():
 
 
 @test
+def command_tree():
+    o = Oven()
+    o.lua('SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end; SENT = {}; send = function(c) SENT[#SENT+1] = c end')
+    def says(cmd, typed=True):
+        o.lua('SAYS = {}')
+        o.L.globals().CMD = cmd
+        o.lua('sbo.typedCommand(CMD)' if typed else 'sbo.command(CMD)')
+        return " | ".join(o.ev("SAYS").values())
+    # every command in the tree (and the menu, group lists, help all) runs
+    for c in ["", "help all", "help gear", "config", "config bar", "version", "stop"]:
+        says(c)
+    for e in o.ev("sbo.CMDS").values():
+        if e.subs:
+            says(e.name)
+            for sub in e.subs.values():
+                if not sub.listOnly:
+                    r = says(e.name + " " + sub.name)
+                    assert "failed" not in r, (e.name, sub.name, r)
+    # short forms
+    o.lua('sbo.cfg.barWidth = 10')
+    says("conf bar.w 12")
+    eq(o.ev("sbo.cfg.barWidth"), 12, "conf bar.w 12")
+    says("config q.op 80")
+    eq(o.ev("sbo.cfg.questHudOpacity"), 80, "config q.op 80")
+    says("set eq.stats of")
+    eq(o.ev("sbo.cfg.eqStats"), False, "set eq.stats of(f)")
+    assert "could be" in says("co"), "co: compare or config"
+    assert "could be" in says("g"), "g: gear or go"
+    assert "bar.session is" in says("config b.s"), "matched part by part: b.s = bar.session"
+    assert "could be" in says("config m.c"), "m.c: map.card or mirror.chat"
+    r = says("config eq.stats")
+    assert "eq.stats is off" in r, r
+    assert "takes" in says("config eq.slots wide")
+    # old commands still work, with a tip once a session
+    r = says("eqstats on")
+    assert "tip: that's sbo config eq.stats now" in r, r
+    eq(o.ev("sbo.cfg.eqStats"), True, "old form works")
+    assert "tip" not in says("eqstats off"), "the tip once"
+    assert "tip" not in says("kills", typed=False), "not for Oven's own calls"
+    r = says("map find road")
+    assert "places find" in r, r
+    # quest.hud
+    says("config quest.hud off")
+    eq(o.ev("sbo.cfg.questHud"), False, "quest HUD off")
+    # stop
+    o.lua('sbo.walk = { dirs = {"e"}, path = {2}, step = 1 }')
+    assert "stopped the walk" in says("stop")
+    eq(o.ev("sbo.walk"), None, "walk cancelled")
+    assert "nothing to stop" in says("st")
+    # log clear asks first
+    o.lua("sbo.dbx(\"INSERT INTO kills (t, key, name, n) VALUES (1, 'x', 'a rat', 1)\")")
+    assert "again within 30 seconds" in says("log clear kills")
+    eq(o.rows("SELECT COUNT(*) AS n FROM kills")[0]["n"], 1, "not yet")
+    says("log cl k")
+    eq(o.rows("SELECT COUNT(*) AS n FROM kills")[0]["n"], 0, "cleared on the second ask")
+    # learn: worn, then carried
+    o.lua('SENT = {}; sbo.eqNames = {}')
+    says("gear learn")
+    assert "inventory" in list(o.ev("SENT").values()), list(o.ev("SENT").values())
+    # compare against
+    o.lua('sbo.remember({ name = "a fine vest", worn = "on body", level = 1, affects = {}, raw = {} })')
+    says("gear compare against fine vest")
+    assert o.ev("sbo.pinned") is not None, "comparing against it"
+    assert "no longer comparing" in says("gear comp against")
+    eq(o.ev("sbo.pinned"), None, "stopped")
+    # version
+    assert "v" + o.ev("sbo.version") in says("version")
+
+
+@test
 def help_ends_at_see_also():
     # help look during the game's auto-run: the next step arrived before any prompt
     lines = open(fixture("help_then_autorun.txt"), encoding="utf-8").read().rstrip("\n").split("\n")

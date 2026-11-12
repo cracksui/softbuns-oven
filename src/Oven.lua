@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.50.3"
+M.version = "0.51.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2207,7 +2207,7 @@ function M.rememberQuests(q, bare)
       M.questReplyRequest = nil
       M.cfg.questPins = M.cfg.questPins or {}
       M.cfg.questPins[d.id] = true
-      M.notifyQuest((d.name or ("#" .. d.id)) .. " pinned to the quest HUD (sbo quest autopin off to stop)")
+      M.notifyQuest((d.name or ("#" .. d.id)) .. " pinned to the quest HUD (sbo config quest.autopin off to stop)")
     end
   end
   M.cfg.quests = M.quests     -- kept between sessions
@@ -2479,6 +2479,7 @@ M.questCardHtml = questCardHtml
 function M.drawQuestTracker()
   if M.questContainer then M.questContainer:hide() end   -- the framed window of 0.14.0
   local pins = M.cfg.questPins or {}
+  if M.cfg.questHud == false then pins = {} end           -- sbo config quest.hud off
   local ids = {}
   for id in pairs(pins) do ids[#ids + 1] = id end
   M.questCards = M.questCards or {}
@@ -3220,7 +3221,7 @@ function M.tabShow(key, quiet)
 end
 
 -- putting something in a tab: draw it with the tab in front, then leave it there - or, with
--- sbo tabs auto off, go back to the tab you were on and mark this one
+-- sbo config tabs.auto off, go back to the tab you were on and mark this one
 local function tabBegin(key) local prev = M.tabOn; M.tabShow(key, true); return prev end
 local function tabEnd(key, prev, asked)
   if asked or M.cfg.tabAuto ~= false or not prev or prev == key then return M.tabShow(key) end
@@ -3994,7 +3995,7 @@ function M.upgradeLines(width, all)
     local s = M.gearScore(it, w) or 0
     if not weakest[it.worn] or s < weakest[it.worn].s then weakest[it.worn] = { it = it, s = s } end
   end
-  if #wearing == 0 then out[#out + 1] = { { C.dim, "type eq and look at your gear first (sbo learn does it in one go)" } }; return out end
+  if #wearing == 0 then out[#out + 1] = { { C.dim, "type eq and look at your gear first (sbo gear learn does it in one go)" } }; return out end
   local shown = 0
   local links = {}
   M.lastUpgrades = {}
@@ -4042,10 +4043,10 @@ function M.upgradeLines(width, all)
     out[#out + 1] = { { C.dim, "everything you've looked at, anywhere · sbo upgrades for only what you carry" } }
   else
     out[#out + 1] = { { C.dim, "what you carry (as of your last i" .. (M.cfg.carried.at and (", " .. M.shortDur(os.time() - M.cfg.carried.at) .. " ago") or "")
-      .. ") and have looked at · sbo upgrades all for everything you've seen · sbo learn inv" } }
+      .. ") and have looked at · sbo upgrades all for everything you've seen · sbo gear learn carried" } }
   end
   if shown > 0 then
-    out[#out + 1] = { { C.dim, "click one below (or sbo upgrades compare <number>) for the full comparison" } }
+    out[#out + 1] = { { C.dim, "click one below (or sbo upgrades <number>) for the full comparison" } }
   end
   return out, links
 end
@@ -4080,7 +4081,7 @@ function M.buildLines(width)
   if not M.cfg.build and not c.class then
     out[#out + 1] = { { C.flag, "type score once so Oven knows your class - until then this is the balanced build" } }
   elseif not M.cfg.build and not known then
-    out[#out + 1] = { { C.flag, "Oven doesn't know the class '" .. c.class .. "' - using balanced. Pick one: sbo build melee / caster / healer / thief / tank (or help classes, and Oven learns it)" } }
+    out[#out + 1] = { { C.flag, "Oven doesn't know the class '" .. c.class .. "' - using balanced. Pick one: sbo gear build melee / caster / healer / thief / tank (or help classes, and Oven learns it)" } }
   end
   out[#out + 1] = {}
   local keys = {}
@@ -4112,7 +4113,7 @@ function M.buildLines(width)
     out[#out + 1] = {}
     for _, b in ipairs(bon) do
       out[#out + 1] = { { C.key, "  weapon bonus  " }, { C.plus, string.format("+%s%% ", b.pct) }, { C.text, b.kind .. " weapons" },
-        { C.dim, b.own and "  (your setting)" or (b.assumed and "  (your race's page names no number - assumed; sbo build set weapon:" .. b.kind .. " N)" or "  (your race's page)") } }
+        { C.dim, b.own and "  (your setting)" or (b.assumed and "  (your race's page names no number - assumed; sbo gear build set weapon:" .. b.kind .. " N)" or "  (your race's page)") } }
     end
   end
   local innate = M.innateMods()
@@ -4141,7 +4142,7 @@ function M.buildLines(width)
   for n in pairs(names) do list[#list + 1] = n end
   table.sort(list)
   out[#out + 1] = { { C.dim, "builds: " .. table.concat(list, ", ") } }
-  out[#out + 1] = { { C.dim, "sbo build NAME switches (or makes a new one) · sbo build set STAT WEIGHT · sbo build reset" } }
+  out[#out + 1] = { { C.dim, "sbo gear build NAME switches (or makes a new one) · sbo gear build set STAT WEIGHT · sbo gear build reset" } }
   return out
 end
 
@@ -4178,7 +4179,7 @@ function M.buildCommand(b)
     for k, v in pairs(cur) do copy[k] = v end
     M.cfg.builds = M.cfg.builds or {}
     M.cfg.builds[name] = copy
-    M.say("new build '" .. name .. "', starting from your current weights - sbo build set STAT WEIGHT to shape it")
+    M.say("new build '" .. name .. "', starting from your current weights - sbo gear build set STAT WEIGHT to shape it")
   else
     M.say("using the " .. name .. " build")
   end
@@ -4257,7 +4258,7 @@ function M.scoreBreakdown(out, a, b, cw, cut)
   local notes = {}
   if anyCap then notes[#notes + 1] = "¼ = already at your maximum, counts a quarter" end
   if anyBoost then notes[#notes + 1] = "↑ = your race's bonus with this kind of weapon" end
-  notes[#notes + 1] = "stats your build doesn't weigh count 0 · sbo build to see or change the weights"
+  notes[#notes + 1] = "stats your build doesn't weigh count 0 · sbo gear build to see or change the weights"
   out[#out + 1] = { { C.dim, table.concat(notes, " · ") } }
 end
 
@@ -4292,7 +4293,7 @@ function M.pin(name)
   local it = M.findItem(name or M.recent[#M.recent])
   if not it then return M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches that") end
   M.pinned = it.name; M.saveItems()
-  M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> pinned: " .. it.name .. " - items you look at next are compared against it (sbo unpin to stop)")
+  M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> pinned: " .. it.name .. " - items you look at next are compared against it (sbo gear compare against to stop)")
 end
 
 function M.compareNames(qa, qb)
@@ -4528,7 +4529,7 @@ function M.observe(l)
   end
 end
 
--- `sbo session`: a summary page in the Inspector
+-- `sbo log session`: a summary page in the Inspector
 function M.sessionLines(width)
   local S, c = M.sess, M.cfg.char or {}
   local out = { header("session", "", width, "Session  (" .. duration(os.time() - S.start) .. ")") }
@@ -4575,7 +4576,7 @@ function M.updateMaxes(raw)
     if c.class and not known and not M.cfg.build and not M.classWarned then
       M.classWarned = true
       tempTimer(0.5, function()
-        M.say("gear score: Oven doesn't know the class '" .. c.class .. "' yet, so it's using the balanced build - type help classes once, or pick one with sbo build")
+        M.say("gear score: Oven doesn't know the class '" .. c.class .. "' yet, so it's using the balanced build - type help classes once, or pick one with sbo gear build")
       end)
     end
     if sc.tnl then c.tnl = tonumber((sc.tnl:gsub(",", ""))); c.exp = tonumber((sc.exp:gsub(",", ""))) end
@@ -5329,7 +5330,7 @@ function M.start(kind, target, cmd)
     M.cap.quiet, M.cap.gag, M.cap.quietKind, M.cap.quietFn = true, true, "fn", M.quietNext.fn
     M.quietNext = nil
   elseif M.learning and kind == "item" then
-    -- sbo learn: record the item, show nothing
+    -- sbo gear learn: record the item, show nothing
     M.cap.quiet, M.cap.gag = true, true
     M.learning.started = true
   end
@@ -5474,7 +5475,7 @@ end
 -- Recorder. Game output is cut into blocks - everything up to each prompt - and each block keeps
 -- the commands that caused it and the GMCP that changed with it. The last cfg.recWindow blocks stay
 -- in memory (a sliding window); they're written to oven_record.txt only when there's a reason:
--- `sbo record save`, a death, or (later) a block Oven can't make sense of. `sbo record [minutes]`
+-- `sbo debug record save`, a death, or (later) a block Oven can't make sense of. `sbo debug record start [minutes]`
 -- writes every block as it happens instead. The file is rotated to oven_record.old.txt at 4 MB.
 M.recordFile = getMudletHomeDir() .. "/oven_record.txt"
 local REC_ROTATE = 4 * 1024 * 1024
@@ -5587,7 +5588,7 @@ function M.windowSave(reason)
   if #out == 0 then return 0 end
   local f = recOpen()
   if not f then return 0 end
-  f:write("##### saved " .. os.date("%Y-%m-%d %H:%M:%S") .. " (" .. (reason or "sbo record save") .. ") | Oven " .. M.version .. "\n")
+  f:write("##### saved " .. os.date("%Y-%m-%d %H:%M:%S") .. " (" .. (reason or "sbo debug record save") .. ") | Oven " .. M.version .. "\n")
   f:write(table.concat(out))
   f:write("##### end\n\n")
   f:close()
@@ -5599,7 +5600,7 @@ end
 function M.recordStart(minutes)
   minutes = tonumber(minutes) or 30
   -- what's in memory and not yet written goes first, so nothing before the recording is lost
-  pcall(M.windowSave, "before sbo record")
+  pcall(M.windowSave, "before sbo debug record")
   M.rec = { untilT = os.time() + minutes * 60, n = 0 }
   local f = recOpen()
   if f then
@@ -5878,7 +5879,7 @@ function M.shopLines(width, q)
       walkLink(room, "walk to " .. (r.name or "#" .. room))
     end
     out[#out + 1] = {}
-    out[#out + 1] = { { C.dim, "sbo shops {text}: where to buy something" } }
+    out[#out + 1] = { { C.dim, "sbo places shops {item}: who sells it" } }
     return out, links
   end
   local rows = M.dbRows([[SELECT i.room, i.item, i.level, i.amount, i.cost, s.name FROM shop_items i
@@ -6256,7 +6257,7 @@ function M.chatCommand(b)
   end
   local c = find(b)
   if c then M.createWindow(); M.container:show(); M.tabShow("chat"); return M.chatFilter(c) end
-  M.say("sbo chat [channel|all] · sbo chat mute|unmute <channel> · sbo chat clear · sbo chat forget <channel>")
+  M.say("sbo chat [channel|all] · sbo chat mute|unmute <channel> · sbo chat clear · sbo chat remove <channel>")
 end
 
 -- what the game sends over GMCP right now, written in full to oven_gmcp.txt
@@ -6470,7 +6471,7 @@ function M.finish(reason)
     return
   end
   if cap.quiet and cap.quietKind == "fn" then
-    -- a reply Oven asked for itself (sbo learn inv): hand it over, draw nothing
+    -- a reply Oven asked for itself (sbo gear learn carried): hand it over, draw nothing
     if reason == "prompt" and not M.cfg.bar then deleteLine() end
     local fn = cap.quietFn
     pcall(M.updateCarried, cap)
@@ -6480,7 +6481,7 @@ function M.finish(reason)
     return
   end
   if cap.quiet then
-    -- sbo learn: remember the item, draw nothing, keep the prompt out of the log too
+    -- sbo gear learn: remember the item, draw nothing, keep the prompt out of the log too
     if reason == "prompt" and not M.cfg.bar then deleteLine() end
     local ok, it = pcall(M.parseItem, cap.plain)
     local good = ok and it and it.name and true or false
@@ -6774,7 +6775,7 @@ function M.roomCardLines(id)
   row({ C.dim, (areaName ~= "" and (areaName .. "  ·  ") or "") .. (#exits > 0 and ("exits " .. table.concat(exits, " ")) or "no exits mapped") })
   local okSh, shopRow = pcall(M.dbRow, "SELECT s.name, COUNT(i.item) AS n FROM shops s LEFT JOIN shop_items i ON i.room = s.room WHERE s.room = %s GROUP BY s.room", id)
   if okSh and shopRow then
-    row({ C.slot, "$ " .. (shopRow.name or "a shop") }, { C.dim, "  " .. tostring(shopRow.n) .. " items (sbo shops)" })
+    row({ C.slot, "$ " .. (shopRow.name or "a shop") }, { C.dim, "  " .. tostring(shopRow.n) .. " items (sbo places shops)" })
   end
   local okS, sp = pcall(M.signAt, id)
   if okS and sp then
@@ -6784,7 +6785,7 @@ function M.roomCardLines(id)
     row({ C.slot, "⊕ signpost here" }, { C.dim, #d > 0 and ("  run " .. table.concat(d, " · ")) or "  (not read yet)" })
   end
   local marks = M.marksOf(id)
-  if #marks > 0 then row({ C.slot, "★ " .. table.concat(marks, ", ") }, { C.dim, "  (sbo run " .. marks[1] .. ")" }) end
+  if #marks > 0 then row({ C.slot, "★ " .. table.concat(marks, ", ") }, { C.dim, "  (sbo go " .. marks[1] .. ")" }) end
   local any = false
   local MAX = 8
   -- notable NPCs ([QUEST] [SHOP] [TRAINER] ...)
@@ -6828,7 +6829,7 @@ function M.roomCardLines(id)
     any = true
     row(); row({ M.REC or C.title, "▸ Picked up here" })
     for i, f in ipairs(order) do
-      if i > MAX then row({ C.dim, string.format("  … and %d more (sbo loot #%d)", #order - MAX, id) }); break end
+      if i > MAX then row({ C.dim, string.format("  … and %d more (sbo log loot #%d)", #order - MAX, id) }); break end
       local who = splitTags(f.who)
       table.sort(who)
       row({ C.num, string.format("  %3d× ", f.count) }, { C.item, f.item },
@@ -6845,7 +6846,7 @@ function M.roomCardLines(id)
       row({ C.text, "  " .. (d.level and ("at level " .. d.level) or "level unknown") .. (d.total and (" (total " .. d.total .. ")") or "") },
           { C.dim, "  " .. ago(d.t) })
     end
-    row({ C.dim, "  what happened: sbo deaths" })
+    row({ C.dim, "  what happened: sbo log deaths" })
   end
   if not any then row(); row({ C.dim, "nothing recorded here yet" }) end
   row(); row({ C.dim, "double-click the room to walk there · click this card to close" })
@@ -7166,7 +7167,7 @@ end
 -- map search: rooms whose name contains the text (rooms in your current area first)
 function M.mapFind(q)
   q = trim(q or "")
-  if q == "" then return say("usage: sbo map find <part of a room name>") end
+  if q == "" then return say("usage: sbo places find <part of a room name>") end
   local ok, found = pcall(searchRoom, q)
   if not ok or type(found) ~= "table" then return say("map search isn't available (is a map loaded?)") end
   local here = M.mapRoom and roomExists(M.mapRoom) and getRoomArea(M.mapRoom)
@@ -7236,7 +7237,7 @@ end
 ---------------------------------------------------------------------------
 -- Signpost runs: "run <name>" in the wilds runs you along the roads, signpost to signpost, to a town
 -- (run rune, run towerofart). Oven learns the names from signposts you look at and where each run
--- ends from the runs you make; walks (sbo run, double-clicking the map) then use a run when it saves
+-- ends from the runs you make; walks (sbo go, double-clicking the map) then use a run when it saves
 -- a long walk: walk to the wilds, run, walk the rest.
 ---------------------------------------------------------------------------
 M.RUN_COST = 25    -- a run counted as this many steps (quick, but it costs stamina and can be cut short)
@@ -7293,7 +7294,7 @@ function M.noteSignpost(sign)
   end
   if new > 0 then
     M.saveSettings()
-    say(string.format("%d new signpost run%s (run <name> in the wilds) - sbo signposts lists them", new, new == 1 and "" or "s"))
+    say(string.format("%d new signpost run%s (run <name> in the wilds) - sbo places signposts lists them", new, new == 1 and "" or "s"))
   end
 end
 
@@ -7370,7 +7371,7 @@ function M.runStopped(atSign)
   if not R.target then return end
   if here == R.target then return M.notifyWalk("arrived") end
   if atSign then return M.mapWalkTo(R.target, true) end   -- the rest on foot
-  M.notifyWalk("stopped: the run was cut short" .. (here and (" at #" .. here) or "") .. " - sbo run again to go on")
+  M.notifyWalk("stopped: the run was cut short" .. (here and (" at #" .. here) or "") .. " - sbo go again to go on")
 end
 
 M.addBlockReader("signpost_runs", "*", function(b)
@@ -7477,7 +7478,7 @@ function M.runVia(plan, target, dirs)
   M.walkStep()
 end
 
--- sbo run <name> with no known end: to the nearest signpost that lists it, and run
+-- sbo go <name> with no known end: to the nearest signpost that lists it, and run
 function M.runFrom(name)
   local here = M.mapRoom
   local best
@@ -7492,7 +7493,7 @@ function M.runFrom(name)
   M.runVia(best, nil, nil)
 end
 
--- sbo signposts
+-- sbo places signposts
 function M.runList()
   local r = M.runData()
   local names = {}
@@ -7520,15 +7521,15 @@ function M.runList()
   M.viewOut(out, links)
 end
 
--- sbo run <what>: run to the nearest room that has it - an NPC tag or name ([Trainer], [Shop],
+-- sbo go <what>: run to the nearest room that has it - an NPC tag or name ([Trainer], [Shop],
 -- "cleric"), a room tag ([Library]), or failing those a room name; or a room number
--- Bookmarks: name the room you're in, then `sbo run <name>` takes you back
+-- Bookmarks: name the room you're in, then `sbo go <name>` takes you back
 function M.markRoom(name)
   name = trim(name or ""):lower()
   local id = M.currentRoom()
   if not id then return say("Oven doesn't know which room you're in yet - move one room first") end
   M.dbx("INSERT OR REPLACE INTO marks (name, room, t) VALUES (%s, %s, %s)", name, id, os.time())
-  say(string.format("bookmarked %s #%d as '%s' - sbo run %s", (roomExists(id) and getRoomName(id)) or "this room", id, name, name))
+  say(string.format("bookmarked %s #%d as '%s' - sbo go %s", (roomExists(id) and getRoomName(id)) or "this room", id, name, name))
 end
 
 function M.unmarkRoom(name)
@@ -7546,7 +7547,7 @@ end
 
 function M.listMarks()
   local rows = M.dbRows("SELECT name, room FROM marks ORDER BY name")
-  if #rows == 0 then return say("no bookmarks yet - stand somewhere and type sbo mark <name>") end
+  if #rows == 0 then return say("no bookmarks yet - stand somewhere and type sbo places mark <name>") end
   local width = M.cfg.window and M.viewCols() or 80
   local out = { header("map", "", width, string.format("Bookmarks  (%d)", #rows)) }
   local links = {}
@@ -7559,7 +7560,7 @@ function M.listMarks()
     links[#links + 1] = { "run to " .. r.name, function() M.mapRun(r.name) end }
   end
   out[#out + 1] = {}
-  out[#out + 1] = { { C.dim, "sbo run <name> to go there · sbo unmark <name> to remove one" } }
+  out[#out + 1] = { { C.dim, "sbo go <name> to go there · sbo places unmark <name> to remove one" } }
   M.viewOut(out, links)
 end
 
@@ -7642,7 +7643,7 @@ function M.mapRun(arg)
   arg = trim(arg or "")
   local all = arg:match("^all%s+(.+)$")
   local q = all or arg
-  if q == "" then return say("usage: sbo run <trainer|shop|quest|… or part of a name or room # >  (sbo run all <what> lists them)") end
+  if q == "" then return say("usage: sbo go <trainer|shop|quest|… or part of a name or room # >  (sbo places find <what> lists them)") end
   if q == "stop" then return M.command("map stop") end
   if tonumber(q) then return M.mapWalkTo(tonumber(q)) end
   local sign = not all and M.runNames()[q:lower()] and q:lower()
@@ -7651,7 +7652,7 @@ function M.mapRun(arg)
     if e and M.cfg.map and M.mapRoom and roomExists(e) then return M.mapWalkTo(e) end
     return M.runFrom(sign)
   end
-  if not M.cfg.map then return say("map following is off - sbo map on first") end
+  if not M.cfg.map then return say("map following is off - sbo config map on first") end
   local here = M.mapRoom or M.currentRoom()
   if not here or not roomExists(here) then return say("Oven doesn't know where you are on the map yet - move one room first") end
   local targets, fromNotes = M.runTargets(q)
@@ -7702,7 +7703,7 @@ function M.mapRun(arg)
   for _, t in ipairs(reach) do if t ~= best and t.steps > 0 then others = others + 1 end end
   say(string.format("running to %s · %s #%d · %d step%s%s", best.why, getRoomName(best.id) or "?", best.id,
     best.steps, best.steps == 1 and "" or "s",
-    others > 0 and string.format("  (%d other%s: sbo run all %s)", others, others == 1 and "" or "s", q) or ""))
+    others > 0 and string.format("  (%d other%s: sbo places find %s)", others, others == 1 and "" or "s", q) or ""))
   M.mapWalkTo(best.id)
 end
 
@@ -7770,7 +7771,7 @@ local function killTable(out, title, book, width, limit)
   out[#out + 1] = { { C.key, "  " .. pad("Creature", nameW + 2) .. string.format("%6s %10s   %s", "Kills", "Exp", "Last") } }
   for i, e in ipairs(rows) do
     if limit and i > limit then
-      out[#out + 1] = { { C.dim, string.format("  … and %d more (sbo kills all)", #rows - limit) } }
+      out[#out + 1] = { { C.dim, string.format("  … and %d more (sbo log kills)", #rows - limit) } }
       break
     end
     local nm = ulen(e.name) > 40 and (M.usub(e.name, 1, 39) .. "…") or e.name
@@ -7907,7 +7908,7 @@ function M.lootLines(width, q, all)
     do
       shown = shown + 1
       if shown > limit then
-        out[#out + 1] = { { C.dim, "… more: sbo loot all" .. (q ~= "" and (" " .. q) or "") } }
+        out[#out + 1] = { { C.dim, "… more: sbo log loot" .. (q ~= "" and (" " .. q) or "") } }
         break
       end
       local day = os.date("%Y-%m-%d", e.t)
@@ -7936,8 +7937,8 @@ function M.lootLines(width, q, all)
   return out, links
 end
 
--- sbo learn: look at every worn item Oven doesn't know yet (the "?" in eq), quietly.
--- sbo learn inv: the same for what you carry, and what's inside your containers.
+-- sbo gear learn: look at every worn item Oven doesn't know yet (the "?" in eq), quietly.
+-- sbo gear learn carried: the same for what you carry, and what's inside your containers.
 -- Each entry is { name, cmd, inside = container name or nil }; done() runs when the queue is empty.
 function M.learnStart(entries, what, done, silent)
   M.learnQueue, M.learnStats, M.learnDone = entries, M.learnStats or { ok = 0, fail = 0 }, done
@@ -7948,14 +7949,16 @@ end
 function M.learn(arg)
   arg = trim(arg or ""):lower()
   if arg == "inv" or arg == "inventory" or arg == "i" then return M.learnInv() end
-  if #M.eqNames == 0 then return say("type eq first, so Oven knows what you're wearing") end
+  -- then: what to do after (sbo gear learn does worn items, then carried ones)
+  local function after() local t = M.learnThen; M.learnThen = nil; if t then t() end end
+  if #M.eqNames == 0 then say("type eq first, so Oven knows what you're wearing"); return after() end
   local q, seen = {}, {}
   for _, n in ipairs(M.eqNames) do
     if not M.items[n] and not seen[n] then seen[n] = true; q[#q + 1] = { name = n } end
   end
-  if #q == 0 then return say("every item you're wearing is already known") end
+  if #q == 0 then say("every item you're wearing is already known"); return after() end
   M.learnStats = { ok = 0, fail = 0 }
-  M.learnStart(q, "worn item", function() M.learnReport(); send("eq") end)
+  M.learnStart(q, "worn item", function() M.learnReport(); send("eq"); after() end)
 end
 
 function M.learnReport(extra)
@@ -8119,152 +8122,6 @@ function M.pickupVerdict(it)
   say(string.format("picked up %s: gear score %s, +%s over your %s (sbo compare %s vs %s)", it.name, sc, d, worn.name, it.name, worn.name))
 end
 
--- the command list, grouped by what you want to do; `sbo help <section>` shows one section
-M.helpSections = {
-  { key = "start", title = "Getting started", rows = {
-    { "sbo test", "see a demo of the layouts" },
-    { "score  eq  look {item}", "just play: Oven bakes these (and i, aff, quest, prac, help…) as they arrive" },
-    { "sbo raw", "the last output exactly as the game sent it" },
-    { "sbo help {section}", "just one section: start gear quest map log bar window update" },
-  } },
-  { key = "gear", title = "Gear and items", rows = {
-    { "sbo learn", "look at worn items Oven doesn't know yet (the ? in eq)" },
-    { "sbo learn inv", "look at everything you carry Oven doesn't know yet, and inside your containers" },
-    { "sbo compare", "compare the last two items you looked at" },
-    { "sbo compare {a} vs {b}", "compare two remembered items by part of their names" },
-    { "sbo pin {name}  /  unpin", "compare everything you look at against one item (handy in shops)" },
-    { "sbo autocompare on|off", "compare each looked-at item with what you wear in that slot" },
-    { "sbo pickup look on|off", "look quietly at new items you pick up; says so when one is an upgrade" },
-    { "sbo items", "list the items Oven remembers" },
-    { "sbo upgrades [all]", "for each slot, the best item you carry that beats what you wear (all: anything you've seen)" },
-    { "sbo upgrades compare {n}", "the full comparison for upgrade number n (or click it)" },
-    { "sbo build [name]", "the weights behind the gear score; switch or make builds (set STAT WEIGHT, reset, auto)" },
-    { "", "" },
-    { "sbo eqstats on|off", "AR and affects column in eq" },
-    { "sbo empty on|off", "show empty slots in eq" },
-    { "sbo donation on|off", "show empty donation-only slots (amulet, face, aura)" },
-    { "sbo slots short|full", "short slot names (finger, neck…) or the game's full ones" },
-    { "sbo gamecolors on|off", "keep the game's own colours on item names" },
-  } },
-  { key = "quest", title = "Quests", rows = {
-    { "sbo quest pin {id|all}", "put quests on the quest HUD (or click pin under quest info)" },
-    { "sbo quest unpin {id|all}", "take them off (click a finished quest to clear it)" },
-    { "sbo quest refresh [id]", "quietly re-check pinned quests (or click the HUD)" },
-    { "sbo quest autopin on|off", "pin the quest you take with quest request (on by default)" },
-    { "sbo quest go [id]", "run to the next step of a quest (or of your first pinned quest)" },
-    { "sbo quest show|hide", "show / hide the quest HUD" },
-    { "sbo quest hud blurb on|off", "add each quest's description, which often holds hints" },
-    { "sbo quest hud left|right", "which top corner it sits in (reset: back there after dragging)" },
-    { "sbo quest hud opacity [0-100]", "how see-through it is (no number = solid)" },
-  } },
-  { key = "map", title = "Map and walking", rows = {
-    { "sbo map on|off", "follow you on the map; double-click a room to walk there" },
-    { "sbo map panel on|off", "the map in its own window, with a search box and zoom buttons" },
-    { "sbo map card on|off", "click a room: its [QUEST]/[SHOP] NPCs, enter commands, kills, loot, deaths" },
-    { "sbo map find {text}", "find rooms by name; click a result to show it or walk there" },
-    { "sbo run {what}", "run to the nearest trainer, shop, quest, boss, NPC name, or room name" },
-    { "sbo run all {what}", "every match, nearest first, to pick from" },
-    { "sbo signposts", "the signpost run names (run towerofart…) and where each ends; walks use them when it's quicker" },
-    { "sbo signposts look on|off", "look quietly at a signpost the first time you're in its room" },
-    { "sbo mark {name}", "bookmark the room you're in (sbo run name goes back; sbo mark lists them)" },
-    { "sbo unmark {name}", "remove a bookmark" },
-    { "sbo map walk {room #}", "walk to a room" },
-    { "sbo map show {room #}", "centre the map on a room" },
-    { "sbo map stop", "cancel a walk" },
-    { "sbo map load [file]", "load a map file (default: map/mm_map.dat)" },
-  } },
-  { key = "log", title = "Kills, loot and progress", rows = {
-    { "sbo shops [text]", "the shops you've listed (shop list / shop i), or which sell something, cheapest first" },
-    { "sbo kills [all]", "what you've killed, with counts and exp (reset: this session, clear: all)" },
-    { "sbo loot [text]", "what was picked up and the exact room; text searches it (all, clear)" },
-    { "sbo session [reset]", "exp gained, exp/hour, time and kills to next level" },
-    { "sbo deaths", "your last deaths: where, at what level, and the lines leading up to each" },
-  } },
-  { key = "bar", title = "Prompt bar", rows = {
-    { "sbo bar on|off", "your prompt as a bar of HP / SP / ST gauges under the text" },
-    { "sbo bar gauges|raw", "gauges, or the prompt exactly as the game sends it" },
-    { "sbo bar session on|off", "session time, kills/deaths and exp per hour on the bar" },
-    { "sbo bar session full|short", "time · k/d · xp/hr, or just xp/hr" },
-    { "sbo bar session top|bottom", "where that goes when it doesn't fit on the bar" },
-    { "sbo bar width [n]", "length of each gauge (default 10)" },
-    { "sbo bar lines [n]  /  font [n]", "bar height / font size" },
-    { "sbo bar bg [r g b]", "background colour, 0-255 each" },
-    { "sbo bar blanks on|off", "keep the blank line the game puts before each prompt" },
-  } },
-  { key = "window", title = "Windows and display", rows = {
-    { "sbo on|off", "turn formatting on / off" },
-    { "sbo main replace|keep", "formatted text in the main window, or leave the main window alone" },
-    { "sbo window on|off", "the Inspector window (drag it by its title, resize from its edges)" },
-    { "sbo helpwindow on|off", "game help pages (and this list) in a window, or on the main screen" },
-    { "sbo mirror {tab} on|off", "also show a tab's output on the main screen: inspector help log chat (sbo mirror: what's on)" },
-    { "sbo combat on|off", "with the game's combat mode mxp: a target bar above the prompt bar, a line per round, a summary per fight" },
-    { "sbo combat bar|lines on|off", "just the target bar, or just the round lines and summaries" },
-    { "sbo layout save|restore|reset", "your panels' places: saved by themselves when moved, put back after connecting" },
-    { "sbo tabs on|off", "Inspector | Help | Log | Chat as tabs in one window (off: help gets its own window)" },
-    { "sbo tab inspector|help|log|chat", "bring a tab to the front (or click it)" },
-    { "sbo tabs auto on|off", "whatever arrives brings its tab to the front (off: the tab gets a • instead)" },
-    { "sbo chat [channel|all]", "the Chat tab: channel talk, tells and says; click a chip to show one channel" },
-    { "sbo chat mute|unmute {channel}", "keep a channel out of All (or right-click its chip)" },
-    { "sbo chat clear  /  forget {channel}", "empty the Chat tab / drop a channel's chip" },
-    { "sbo font [size]", "Inspector / help window font size" },
-    { "sbo clear", "clear the Inspector's history" },
-  } },
-  { key = "update", title = "Updates and troubleshooting", rows = {
-    { "sbo update", "get the newest version, settings kept (or click the version on the bar)" },
-    { "sbo update auto on|off", "install new versions by themselves" },
-    { "sbo update force", "reinstall even if you're current" },
-    { "sbo update {file}", "install a local .mpackage file" },
-    { "sbo samples on|off", "log raw game output to oven_samples.txt (helps fix layouts)" },
-    { "sbo record save [note]", "save the last few hundred blocks of game output to oven_record.txt (just saw something odd? do this)" },
-    { "sbo record [minutes|off]", "write everything the game sends to oven_record.txt as it happens (30 min)" },
-    { "sbo record window {n}|off", "how many blocks of recent output to keep in memory (300)" },
-    { "sbo gmcp", "list what the game sends over GMCP, written in full to oven_gmcp.txt" },
-    { "sbo prompt [pattern]", "set your prompt pattern (blank = detect it automatically)" },
-  } },
-}
-
-function M.help(section)
-  section = trim(section or ""):lower()
-  local pick
-  for _, s in ipairs(M.helpSections) do
-    if section ~= "" and (s.key == section or s.title:lower():find(section, 1, true)) then pick = s; break end
-  end
-  local cmdW = 0
-  for _, s in ipairs(M.helpSections) do
-    for _, r in ipairs(s.rows) do cmdW = math.max(cmdW, ulen((r[1]:gsub("[{}]", "")))) end
-  end
-  local buf = {}
-  local function add(a) buf[#buf + 1] = a end
-  add("\n<orange>Soft Bun's Oven<reset> <dim_grey>v" .. M.version .. " by softbuns  ·  `oven` works as well as `sbo`<reset>\n")
-  if section ~= "" and not pick then add("<dim_grey>no section called '" .. section .. "' - here's everything<reset>\n") end
-  for _, s in ipairs(M.helpSections) do
-    if not pick or pick == s then
-      add("\n<turquoise>▸ " .. s.title .. "<reset>  <dim_grey>sbo help " .. s.key .. "<reset>\n")
-      for _, r in ipairs(s.rows) do
-        if r[1] == "" then add("\n")
-        else
-          -- {word} = something you fill in, shown as a grey word
-          local shown = r[1]:gsub("{([^}]*)}", "%1")
-          local cmd = r[1]:gsub("{([^}]*)}", "<light_slate_grey>%1<khaki>")
-          add("  <khaki>" .. cmd .. "<reset>" .. string.rep(" ", cmdW - ulen(shown) + 3) .. r[2] .. "\n")
-        end
-      end
-    end
-  end
-  add("\n<dim_grey>grey words: fill in your own  ·  [in brackets]: optional  ·  a|b: pick one  ·  a number left off = default<reset>\n")
-  add(string.format("<dim_grey>now: formatting %s · main %s · Inspector %s · help window %s · bar %s · map %s<reset>\n",
-    M.cfg.enabled and "on" or "off", M.cfg.main, M.cfg.window and "on" or "off", M.cfg.helpWindow and "on" or "off",
-    M.cfg.bar and "on" or "off", M.cfg.map and "on" or "off"))
-  local text = table.concat(buf)
-  if M.cfg.helpWindow then
-    local lines = {}
-    for l in (text:gsub("^\n", "") .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
-    M.helpPage(pick and ("Soft Bun's Oven: " .. pick.title) or "Soft Bun's Oven", lines, "cecho")
-    M.log("<dim_grey>[sbo] command list → help window<reset>")
-  else
-    M.log((text:gsub("^\n", ""):gsub("\n$", "")))
-  end
-end
 
 M.demo = {
   eq = {
@@ -8353,7 +8210,7 @@ function M.numArg(v, key)
   if n and n >= 0 then return n end
 end
 
-function M.command(args)
+function M.legacyCommand(args)
   args = trim(args or "")
   local a, b = args:match("^(%S*)%s*(.-)$")
   a = a:lower()
@@ -8400,7 +8257,7 @@ function M.command(args)
   elseif a == "tabs" and (b == "auto on" or b == "auto off") then
     M.cfg.tabAuto = (b == "auto on")
     say(M.cfg.tabAuto and "tabs switch by themselves: whatever arrives comes to the front"
-      or "tabs stay where you put them: a tab with something new gets a • (sbo commands like sbo kills still switch)")
+      or "tabs stay where you put them: a tab with something new gets a • (sbo commands like sbo log kills still switch)")
   elseif a == "tabs" and onoff ~= nil then
     M.cfg.tabs = onoff
     if M.container then M.applyTabs(); M.viewShow() end
@@ -8412,7 +8269,7 @@ function M.command(args)
   elseif a == "combat" and (onoff ~= nil or b:match("^bar %a+$") or b:match("^lines %a+$")) then
     local what, v = b:match("^(%a+) (%a+)$")
     if not what then what, v = "both", b end
-    if v ~= "on" and v ~= "off" then return say("sbo combat on|off · sbo combat bar on|off · sbo combat lines on|off") end
+    if v ~= "on" and v ~= "off" then return say("sbo config combat|combat.bar|combat.lines on|off") end
     if what == "bar" or what == "both" then M.cfg.combatBar = (v == "on") end
     if what == "lines" or what == "both" then M.cfg.combatLines = (v == "on") end
     if not M.cfg.combatBar then M.cbarShown = false; pcall(M.layoutBar) end
@@ -8431,15 +8288,15 @@ function M.command(args)
       M.cfg.mirror[key] = (v == "on")
       if key == "help" and v == "on" then M.cfg.helpWindow = true end
     elseif b ~= "" then
-      return say("sbo mirror inspector|help|log|chat on|off")
+      return say("sbo config mirror.inspector|help|log|chat on|off")
     end
     local m = M.cfg.mirror
     local function st(x) return x and "on" or "off" end
     say("also on the main screen - inspector " .. st(m.view) .. " · help " .. st(m.help) .. " · log " .. st(m.log)
-      .. " · chat " .. st(m.chat) .. "  (sbo mirror <tab> on|off)")
+      .. " · chat " .. st(m.chat) .. "  (sbo config mirror.<tab> on|off)")
   elseif a == "helpwindow" and b == "both" then
     M.cfg.helpWindow, M.cfg.mirror.help = true, true
-    say("help pages: in the help window and on the main screen (same as sbo mirror help on)")
+    say("help pages: in the help window and on the main screen (same as sbo config mirror.help on)")
   elseif a == "helpwindow" and onoff ~= nil then
     M.cfg.mirror.help = false
     M.cfg.helpWindow = onoff
@@ -8478,11 +8335,11 @@ function M.command(args)
       -- everything still in memory, even what was written before
       local note = trim(b:gsub("^save%s+all", ""))
       M.win.savedSeq = 0
-      local n = M.windowSave(note ~= "" and ("sbo record save all: " .. note) or "sbo record save all")
+      local n = M.windowSave(note ~= "" and ("sbo debug record save all: " .. note) or "sbo debug record save all")
       return say("saved all " .. n .. " blocks still in memory to oven_record.txt")
     elseif b:match("^save") then
       local note = trim(b:gsub("^save", ""))
-      local n = M.windowSave(note ~= "" and ("sbo record save: " .. note) or "sbo record save")
+      local n = M.windowSave(note ~= "" and ("sbo debug record save: " .. note) or "sbo debug record save")
       if n == 0 then return say("nothing new since the last save - it's all in oven_record.txt") end
       return say("saved the last " .. n .. " blocks of game output to oven_record.txt")
     elseif b:match("^window") then
@@ -8493,14 +8350,14 @@ function M.command(args)
         M.saveSettings()
       end
       return say("keeping the last " .. M.cfg.recWindow .. " blocks of game output in memory (now " .. #W.blocks
-        .. ") - sbo record save writes them out, and they're saved when you die (sbo record window N|off)")
+        .. ") - sbo debug record save writes them out, and they're saved when you die (sbo config record.window N)")
     elseif b == "" or tonumber(b) then
       local mins = tonumber(b) or 30
       M.recordStart(mins)
       return say("recording every block as it happens, with your commands and GMCP, for " .. mins
-        .. " minutes to oven_record.txt (sbo record off stops it). Passwords aren't saved.")
+        .. " minutes to oven_record.txt (sbo debug record stop stops it). Passwords aren't saved.")
     end
-    return say("sbo record save [note] | sbo record save all | sbo record [minutes] | sbo record off | sbo record window N|off")
+    return say("sbo debug record save [note] | sbo debug record save all | sbo debug record start [minutes] | sbo debug record stop | sbo config record.window N")
   elseif a == "gmcp" then
     local names = M.gmcpDump()
     if #names == 0 then return say("the game hasn't sent any GMCP yet") end
@@ -8539,7 +8396,7 @@ function M.command(args)
       M.cfg.questHudSide = val; M.cfg.questHudPos = nil; M.saveSettings(); M.drawQuestTracker(); return say("quest HUD on the " .. val)
     elseif sub == "hud" and val:match("^opacity") then
       local n = val:match("^opacity%s*(%d*)%%?$")
-      if n == nil then return say("usage: sbo quest hud opacity <0-100>  (nothing = opaque)") end
+      if n == nil then return say("usage: sbo config quest.opacity <0-100>") end
       M.cfg.questHudOpacity = (n == "") and 100 or math.max(0, math.min(100, tonumber(n)))
       M.saveSettings(); M.drawQuestTracker()
       return say("quest HUD opacity " .. M.cfg.questHudOpacity .. "%" .. (n == "" and " (default)" or ""))
@@ -8552,11 +8409,11 @@ function M.command(args)
       if not next(M.cfg.questPins or {}) then say("no quests pinned: type quest info, then click pin (or sbo quest pin <id|all>)") end
       return
     end
-    return say("usage: sbo quest pin|unpin <id|all>, sbo quest refresh [id], sbo quest show|hide")
+    return say("sbo quest pin|unpin <id|all> · sbo quest go [id] · sbo quest refresh [id]")
   elseif a == "map" then
     if b == "on" then
       M.cfg.map = true; M.saveSettings(); M.mapStart()
-      return say("map: following you by room number; double-click a room to walk there (sbo map stop cancels)")
+      return say("map: following you by room number; double-click a room to walk there (sbo stop cancels)")
     elseif b == "off" then
       M.cfg.map = false; M.saveSettings(); M.mapStop(); return say("map following and click-to-walk off")
     elseif b == "stop" then
@@ -8585,7 +8442,7 @@ function M.command(args)
       return
     end
     return say("map " .. (M.cfg.map and "on" or "off") .. (M.mapRoom and (" · you're in room " .. M.mapRoom) or "")
-      .. "  (sbo map on|off|stop|load [file])")
+      .. "  (sbo config map on|off · sbo places loadmap [file])")
   elseif a == "session" then
     if b == "reset" then M.sess = { start = os.time(), gained = 0 }; say("session counters reset"); return end
     M.logOut(M.sessionLines)
@@ -8603,7 +8460,7 @@ function M.command(args)
   elseif a == "pickup" then
     local v = trim(b or ""):lower():gsub("^look%s*", "")
     if v == "on" or v == "off" then M.cfg.pickupLook = (v == "on"); M.saveSettings() end
-    say("looking at new items you pick up: " .. (M.cfg.pickupLook and "on" or "off") .. "  (sbo pickup look on|off)")
+    say("looking at new items you pick up: " .. (M.cfg.pickupLook and "on" or "off") .. "  (sbo config gear.pickuplook on|off)")
   elseif a == "items" then
     say(#M.recent .. " remembered items (most recent last):")
     for _, n in ipairs(M.recent) do
@@ -8618,7 +8475,7 @@ function M.command(args)
     elseif sub == "raw" or sub == "gauges" then M.cfg.barMode = sub; M.drawBar(); say("prompt bar mode " .. sub)
     elseif sub == "session" and (val == "on" or val == "off") then
       M.cfg.barSession = (val == "on"); M.showSessionBar(M.cfg.barSession); M.drawBar()
-      say("session details " .. val .. (M.cfg.bar and "" or " (they show when the bar is on: sbo bar on)"))
+      say("session details " .. val .. (M.cfg.bar and "" or " (they show when the bar is on: sbo config bar on)"))
     elseif sub == "session" and (val == "full" or val == "short") then
       M.cfg.barSessionStyle = val; M.drawBar()
       say("session details: " .. (val == "short" and "just exp per hour" or "time, kills/deaths and exp per hour"))
@@ -8649,6 +8506,541 @@ function M.command(args)
     else return M.help() end
   else return M.help() end
   M.saveSettings()
+end
+
+---------------------------------------------------------------------------
+-- The sbo commands, as a tree: a few groups (gear, quest, places, log, chat, window, version,
+-- debug), go/stop/config at the top, and every setting under sbo config. Any unique start of a
+-- word works at every level ("sbo ge up" = "sbo gear upgrades"); when a start fits more than one,
+-- Oven lists them instead of guessing. The old commands (0.50 and before) still work.
+---------------------------------------------------------------------------
+local L = function(cmd) return function() return M.legacyCommand(cmd) end end
+local function legacy(cmd) return M.legacyCommand(cmd) end
+
+-- each entry: name, args (shown), desc, run(rest); a group has subs (and may have run for no sub)
+M.CMDS = {
+  { name = "go", args = "{what}", desc = "walk/run to a trainer, shop, quest, NPC, room #, bookmark",
+    run = function(r)
+      if r == "" then return say("sbo go {what}: a trainer, shop, quest, NPC name, room #, bookmark or signpost run") end
+      if r:lower() == "stop" then return M.stopAll() end
+      return M.mapRun(r)
+    end },
+  { name = "stop", desc = "stop a walk, or anything Oven is doing for you", run = function() return M.stopAll() end },
+  { name = "gear", desc = "compare items, upgrades, learning items, gear-score builds", subs = {
+    { name = "compare", args = "[{a} vs {b}]", desc = "the last two items looked at, or two by name",
+      run = function(r)
+        local rest = r:match("^against%s*(.-)$")
+        if rest then return M.compareAgainst(rest) end
+        return legacy("compare " .. r)
+      end },
+    { name = "compare against", args = "[{item}]", desc = "compare every look to one item; no item: stop", listOnly = true },
+    { name = "upgrades", args = "[all|{n}]", desc = "best upgrade per slot (all: anything seen; n: compare it)",
+      run = function(r)
+        if tonumber(r) then return legacy("upgrades compare " .. r) end
+        return legacy("upgrades " .. r)
+      end },
+    { name = "learn", args = "[worn|carried]", desc = "look at items Oven doesn't know yet (both when left off)",
+      run = function(r)
+        local w = r:lower()
+        if w ~= "" and ("worn"):sub(1, #w) == w then return M.learn("") end
+        if w ~= "" and (("carried"):sub(1, #w) == w or w == "inv") then return M.learnInv() end
+        M.learnThen = function() M.learnInv() end
+        return M.learn("")
+      end },
+    { name = "items", desc = "the items Oven remembers", run = L("items") },
+    { name = "build", args = "[{name}|set|reset|auto]", desc = "gear-score weights (set: a stat and its weight)",
+      run = function(r) return legacy("build " .. r) end },
+  } },
+  { name = "quest", desc = "the quest HUD: pin quests, go to the next step", subs = {
+    { name = "pin", args = "{id|all}", desc = "put quests on the quest HUD", run = function(r) return legacy("quest pin " .. r) end },
+    { name = "unpin", args = "{id|all}", desc = "take them off", run = function(r) return legacy("quest unpin " .. r) end },
+    { name = "go", args = "[{id}]", desc = "to the next step of a quest", run = function(r) return legacy("quest go " .. r) end },
+    { name = "refresh", args = "[{id}]", desc = "re-check pinned quests with the game", run = function(r) return legacy("quest refresh " .. r) end },
+  } },
+  { name = "places", desc = "find rooms, shops, signposts and bookmarks", subs = {
+    { name = "find", args = "{what|#}", desc = "NPCs, tags, rooms, nearest first (#: centre the map)",
+      run = function(r) return M.placesFind(r) end },
+    { name = "shops", args = "[{item}]", desc = "shops you've listed, or who sells an item",
+      run = function(r) return legacy("shops " .. r) end },
+    { name = "signposts", desc = "signpost runs and where each ends", run = function() return M.runList() end },
+    { name = "mark", args = "[{name}]", desc = "bookmark this room; no name: list them",
+      run = function(r) return legacy("mark " .. r) end },
+    { name = "unmark", args = "{name}", desc = "remove a bookmark", run = function(r) return legacy("unmark " .. r) end },
+    { name = "loadmap", args = "[{file}]", desc = "load a map file (map/mm_map.dat)", run = function(r) return legacy("map load " .. r) end },
+  } },
+  { name = "log", desc = "kills, loot, deaths and this session", subs = {
+    { name = "kills", desc = "what you've killed, with counts and exp", run = L("kills all") },
+    { name = "loot", args = "[{text}]", desc = "what was picked up and where; text searches it",
+      run = function(r) return legacy("loot all " .. r) end },
+    { name = "deaths", desc = "your last deaths, with what led up to them", run = L("deaths") },
+    { name = "session", desc = "exp per hour, time and kills to the next level", run = L("session") },
+    { name = "reset", desc = "start a fresh session (kills, exp per hour, gold)", run = L("session reset") },
+    { name = "clear", args = "{kills|loot}", desc = "wipe all-time history (asks first)", run = function(r) return M.logClear(r) end },
+  } },
+  { name = "chat", args = "[{channel}|all]", desc = "the Chat tab: one channel, or all",
+    run = function(r) return M.chatCommand(r) end, subs = {
+    { name = "mute", args = "{channel}", desc = "keep a channel out of All", run = function(r) return M.chatCommand("mute " .. r) end },
+    { name = "unmute", args = "{channel}", desc = "bring it back", run = function(r) return M.chatCommand("unmute " .. r) end },
+    { name = "remove", args = "{channel}", desc = "drop a channel's chip", run = function(r) return M.chatCommand("forget " .. r) end },
+    { name = "clear", desc = "empty the Chat tab", run = function() return M.chatCommand("clear") end },
+  } },
+  { name = "window", desc = "tabs and panels", subs = {
+    { name = "tab", args = "{inspector|help|log|chat}", desc = "bring a tab to the front", run = function(r) return M.windowTab(r) end },
+    { name = "restore", desc = "panels back where you put them", run = L("layout restore") },
+    { name = "reset", desc = "panels back to Oven's defaults", run = L("layout reset") },
+    { name = "clear", desc = "empty the Inspector's history", run = L("clear") },
+    { name = "demo", desc = "see sample layouts", run = L("test") },
+  } },
+  { name = "version", desc = "the version you have; update to the newest",
+    run = function() return M.versionInfo() end, subs = {
+    { name = "update", args = "[force|{file}]", desc = "get the newest version, settings kept (force: reinstall; or a local .mpackage)",
+      run = function(r) return M.update(r) end },
+  } },
+  { name = "debug", desc = "raw output, GMCP and recordings, for fixing things", subs = {
+    { name = "raw", desc = "the last output exactly as the game sent it", run = L("raw") },
+    { name = "gmcp", desc = "what the game sends over GMCP (written to oven_gmcp.txt)", run = L("gmcp") },
+    { name = "samples", args = "{on|off}", desc = "log raw output to oven_samples.txt", run = function(r) return legacy("samples " .. r) end },
+    { name = "record", args = "{start [minutes] | stop | save [note]}", desc = "record game output to oven_record.txt",
+      run = function(r)
+        local v, rest = r:match("^(%S*)%s*(.-)$")
+        v = v:lower()
+        if v ~= "" and ("start"):sub(1, #v) == v then return legacy("record " .. rest) end
+        if v ~= "" and ("stop"):sub(1, #v) == v and #v >= 3 then return legacy("record off") end
+        if v ~= "" and ("save"):sub(1, #v) == v and #v >= 2 then return legacy("record save " .. rest) end
+        return say("sbo debug record start [minutes] · sbo debug record stop · sbo debug record save [note]")
+      end },
+  } },
+  { name = "config", args = "[{name} {value}]", desc = "every setting with its value, grouped; or change one",
+    run = function(r) return M.config(r) end },
+  -- shortcuts (listed under the menu) and other names for things
+  { name = "compare", shortcut = "gear compare", run = function(r) return M.CMD_RUN({ "gear", "compare" }, r) end },
+  { name = "upgrades", shortcut = "gear upgrades", run = function(r) return M.CMD_RUN({ "gear", "upgrades" }, r) end },
+  { name = "set", alias = "config", run = function(r) return M.config(r) end },
+  { name = "run", alias = "go", run = function(r) return M.mapRun(r) end },
+  { name = "update", alias = "version update", run = function(r) return M.update(r) end },
+  { name = "help", alias = "", run = function(r) return M.help(r) end },
+}
+
+-- the entry a word means among siblings: an exact name, else the one name it's the start of.
+-- Aliases only by their full name. Returns entry, or nil plus the names it could be.
+local function pick(list, w)
+  w = (w or ""):lower()
+  if w == "" then return nil, {} end
+  for _, e in ipairs(list) do if e.name == w and not e.listOnly then return e end end
+  local hits = {}
+  for _, e in ipairs(list) do
+    if not e.alias and not e.listOnly and e.name:sub(1, #w) == w then hits[#hits + 1] = e end
+  end
+  if #hits == 1 then return hits[1] end
+  local names = {}
+  for _, e in ipairs(hits) do names[#names + 1] = e.name end
+  return nil, names
+end
+M.cmdPick = pick
+
+-- the shortest start of each name that only it has (shown highlighted in the lists)
+local function shortest(list, e)
+  for n = 1, #e.name do
+    local pre, ok = e.name:sub(1, n), true
+    for _, o in ipairs(list) do
+      if o ~= e and not o.alias and not o.listOnly and o.name:sub(1, n) == pre then ok = false; break end
+    end
+    if ok then return n end
+  end
+  return #e.name
+end
+M.cmdShortest = shortest
+
+-- the old commands: what each is now (a tip, once a session, when you type one)
+local OLD = {
+  on = "config formatting on", off = "config formatting off", main = "config main", samples = "debug samples",
+  prompt = "config prompt", font = "config font", clear = "window clear", raw = "debug raw", test = "window demo",
+  pin = "gear compare against {item}", unpin = "gear compare against", tabs = "config tabs / tabs.auto",
+  layout = "window restore / reset", combat = "config combat / combat.bar / combat.lines", tab = "window tab",
+  mirror = "config mirror.{tab}", helpwindow = "config help.window", slots = "config eq.slots", learn = "gear learn",
+  signposts = "places signposts", signpost = "places signposts", runs = "places signposts", build = "gear build",
+  mark = "places mark", marks = "places mark", unmark = "places unmark", record = "debug record start|stop|save",
+  gmcp = "debug gmcp", deaths = "log deaths", kills = "log kills", loot = "log loot", session = "log session / log reset",
+  shops = "places shops", shop = "places shops", gamecolors = "config eq.gamecolors", eqstats = "config eq.stats",
+  donation = "config eq.donation", empty = "config eq.empty", autocompare = "config gear.autocompare",
+  pickup = "config gear.pickuplook", items = "gear items", bar = "config bar…", quests = "quest",
+  upgrade = "gear upgrades",
+  map = function(b)
+    local w = (b:match("^(%S*)") or ""):lower()
+    if w == "find" or w == "search" then return "places find" elseif w == "walk" then return "go {#}"
+    elseif w == "show" then return "places find {#}" elseif w == "stop" then return "stop"
+    elseif w == "load" then return "places loadmap" end
+    return "config map / map.panel / map.card"
+  end,
+  quest = function(b)
+    local w = (b:match("^(%S*)") or ""):lower()
+    if w == "autopin" then return "config quest.autopin" elseif w == "hud" then return "config quest.side / quest.opacity / quest.blurb"
+    elseif w == "show" or w == "hide" then return "config quest.hud on|off" end
+  end,
+  chat = function(b) if b:match("^forget") then return "chat remove" end end,
+  window = function(b) if b == "on" or b == "off" then return "config window " .. b end end,
+  update = function(b) if b:match("^auto") then return "config update.auto" end return "version update" end,
+}
+M.OLD_COMMANDS = OLD
+
+function M.oldCommand(a, args, b)
+  local hint = OLD[a]
+  if type(hint) == "function" then hint = hint(b) end
+  if hint and M.typing then
+    M.oldTold = M.oldTold or {}
+    if not M.oldTold[a] then
+      M.oldTold[a] = true
+      say("tip: that's sbo " .. hint .. " now (the old form still works)")
+    end
+  end
+  return M.legacyCommand(args)
+end
+
+-- run the entry at path with the rest of the line
+function M.CMD_RUN(path, rest)
+  local list, e = M.CMDS, nil
+  for _, n in ipairs(path) do e = pick(list, n); list = e and e.subs or {} end
+  if e and e.run then return e.run(rest or "") end
+end
+
+function M.typedCommand(args)
+  M.typing = true
+  local ok, err = pcall(M.command, args)
+  M.typing = false
+  if not ok then say("that command failed: " .. tostring(err)) end
+end
+
+function M.command(args)
+  args = trim(args or "")
+  if args == "" then return M.menu() end
+  local a, b = args:match("^(%S+)%s*(.-)$")
+  local al = a:lower()
+  -- 1. a new command by its full name; 2. an old one; 3. the start of a new one
+  local e = nil
+  for _, x in ipairs(M.CMDS) do if x.name == al then e = x; break end end
+  if not e and OLD[al] ~= nil then return M.oldCommand(al, args, b) end
+  if not e then
+    local maybe
+    e, maybe = pick(M.CMDS, al)
+    if not e then
+      if #maybe > 0 then return M.choose("sbo " .. a, maybe, "") end
+      return say("no command '" .. a .. "' - type sbo for the list")
+    end
+  end
+  if not e.subs then return e.run(b) end
+  -- a group: its sub-command, or the group's own list
+  if b == "" then
+    if e.run and e.name ~= "chat" then return e.run("") end
+    if e.name == "chat" then return e.run("") end
+    return M.groupHelp(e)
+  end
+  local w, rest = b:match("^(%S+)%s*(.-)$")
+  local sub, maybe = pick(e.subs, w)
+  if sub then return sub.run(rest) end
+  if #maybe > 0 then return M.choose("sbo " .. e.name .. " " .. w, maybe, e.name .. " ") end
+  -- no such sub-command: the group's own (chat: a channel), or the old form (quest autopin on)
+  if e.run then return e.run(b) end
+  if OLD[e.name] ~= nil or e.name == "quest" or e.name == "window" or e.name == "chat" then
+    return M.oldCommand(e.name, args, b)
+  end
+  return M.groupHelp(e, "no '" .. w .. "' in sbo " .. e.name)
+end
+
+-- a short start fits several: say which, with links
+function M.choose(typed, names, prefix)
+  local out = {}
+  for _, n in ipairs(names) do out[#out + 1] = "sbo " .. prefix .. n end
+  say(typed .. " could be: " .. table.concat(out, " · ") .. " - type a little more")
+end
+
+-- the window tab by any start of its name
+function M.windowTab(r)
+  local tabs = { { name = "inspector" }, { name = "help" }, { name = "log" }, { name = "chat" } }
+  local t = pick(tabs, r)
+  if not t then return say("sbo window tab inspector|help|log|chat") end
+  return legacy("tab " .. t.name)
+end
+
+-- sbo stop: whatever Oven is doing for you
+function M.stopAll()
+  local what = {}
+  if M.walk or (M.running and M.running.target) then
+    M.walk = nil
+    if M.running then M.running.target = nil end
+    what[#what + 1] = "the walk"
+  end
+  if M.learnQueue or M.learnThen then
+    M.learnQueue, M.learnDone, M.learnThen = nil, nil, nil
+    what[#what + 1] = "looking at items"
+  end
+  if M.pickupPending then M.pickupPending = nil; what[#what + 1] = "looking at picked-up items" end
+  if #what == 0 then return say("nothing to stop") end
+  say("stopped " .. table.concat(what, " and ") .. (M.running and " (a signpost run goes on until it stops)" or ""))
+end
+
+-- sbo gear compare against [item]
+function M.compareAgainst(item)
+  item = trim(item or "")
+  if item ~= "" then return legacy("pin " .. item) end
+  local was = M.pinned and (M.pinned.name or M.pinned)
+  M.pinned = nil; M.saveItems()
+  say(was and ("no longer comparing against " .. tostring(was)) or "not comparing against anything (sbo gear compare against {item})")
+end
+
+-- sbo places find: a room number centres the map; otherwise NPCs, tags and rooms, nearest first
+function M.placesFind(q)
+  q = trim(q or "")
+  if q == "" then return say("sbo places find {what}: an NPC, a [tag], a room name, or a room #") end
+  if tonumber(q) then return legacy("map show " .. q) end
+  local okT, targets = pcall(M.runTargets, q)
+  if M.cfg.map and M.mapRoom and okT and type(targets) == "table" and #targets > 0 then return M.mapRun("all " .. q) end
+  return M.mapFind(q)
+end
+
+-- sbo log clear kills|loot: asks first (type it again within 30 seconds)
+function M.logClear(r)
+  local w = (r or ""):lower()
+  local what = (w ~= "" and ("kills"):sub(1, #w) == w) and "kills" or ((w ~= "" and ("loot"):sub(1, #w) == w) and "loot" or nil)
+  if not what then return say("sbo log clear kills · sbo log clear loot") end
+  local p = M.pendingClear
+  if p and p.what == what and os.time() - p.at <= 30 then
+    M.pendingClear = nil
+    return legacy(what .. " clear")
+  end
+  local n = M.dbRow("SELECT COUNT(*) AS n FROM " .. what)
+  M.pendingClear = { what = what, at = os.time() }
+  say(string.format("this wipes all %s %s ever logged - type sbo log clear %s again within 30 seconds to do it",
+    tostring(n and n.n or 0), what == "kills" and "kill rows" or "loot rows", what))
+end
+
+-- sbo version
+function M.versionInfo()
+  local st = M.updState or {}
+  local extra = ""
+  if st.state == "avail" and st.ver then extra = " · v" .. st.ver .. " is available: sbo version update" end
+  say(string.format("Soft Bun's Oven v%s · automatic updates %s%s", M.version, M.cfg.autoUpdate and "on" or "off", extra))
+end
+
+---------------------------------------------------------------------------
+-- sbo config: every setting in one place
+---------------------------------------------------------------------------
+local function onoff(v) return v and "on" or "off" end
+local BOOL = { "on", "off" }
+-- { key, group, values (list, or "number", "rgb", "text"), get(), set(v) }
+M.SETTINGS = {
+  { "formatting", "Display", BOOL, function() return onoff(M.cfg.enabled) end, function(v) legacy(v) end },
+  { "main", "Display", { "replace", "keep" }, function() return M.cfg.main end, function(v) legacy("main " .. v) end },
+  { "window", "Display", BOOL, function() return onoff(M.cfg.window) end, function(v) legacy("window " .. v) end },
+  { "help.window", "Display", BOOL, function() return onoff(M.cfg.helpWindow) end, function(v) legacy("helpwindow " .. v) end },
+  { "tabs", "Display", BOOL, function() return onoff(M.cfg.tabs) end, function(v) legacy("tabs " .. v) end },
+  { "tabs.auto", "Display", BOOL, function() return onoff(M.cfg.tabAuto ~= false) end, function(v) legacy("tabs auto " .. v) end },
+  { "mirror.inspector", "Display", BOOL, function() return onoff((M.cfg.mirror or {}).view) end, function(v) legacy("mirror inspector " .. v) end },
+  { "mirror.help", "Display", BOOL, function() return onoff((M.cfg.mirror or {}).help) end, function(v) legacy("mirror help " .. v) end },
+  { "mirror.log", "Display", BOOL, function() return onoff((M.cfg.mirror or {}).log) end, function(v) legacy("mirror log " .. v) end },
+  { "mirror.chat", "Display", BOOL, function() return onoff((M.cfg.mirror or {}).chat) end, function(v) legacy("mirror chat " .. v) end },
+  { "font", "Display", "number", function() return tostring(M.cfg.fontSize or "") end, function(v) legacy("font " .. v) end },
+  { "gear.autocompare", "Gear and eq", BOOL, function() return onoff(M.cfg.autocompare) end, function(v) legacy("autocompare " .. v) end },
+  { "gear.pickuplook", "Gear and eq", BOOL, function() return onoff(M.cfg.pickupLook) end, function(v) legacy("pickup look " .. v) end },
+  { "eq.stats", "Gear and eq", BOOL, function() return onoff(M.cfg.eqStats) end, function(v) legacy("eqstats " .. v) end },
+  { "eq.empty", "Gear and eq", BOOL, function() return onoff(M.cfg.showEmpty) end, function(v) legacy("empty " .. v) end },
+  { "eq.donation", "Gear and eq", BOOL, function() return onoff(M.cfg.showDonation) end, function(v) legacy("donation " .. v) end },
+  { "eq.slots", "Gear and eq", { "short", "full" }, function() return M.cfg.slotNames or "short" end, function(v) legacy("slots " .. v) end },
+  { "eq.gamecolors", "Gear and eq", BOOL, function() return onoff(M.cfg.gameColors) end, function(v) legacy("gamecolors " .. v) end },
+  { "quest.hud", "Quests", BOOL, function() return onoff(M.cfg.questHud ~= false) end,
+    function(v) M.cfg.questHud = (v == "on"); M.saveSettings(); M.drawQuestTracker(); say("quest HUD " .. v) end },
+  { "quest.autopin", "Quests", BOOL, function() return onoff(M.cfg.questAutoPin ~= false) end, function(v) legacy("quest autopin " .. v) end },
+  { "quest.blurb", "Quests", BOOL, function() return onoff(M.cfg.questHudBlurb) end, function(v) legacy("quest hud blurb " .. v) end },
+  { "quest.side", "Quests", { "left", "right" }, function() return M.cfg.questHudSide or "right" end, function(v) legacy("quest hud " .. v) end },
+  { "quest.opacity", "Quests", "number", function() return tostring(M.cfg.questHudOpacity or 100) end, function(v) legacy("quest hud opacity " .. v) end },
+  { "map", "Map", BOOL, function() return onoff(M.cfg.map) end, function(v) legacy("map " .. v) end },
+  { "map.panel", "Map", BOOL, function() return onoff(M.cfg.mapPanel) end, function(v) legacy("map panel " .. v) end },
+  { "map.card", "Map", BOOL, function() return onoff(M.cfg.mapCard) end, function(v) legacy("map card " .. v) end },
+  { "signposts.look", "Map", BOOL, function() return onoff(M.cfg.signLook) end, function(v) legacy("signposts look " .. v) end },
+  { "bar", "Prompt bar", BOOL, function() return onoff(M.cfg.bar) end, function(v) legacy("bar " .. v) end },
+  { "bar.mode", "Prompt bar", { "gauges", "raw" }, function() return M.cfg.barMode or "gauges" end, function(v) legacy("bar " .. v) end },
+  { "bar.session", "Prompt bar", BOOL, function() return onoff(M.cfg.barSession) end, function(v) legacy("bar session " .. v) end },
+  { "bar.session.style", "Prompt bar", { "full", "short" }, function() return M.cfg.barSessionStyle or "full" end, function(v) legacy("bar session " .. v) end },
+  { "bar.session.place", "Prompt bar", { "top", "bottom" }, function() return M.cfg.barSessionPos or "top" end, function(v) legacy("bar session " .. v) end },
+  { "bar.width", "Prompt bar", "number", function() return tostring(M.cfg.barWidth or "") end, function(v) legacy("bar width " .. v) end },
+  { "bar.lines", "Prompt bar", "number", function() return tostring(M.cfg.barLines or "") end, function(v) legacy("bar lines " .. v) end },
+  { "bar.font", "Prompt bar", "number", function() return tostring(M.cfg.barFont or "") end, function(v) legacy("bar font " .. v) end },
+  { "bar.bg", "Prompt bar", "rgb", function() local c = M.cfg.barBg or {} return table.concat({ tostring(c[1]), tostring(c[2]), tostring(c[3]) }, " ") end,
+    function(v) legacy("bar bg " .. v) end },
+  { "bar.blanks", "Prompt bar", BOOL, function() return onoff(not M.cfg.barBlank) end, function(v) legacy("bar blanks " .. v) end },
+  { "combat", "Combat", BOOL, function() return onoff(M.cfg.combatBar or M.cfg.combatLines) end, function(v) legacy("combat " .. v) end },
+  { "combat.bar", "Combat", BOOL, function() return onoff(M.cfg.combatBar) end, function(v) legacy("combat bar " .. v) end },
+  { "combat.lines", "Combat", BOOL, function() return onoff(M.cfg.combatLines) end, function(v) legacy("combat lines " .. v) end },
+  { "update.auto", "Updates and debug", BOOL, function() return onoff(M.cfg.autoUpdate) end, function(v) M.update("auto " .. v) end },
+  { "record.window", "Updates and debug", "number", function() return tostring(M.cfg.recWindow or "") end, function(v) legacy("record window " .. v) end },
+  { "prompt", "Updates and debug", "text", function() return M.cfg.promptPattern ~= "" and M.cfg.promptPattern or "(automatic)" end,
+    function(v) legacy("prompt " .. v) end },
+}
+
+-- a setting by its name or any start of each part: "bar.w" = bar.width, "q.op" = quest.opacity
+function M.settingFind(q)
+  q = (q or ""):lower()
+  for _, s in ipairs(M.SETTINGS) do if s[1] == q then return s end end
+  local qp = {}
+  for x in q:gmatch("[^%.]+") do qp[#qp + 1] = x end
+  local hits = {}
+  for _, s in ipairs(M.SETTINGS) do
+    local sp = {}
+    for x in s[1]:gmatch("[^%.]+") do sp[#sp + 1] = x end
+    if #sp == #qp then
+      local ok = true
+      for i = 1, #qp do if sp[i]:sub(1, #qp[i]) ~= qp[i] then ok = false; break end end
+      if ok then hits[#hits + 1] = s end
+    end
+  end
+  if #hits == 1 then return hits[1] end
+  return nil, hits
+end
+
+local function valuesText(s)
+  if type(s[3]) == "table" then return table.concat(s[3], "|") end
+  return ({ number = "{n}", rgb = "{r g b}", text = "{pattern}" })[s[3]] or ""
+end
+
+function M.config(r)
+  r = trim(r or "")
+  if r == "" then return M.configList() end
+  local name, v = r:match("^(%S+)%s*(.-)$")
+  local s, hits = M.settingFind(name)
+  if not s then
+    if hits and #hits > 1 then
+      local n = {}
+      for _, h in ipairs(hits) do n[#n + 1] = h[1] end
+      return say(name .. " could be: " .. table.concat(n, " · ") .. " - type a little more")
+    end
+    -- a group's start ("sbo config bar"): just those
+    return M.configList(name)
+  end
+  if v == "" then
+    return say(string.format("%s is %s  (sbo config %s %s)", s[1], s[4](), s[1], valuesText(s)))
+  end
+  if type(s[3]) == "table" then
+    local val = pick((function() local l = {} for _, x in ipairs(s[3]) do l[#l + 1] = { name = x } end return l end)(), v)
+    if not val then return say(s[1] .. " takes " .. valuesText(s)) end
+    v = val.name
+  elseif s[3] == "number" and not tonumber(v) and v ~= "default" then
+    return say(s[1] .. " takes a number (or default)")
+  end
+  if v == "default" then v = "" end
+  s[5](v)
+  M.saveSettings()
+end
+
+function M.configList(only)
+  only = only and only:lower() or nil
+  local width = M.cfg.window and M.viewCols() or columns("main")
+  local out, links = { header("help", "", width, "Settings  (sbo config {name} {value})") }, {}
+  local last
+  local kw = 0
+  for _, s in ipairs(M.SETTINGS) do kw = math.max(kw, ulen(s[1])) end
+  local shown = 0
+  for _, s in ipairs(M.SETTINGS) do
+    if not only or s[1]:sub(1, #only) == only or s[2]:lower():sub(1, #only) == only then
+      shown = shown + 1
+      if s[2] ~= last then
+        if last then out[#out + 1] = {} end
+        out[#out + 1] = { { M.REC or C.title, "▸ " .. s[2] } }
+        last = s[2]
+      end
+      local cur = s[4]()
+      out[#out + 1] = { { C.key, "  " .. pad(s[1], kw + 2) }, { (cur == "on") and C.plus or ((cur == "off") and C.dim or C.num), pad(cur, 10) },
+                        { C.dim, valuesText(s) } }
+      if s[3] == BOOL then
+        local key = s[1]
+        links[#links + 1] = { key .. " → " .. (cur == "on" and "off" or "on"), function()
+          M.config(key .. " " .. (s[4]() == "on" and "off" or "on")); M.configList(only) end }
+      end
+    end
+  end
+  if shown == 0 then return say("no setting called '" .. only .. "' - sbo config lists them all") end
+  M.viewOut(out, links)
+end
+
+---------------------------------------------------------------------------
+-- sbo (the menu), sbo {group} and sbo help
+---------------------------------------------------------------------------
+-- "gear" with its shortest start bright: <khaki>ge<dim>ar
+local function marked(list, e)
+  local n = shortest(list, e)
+  return "<khaki>" .. e.name:sub(1, n) .. "<light_slate_grey>" .. e.name:sub(n + 1) .. "<reset>"
+end
+local function argsText(a)
+  if not a or a == "" then return "" end
+  return " <light_slate_grey>" .. a:gsub("[{}]", "") .. "<reset>"
+end
+
+local function helpOut(title, lines)
+  local text = table.concat(lines, "\n")
+  if M.cfg.helpWindow then
+    M.helpPage(title, lines, "cecho")
+  else
+    M.log(text)
+  end
+end
+
+function M.menu()
+  local lines = { "", "<orange>Soft Bun's Oven<reset> <dim_grey>v" .. M.version .. "  ·  `oven` works as well as `sbo`<reset>", "" }
+  local w = 0
+  local function shownOf(e) return e.name .. ((not e.subs and e.args) and (" " .. e.args:gsub("[{}]", "")) or "") end
+  for _, e in ipairs(M.CMDS) do if not e.alias and not e.shortcut then w = math.max(w, ulen(shownOf(e))) end end
+  for _, e in ipairs(M.CMDS) do
+    if not e.alias and not e.shortcut then
+      local shown = shownOf(e)
+      lines[#lines + 1] = "  sbo " .. marked(M.CMDS, e) .. (e.subs and "" or argsText(e.args))
+        .. string.rep(" ", w - ulen(shown) + 3) .. "<dim_grey>" .. (e.desc or "") .. "<reset>"
+    end
+  end
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "<dim_grey>sbo {group} lists its commands  ·  sbo help all: everything  ·  shortcuts: sbo compare, sbo upgrades<reset>"
+  lines[#lines + 1] = "<dim_grey>any start of a word works: the bright part is enough (sbo ge up = sbo gear upgrades)<reset>"
+  helpOut("Soft Bun's Oven", lines)
+end
+
+local function groupLines(e, lines)
+  lines[#lines + 1] = "<turquoise>▸ sbo " .. e.name .. "<reset>  <dim_grey>" .. (e.desc or "") .. "<reset>"
+  if e.run and e.args then lines[#lines + 1] = "  sbo " .. e.name .. argsText(e.args) end
+  local w = 0
+  for _, s in ipairs(e.subs) do w = math.max(w, ulen(s.name .. (s.args and (" " .. s.args:gsub("[{}]", "")) or ""))) end
+  for _, s in ipairs(e.subs) do
+    local shown = s.name .. (s.args and (" " .. s.args:gsub("[{}]", "")) or "")
+    local nm = s.listOnly and ("<khaki>" .. s.name .. "<reset>") or marked(e.subs, s)
+    lines[#lines + 1] = "  sbo " .. e.name .. " " .. nm .. argsText(s.args) .. string.rep(" ", w - ulen(shown) + 3)
+      .. "<dim_grey>" .. (s.desc or "") .. "<reset>"
+  end
+end
+
+function M.groupHelp(e, note)
+  local lines = { "" }
+  if note then lines[#lines + 1] = "<dim_grey>" .. note .. "<reset>"; lines[#lines + 1] = "" end
+  groupLines(e, lines)
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "<dim_grey>grey words: fill in your own  ·  [brackets]: optional  ·  a|b: one of them  ·  the bright part is enough<reset>"
+  helpOut("sbo " .. e.name, lines)
+end
+
+function M.help(section)
+  section = trim(section or ""):lower()
+  if section == "" then return M.menu() end
+  if section == "all" then
+    local lines = { "" }
+    for _, e in ipairs(M.CMDS) do
+      if e.subs then groupLines(e, lines); lines[#lines + 1] = ""
+      elseif not e.alias and not e.shortcut then
+        lines[#lines + 1] = "<turquoise>▸ sbo " .. e.name .. "<reset>" .. argsText(e.args) .. "  <dim_grey>" .. (e.desc or "") .. "<reset>"
+        lines[#lines + 1] = ""
+      end
+    end
+    return helpOut("Soft Bun's Oven: every command", lines)
+  end
+  if section == "config" or section == "settings" then return M.configList() end
+  local e = pick(M.CMDS, section)
+  if e and e.subs then return M.groupHelp(e) end
+  if e then return M.menu() end
+  return M.menu()
 end
 
 -- Updates come from GitHub: VERSION says what's current, Oven.mpackage is the package.
@@ -8697,7 +9089,7 @@ function M.compactStatus(msg)
   v = msg:match("latest version %(v(%S+)%)")
   if v then return "ok", "✓ up to date (v" .. v .. ")" end
   v = msg:match("^v(%S+) is available")
-  if v then return "avail", "↑ v" .. v .. " available - sbo update", v end
+  if v then return "avail", "↑ v" .. v .. " available - sbo version update", v end
   if msg:find("fail") then return "err", "✗ " .. msg end
   return nil, msg
 end
@@ -8713,7 +9105,7 @@ function M.notify(msg, secs)
   end
 end
 
--- a click on the bar: on the version tag (right end) = sbo update
+-- a click on the bar: on the version tag (right end) = sbo version update
 function M.barClick(ev)
   if type(ev) ~= "table" or not ev.x or not M.bar then return end
   local font = (pcall(getFont) and getFont()) or "monospace"
@@ -8772,7 +9164,7 @@ function M.update(arg)
       M.cfg.autoUpdate = (auto == "on"); M.saveSettings(); M.startUpdatePoll()
     end
     return say("automatic updates " .. (M.cfg.autoUpdate and "on: new versions install themselves within a few minutes"
-      or "off: you're told when a new version is out (sbo update auto on to install them automatically)"))
+      or "off: you're told when a new version is out (sbo config update.auto on to install them automatically)"))
   end
   if arg ~= "" and arg ~= "force" then
     -- a local .mpackage file, for testing your own builds
@@ -8829,7 +9221,7 @@ function M.onDownload(event, file, err)
       if not newer(latest, M.version) then M.updState = { state = "ok" }; pcall(M.drawBar) end
       if newer(latest, M.version) and latest ~= M.toldAbout then
         M.toldAbout = latest
-        M.notify("v" .. latest .. " is available (you have v" .. M.version .. ") - type sbo update")
+        M.notify("v" .. latest .. " is available (you have v" .. M.version .. ") - type sbo version update")
       end
     elseif mode == "auto" and not newer(latest, M.version) then
       M.pending = nil
@@ -8986,7 +9378,7 @@ function M.init()
     M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("msdp." .. v, M.onMsdp)
   end
   M.lineTrigger = tempRegexTrigger("^", function() M.onLine() end)
-  M.alias = tempAlias("^(?:sbo|oven)(?:\\s+(.*))?$", function() M.command(matches[2]) end)
+  M.alias = tempAlias("^(?:sbo|oven)(?:\\s+(.*))?$", function() M.typedCommand(matches[2]) end)
   if M.cfg.window and M.container then
     M.container:show()
     -- an update in the middle of a session: rebuild the open window with (or without) its tabs

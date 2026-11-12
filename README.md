@@ -66,11 +66,11 @@ separate profiles, install it in each.
 
 | Type this | What happens |
 |---|---|
-| `sbo test` | Shows a demo, so you can see what the layouts look like. |
+| `sbo window demo` | Shows a demo, so you can see what the layouts look like. |
 | `score` | Your score, reorganised: level and exp-to-level first. This also teaches the prompt bar your max HP / SP / ST. |
 | `eq` | Your equipment as a table, with armor and weapon breakdowns. |
 | `look <something you wear>` | The item's stats, laid out. Do this for your worn gear once — Oven remembers it, so later items are compared against what you wear. |
-| `sbo bar on` | Moves your prompt into a fixed bar under the text, with gauges, your level and exp to level. |
+| `sbo config bar on` | Moves your prompt into a fixed bar under the text, with gauges, your level and exp to level. |
 | `sbo` | The full list of commands. |
 
 Formatted output appears in the main window **and** in a floating **Inspector** window, which shows
@@ -86,8 +86,8 @@ aliases in the game (`alias qr quest request`): Oven reads your alias list quiet
 your `alias` / `unalias` changes, so `qr` is a quest request to Oven too.
 
 Results open in the **Inspector** window, which has four tabs: **Inspector** (eq, items, score, comparisons,
-with ◀ older / newer ▶), **Help** (game help pages and `sbo`'s command list), **Log** (`sbo session`, `kills`,
-`loot`, `deaths`, with links between them) and **Chat**. Whatever arrives brings its tab to the front (`sbo tabs auto off`
+with ◀ older / newer ▶), **Help** (game help pages and `sbo`'s command list), **Log** (`sbo log session`, `kills`,
+`loot`, `deaths`, with links between them) and **Chat**. Whatever arrives brings its tab to the front (`sbo config tabs.auto off`
 leaves you where you are and marks the tab with a •) - except chat, which never takes the window from you: the tab counts what you haven't read (`Chat (3)`).
 
 **Chat** collects channel talk (`[CLAN] Name: '...'` and the channel's news, NOVICE), yells, shouts,
@@ -114,10 +114,10 @@ gets its chip the first time it speaks, and its count is what you haven't read. 
 ## Quest tracker
 
 Pin quests to an MMO-style **quest HUD** - a small translucent panel in the top corner of the game
-screen - drag it anywhere (`sbo quest hud reset` puts it back, `sbo quest hud left|right` picks the
-corner, `sbo quest hud opacity 0-100` how see-through it is): click **pin** under `quest info`
+screen - drag it anywhere (`sbo window reset` puts it back, `sbo config quest.side left|right` picks the
+corner, `sbo config quest.opacity 0-100` how see-through it is): click **pin** under `quest info`
 (or `sbo quest pin <id>` / `sbo quest pin all`, which quietly checks `quest info` and pins the unfinished quests it lists). A quest you take with `quest request` is pinned for you (`sbo quest autopin off` to stop). Each pinned quest shows its progress and its steps
-(done ones greyed out, the next one marked ▶; they update as you finish them) - `sbo quest hud blurb on` adds the quest's description, which often
+(done ones greyed out, the next one marked ▶; they update as you finish them) - `sbo config quest.blurb on` adds the quest's description, which often
 holds hints - updates whenever the game shows that quest, and re-checks quietly when you click it
 (or `sbo quest refresh`). When Oven can place the next step - an NPC it has seen, a creature you've
 killed somewhere, or a room on the map by name - the HUD shows where (green: the room the game names for that step; orange: one Oven found itself, a good guess),
@@ -131,14 +131,14 @@ in each room are kept in a database in your profile folder (`oven.db`), so nothi
 
 - **Automatic:** look at an item and it's compared with whatever you wear in that slot
   (run `eq` and look at your worn item once so Oven knows it).
-- **Pin one item:** `sbo pin <name>` (or click **pin for comparing** under an item in the
-  Inspector) — everything you look at next is compared against it. Handy in shops. `sbo unpin` stops.
+- **Pin one item:** `sbo gear compare against <name>` (or click **pin for comparing** under an item in the
+  Inspector) — everything you look at next is compared against it. Handy in shops. `sbo gear compare against` stops.
 - **Any two:** `sbo compare` compares the last two items you looked at;
   `sbo compare hook vs dagger` compares any two remembered items by part of their names.
-- `sbo items` lists what Oven remembers.
-- `sbo learn` looks at every worn item Oven doesn't know yet (the `?` in `eq`) in one go, quietly,
+- `sbo gear items` lists what Oven remembers.
+- `sbo gear learn worn` looks at every worn item Oven doesn't know yet (the `?` in `eq`) in one go, quietly,
   then shows your `eq` again with their stats filled in.
-- `sbo learn inv` does the same for everything you carry, then looks inside each container (bags,
+- `sbo gear learn carried` does the same for everything you carry, then looks inside each container (bags,
   backpacks) and at what's in them, and shows your inventory again. If the game won't let Oven look at an
   item while it's in a container, it says so after the first try and skips the rest.
 
@@ -150,13 +150,13 @@ there (`+5.5 (+31%) upgrade`), comparisons start with it and end with a **score 
 stat's points, as value × weight, for both items), and `sbo upgrades` lists, slot by slot, the
 best item you carry (your last `i`, and inside the bags you've looked in) that beats your gear - `sbo upgrades
 all` searches every item you've ever looked at, shops included. Each suggestion says what makes the difference
-(`+6 ar · −2.2 hp`); click it (or `sbo upgrades compare 2`) for the full comparison. The build starts from your class (Materia Magica's 16 classes each map to monk, melee, caster, healer,
-thief, tank or paladin - and Oven reads `help classes` to place any it doesn't know by their group); `sbo build` shows the weights, `sbo build set strength 4` changes one, `sbo build pvp`
-makes and switches to a new build, `sbo build reset` / `sbo build auto` go back. Stats already at their
-maximum in `score` (Strength 20/20) count a quarter, since more of them is mostly wasted; `sbo build` shows
+(`+6 ar · −2.2 hp`); click it (or `sbo upgrades 2`) for the full comparison. The build starts from your class (Materia Magica's 16 classes each map to monk, melee, caster, healer,
+thief, tank or paladin - and Oven reads `help classes` to place any it doesn't know by their group); `sbo gear build` shows the weights, `sbo gear build set strength 4` changes one, `sbo gear build pvp`
+makes and switches to a new build, `sbo gear build reset` / `sbo gear build auto` go back. Stats already at their
+maximum in `score` (Strength 20/20) count a quarter, since more of them is mostly wasted; `sbo gear build` shows
 where each stat stands and, once you've read your race's help page, your race's maximums. Race pages'
 weapon bonuses count too (a dwarf's +10% with bashing weapons makes a maul score higher; where a page
-names no number, 10% is assumed - `sbo build set weapon:staff 20` sets your own). Your race's built-in
+names no number, 10% is assumed - `sbo gear build set weapon:staff 20` sets your own). Your race's built-in
 weaknesses, which the game reports as you log in (a sahuagin's *maladapted*: disease resistance -25), make
 matching resistances on gear count for more.
 
@@ -169,105 +169,127 @@ target room of quest steps (`sbo quest go`), the creature you're fighting (kills
 race, deaths with what you were fighting) and your race's built-in weaknesses. With the game's `combat mode mxp` (combat text replaced by data, see `help combat`),
 Oven shows a line above the prompt bar while you fight - each target's health bar and name, and with one target
 how the fight's going - and draws one line per round in the game text (your hits and misses and theirs, out of
-reach) with a summary when the fight ends (`sbo combat bar|lines off`, or `sbo combat off` for both). What GMCP doesn't send - mail,
+reach) with a summary when the fight ends (`sbo config combat.bar off` / `combat.lines off`, or `sbo config combat off` for both). What GMCP doesn't send - mail,
 your group's lowest health, mount stamina - still comes from the prompt.
 
 ## Commands
 
+Type `sbo` for the menu. A group word on its own (`sbo gear`) lists that group's commands, and every
+setting lives under `sbo config`. Any start of a word works when only one command starts that way, like
+the game's own `que re`: `sbo ge up` is `sbo gear upgrades`, `sbo conf bar.w 12` is
+`sbo config bar.width 12`. When a start fits more than one (`sbo co`: compare or config), Oven lists
+them rather than guessing. `oven` works as well as `sbo`.
+
 ```
-sbo                       list of commands, grouped by task
-sbo help <section>        one group: start gear quest map log bar window update
-sbo test                  demo
-sbo on|off                turn formatting on / off
-sbo main replace|keep     replace the raw text in the main window, or leave it alone
-                          (keep = formatted output only in the Inspector)
-sbo window on|off         show / hide the Inspector window
-sbo layout save|restore|reset  your panels' places (Inspector, Help, Map): saved by themselves a few
-                          seconds after you move one, put back after every connect; reset = Oven's defaults
-sbo tabs on|off           Inspector | Help | Log | Chat as tabs in that window (off: help gets its own window)
-sbo tab inspector|help|log|chat  bring a tab to the front (or click it)
-sbo tabs auto on|off      whatever arrives brings its tab to the front (off: that tab gets a • instead)
-sbo chat [channel|all]    the Chat tab, showing one channel or all · mute|unmute <channel> · clear · forget <channel>
-sbo clear                 clear the Inspector's history
-sbo font [size]           Inspector / help window font size (leave the number off for the default)
-sbo raw                   reprint the last output exactly as the game sent it
-sbo compare / pin / unpin / items / autocompare on|off     gear comparison (see above)
-sbo pickup look on|off                                    look quietly at new items you pick up; says so if one is an upgrade
-sbo signposts [look on|off]                               signpost runs (run rune, run towerofart…): read from signposts, kept per room; walks use them
-sbo shops [text]                                          shops you've listed (shop list / shop i), or which sell something - cheapest first, click to walk
-sbo learn                 look at worn items Oven doesn't know yet (the ? in eq)
-sbo learn inv             the same for everything you carry, and what's inside your containers
-sbo loot [text|all]       what you and your group picked up, from where, and the exact room (sbo loot lance = search)
-sbo kills [all]           what you've killed, with counts and exp - this session and all time
-sbo deaths                your last deaths: where, at what level, and the lines leading up to each
-sbo session [reset]       exp gained, exp/hour, time and kills to next level
-sbo map on|off            follow you on the map (GMCP room number); double-click a room to walk there
-sbo map stop              cancel a walk in progress
-sbo map panel on|off      the map in its own window: room name, search box, zoom/centre buttons
-sbo map card on|off       click a room on the map panel: its [QUEST]/[SHOP]/[TRAINER] NPCs,
-                          working enter commands, kills, loot and your deaths there (on)
-sbo map find <text>       find rooms by name - click a result to show it or walk there
-sbo run <what>            run to the nearest trainer / shop / quest / boss / NPC / room name seen
-                          (sbo run all <what> lists every match, nearest first)
-sbo mark <name>           bookmark the room you're in; sbo run <name> takes you back (sbo mark = list,
-                          sbo unmark <name> removes one)
-sbo map walk <room #>     walk to a room (sbo map show <#> just centres the map on it)
-sbo map load [file]       load a map file (default: map/mm_map.dat)
-sbo gamecolors on|off     keep the game's own colours on item names
-sbo eqstats on|off        AR / affects column in eq (look at an item once to fill it in)
-sbo empty on|off          show empty slots in eq
-sbo donation on|off       show / hide empty donation-only slots (amulet, face, aura)
-sbo slots short|full      short slot names in eq tables, or the game's full ones
-sbo helpwindow on|off     game help pages (and the sbo command list) in a window, or on the main screen
-sbo mirror <tab> on|off   also show a tab's output on the main screen - inspector (on: game layouts and sbo upgrades,
-                          build, compare…), help, log, chat (on);
-                          chat off takes chat off the main screen. `sbo mirror` shows what's on
-sbo bar on|off            prompt bar
-sbo bar gauges|raw        prompt bar as gauges, or the prompt exactly as the game sends it
-sbo bar session on|off    session time, kills/deaths and exp per hour - on the bar when it fits, else their own line
-sbo bar session full|short  time · k/d · xp/hr, or just xp/hr
-sbo bar session top|bottom  where that line goes: top of the screen (default) or under the bar
-sbo bar bg [r g b]        prompt bar background colour, 0-255 each (no numbers = default)
-sbo bar blanks on|off     keep / remove the blank line before each prompt (removed by default)
-sbo bar width [n]         length of each gauge (default 10)
-sbo bar lines [n]         prompt bar height
-sbo bar font [n]          prompt bar font size (0 or no number = same as the main window)
-sbo record save [note]    save the last few hundred blocks of game output (kept in memory all the time,
-                          with your commands and GMCP) to oven_record.txt - also saved when you die
-sbo record [min|off]      write everything the game sends to oven_record.txt as it happens (30 min)
-sbo record window N|off   how many blocks of recent output to keep in memory (300)
-sbo gmcp                  list what the game sends over GMCP (written in full to oven_gmcp.txt)
-sbo update                get the newest version
-sbo update auto on|off    install new versions automatically
+sbo                          the menu
+sbo go {what}                walk/run to a trainer, shop, quest, NPC,
+                             room #, bookmark (signpost runs when quicker)
+sbo stop                     stop a walk, or anything Oven is doing for you
+
+sbo gear
+    compare [{a} vs {b}]     the last two items looked at, or two by name
+    compare against [{item}] compare every look to one item; no item: stop
+    upgrades [all|{n}]       best upgrade per slot; n: its full comparison
+    learn [worn|carried]     look at items Oven doesn't know (both if left off)
+    items                    the items Oven remembers
+    build [{name}|set|reset|auto]   gear-score weights
+
+sbo quest
+    pin {id|all}             onto the quest HUD
+    unpin {id|all}
+    go [{id}]                to the next step
+    refresh [{id}]           re-check pinned quests
+
+sbo places
+    find {what|#}            NPCs, tags, rooms, nearest first (#: centre the map)
+    shops [{item}]           shops you've listed, or who sells an item
+    signposts                signpost runs and where each ends
+    mark [{name}]            bookmark this room; no name: list them
+    unmark {name}
+    loadmap [{file}]         load a map file
+
+sbo log
+    kills                    what you've killed, counts and exp
+    loot [{text}]            pickups and where; text searches
+    deaths                   recent deaths, with what led up to them
+    session                  exp/hour, time and kills to the next level
+    reset                    start a fresh session
+    clear kills|loot         wipe all-time history (asks first)
+
+sbo chat [{channel}|all]     the Chat tab
+    mute / unmute {channel}  keep a channel out of All
+    remove {channel}         drop a channel's chip
+    clear                    empty the Chat tab
+
+sbo window
+    tab {name}               inspector | help | log | chat
+    restore                  panels back where you put them
+    reset                    panels back to the defaults
+    clear                    empty the Inspector's history
+    demo                     sample layouts
+
+sbo version                  the version you have
+    update [force|{file}]    get the newest (force: reinstall; or a local .mpackage)
+
+sbo debug
+    raw                      the last output as the game sent it
+    gmcp                     what the game sends over GMCP
+    samples on|off           log raw output to oven_samples.txt
+    record start [{minutes}] record everything to oven_record.txt
+    record stop
+    record save [{note}]     save the last few hundred blocks
+
+sbo config                   every setting, grouped, with its value
+sbo config {name} {value}    change one (sbo set works too)
 ```
 
-Any number setting goes back to its default if you leave the number off (e.g. `sbo bar width`).
+Shortcuts: `sbo compare` and `sbo upgrades` work without `gear`.
 
-`oven` works as well as `sbo`.
+### Settings (`sbo config`)
+
+```
+Display      formatting on|off · main replace|keep · window on|off · help.window on|off
+             tabs on|off · tabs.auto on|off · mirror.inspector|help|log|chat on|off · font {n}
+Gear and eq  gear.autocompare · gear.pickuplook · eq.stats · eq.empty · eq.donation (on|off)
+             eq.slots short|full · eq.gamecolors on|off
+Quests       quest.hud on|off · quest.autopin on|off · quest.blurb on|off
+             quest.side left|right · quest.opacity 0-100
+Map          map on|off · map.panel on|off · map.card on|off · signposts.look on|off
+Prompt bar   bar on|off · bar.mode gauges|raw · bar.session on|off · bar.session.style full|short
+             bar.session.place top|bottom · bar.width {n} · bar.lines {n} · bar.font {n}
+             bar.bg {r g b} · bar.blanks on|off
+Combat       combat on|off · combat.bar on|off · combat.lines on|off
+Updates      update.auto on|off · record.window {n} · prompt {pattern}
+```
+
+A number setting goes back to its default with `default` (`sbo config bar.width default`).
+
+The commands from before 0.51 (`sbo run`, `sbo eqstats off`, `sbo map find`…) still work; the first
+time you use one, Oven tells you its new form.
 
 ## Updating
 
-Type **`sbo update`** (or click the version tag at the right end of the prompt bar). Oven checks this page for a newer version and installs it, keeping your
+Type **`sbo version update`** (or click the version tag at the right end of the prompt bar). Oven checks this page for a newer version and installs it, keeping your
 settings and remembered items. You'll also get a one-line notice when you log in if an update
-is out. `sbo update force` reinstalls even if you're current.
+is out. `sbo version update force` reinstalls even if you're current.
 
-Want it hands-free? **`sbo update auto on`** checks every couple of minutes and installs new
+Want it hands-free? **`sbo config update.auto on`** checks every couple of minutes and installs new
 versions by itself.
 
 ## Troubleshooting
 
 - **Nothing is formatted.** Check you installed into the profile you're playing (Toolbox →
-  Package Manager should list *Oven*), and that `sbo on` is set. Type `sbo` to see the current
+  Package Manager should list *Oven*), and that `sbo config formatting on` is set. Type `sbo` to see the current
   settings.
-- **A layout looks wrong or something is missing.** Type `sbo raw` to see exactly what the game
+- **A layout looks wrong or something is missing.** Type `sbo debug raw` to see exactly what the game
   sent. Very short replies (one line) are left untouched on purpose.
-- **The Inspector window disappeared.** `sbo window on`. If it's off-screen, drag it back by its title
+- **The Inspector window disappeared.** `sbo config window on`. If it's off-screen, drag it back by its title
   bar or resize the Mudlet window.
-- **The prompt bar overlaps something or looks off.** `sbo bar off` puts the prompt back in the
-  text. `sbo bar raw` shows the prompt as the game sends it instead of gauges.
+- **The prompt bar overlaps something or looks off.** `sbo config bar off` puts the prompt back in the
+  text. `sbo config bar.mode raw` shows the prompt as the game sends it instead of gauges.
 - **Level / exp to level on the bar is out of date.** It's taken from your last `score`; type
   `score` to refresh it.
-- **`sbo update` says the download failed.** Check your internet connection, or reinstall by hand
+- **`sbo version update` says the download failed.** Check your internet connection, or reinstall by hand
   (step 3 above) — your settings are kept either way.
 
 ## Removing it
@@ -288,10 +310,10 @@ kind - e.g. room NPCs are read only from room views whose name matches GMCP's `r
 **Tests:** `pip install lupa`, then `python3 tests/run.py`. They load Oven under Lua 5.1 (what Mudlet runs) with
 Mudlet stubbed out and replay recorded game output (`tests/fixtures`) through it: room views, help pages, kills,
 loot, GMCP, the recorder, updates, and an in-session upgrade from the previous version. Fixtures come from
-`sbo record save` recordings with other players renamed and chat and private GMCP left out - never commit a raw
+`sbo debug record save` recordings with other players renamed and chat and private GMCP left out - never commit a raw
 recording.
 
 **Releasing:** bump `M.version` in `src/Oven.lua`, run `python3 build.py` (runs the tests and won't build if any
-fail, then writes `Oven.mpackage` and `VERSION`), commit all three and push. Players get it with `sbo update`.
+fail, then writes `Oven.mpackage` and `VERSION`), commit all three and push. Players get it with `sbo version update`.
 
 MIT licensed — see [LICENSE](LICENSE).
