@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.59.0"
+M.version = "0.60.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6022,10 +6022,22 @@ end)
 -- walk or a signpost run only passes through (the walk's last room counts: it's over by then).
 -- A shop is a room whose NPC the game tags [Shop], or one you've listed before.
 M.shopTried = M.shopTried or {}
+-- a traveling seller: a [Shop] NPC seen in more than one room (it walks a path; every room it's been
+-- seen in stays marked). key = its line, lower-cased, as room_npcs keeps it.
+function M.travelerRooms(key)
+  local r = M.dbRow("SELECT COUNT(DISTINCT room) AS n FROM room_npcs WHERE key = %s", key)
+  return tonumber(r and r.n) or 0
+end
+function M.isTraveler(key) return M.travelerRooms(key) >= 2 end
+
+-- a shop: one Oven has listed, or a room with a shopkeeper who stays there (not a traveling seller)
 function M.isShopRoom(room)
   if not room then return false end
   if M.dbRow("SELECT room FROM shops WHERE room = %s", room) then return true end
-  return M.dbRow("SELECT room FROM room_npcs WHERE room = %s AND instr(lower(ifnull(tags, '')), 'shop') > 0", room) ~= nil
+  for _, r in ipairs(M.dbRows("SELECT key FROM room_npcs WHERE room = %s AND instr(lower(ifnull(tags, '')), 'shop') > 0", room)) do
+    if not M.isTraveler(r.key) then return true end
+  end
+  return false
 end
 
 -- what's keeping Oven from doing something by itself right now (nil: nothing)
@@ -6099,6 +6111,21 @@ function M.shopLines(width, q)
       out[#out + 1] = { { C.item, "  " .. (r.name or "a shop") }, { C.num, "  " .. r.n .. " items" }, { C.dim, r.last and ("  listed " .. M.shortDur(os.time() - tonumber(r.last)) .. " ago") or "" } }
       out[#out + 1] = { { C.dim, "    " .. where(room) } }
       walkLink(room, "walk to " .. (r.name or "#" .. room))
+    end
+    local travelers = M.dbRows([[SELECT key, MAX(text) AS text, COUNT(DISTINCT room) AS n, MAX(last) AS last FROM room_npcs
+      WHERE instr(lower(ifnull(tags, '')), 'shop') > 0 GROUP BY key HAVING COUNT(DISTINCT room) >= 2 ORDER BY text]])
+    if #travelers > 0 then
+      out[#out + 1] = {}
+      subhead(out, "Traveling sellers")
+      for _, tr in ipairs(travelers) do
+        local at = M.dbRow("SELECT room FROM room_npcs WHERE key = %s ORDER BY last DESC LIMIT 1", tr.key)
+        local room = at and tonumber(at.room)
+        out[#out + 1] = { { C.text, "  " .. tr.text }, { C.dim, "  · seen in " .. tr.n .. " rooms" } }
+        if room then
+          out[#out + 1] = { { C.dim, "    last seen " .. where(room) .. (tr.last and ("  " .. M.shortDur(os.time() - tonumber(tr.last)) .. " ago") or "") } }
+          walkLink(room, "walk to where " .. tr.text:sub(1, 30) .. "… was last seen")
+        end
+      end
     end
     local refused = M.dbRows("SELECT room, said, level FROM shop_refusals ORDER BY t DESC")
     if #refused > 0 then
@@ -6179,8 +6206,10 @@ M.addBlockReader("shop_first_visit", "room", function(b, seg)
   if not room or room ~= M.mapRoom then return end
   local tagged = false
   for _, x in ipairs(seg.here) do
-    local tags = M.npcTags(x)
-    for _, t in ipairs(tags or {}) do if t:lower() == "shop" then tagged = true end end
+    local tags, text = M.npcTags(x)
+    for _, t in ipairs(tags or {}) do
+      if t:lower() == "shop" and not M.isTraveler(text:lower()) then tagged = true end
+    end
   end
   if not tagged then return end
   if M.dbRow("SELECT room FROM shops WHERE room = %s", room) then return end
@@ -7071,8 +7100,9 @@ function M.roomCardLines(id)
     for i, n in ipairs(npcs) do
       if i > MAX then row({ C.dim, string.format("  … and %d more", #npcs - MAX) }); break end
       local r = { { C.dim, "  " } }
-      for _, t in ipairs(n.tags or {}) do r[#r + 1] = { C.flag, "[" .. t .. "] " } end
+      for _, t in ipairs(n.tags or {}) do r[#r + 1] = { t == "Traveling" and C.slot or C.flag, "[" .. t .. "] " } end
       r[#r + 1] = { C.text, n.text }
+      if n.rooms then r[#r + 1] = { C.dim, "  · seen in " .. n.rooms .. " rooms" } end
       out[#out + 1] = r
     end
   end
@@ -7327,8 +7357,16 @@ function M.roomFlagsOf(id)
 end
 function M.roomNpcsOf(id)
   local out = {}
-  for _, r in ipairs(M.dbRows("SELECT text, tags, seen, last FROM room_npcs WHERE room = %s ORDER BY last DESC", id)) do
-    out[#out + 1] = { text = r.text, tags = splitTags(r.tags), seen = tonumber(r.seen), last = tonumber(r.last) }
+  for _, r in ipairs(M.dbRows("SELECT key, text, tags, seen, last FROM room_npcs WHERE room = %s ORDER BY last DESC", id)) do
+    local tags = splitTags(r.tags)
+    local rooms
+    for _, t in ipairs(tags) do
+      if t:lower() == "shop" then
+        local n = M.travelerRooms(r.key)
+        if n >= 2 then rooms = n; tags[#tags + 1] = "Traveling" end
+      end
+    end
+    out[#out + 1] = { text = r.text, tags = tags, seen = tonumber(r.seen), last = tonumber(r.last), rooms = rooms }
   end
   return out
 end

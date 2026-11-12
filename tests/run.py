@@ -1107,6 +1107,28 @@ def quiet_reply_once():
 
 
 @test
+def traveling_sellers():
+    o = Oven()
+    o.lua('''roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
+      getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end; getRoomExits = function() return {} end
+      local hg = "A slender, older man is here, turning the handle of a hurdy-gurdy."
+      for _, r in ipairs({ 10475, 10476, 10477 }) do
+        sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (%s, %s, %s, 'Shop', 1, %s)", r, hg:lower(), hg, r)
+      end
+      sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (10477, 'stumpy', 'A short, stumpy man is here.', 'Boss', 1, 1)")
+      sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (10515, 'kasan', 'Kasan the samurai is here.', 'Shop', 1, 1)")
+      sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (10515, %s, %s, 'Shop', 1, 1)",
+        hg:lower(), hg)''')
+    eq(o.ev("sbo.isShopRoom(10476)"), False, "a street he walks through isn't a shop")
+    eq(o.ev("sbo.isShopRoom(10515)"), True, "a room with its own shopkeeper still is")
+    card = o.lua('local t = {} for _, r in ipairs(sbo.roomCardLines(10476)) do local x = "" for _, g in ipairs(r) do x = x .. tostring(g[2] or "") end t[#t+1] = x end return table.concat(t, "\\n")')
+    assert "[Shop] [Traveling] A slender, older man" in card and "seen in 4 rooms" in card, card
+    out = o.lua('local out = sbo.shopLines(80, ""); local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end; return table.concat(s)')
+    assert "Traveling sellers" in out and "hurdy-gurdy" in out and "seen in 4 rooms" in out, out
+    eq(o.ev("sbo.isTraveler('kasan the samurai is here.')"), False, "one room: a shopkeeper")
+
+
+@test
 def help_ends_at_see_also():
     # help look during the game's auto-run: the next step arrived before any prompt
     lines = open(fixture("help_then_autorun.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
