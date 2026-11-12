@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.71.3"
+M.version = "0.72.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3007,8 +3007,45 @@ end
 
 M.questTargetCache = M.questTargetCache or {}
 M.QUEST_ROOM_EXACT = "the quest's target room"
+-- the item a step asks you to get: "Recover and Keep a bottle of Sepharian white wine" -> the item
+local function stepItem(text)
+  local t = trim(text or "")
+  local it = t:match("^Recover and Keep (.+)$") or t:match("^Recover (.+)$") or t:match("^Locate and deliver (.-) to .+$")
+    or t:match("^Locate (.+)$") or t:match("^Obtain (.+)$") or t:match("^Buy (.+)$")
+  if not it then return nil end
+  return trim(it:gsub("%s*%[.-%]%s*", " "))
+end
+local function bare(n) return (trim(n or ""):lower():gsub("^an? ", ""):gsub("^the ", "")) end
+
+-- a shop Oven has listed whose stock is exactly that item (not "white wine" for "Sepharian white wine"):
+-- the nearest one
+function M.shopSelling(item)
+  local want = bare(item)
+  if want == "" then return nil end
+  local best, steps, label
+  for _, r in ipairs(M.dbRows([[SELECT i.room, i.item, i.cost, ifnull(i.currency, 'gold') AS currency, s.name FROM shop_items i
+      LEFT JOIN shops s ON s.room = i.room WHERE instr(lower(i.item), %s) > 0]], want)) do
+    local id = tonumber(r.room)
+    if id and bare(r.item) == want and roomExists(id) then
+      local n = 9999
+      if M.mapRoom and id == M.mapRoom then n = 0 elseif M.mapRoom and getPath(M.mapRoom, id) then n = #speedWalkDir end
+      if not steps or n < steps then
+        best, steps = id, n
+        label = string.format("%s sells %s (%s %s)", r.name or "a shop", r.item, tostring(r.cost), r.currency)
+      end
+    end
+  end
+  return best, label
+end
+
 function M.questTarget(ph, qid)
   if not ph or not ph.text then return end
+  -- an item to get that a shop you know sells (exactly that item): that shop, before anything else
+  local item = stepItem(ph.text)
+  if item then
+    local okS, room, label = pcall(M.shopSelling, item)
+    if okS and room then return room, label end
+  end
   -- the game's quest log names the room for many steps
   if qid and ph.n then
     local r = M.gmcpQuestRoom(qid, ph.n)

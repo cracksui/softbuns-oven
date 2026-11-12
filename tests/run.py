@@ -1606,6 +1606,29 @@ def formatting_off_still_reads():
 
 
 @test
+def quest_go_prefers_a_shop_with_the_item():
+    o = Oven()
+    o.lua("""roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
+      getRoomArea = function() return 1 end; getRoomAreaName = function() return "Rune" end
+      getPath = function(a, b) speedWalkDir = {} for i = 1, (b == 300 and 9 or 3) do speedWalkDir[i] = "e" end return true end
+      sbo.mapRoom = 1
+      sbo.dbx("INSERT INTO shops (room, name, last) VALUES (62538, 'Jepar''s Imported Cuisine', 1)")
+      sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last, currency) VALUES (62538, 1, 'A bottle of white wine', 1, 'No limit', 145, 1, 'gold')")
+      gmcp.char = { quests = { q2682 = { quest_info = { vnum = 2682 }, goals = { { phase_number = 4, room_target = 62538 } } } } }""")
+    ph = "{ n = 4, text = 'Recover and Keep a bottle of Sepharian white wine' }"
+    # no shop sells it: the game's room
+    eq(o.ev(f"(sbo.questTarget({ph}, '2682'))"), 62538, "the game's room when no shop has it")
+    # a shop that sells exactly it: there instead; plain white wine doesn't count
+    o.lua("""sbo.questTargetCache = {}
+      sbo.dbx("INSERT INTO shops (room, name, last) VALUES (300, 'Randol''s Fine Wines', 1)")
+      sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last, currency) VALUES (300, 1, 'A bottle of Sepharian white wine', 1, '5', 500, 1, 'gold')")""")
+    room = o.ev(f"(sbo.questTarget({ph}, '2682'))")
+    eq(room, 300, "the shop that sells it")
+    why = o.lua(f"local _, w = sbo.questTarget({ph}, '2682') return w")
+    assert "Randol" in why and "Sepharian" in why, why
+
+
+@test
 def quest_steps_update():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     o = Oven()
