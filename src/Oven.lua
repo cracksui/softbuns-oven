@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.55.3"
+M.version = "0.56.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2374,7 +2374,7 @@ function M.questPin(id, on)
     if not M.pinAllFromList then
       M.pinAllPending = on
       M.quietQuest = true
-      send("quest info", false)
+      M.sendOwn("quest info", false)
       return
     end
     local n = 0
@@ -2880,7 +2880,7 @@ function M.questRefresh(id)
     return
   end
   M.quietQuest = true
-  send("quest info " .. id, false)
+  M.sendOwn("quest info " .. id, false)
 end
 
 ---------------------------------------------------------------- affects
@@ -5442,7 +5442,22 @@ function M.expandAlias(cmd)
   return full and (full .. rest) or cmd
 end
 
+-- a command Oven sends by itself, noted so onSend can tell it from one you typed (M.lastUserCmdAt)
+function M.sendOwn(cmd, echo)
+  M.ownCmds = M.ownCmds or {}
+  M.ownCmds[cmd] = (M.ownCmds[cmd] or 0) + 1
+  send(cmd, echo)
+end
+
+-- you haven't typed anything for a while: time for Oven's own errands that can wait
+function M.userIdle(secs)
+  return now() - (M.lastUserCmdAt or 0) >= (secs or 2)
+end
+
 function M.onSend(_, cmd)
+  local own = M.ownCmds and M.ownCmds[cmd]
+  if own and own > 0 then M.ownCmds[cmd] = (own > 1) and (own - 1) or nil
+  else M.lastUserCmdAt = now() end
   -- everything below sees what an alias stands for ("qr" -> "quest request"), recordings too
   cmd = M.expandAlias(cmd)
   pcall(M.recordCommand, cmd)
@@ -6516,7 +6531,7 @@ function M.onLineWork()
       -- "no more text" timer close the page while we wait for it
       if cap.idleTimer then killTimer(cap.idleTimer) end
       cap.idleTimer = tempTimer(3, function() M.finish("idle") end)
-      send("c", false)
+      M.sendOwn("c", false)
     end
     return   -- otherwise leave it in the main window so you can answer it
   end
@@ -6597,7 +6612,7 @@ function M.finish(reason)
       tempTimer(1, function()
         -- the game said so itself ("You inform ... you have completed your quest"): nothing to check
         if M.questTurnedInAt and os.time() - M.questTurnedInAt < 10 then return end
-        M.questTurnInCheck = true; M.quietQuest = true; send("quest info", false)
+        M.questTurnInCheck = true; M.quietQuest = true; M.sendOwn("quest info", false)
       end)
     end
   end
@@ -6802,7 +6817,7 @@ function M.walkStep()
   if not w then return end
   w.from = M.mapRoom
   local mine, step = w, w.step
-  send(w.dirs[w.step], false)
+  M.sendOwn(w.dirs[w.step], false)
   -- no arrival within a few seconds (door, blocked, exhausted…): stop
   tempTimer(6, function()
     if M.walk == mine and mine.step == step then
@@ -7510,7 +7525,7 @@ function M.runStart(name, target)
   if M.running and M.running.timer then pcall(killTimer, M.running.timer) end
   M.running = { name = name, target = target, at = now(), from = M.mapRoom, ours = true }
   local mine = M.running
-  send("run " .. name, false)
+  M.sendOwn("run " .. name, false)
   mine.timer = tempTimer(6, function()
     if M.running == mine and not mine.started then M.runFailed("the game didn't start the run") end
   end)
@@ -7574,7 +7589,7 @@ M.addBlockReader("signpost_runs", "*", function(b)
   if sign and next(sign.dests) then M.noteSignpost(sign) end
   if atSign and b.prompt and M.mapRoom then
     local room, p = M.mapRoom, b.lines[#b.lines]
-    tempTimer(0.5, function() pcall(M.signAutoLook, room, p) end)
+    tempTimer(0, function() pcall(M.signAutoLook, room, p) end)
   end
 end)
 
@@ -8137,7 +8152,7 @@ function M.learn(arg)
   end
   if #q == 0 then say("every item you're wearing is already known"); return after() end
   M.learnStats = { ok = 0, fail = 0 }
-  M.learnStart(q, "worn item", function() M.learnReport(); send("eq"); after() end)
+  M.learnStart(q, "worn item", function() M.learnReport(); M.sendOwn("eq"); after() end)
 end
 
 function M.learnReport(extra)
@@ -8149,7 +8164,7 @@ end
 -- a reply read quietly and handed to fn(lines): the next command of that kind
 function M.quietly(cmd, kind, fn)
   M.quietNext = { kind = kind, fn = fn }
-  send(cmd, false)
+  M.sendOwn(cmd, false)
   -- no reply of that kind? give up on it
   local mine = M.quietNext
   tempTimer(6, function() if M.quietNext == mine then M.quietNext = nil; pcall(fn, nil) end end)
@@ -8193,7 +8208,7 @@ function M.learnContainers(names, i)
   if not bag or M.learnNoInside then
     M.learnNoInside = nil
     M.learnReport()
-    return send("inventory")
+    return M.sendOwn("inventory")
   end
   M.quietly('look in "' .. bag .. '"', "contents", function(lines)
     local q = {}
@@ -8216,7 +8231,7 @@ function M.learnNext()
   end
   M.learning = { name = e.name, entry = e, ok0 = M.learnStats.ok }
   local mine = M.learning
-  send(e.cmd or ('look "' .. e.name .. '"'), false)
+  M.sendOwn(e.cmd or ('look "' .. e.name .. '"'), false)
   -- no reply at all? move on
   tempTimer(5, function()
     if M.learning == mine and not mine.started then
@@ -8279,17 +8294,26 @@ function M.fighting()
   return (M.live.statusAt or 0) >= os.time() - 30
 end
 
+-- one look at a time, and only once you've stopped typing for 2 seconds (they share the game's command
+-- queue with yours, so they wait for a quiet moment); never mid-fight, never before you're playing
 function M.pickupFlush(promptLine)
   local q = M.pickupPending
   if not q or #q == 0 then M.pickupPending = nil return end
-  -- only between commands, never mid-fight, never before you're playing
-  if M.cap or M.learning or M.learnQueue or M.quietNext or M.fighting() or not M.inGame(promptLine) then return end
-  M.pickupPending = nil
+  promptLine = promptLine or M.lastStatusPrompt
+  if M.busyWhy(promptLine) then return end   -- the next prompt tries again
+  if not M.userIdle(2) then
+    -- you're typing: try again after a quiet spell (a prompt may not come)
+    if not M.pickupRetry then
+      M.pickupRetry = tempTimer(2.2, function() M.pickupRetry = nil; pcall(M.pickupFlush) end)
+    end
+    return
+  end
+  local e = table.remove(q, 1)
+  if #q == 0 then M.pickupPending = nil end
   M.learnStats = { ok = 0, fail = 0 }
-  local names = {}
-  for _, e in ipairs(q) do names[#names + 1] = e.name end
-  M.learnStart(q, "picked-up item", function()
-    for _, n in ipairs(names) do if M.items[n] then pcall(M.pickupVerdict, M.items[n]) end end
+  M.learnStart({ e }, "picked-up item", function()
+    if M.items[e.name] then pcall(M.pickupVerdict, M.items[e.name]) end
+    if M.pickupPending then tempTimer(1, function() pcall(M.pickupFlush) end) end
   end, true)
 end
 

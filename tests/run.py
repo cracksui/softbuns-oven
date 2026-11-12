@@ -990,6 +990,28 @@ def shop_listed_on_arrival():
 
 
 @test
+def own_errands_wait_for_idle():
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.log = function() end')
+    o.lua(GAME)
+    o.set_gmcp("char.status", '{ state = "playing" }')
+    o.lua('sbo.items["a sword"] = nil; sbo.items["a bag"] = nil; SENT = {}')
+    # you're typing: picked-up items wait
+    o.lua('sbo.onSend(nil, "n")')
+    o.feed("You get a sword.", "You get a bag.", "<270hp 550sp 401st>")
+    o.L.execute("for id, t in pairs(timers) do if t[1] <= 0.5 then timers[id] = nil; t[2]() end end")
+    eq(len(o.ev("SENT")), 0, "nothing while you're typing")
+    # quiet for a couple of seconds: one at a time
+    o.L.execute("runTimers()")
+    eq(list(o.ev("SENT").values()), ['look "a sword"', 'look "a bag"'], "then each, in turn")
+    # Oven's own commands aren't you typing
+    o.lua('sbo.lastUserCmdAt = nil; sbo.sendOwn("look x", false)')
+    eq(o.ev("sbo.lastUserCmdAt"), None, "its own command doesn't count")
+    o.lua('sbo.onSend(nil, "look x")')
+    assert o.ev("sbo.lastUserCmdAt") is not None, "the same command typed by you does"
+
+
+@test
 def help_ends_at_see_also():
     # help look during the game's auto-run: the next step arrived before any prompt
     lines = open(fixture("help_then_autorun.txt"), encoding="utf-8").read().rstrip("\n").split("\n")

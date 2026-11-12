@@ -5,8 +5,12 @@ table.save=function() end; table.load=function() end
 timers={}; local tid=0
 function tempTimer(t,f) tid=tid+1; timers[tid]={t,f}; return tid end
 function killTimer(id) timers[id]=nil end
+-- Mudlet's clock; time moves on as timers fire (see runTimers)
+CLOCK_OFFSET = 0
+function getEpoch() return os.clock() + CLOCK_OFFSET end
 -- all of them, soonest first (then oldest), like time passing
 function runTimers()
+  local guard = 0
   while true do
     local best, bid
     for id, t in pairs(timers) do
@@ -14,7 +18,10 @@ function runTimers()
     end
     if not best then return end
     timers[bid] = nil
+    CLOCK_OFFSET = CLOCK_OFFSET + (tonumber(best[1]) or 0)
     best[2]()
+    guard = guard + 1
+    if guard > 5000 then error("runTimers: timers keep starting timers") end
   end
 end
 function fg(w,c) end function resetFormat() end
