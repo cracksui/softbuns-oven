@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.67.0"
+M.version = "0.67.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2672,10 +2672,30 @@ local function questCardHtml(id, Q)
         end
       else
         for _, sg in ipairs(segsOf(i, trim(l))) do para[#para + 1] = sg end
+        para[#para + 1] = { nil, " " }   -- the next line is a new word, not glued on
       end
     end
     flush()
     while #lines > 0 and lines[#lines][2] == 0 do table.remove(lines) end
+    -- what it's worth: the rewards that aren't nothing, and any items
+    local worth = {}
+    for _, r in ipairs(Q.rewards or {}) do
+      if tostring(r[1]):gsub(",", "") ~= "0" then worth[#worth + 1] = { C.num, r[1] .. " " .. r[2] } end
+    end
+    for _, it in ipairs(Q.rewardItems or {}) do worth[#worth + 1] = { C.item, it } end
+    if #worth > 0 then
+      local segs = { { C.key, "Rewards " } }
+      for k, w in ipairs(worth) do
+        if k > 1 then segs[#segs + 1] = { C.dim, " · " } end
+        segs[#segs + 1] = w
+      end
+      put("", 0)
+      for _, ln in ipairs(segWrap(segs, HUD_WRAP, 8)) do
+        local h = {}
+        for _, sg in ipairs(ln[1]) do h[#h + 1] = span(sg[1] or C.dim, sg[2]) end
+        put(span(C.dim, " ") .. table.concat(h), ln[2] + 1)
+      end
+    end
     -- …then folded: the first few lines, unless you've opened it (click the quest)
     local SHOW = 3
     local open = (M.cfg.questHintOpen or {})[tostring(id)]

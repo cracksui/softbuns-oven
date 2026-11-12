@@ -1457,6 +1457,11 @@ def quest_hint_paragraphs_and_folding():
     eq(desc[desc.index("sustenance they need to thrive.") + 1], "", "after 'thrive.  '")
     assert not any("velocity token" in d for d in desc), f"rewards aren't the hint: {desc}"
     eq(list(o.ev("sbo.quests['3519'].rewardItems").values()), ["a velocity token", "a dusty curious coin"], "they're rewards")
+    o.lua("sbo.cfg.questHintOpen = { ['3519'] = true }")
+    panel = " ".join(_re.sub("<[^>]+>", "", x).replace("\xa0", " ") for x in o.lua("return (sbo.questCardHtml('3519', sbo.quests['3519']))").values())
+    assert "you areAdventurer" not in panel and "you are Adventurer" in panel, f"lines don't glue together: {panel}"
+    assert "Rewards" in panel and "25,000 gold pieces" in panel and "a velocity token" in panel, panel
+    assert "0 piety" not in panel, "rewards of nothing left out"
     # and the quest info layout shows them, and the time left
     o.L.globals().LINES = o.L.table_from(lines[lines.index(next(l for l in lines if l.startswith("This quest"))):])
     lay = o.lua('local raw = {} for _, l in ipairs(LINES) do raw[#raw+1] = l end local out = sbo.formatters.quest(raw, 100) local t = {} for _, r in ipairs(out) do for _, g in ipairs(r) do t[#t+1] = tostring(g[2] or "") end t[#t+1] = "\\n" end return table.concat(t)')
