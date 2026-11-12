@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.77.3"
+M.version = "0.77.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7218,9 +7218,14 @@ function M.chatChips()
   -- the chips sit in an area of their own and wrap onto more rows when they don't fit across
   -- (chips from before 0.77.3 were in a single row: put away)
   if not M.chatChipArea then
-    for _, lab in ipairs(M.chatChipLabels or {}) do pcall(function() lab:hide() end) end
+    -- hidden isn't enough: the row still makes room for them, pushing the area off the side
+    for _, lab in ipairs(M.chatChipLabels or {}) do
+      pcall(function() lab:hide() end)
+      pcall(function() M.chatBar:remove(lab) end)
+    end
     M.chatChipLabels = {}
     M.chatChipArea = Geyser.Container:new({ name = "ovenChatChipArea" }, M.chatBar)
+    pcall(function() M.chatBar:organize() end)
   end
   local okW, areaW = pcall(function() return M.chatChipArea:get_width() end)
   areaW = (okW and tonumber(areaW) and areaW > 50) and areaW or 400
