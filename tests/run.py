@@ -472,6 +472,28 @@ def quest_timers():
 
 
 @test
+def quest_time_up():
+    import time as _time
+    o = Oven()
+    o.lua('''sbo.cfg.promptPattern = "<%d+hp"; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end; sbo.notifyQuest = function(m) SAYS[#SAYS+1] = m end
+      SENT = {}
+      REPLY = { "                   Quest #3390 : Cooking Spaghetti and Pesto (  9/10  complete).", "A total of [1] quests." }
+      send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c); if c == "quest info" then for _, l in ipairs(REPLY) do line = l; sbo.onLine() end end; line = "<281hp 696sp 457st>"; sbo.onLine() end''')
+    o.set_gmcp("char.status", '{ state = "playing" }')
+    o.feed("<281hp 696sp 457st>")
+    now = int(_time.time())
+    o.lua(f"""sbo.quests['3519'] = {{ name = 'Daily Quest - Feeding Hungry Mouths', active = true, total = 1, done = 0, deadline = {now - 5} }}
+      sbo.quests['3390'] = {{ name = 'Cooking Spaghetti and Pesto', active = true, total = 10, done = 9 }}
+      sbo.cfg.questPins = {{ ['3519'] = true, ['3390'] = true }}""")
+    o.lua("sbo.questTimeUpCheck(); runTimers()")
+    eq(list(o.ev("SENT").values()), ["quest info"], "time's up: the quest log checked")
+    eq(sorted(o.ev("sbo.cfg.questPins").keys()), ["3390"], "gone from the log: off the panel")
+    assert any("no longer active" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    o.lua("SENT = {}; sbo.questTimeUpCheck(); runTimers()")
+    eq(len(o.ev("SENT")), 0, "asked once")
+
+
+@test
 def tabs_auto_off():
     o = Oven()
     o.lua('''sbo.cfg.window = true

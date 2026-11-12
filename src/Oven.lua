@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.68.0"
+M.version = "0.69.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2274,7 +2274,8 @@ function M.rememberQuests(q, bare)
       if not active[id] then
         M.cfg.questPins[id] = nil
         local Q = M.quests[id]
-        M.notifyQuest((Q and Q.name or ("#" .. id)) .. ((Q and questFinished(Q)) and " turned in - unpinned" or " is no longer active - unpinned"))
+        -- (M.questFinished: the local questFinished is declared further down the file)
+        M.notifyQuest((Q and Q.name or ("#" .. id)) .. ((Q and M.questFinished(Q)) and " turned in - unpinned" or " is no longer active - unpinned"))
       end
     end
   end
@@ -10231,6 +10232,20 @@ function M.panelsWatch()
   M.panelTimer = tempTimer(4, function() pcall(M.panelsSave) end, true)   -- repeating
 end
 
+-- a pinned quest whose time has run out: ask the game (quietly, once) - gone from your log, it comes off
+-- the panel like a finished or abandoned quest; still listed, it stays, marked "time's up"
+function M.questTimeUpCheck()
+  local nowT = os.time()
+  for id in pairs(M.cfg.questPins or {}) do
+    local Q = M.quests[id]
+    if Q and Q.deadline and Q.deadline <= nowT and Q.timeUpChecked ~= Q.deadline then
+      if M.busyWhy(M.lastStatusPrompt) then return end
+      Q.timeUpChecked = Q.deadline
+      return M.questLogCheck()
+    end
+  end
+end
+
 -- quest time limits count down on the quest panel and the bar
 function M.questClock()
   if M.questClockTimer then killTimer(M.questClockTimer) end
@@ -10240,6 +10255,7 @@ function M.questClock()
     if not any then return end
     if next(M.cfg.questPins or {}) then pcall(M.drawQuestTracker) end
     pcall(M.drawBar)
+    pcall(M.questTimeUpCheck)
   end, true)   -- repeating
 end
 
