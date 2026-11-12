@@ -1439,6 +1439,11 @@ def quest_hint_paragraphs_and_folding():
     eq(desc[desc.index("sustenance they need to thrive.") + 1], "", "after 'thrive.  '")
     assert not any("velocity token" in d for d in desc), f"rewards aren't the hint: {desc}"
     eq(list(o.ev("sbo.quests['3519'].rewardItems").values()), ["a velocity token", "a dusty curious coin"], "they're rewards")
+    # and the quest info layout shows them, and the time left
+    o.L.globals().LINES = o.L.table_from(lines[lines.index(next(l for l in lines if l.startswith("This quest"))):])
+    lay = o.lua('local raw = {} for _, l in ipairs(LINES) do raw[#raw+1] = l end local out = sbo.formatters.quest(raw, 100) local t = {} for _, r in ipairs(out) do for _, g in ipairs(r) do t[#t+1] = tostring(g[2] or "") end t[#t+1] = "\\n" end return table.concat(t)')
+    assert "a velocity token" in lay and "a dusty curious coin" in lay, lay
+    assert "Time left" in lay and "8h" in lay, lay
 
 
 @test

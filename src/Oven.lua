@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.65.1"
+M.version = "0.65.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2356,6 +2356,11 @@ function M.formatters.quest(raw, width)
       local lim = d.limit:find("no time limit") and "none" or d.limit:gsub("^This quest ", "")
       cells[#cells + 1] = { "Time limit", { { C.item, lim } } }
     end
+    -- "You have 1984 Alyrian minute remaining" (read into the deadline)
+    if d.deadline then
+      local left = d.deadline - os.time()
+      cells[#cells + 1] = { "Time left", { { M.timeLeftColor(left), M.timeLeftText(left) } } }
+    end
     cells[#cells + 1] = { "Progress", questGauge(d.done, d.total, 10) }
     grid(out, cells, width)
     if #d.rewards == 0 and d.rewardNote then
@@ -2371,6 +2376,15 @@ function M.formatters.quest(raw, width)
         segs[#segs + 1] = { zero and C.dim or C.text, " " .. r[2] }
       end
       kvLine(out, "Rewards", 8, segs, width)
+    end
+    -- "*The item 'a velocity token'."
+    if d.rewardItems and #d.rewardItems > 0 then
+      local segs = {}
+      for i, it in ipairs(d.rewardItems) do
+        if i > 1 then segs[#segs + 1] = { C.dim, " · " } end
+        segs[#segs + 1] = { C.item, it }
+      end
+      kvLine(out, "Items", 8, segs, width)
     end
     if #d.desc > 0 then paragraphs(out, d.desc, width) end
     if #d.phases > 0 then
