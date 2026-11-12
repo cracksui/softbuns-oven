@@ -738,6 +738,8 @@ MAP_GAME = r"""
       local c = table.remove(OUTBOX, 1)
       sbo.onSend(nil, c)
       if EXITS[HERE] and EXITS[HERE][c] then at(EXITS[HERE][c]); lines("<270hp 550sp 401st>")
+      elseif c == "run rune" and RUN_HOOK and RUN_HOOK() then
+        -- (a test's own handling of this run)
       elseif c == "run rune" then
         if AREA[HERE] ~= 1 then lines("That only works in the wilds!", "<270hp 550sp 401st>")
         elseif not SIGNS[HERE] then lines("You need a signpost to run from.", "<270hp 550sp 401st>")
@@ -794,6 +796,33 @@ def signpost_runs():
     eq(o.ev("HERE"), 255, "fell back to walking")
     assert any("walking instead" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
     o.lua('sbo.command("signposts")')
+
+
+@test
+def run_stops_at_a_signpost_on_the_way():
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.cfg.map = true; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end')
+    o.lua(MAP_GAME)
+    o.set_gmcp("char.status", '{ state = "playing" }')
+    # the game halts the run at the signpost at 150 (a junction) the first time
+    o.lua("""
+      SIGNS[150] = true
+      HALTED = false
+      RUN_HOOK = function()
+        if HALTED or not SIGNS[HERE] then return false end
+        HALTED = true
+        LINES("You start running.", "<270hp 550sp 401st>")
+        AT(150); LINES("You run eastward.", "     A weatherbeaten signpost is firmly planted here.", "You stop running.", "<270hp 550sp 401st>")
+        return true
+      end
+      sbo.dbx("INSERT OR REPLACE INTO signposts (room, sign, dests, exact, last) VALUES (120, 'a post', 'rune=east', 1, 1)")
+    """)
+    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(255); PUMP()')
+    sent = list(o.ev("SENT").values())
+    eq(sent.count("run rune"), 2, f"ran on from the signpost on the way: {sent}")
+    eq(o.ev("HERE"), 255, "arrived")
+    eq(o.ev("sbo.runData().ends.rune"), 250, "the end is the real end, not the junction")
+    assert any("running on" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
 
 
 @test
