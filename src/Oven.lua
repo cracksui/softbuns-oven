@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.62.0"
+M.version = "0.63.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2146,9 +2146,23 @@ function M.parseQuests(raw)
   local inPhases = false
   for idx, l in ipairs(raw) do
     local t = trim(l)
-    local id, name, done, total = t:match("^Quest #(%d+)%s*:%s*(.-)%s*%(%s*(%d+)/(%d+)%s+complete%)%.?$")
+    -- "Quest #3390 : Cooking Spaghetti and Pesto (  0/10  complete)."
+    -- "Daily Quest #3519 : Daily Quest - Feeding Hungr (  0/1   complete).  [2h 16min 58s]" (a kind in front,
+    -- the name cut short, the time left after)
+    local left = t:match("%s%[([%dhdmins ]+)%]$")
+    local tl = left and trim(t:gsub("%s%[[%dhdmins ]+%]$", "")) or t
+    local kind, id, name, done, total = tl:match("^(%a*)%s*Quest #(%d+)%s*:%s*(.-)%s*%(%s*(%d+)/(%d+)%s+complete%)%.?$")
     if id then
-      list[#list + 1] = { id = id, name = name, done = tonumber(done), total = tonumber(total), idx = idx }
+      local e = { id = id, name = name, done = tonumber(done), total = tonumber(total), idx = idx, kind = kind ~= "" and kind or nil }
+      if left then
+        local secs = 0
+        for n, u in left:gmatch("(%d+)%s*(%a+)") do
+          u = u:lower()
+          secs = secs + tonumber(n) * ((u:sub(1, 1) == "d" and 86400) or (u:sub(1, 1) == "h" and 3600) or (u:sub(1, 1) == "m" and 60) or 1)
+        end
+        if secs > 0 then e.deadline = os.time() + secs end
+      end
+      list[#list + 1] = e
     else
       -- "is called 'Part-ay!'," or "is called 'Training in the Forest'." (ends with , or .)
       local qid, qname = t:match("^This quest %[(%d+)%] is called '(.*)'[,%.]?%s*$")
@@ -2222,7 +2236,10 @@ function M.rememberQuests(q, bare)
     local active = {}
     for _, e in ipairs(list) do
       local Q = M.quests[e.id] or {}
-      Q.name, Q.seen = e.name or Q.name, now
+      -- a list can cut a long name short ("Feeding Hungr"): keep the whole one already known
+      if not (Q.name and e.name and Q.name:sub(1, #e.name) == e.name) then Q.name = e.name or Q.name end
+      Q.seen = now
+      if e.deadline then Q.deadline = e.deadline end
       if e.done then Q.done, Q.total = e.done, e.total end
       Q.active = true
       M.quests[e.id] = Q
@@ -5518,7 +5535,7 @@ M.shapes = {
   end,
   quest = function(t, l, cap)
     if not cap.questStarted then
-      if t:match("^Quest #%d+") or t:match("^This quest %[%d+%]") or t:match("^Usage: quest")
+      if t:match("^%a* ?Quest #%d+") or t:match("^This quest %[%d+%]") or t:match("^Usage: quest")
          or t:match("^You must seek out a quest master") or t:match("^You are not on")
          or t:match("^You have no") or t:match("^A total of %[") then
         cap.questStarted = true

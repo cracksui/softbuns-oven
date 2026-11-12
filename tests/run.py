@@ -1304,6 +1304,29 @@ def quest_given_by_another_command():
 
 
 @test
+def quest_list_with_daily():
+    import time as _time
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.log = function() end')
+    o.lua("sbo.quests['3519'] = { name = 'Daily Quest - Feeding Hungry Mouths', active = true }")
+    o.lua('sbo.onSend(nil, "quest info")')
+    o.feed("             Daily Quest #3519 : Daily Quest - Feeding Hungr (  0/1   complete).  [2h 16min 58s]",
+           "                   Quest #3390 : Cooking Spaghetti and Pesto (  0/10  complete).",
+           "A total of [2] quests.",
+           "Type QUEST STATUS <#> for complete information on that quest.",
+           "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("sbo.quests['3519'].name"), "Daily Quest - Feeding Hungry Mouths", "the whole name kept, not 'Feeding Hungr'")
+    eq((o.ev("sbo.quests['3519'].done"), o.ev("sbo.quests['3519'].total")), (0, 1), "its progress")
+    left = o.ev("sbo.quests['3519'].deadline") - int(_time.time())
+    assert abs(left - (2 * 3600 + 16 * 60 + 58)) <= 5, f"time left from [2h 16min 58s]: {left}"
+    eq(o.ev("sbo.quests['3390'].active"), True, "the other quest")
+    # pin all: both
+    o.lua("sbo.cfg.questPins = {}; sbo.pinAllFromList = true; sbo.questPin('all', true); sbo.pinAllFromList = nil")
+    eq(sorted(o.ev("sbo.cfg.questPins").keys()), ["3390", "3519"], "pin all pins the daily too")
+
+
+@test
 def quest_steps_update():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     o = Oven()
