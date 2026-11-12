@@ -1135,6 +1135,14 @@ def traveling_sellers():
     o.lua('sbo.command("map highlight hurdy-gurdy")')
     eq(sorted(o.ev("LIT").keys()), [10475, 10476, 10477, 10515], "every room he's been seen in")
     eq(o.ev("CENTRE"), 10477, "centred on where he was last seen")
+    # a highlight that's showing picks up a new match by itself, without moving the map
+    o.lua("CENTRE = nil; sbo.command('map highlight hurdy-gurdy')")
+    o.lua('''CENTRE = nil
+      sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (10600, %s, %s, 'Shop', 1, 1)",
+        "a slender, older man is here, turning the handle of a hurdy-gurdy.", "A slender, older man is here, turning the handle of a hurdy-gurdy.")
+      sbo.mapLearned(); runTimers()''')
+    assert o.ev("LIT[10600]"), "the new room lit up"
+    eq(o.ev("CENTRE"), None, "the map didn't move")
     o.lua('sbo.command("map hi")')
     eq(len(o.ev("LIT")), 0, "cleared")
     # many different matches: centred on the nearest to you; "in {area}" narrows it

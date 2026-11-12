@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.65.2"
+M.version = "0.66.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6045,6 +6045,7 @@ function M.recordShop(room, shop)
   if not known then M.say("new shop: " .. label)
   elseif auto then M.say("shop updated: " .. label) end
   M.dbx("INSERT OR REPLACE INTO shops (room, name, last) VALUES (%s, %s, %s)", room, shop.name, t)
+  if not known then pcall(M.mapLearned) end
   M.dbx("DELETE FROM shop_refusals WHERE room = %s", room)
   -- the stock as it is now (what's sold out or gone is dropped from this shop's list)
   M.dbx("DELETE FROM shop_items WHERE room = %s", room)
@@ -6222,6 +6223,7 @@ M.addBlockReader("where_is", "*", function(b)
     local room = here and M.followDirs(here, a.dirs)
     M.dbx("INSERT OR REPLACE INTO where_rooms (area, feature, room, start, dirs, t) VALUES (%s, %s, %s, %s, %s, %s)",
       area or listArea or "", a.feature, room, here, a.dirs, os.time())
+    if room then pcall(M.mapLearned) end
     M.noteAuto("where", room, a.feature .. (room and "" or " (directions go off the map)"))
   end
 end)
@@ -6451,6 +6453,7 @@ M.addBlockReader("room_npcs", "room", function(b, seg)
         local c = M.dbRow("SELECT COUNT(*) AS c FROM room_npcs WHERE room = %s", seg.room)
         if tonumber(c and c.c or 0) < 20 then
           M.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last, src) VALUES (%s, %s, %s, %s, 1, %s, 'room')", seg.room, key, text, tg, os.time())
+          pcall(M.mapLearned)
         end
       end
     end
@@ -8136,6 +8139,7 @@ function M.markRoom(name)
   local id = M.currentRoom()
   if not id then return say("Oven doesn't know which room you're in yet - move one room first") end
   M.dbx("INSERT OR REPLACE INTO marks (name, room, t) VALUES (%s, %s, %s)", name, id, os.time())
+  pcall(M.mapLearned)
   say(string.format("bookmarked %s #%d as '%s' - sbo go %s", (roomExists(id) and getRoomName(id)) or "this room", id, name, name))
 end
 
@@ -9403,10 +9407,11 @@ end
 
 -- sbo map highlight {what}: every room with it, lit up on the map (the best kind of match only: a tag or
 -- NPC over a room name), centred on the latest sighting; no argument clears them
-function M.mapHighlightAll(q)
+function M.mapHighlightAll(q, quiet)
   for _, id in ipairs(M.mapHighlights or {}) do pcall(unHighlightRoom, id) end
   M.mapHighlights = {}
   q = trim(q or "")
+  M.mapHighlightQuery = (q ~= "") and q or nil   -- kept up to date as Oven learns more (M.mapLearned)
   if q == "" then return say("map highlights cleared") end
   -- "trainer in rune": only rooms in an area whose name has "rune" in it
   local what, area = q:match("^(.-)%s+in%s+(.+)$")
@@ -9422,7 +9427,7 @@ function M.mapHighlightAll(q)
     end
     targets = kept
   end
-  if #targets == 0 then return say("no rooms Oven knows with '" .. q .. "'") end
+  if #targets == 0 then return quiet or say("no rooms Oven knows with '" .. q .. "'") end
   local best = math.huge
   for _, t in ipairs(targets) do best = math.min(best, t.rank or 9) end
   local lit = {}
@@ -9455,12 +9460,24 @@ function M.mapHighlightAll(q)
     centre = nearest or lit[1]
     note = steps and string.format(" · centred on the nearest, %d step%s away", steps, steps == 1 and "" or "s") or ""
   end
+  if quiet then return end
   if centre then
     if M.mapPanel and M.cfg.mapPanel then pcall(M.showMapPanel, true) end
     pcall(M.centerOn, centre)
   end
   say(string.format("%d room%s lit up on the map for '%s'%s  (sbo map highlight clears them)", #M.mapHighlights,
     #M.mapHighlights == 1 and "" or "s", q, note or ""))
+end
+
+-- something new about a room (an NPC or tag, a shop listed, a where-is feature, a bookmark): a highlight
+-- that's showing is redone, quietly, so a new match lights up without moving the map
+function M.mapLearned()
+  if not M.mapHighlightQuery or M.mapRelightPending then return end
+  M.mapRelightPending = true
+  tempTimer(0.2, function()
+    M.mapRelightPending = nil
+    if M.mapHighlightQuery then pcall(M.mapHighlightAll, M.mapHighlightQuery, true) end
+  end)
 end
 
 -- sbo map find: a room number centres the map; otherwise NPCs, tags and rooms, nearest first
