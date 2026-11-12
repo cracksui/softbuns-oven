@@ -1394,6 +1394,44 @@ def quest_list_with_daily():
 
 
 @test
+def quest_hint_paragraphs_and_folding():
+    import re as _re
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.log = function() end; sbo.cfg.questHudBlurb = true')
+    o.lua('sbo.onSend(nil, "quest info 3390")')
+    o.feed("This quest [3390] is called 'Cooking Spaghetti and Pesto',",
+           "for Adventurers levels 20 to 240.",
+           "Spaghetti and pesto is an easy meal with a ton of flavor.  It is a popular",
+           "meal in Alyria, and all of the ingredients are fairly easy to find.  ",
+           "",
+           "Your journey begins at Li's Diner in Xaventry.  They serve a plate of",
+           "spaghetti there, but their cooks do not season it very well.  ",
+           "",
+           "The cooks in the Palace of Diocletian are known to use a lot of pesto in",
+           "their creations, and they undoubtedly have some.  ",
+           "Upon successful completion of this quest you can receive:",
+           "This quest has no time limit.",
+           "Cooking Spaghetti and Pesto consists of:",
+           "Phase 1: Journey to Li's Diner [The Towne of Xaventry].",
+           "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    desc = list(o.ev("sbo.quests['3390'].desc").values())
+    assert "" in desc, f"the paragraph breaks are kept: {desc}"
+    card = lambda: [_re.sub("<[^>]+>", "", x).replace("\xa0", " ") for x in o.lua("return (sbo.questCardHtml('3390', sbo.quests['3390']))").values()]
+    folded = card()
+    assert any("more line" in x and "click to open" in x for x in folded), folded
+    assert not any("Palace of Diocletian" in x for x in folded), "folded: the rest hidden"
+    o.lua("sbo.questHudClick('3390')")
+    opened = card()
+    assert any("Palace of Diocletian" in x for x in opened), opened
+    i = next(k for k, x in enumerate(opened) if "Li's Diner in Xaventry" in x)
+    assert opened[i - 1].strip() == "", f"a gap between paragraphs: {opened[i-2:i+1]}"
+    assert any("click to fold" in x for x in opened), opened
+    o.lua("sbo.questHudClick('3390')")
+    assert any("click to open" in x for x in card()), "folded again"
+
+
+@test
 def quest_steps_update():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     o = Oven()

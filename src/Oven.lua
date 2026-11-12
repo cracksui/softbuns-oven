@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.64.0"
+M.version = "0.65.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2201,8 +2201,9 @@ function M.parseQuests(raw)
           local ph = M.phaseFromText(ptext)
           ph.n = tonumber(pn)
           detail.phases[#detail.phases + 1] = ph
-        elseif t ~= "" and not inPhases then
-          detail.desc[#detail.desc + 1] = rtrim(l)   -- keep indentation (lists, continuation lines)
+        elseif not inPhases and (t ~= "" or (#detail.desc > 0 and detail.desc[#detail.desc] ~= "")) then
+          -- keep indentation (lists, continuation lines) and the blank line between paragraphs
+          detail.desc[#detail.desc + 1] = (t == "") and "" or rtrim(l)
         elseif t ~= "" then
           other[#other + 1] = t
         end
@@ -2549,29 +2550,48 @@ local function questCardHtml(id, Q)
   end
   -- the quest's blurb (often holds hints), dimmed
   if M.cfg.questHudBlurb and Q.desc and #Q.desc > 0 and not finished then
+    -- laid out first (paragraphs with a gap between them, lists and headings on their own lines)…
+    local lines = {}
+    local function put(h, w) lines[#lines + 1] = { h, w } end
     local para = {}
     local function flush()
       if #para > 0 then
-        for _, l in ipairs(hudWrap(table.concat(para, " "), HUD_WRAP, 0)) do add(span(C.dim, " " .. l), ulen(l) + 1) end
+        for _, l in ipairs(hudWrap(table.concat(para, " "), HUD_WRAP, 0)) do put(span(C.dim, " " .. l), ulen(l) + 1) end
         para = {}
       end
     end
-    add("", 0)
     for _, l in ipairs(Q.desc) do
-      if trim(l) == "" then flush()
+      if trim(l) == "" then
+        flush()
+        if #lines > 0 and lines[#lines][2] > 0 then put("", 0) end
       elseif l:match("%S%s%s%s+%S") or l:match("^%s%s%s%s+%S") or l:match("^%s*[%*%-] ") or trim(l):match(":$") then
         flush()   -- list lines and "You can find:" headings keep their own line, spacing and all
         local line = rtrim(l)
         if ulen(line) <= HUD_WRAP + 4 then
-          add(span(C.dim, " " .. line:gsub(" ", "\194\160")), ulen(line) + 1)
+          put(span(C.dim, " " .. line:gsub(" ", "\194\160")), ulen(line) + 1)
         else
-          for _, w in ipairs(hudWrap(line, HUD_WRAP, 4)) do add(span(C.dim, " " .. w), ulen(w) + 1) end
+          for _, w in ipairs(hudWrap(line, HUD_WRAP, 4)) do put(span(C.dim, " " .. w), ulen(w) + 1) end
         end
       else
         para[#para + 1] = trim(l)
       end
     end
     flush()
+    while #lines > 0 and lines[#lines][2] == 0 do table.remove(lines) end
+    -- …then folded: the first few lines, unless you've opened it (click the quest)
+    local SHOW = 3
+    local open = (M.cfg.questHintOpen or {})[tostring(id)]
+    add("", 0)
+    for i, x in ipairs(lines) do
+      if open or i <= SHOW then add(x[1], x[2]) end
+    end
+    if #lines > SHOW then
+      if open then add(span(C.slot, " ▾ click to fold the hint"), 25)
+      else
+        local more = #lines - SHOW
+        add(span(C.slot, string.format(" ▸ %d more line%s · click to open", more, more == 1 and "" or "s")), 32)
+      end
+    end
   end
   return html, widest
 end
@@ -2601,7 +2621,7 @@ function M.drawQuestTracker()
   if not M.questHud then
     M.questHud = Geyser.Label:new({ name = "ovenQuestHud", x = 0, y = 0, width = 300, height = 60 })
     hudCallbacks(M.questHud, nil)
-    pcall(function() M.questHud:setToolTip("drag to move · click a quest to refresh it · click a finished quest to clear it") end)
+    pcall(function() M.questHud:setToolTip("drag to move · click a quest to open or fold its hint · click a finished quest to clear it · sbo quest refresh re-checks") end)
   end
   local alpha = math.floor(255 * math.max(0, math.min(100, tonumber(M.cfg.questHudOpacity) or 100)) / 100 + 0.5)
   M.questHud:setStyleSheet(string.format([[
@@ -2702,14 +2722,20 @@ function M.hudRelease(ev)
   end
 end
 
--- a click on a quest card: a finished quest is cleared, any other quest is refreshed;
--- a click on the frame (between cards) refreshes them all
+-- a click on a quest card: a finished quest is cleared; any other opens or folds its hint (when there's a
+-- hint to fold), else refreshes it; a click on the frame (between cards) refreshes them all
 function M.questHudClick(id)
   if not id then return M.questRefresh("all") end
   local Q = M.quests[id] or {}
   if questFinished(Q) then
     M.questPin(id, false)
     M.notifyQuest((Q.name or ("#" .. id)) .. " cleared from the quest HUD")
+  elseif M.cfg.questHudBlurb and Q.desc and #Q.desc > 0 then
+    M.cfg.questHintOpen = M.cfg.questHintOpen or {}
+    local k = tostring(id)
+    M.cfg.questHintOpen[k] = (not M.cfg.questHintOpen[k]) or nil
+    M.saveSettings()
+    M.drawQuestTracker()
   else
     M.questRefresh(id)
   end
