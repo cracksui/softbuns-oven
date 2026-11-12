@@ -332,9 +332,9 @@ def quest_info_typed_updates_pins():
         o.L.execute("runTimers()")
         eq(o.ev("sbo.cfg.questPins['100']"), None, f"main={main}: dropped quest unpinned")
         eq(o.ev("sbo.quests['3098'].active"), True, f"main={main}: the one quest is active")
-        eq(o.ev("sbo.quests['100'].active"), False, f"main={main}: old quest inactive")
+        eq(o.ev("sbo.quests['100']"), None, f"main={main}: a quest gone from the log is forgotten")
         # quest info for one quest by number says nothing about the others
-        o.lua('sbo.questPin("3098", true); sbo.quests["100"].active = true; sbo.onSend(nil, "quest info 3098")')
+        o.lua('sbo.questPin("3098", true); sbo.quests["100"] = { name = "Another", active = true }; sbo.onSend(nil, "quest info 3098")')
         o.feed(*reply, "[Mail]<270hp 550sp 401st>")
         o.L.execute("runTimers()")
         eq(o.ev("sbo.quests['100'].active"), True, f"main={main}: quest info <id> leaves other quests alone")
@@ -488,7 +488,7 @@ def quest_time_up():
     o.lua("sbo.questTimeUpCheck(); runTimers()")
     eq(list(o.ev("SENT").values()), ["quest info"], "time's up: the quest log checked")
     eq(sorted(o.ev("sbo.cfg.questPins").keys()), ["3390"], "gone from the log: off the panel")
-    assert any("no longer active" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    assert any("no longer in your quest log" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
     o.lua("SENT = {}; sbo.questTimeUpCheck(); runTimers()")
     eq(len(o.ev("SENT")), 0, "asked once")
 
@@ -1693,6 +1693,7 @@ def quest_givers_any_npc():
     o.feed("You inform Samara you have completed your quest 'Bridge Trial'.",
            "Samara tells you, 'Congratulations on the completion of thy quest, Hero!'", "<270hp>")
     eq(o.ev("sbo.cfg.questPins['90']"), None, "turned in to Samara")
+    eq(o.ev("sbo.quests['90']"), None, "turned in: its record is gone too")
     eq(o.ev("#sbo.chat.lines"), 0, "a one-word quest giver's tell isn't chat")
     o.feed("Wren tells you 'nice one'", "<270hp>")
     eq(o.ev("#sbo.chat.lines"), 1, "a player's tell still is")

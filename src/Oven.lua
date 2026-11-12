@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.69.1"
+M.version = "0.70.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2256,6 +2256,24 @@ function M.questInProgress(Q, fresh)
   end
 end
 
+-- a quest you no longer have (turned in, abandoned, expired): its record goes
+function M.questForget(id)
+  id = tostring(id)
+  local Q = M.quests[id]
+  -- who gave it stays known (their tells aren't a player's chat)
+  -- (not ipairs over { master, turnIn }: it stops at the first missing one)
+  if Q then
+    for _, k in ipairs({ "master", "turnIn" }) do
+      local n = Q[k]
+      if n then M.cfg.questGivers = M.cfg.questGivers or {}; M.cfg.questGivers[n] = true end
+    end
+  end
+  M.quests[id] = nil
+  if M.cfg.questPins then M.cfg.questPins[id] = nil end
+  if M.cfg.questHintOpen then M.cfg.questHintOpen[id] = nil end
+  M.cfg.quests = M.quests
+end
+
 -- keep what we learn about quests, for the tracker
 function M.rememberQuests(q, bare)
   local now = os.time()
@@ -2280,17 +2298,21 @@ function M.rememberQuests(q, bare)
       M.quests[e.id] = Q
       active[e.id] = true
     end
-    -- anything else remembered is no longer in your log (finished, turned in or abandoned)
-    for id, Q in pairs(M.quests) do if not active[id] then Q.active = false end end
-    -- a pinned quest missing from your active list is finished (or abandoned)
+    -- a pinned quest missing from your active list is finished (or abandoned, or out of time)
+    local gone = {}
     for id in pairs(M.cfg.questPins or {}) do
       if not active[id] then
-        M.cfg.questPins[id] = nil
         local Q = M.quests[id]
         -- (M.questFinished: the local questFinished is declared further down the file)
-        M.notifyQuest((Q and Q.name or ("#" .. id)) .. ((Q and M.questFinished(Q)) and " turned in - unpinned" or " is no longer active - unpinned"))
+        gone[#gone + 1] = (Q and Q.name or ("#" .. id)) .. ((Q and M.questFinished(Q)) and " turned in - cleared" or " is no longer in your quest log - cleared")
       end
     end
+    -- anything remembered that's no longer in your log goes (taken again, it's read anew)
+    local drop = {}
+    for id in pairs(M.quests) do if not active[id] then drop[#drop + 1] = id end end
+    for id in pairs(M.cfg.questPins or {}) do if not active[id] and not M.quests[id] then drop[#drop + 1] = id end end
+    for _, id in ipairs(drop) do M.questForget(id) end
+    for _, m in ipairs(gone) do M.notifyQuest(m) end
   end
   if q.detail then
     local d = q.detail
@@ -2901,12 +2923,10 @@ function M.questTurnedIn(name)
   M.questTurnedInAt = os.time()
   for id, Q in pairs(M.quests or {}) do
     if Q.name and Q.name:lower() == name:lower() then
-      Q.complete, Q.active, Q.turnedIn = true, false, os.time()
-      M.cfg.quests = M.quests
-      if (M.cfg.questPins or {})[id] then
-        M.cfg.questPins[id] = nil
-        M.notifyQuest(Q.name .. " turned in - unpinned")
-      end
+      -- turned in: done with - off the panel and out of Oven's quest records (taken again, it's read anew)
+      local pinned = (M.cfg.questPins or {})[id]
+      M.questForget(id)
+      if pinned then M.notifyQuest(Q.name .. " turned in - cleared") end
       M.saveSettings()
       pcall(M.drawQuestTracker)
       return id
@@ -6698,14 +6718,14 @@ M.addChatPattern("hint", function(l)
   if kind then return "HINT", kind, msg end
 end)
 -- quest givers Oven knows (from quest info and "Return to X ..."): NPCs, even with one-word names
+-- (also the ones from quests you've since turned in: kept by name in cfg.questGivers)
 local function questGiver(who)
   who = who:lower()
+  local function is(n) return n and (n:lower() == who or n:lower():gsub("^the ", "") == who) end
   for _, Q in pairs(M.quests or {}) do
-    for _, k in ipairs({ "master", "turnIn" }) do   -- (either may be missing)
-      local n = Q[k]
-      if n and (n:lower() == who or n:lower():gsub("^the ", "") == who) then return true end
-    end
+    if is(Q.master) or is(Q.turnIn) then return true end   -- (either may be missing)
   end
+  for n in pairs(M.cfg.questGivers or {}) do if is(n) then return true end end
 end
 M.questGiver = questGiver
 
