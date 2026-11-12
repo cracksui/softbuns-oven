@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.52.1"
+M.version = "0.53.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2157,6 +2157,10 @@ function M.parseQuests(raw)
         elseif detail.inRewards and (t:match("^%*?Up to") or t:match("^[%d,]+ %a")) then
           detail.rewardText = (detail.rewardText and (detail.rewardText .. " ") or "") .. t:gsub("^%*", "")
           if t:match("%.$") then detail.inRewards = false end
+        elseif t:match("^You have [%d,]+ Alyrian minutes? remaining") then
+          -- an Alyrian minute is 15 real seconds (quest 52: 300 of them = GMCP's deadline 75 minutes later)
+          local n = tonumber((t:match("^You have ([%d,]+)"):gsub(",", "")))
+          if n then detail.deadline = os.time() + n * M.ALYRIAN_MINUTE end
         elseif t:match("time limit") then detail.limit = t:gsub("%.$", "")
         elseif t:match(" consists of:$") then inPhases = true
         elseif pn then
@@ -2412,6 +2416,31 @@ local HUD_WRAP, HUD_COLS = 60, 68
 
 -- one quest's lines (html) and their widest width in characters:
 -- the name and progress, every step still to do (the next one marked), and optionally the blurb
+-- Quest time limits: Q.deadline (a Unix time) from GMCP's quest_info.timer, or from
+-- "You have 289 Alyrian minute remaining" (an Alyrian minute is 15 real seconds)
+M.ALYRIAN_MINUTE = 15
+function M.timeLeftText(sec)
+  if sec <= 0 then return "time's up" end
+  if sec < 60 then return "<1m left" end
+  return M.shortDur(sec) .. " left"
+end
+function M.timeLeftColor(sec)
+  if sec <= 10 * 60 then return C.minus end
+  if sec <= 30 * 60 then return C.title end
+  return C.dim
+end
+-- the active quest with the least time left: Q, id, seconds
+function M.questSoonest()
+  local best, bestId, left
+  local nowT = os.time()
+  for id, Q in pairs(M.quests or {}) do
+    if Q.active ~= false and Q.deadline and Q.deadline > nowT and (not left or Q.deadline - nowT < left) then
+      best, bestId, left = Q, id, Q.deadline - nowT
+    end
+  end
+  return best, bestId, left
+end
+
 -- "2. Defeat 4/5 of a lost demon · Rune Forest · Group"
 function M.phaseLabel(ph)
   return string.format("%d. %s", ph.n, ph.text) .. (ph.area and (" · " .. ph.area) or "")
@@ -2431,9 +2460,18 @@ local function questCardHtml(id, Q)
     local col = finished and C.plus or (M.REC or C.slot)
     bar = span(col, string.rep("█", k)) .. span(C.dim, string.rep("░", n - k)) .. span(C.num, string.format(" %d/%d", done, Q.total))
   end
+  local titleW = ulen(name) + ulen(id) + 4 + (Q.total and 13 or 0) + (finished and 2 or 0)
+  local timeHtml, timeW
+  if Q.deadline then
+    local left = Q.deadline - os.time()
+    local txt = M.timeLeftText(left)
+    timeHtml, timeW = span(M.timeLeftColor(left), txt), ulen(txt)
+  end
+  local together = timeHtml and titleW + 3 + timeW <= HUD_WRAP + 3
   add((finished and span(C.plus, "✓ ") or "") .. span(C.dim, "#" .. id .. " ")
-    .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar,
-    ulen(name) + ulen(id) + 4 + (Q.total and 13 or 0) + (finished and 2 or 0))
+    .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar
+    .. (together and ("&nbsp;&nbsp;&nbsp;" .. timeHtml) or ""), titleW + (together and (3 + timeW) or 0))
+  if timeHtml and not together then add("   " .. timeHtml, timeW + 3) end
   if finished then
     -- who to turn it in to: "Return to Lord Agrippa in time to receive your reward!" (else the quest master)
     local who = Q.turnIn or Q.master
@@ -4840,6 +4878,13 @@ function M.drawBar()
     segs[#segs + 1] = { tag == "SAFE" and C.plus or C.key, tag }
     segs[#segs + 1] = { C.dim, " · " }
   end
+  -- the quest with the least time left
+  local okS, sQ, _, sLeft = pcall(M.questSoonest)
+  if okS and sQ then
+    segs[#segs + 1] = { C.dim, "quest " }
+    segs[#segs + 1] = { M.timeLeftColor(sLeft), M.shortDur(sLeft) }
+    segs[#segs + 1] = { C.dim, " · " }
+  end
   if #segs > 0 then segs[#segs] = { C.dim, "   " } end
   -- level and exp to level: prompt > MSDP > last `score`
   local pools, lvl, tnl = {}, nil, nil
@@ -5084,6 +5129,12 @@ function M.onGmcpQuests()
       local Q = M.quests[id] or {}
       M.quests[id] = Q
       if info.name and not Q.name then Q.name = info.name end
+      -- quest_info.timer: when time runs out (a Unix time), -1 for no limit
+      local tm = tonumber(info.timer)
+      if info.completed ~= true and tm then
+        local dl = tm > 0 and tm or nil
+        if Q.deadline ~= dl then Q.deadline = dl; changed = true end
+      end
       local pinned = M.cfg.questPins and M.cfg.questPins[id]
       if info.abandoned == true then
         if Q.active ~= false or pinned then changed = true end
@@ -9321,8 +9372,21 @@ function M.panelsWatch()
   M.panelTimer = tempTimer(4, function() pcall(M.panelsSave) end, true)   -- repeating
 end
 
+-- quest time limits count down on the quest panel and the bar
+function M.questClock()
+  if M.questClockTimer then killTimer(M.questClockTimer) end
+  M.questClockTimer = tempTimer(30, function()
+    local any = false
+    for _, Q in pairs(M.quests or {}) do if Q.active ~= false and Q.deadline then any = true; break end end
+    if not any then return end
+    if next(M.cfg.questPins or {}) then pcall(M.drawQuestTracker) end
+    pcall(M.drawBar)
+  end, true)   -- repeating
+end
+
 function M.teardown()
   if M.panelTimer then killTimer(M.panelTimer); M.panelTimer = nil end
+  if M.questClockTimer then killTimer(M.questClockTimer); M.questClockTimer = nil end
   pcall(M.panelsSave)
   pcall(M.dbClose)
   if M.handlers then for _, h in ipairs(M.handlers) do killAnonymousEventHandler(h) end end
@@ -9382,6 +9446,7 @@ function M.init()
     tempTimer(3, function() pcall(M.panelsRestore); M.panelsHold = nil end)
   end)
   M.panelsWatch()
+  M.questClock()
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadDone", M.onDownload)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadError", M.onDownload)
   for _, v in ipairs({ "LEVEL", "EXPERIENCE", "EXPERIENCE_MAX", "EXPERIENCE_TNL", "EXPERIENCE_TO_LEVEL" }) do

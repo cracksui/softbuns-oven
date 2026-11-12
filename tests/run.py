@@ -435,6 +435,43 @@ def bar_group_health():
 
 
 @test
+def quest_timers():
+    import re as _re, time as _time
+    o = Oven()
+    lines = open(fixture("quest_login_daily.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"')
+    o.feed(*lines)
+    o.feed("<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    left = o.ev("sbo.quests['3519'].deadline") - int(_time.time())
+    assert abs(left - 1984 * 15) <= 5, f"1984 Alyrian minutes = 8h16m: {left}s"
+    # GMCP: quest_info.timer is the deadline; -1 is none
+    now = int(_time.time())
+    o.lua(f"""gmcp.char = {{ quests = {{
+        q52 = {{ quest_info = {{ vnum = 52, name = "Jail Time", completed = false, abandoned = false, timer = {now + 40 * 60} }}, goals = {{}} }},
+        q60 = {{ quest_info = {{ vnum = 60, name = "Untimed", completed = false, abandoned = false, timer = -1 }}, goals = {{}} }} }} }}
+      sbo.onGmcpQuests()""")
+    eq(o.ev("sbo.quests['52'].deadline"), now + 40 * 60, "from GMCP")
+    eq(o.ev("sbo.quests['60'].deadline"), None, "no limit")
+    # the bar: only the soonest
+    o.lua("""sbo.bar = { rawEcho = function(self, h) BAR = h end }
+             sbo.lastPromptText = "[Mail]<270hp 501sp 401st>"; sbo.drawBar()""")
+    plain = _re.sub("<[^>]+>", "", o.ev("BAR") or "")
+    assert "quest 40m" in plain or "quest 39m" in plain, plain
+    assert "8h" not in plain, f"just the soonest: {plain}"
+    assert plain.find("quest") < plain.find("HP"), f"at the left: {plain}"
+    # the panel: each pinned quest's time
+    o.lua("sbo.cfg.questPins = { ['52'] = true, ['3519'] = true }")
+    card = o.lua("local h = sbo.questCardHtml('3519', sbo.quests['3519']); return table.concat(h, '\\n')")
+    assert "8h1" in _re.sub("<[^>]+>", "", card) and "left" in card, card
+    # turned in: no more timer
+    o.lua("sbo.quests['52'].active = false")
+    o.lua("sbo.drawBar()")
+    plain = _re.sub("<[^>]+>", "", o.ev("BAR") or "")
+    assert "quest 8h" in plain, f"the next soonest: {plain}"
+
+
+@test
 def tabs_auto_off():
     o = Oven()
     o.lua('''sbo.cfg.window = true

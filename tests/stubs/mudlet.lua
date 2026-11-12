@@ -5,7 +5,18 @@ table.save=function() end; table.load=function() end
 timers={}; local tid=0
 function tempTimer(t,f) tid=tid+1; timers[tid]={t,f}; return tid end
 function killTimer(id) timers[id]=nil end
-function runTimers() local any=true while any do any=false for id,t in pairs(timers) do timers[id]=nil; t[2](); any=true; break end end end
+-- all of them, soonest first (then oldest), like time passing
+function runTimers()
+  while true do
+    local best, bid
+    for id, t in pairs(timers) do
+      if not best or t[1] < best[1] or (t[1] == best[1] and id < bid) then best, bid = t, id end
+    end
+    if not best then return end
+    timers[bid] = nil
+    best[2]()
+  end
+end
 function fg(w,c) end function resetFormat() end
 function echo(w,t) if t==nil then t=w end io.write(t) end
 function decho(w,t) if t==nil then t=w end io.write("[D]"..t) end

@@ -123,6 +123,10 @@ killed somewhere, or a room on the map by name - the HUD shows where (green: the
 and **`sbo quest go`** runs you there. A finished quest shows ✓ complete (and who to return to) and stays until you turn it in with `quest
 complete` - then it comes off the HUD by itself (or click it to clear it sooner). Abandoned quests unpin themselves as soon as the game reports it.
 
+Quests with a time limit show the time left next to their name on the quest panel (orange under 30
+minutes, red under 10), and the prompt bar shows the one running out soonest (`quest 8h16m`). The game
+gives limits in Alyrian minutes; one is 15 real seconds.
+
 ## Comparing gear
 
 Every item you look at is remembered (it survives logging out). Items, loot, kills, deaths and what's
