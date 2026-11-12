@@ -1350,6 +1350,18 @@ def tab_dragged_out():
     eq(o.ev("WIDGETS['ovenTabs3_log'].shown"), False, "its tab leaves the bar")
     eq(o.ev("sbo.tabOn"), "view", "the Oven window shows another tab")
     eq(o.ev("sbo.cfg.tabsOut.log"), True, "remembered")
+    # the window follows the mouse while the tab is dragged; Mudlet may not say when it's let go
+    o.lua('WIDGETS["ovenTab_log"].items["dock into the Oven window"]()')
+    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_log"].click(); MOUSE = {960, 60}; sbo.tabDragMove("log")')
+    eq(o.ev("sbo.tabIsOut('log')"), False, "a small move: still a tab")
+    o.lua('MOUSE = {700, 100}; sbo.tabDragMove("log")')
+    eq(o.ev("sbo.tabIsOut('log')"), True, "past the window's edge: torn off")
+    eq(o.ev("WIDGETS['ovenTabs3_log'].shown"), True, "its tab stays while still held")
+    o.lua('MOUSE = {400, 500}; sbo.tabDragMove("log")')
+    eq(o.ev("WIDGETS['ovenTab_log'].x0"), 360, "follows the mouse")
+    o.lua('runTimers()')
+    eq(o.ev("WIDGETS['ovenTabs3_log'].shown"), False, "stopped moving: its tab leaves the bar")
+    eq(o.ev("sbo.tabDrag"), None, "drag over")
     # new content for it shows its window, and leaves the Oven window's tab alone
     o.lua('WIDGETS["ovenTab_log"]:hide(); sbo.command("log session")')
     eq(o.ev("WIDGETS['ovenTab_log'].shown"), True, "its window comes back for new content")
@@ -1366,6 +1378,10 @@ def tab_dragged_out():
     eq(o.ev("sbo.tabIsOut('notes')"), True, "sbo window undock notes")
     o.lua('sbo.command("window dock notes")')
     eq(o.ev("sbo.tabIsOut('notes')"), False, "sbo window dock notes")
+    # an update mid-session keeps the tab labels: they're wired to the new code again
+    o.lua('WIDGETS["ovenTabs3_help"].click = function() end; sbo.createWindow()')
+    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_help"].click(); MOUSE = {300, 300}; sbo.tabRelease("help")')
+    eq(o.ev("sbo.tabIsOut('help')"), True, "old labels drag too")
     o.lua('sbo.runTimers = nil'); o.lua('runTimers()')
 
 

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.76.1"
+M.version = "0.76.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3540,8 +3540,18 @@ local tabOnStyle = [[
   QLabel { background-color: black; color: #e6c35c; border: 1px solid #555; border-bottom: none;
            border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 10px; margin-right: 2px; }]]
 
+-- what a tab does when clicked, dragged and let go (wired again after an update, which keeps the labels)
+function M.tabWire(key, lab)
+  pcall(function() lab:setCursor("PointingHand") end)
+  lab:setClickCallback(function() M.tabPress(key) end)
+  pcall(function() lab:setReleaseCallback(function() M.tabRelease(key) end) end)
+  pcall(function() lab:setMoveCallback(function() M.tabDragMove(key) end) end)
+end
 function M.buildTabs()
-  if M.tabBox and M.tabsId == TABS_ID then return end
+  if M.tabBox and M.tabsId == TABS_ID then
+    for key, lab in pairs(M.tabLabels or {}) do M.tabWire(key, lab) end
+    return
+  end
   if M.tabBox then pcall(function() M.tabBox:hide() end) end   -- tabs from before an update
   M.tabsId = TABS_ID
   M.tabBox = Geyser.VBox:new({ name = TABS_ID .. "Box", x = 0, y = 0, width = "100%", height = "100%" }, M.container)
@@ -3552,13 +3562,7 @@ function M.buildTabs()
     local key = t.key
     local lab = Geyser.Label:new({ name = TABS_ID .. "_" .. key, width = 96, h_policy = Geyser.Fixed }, M.tabBar)
     lab:echo("<center>" .. t.title .. "</center>")
-    pcall(function() lab:setCursor("PointingHand") end)
-    lab:setClickCallback(function() M.tabPress(key) end)
-    pcall(function() lab:setReleaseCallback(function() M.tabRelease(key) end) end)
-    pcall(function() lab:setMoveCallback(function()
-      local d = M.tabDrag
-      if d and d.key == key and not d.moved then d.moved = true; M.tabTrace("moving " .. key) end
-    end) end)
+    M.tabWire(key, lab)
     M.tabLabels[key] = lab
     M.tabPages[key] = Geyser.Container:new({ name = TABS_ID .. "Page_" .. key, x = 0, y = 0, width = "100%", height = "100%" }, M.tabBody)
   end
@@ -3681,28 +3685,65 @@ function M.tabPress(key)
   M.tabTrace("press " .. key .. " at " .. tostring(x) .. "," .. tostring(y))
   M.tabShow(key)
 end
+local function insideOven(x, y)
+  local c = M.container
+  local okG, cx, cy, cw, ch = pcall(function() return c:get_x(), c:get_y(), c:get_width(), c:get_height() end)
+  return okG and tonumber(cx) and x >= cx and x <= cx + cw and y >= cy and y <= cy + ch, cx, cy, cw, ch
+end
+-- dragged past the Oven window's edge: the tab tears off into its own window, which follows the mouse
+-- until you let go (or stop moving); its tab leaves the bar then
+function M.tabDragMove(key)
+  local d = M.tabDrag
+  if not d or d.key ~= key then return end
+  local ok, x, y = pcall(getMousePosition)
+  if not ok or not tonumber(x) then return end
+  if not d.moved then d.moved = true; M.tabTrace("moving " .. key .. " at " .. x .. "," .. y) end
+  if d.torn then
+    pcall(function() M.tabWins[key]:move(math.floor(math.max(0, x - 40)), math.floor(math.max(0, y - 10))) end)
+  elseif math.abs(x - d.x) + math.abs(y - d.y) >= 40 and not insideOven(x, y) then
+    d.torn = true
+    M.tabUndock(key, x, y, true)
+    if not M.tabIsOut(key) then M.tabDrag = nil; return end
+  end
+  if d.torn then
+    if M.tabDragTimer then killTimer(M.tabDragTimer) end
+    M.tabDragTimer = tempTimer(0.8, function() M.tabDragTimer = nil; M.tabDragEnd(key) end)
+  end
+end
+function M.tabDragEnd(key)
+  local d = M.tabDrag
+  if not d or d.key ~= key then return end
+  M.tabDrag = nil
+  if M.tabDragTimer then killTimer(M.tabDragTimer); M.tabDragTimer = nil end
+  if M.tabIsOut(key) then M.tabLabelOut(key) end
+end
+function M.tabLabelOut(key)
+  M.tabLabels[key]:hide()
+  pcall(function() M.tabLabels[key]:resize(0, nil); M.tabBar:organize() end)
+end
+
 -- let go outside the Oven window, well away from where it was picked up: its own window there
 function M.tabRelease(key)
   local d = M.tabDrag
-  M.tabDrag = nil
   local ok, x, y = pcall(getMousePosition)
   M.tabTrace("release " .. key .. " at " .. tostring(x) .. "," .. tostring(y) .. (d and "" or " (no press seen)"))
+  if d and d.torn then return M.tabDragEnd(key) end
+  M.tabDrag = nil
   if not d or d.key ~= key then return end
   if not ok or not tonumber(x) then return end
   if math.abs(x - d.x) + math.abs(y - d.y) < 40 then return end
-  local c = M.container
-  local okG, cx, cy, cw, ch = pcall(function() return c:get_x(), c:get_y(), c:get_width(), c:get_height() end)
-  if okG and x >= cx and x <= cx + cw and y >= cy and y <= cy + ch then
+  local inside, cx, cy, cw, ch = insideOven(x, y)
+  if inside then
     return M.tabTrace(string.format("  inside the window (%s,%s %sx%s)", tostring(cx), tostring(cy), tostring(cw), tostring(ch)))
   end
   M.tabUndock(key, x, y)
 end
 
-function M.tabUndock(key, x, y)
-  local ok, err = pcall(M.tabUndock1, key, x, y)
+function M.tabUndock(key, x, y, holdTab)
+  local ok, err = pcall(M.tabUndock1, key, x, y, holdTab)
   if not ok then M.tabTrace("undock " .. key .. " failed: " .. tostring(err)); say("couldn't undock " .. key .. ": " .. tostring(err)) end
 end
-function M.tabUndock1(key, x, y)
+function M.tabUndock1(key, x, y, holdTab)
   M.tabTrace("undock " .. key .. (x and (" to " .. x .. "," .. y) or ""))
   if not M.cfg.tabs or not M.tabPages or not M.tabPages[key] or M.tabIsOut(key) then return end
   local name = "ovenTab_" .. key
@@ -3741,9 +3782,8 @@ function M.tabUndock1(key, x, y)
   pcall(function() win:raiseAll() end)
   M.tabTrace(string.format("  page now in %s · out %s · window at %s,%s", tostring(pg.container and pg.container.name),
     tostring(M.tabIsOut(key)), tostring((pcall(win.get_x, win)) and win:get_x()), tostring((pcall(win.get_y, win)) and win:get_y())))
-  -- its tab leaves the bar
-  M.tabLabels[key]:hide()
-  pcall(function() M.tabLabels[key]:resize(0, nil); M.tabBar:organize() end)
+  -- its tab leaves the bar (once you let go of it, when it's being dragged)
+  if not holdTab then M.tabLabelOut(key) end
   M.cfg.tabsOut = M.cfg.tabsOut or {}
   if not M.cfg.tabsOut[key] then M.cfg.tabsOut[key] = true; M.saveSettings() end
   -- the Oven window shows another tab - or goes away once every tab is out
