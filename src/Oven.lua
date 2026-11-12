@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.76.3"
+M.version = "0.77.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7824,13 +7824,13 @@ local mapButtonStyle = [[
 
 -- bump when the panel's contents change, so a panel built by an older version (in the same
 -- Mudlet session) is rebuilt after an update instead of keeping its old layout
-local MAP_PANEL_LAYOUT = 3
+local MAP_PANEL_LAYOUT = 4
 
 function M.createMapPanel()
   if M.mapPanel and M.mapPanelLayout == MAP_PANEL_LAYOUT then return end
   if M.mapPanel then
     pcall(function() M.mapPanel:hide() end)
-    M.mapPanel, M.mapRoomLabel, M.mapSearchBox, M.mapWidget = nil, nil, nil, nil
+    M.mapPanel, M.mapRoomLabel, M.mapSearchBox, M.mapWidget, M.mapSearchStatus = nil, nil, nil, nil, nil
   end
   M.mapPanelLayout = MAP_PANEL_LAYOUT
   M.mapPanel = Adjustable.Container:new({
@@ -7854,23 +7854,111 @@ function M.createMapPanel()
     b:setClickCallback(function() fn() end)
     return b
   end
-  -- search box: type part of a room name, Enter
-  local findLabel = Geyser.Label:new({ name = "ovenMapFindLabel", width = 36, h_policy = Geyser.Fixed }, header)
-  findLabel:setStyleSheet("background-color: rgba(18,18,26,255); color: #808080; qproperty-alignment: 'AlignVCenter | AlignRight'; padding-right: 4px;")
-  findLabel:echo("find")
-  M.mapSearchBox = Geyser.CommandLine:new({ name = "ovenMapSearch", width = 150, h_policy = Geyser.Fixed }, header)
-  pcall(function() M.mapSearchBox:setStyleSheet([[
-    background-color: rgba(30,30,42,255); color: #c0c0c0; border: 1px solid #333;
-    qproperty-placeholderText: "room name…";]]) end)
-  M.mapSearchBox:setAction(function(text)
-    M.mapSearchBox:clear()
-    M.mapFind(text)
-  end)
   button("ovenMapZoomOut", "−", "zoom out", function() M.mapZoom(1.25) end)
   button("ovenMapZoomIn", "+", "zoom in", function() M.mapZoom(0.8) end)
   button("ovenMapCentre", "◎", "centre on you", function() M.centerOn(M.mapRoom) end)
   M.mapWidget = Geyser.Mapper:new({ name = "ovenMapper", v_policy = Geyser.Dynamic }, box)
   if M.cfg.mapZoom then pcall(setMapZoom, M.cfg.mapZoom) end
+  -- search, along the bottom: matches in the area on show light up, the list goes to the Inspector
+  local footer = Geyser.HBox:new({ name = "ovenMapFooter", height = 24, v_policy = Geyser.Fixed }, box)
+  local findLabel = Geyser.Label:new({ name = "ovenMapFindLabel", width = 36, h_policy = Geyser.Fixed }, footer)
+  findLabel:setStyleSheet("background-color: rgba(18,18,26,255); color: #808080; qproperty-alignment: 'AlignVCenter | AlignRight'; padding-right: 4px;")
+  findLabel:echo("find")
+  M.mapSearchBox = Geyser.CommandLine:new({ name = "ovenMapSearch" }, footer)
+  pcall(function() M.mapSearchBox:setStyleSheet([[
+    background-color: rgba(30,30,42,255); color: #c0c0c0; border: 1px solid #333;
+    qproperty-placeholderText: "a room, an NPC, a [tag], an item a shop sells…";]]) end)
+  M.mapSearchBox:setAction(function(text)
+    M.mapSearchBox:clear()
+    M.mapSearch(text)
+  end)
+  M.mapSearchStatus = Geyser.Label:new({ name = "ovenMapFindStatus", width = 190, h_policy = Geyser.Fixed }, footer)
+  M.mapSearchStatus:setStyleSheet("background-color: rgba(18,18,26,255); color: #808080; qproperty-alignment: 'AlignVCenter | AlignRight'; padding-right: 6px;")
+  local clear = Geyser.Label:new({ name = "ovenMapFindClear", width = 28, h_policy = Geyser.Fixed }, footer)
+  clear:setStyleSheet(mapButtonStyle)
+  clear:echo("×")
+  pcall(function() clear:setToolTip("clear the search") end)
+  pcall(function() clear:setCursor("PointingHand") end)
+  clear:setClickCallback(function() M.mapSearch("") end)
+  M.mapSearchDraw()
+end
+
+---------------------------------------------------------------------------
+-- Map panel search: everything Oven knows that matches (room names, NPCs and [tags], shops'
+-- stock, where-is features, bookmarks) - the ones in the area the map is showing light up, and
+-- light up again as you go into another area (or the map is moved to one)
+---------------------------------------------------------------------------
+local SEARCH_RGB = { 120, 200, 255 }
+-- the area the map panel is showing
+function M.mapShownArea()
+  local id = M.mapCenter or M.mapRoom
+  return id and roomExists(id) and getRoomArea(id) or nil
+end
+-- every room matching, anywhere on the map
+function M.mapSearchRooms(q)
+  local ids, seen = {}, {}
+  local function add(id) id = tonumber(id); if id and not seen[id] and roomExists(id) then seen[id] = true; ids[#ids + 1] = id end end
+  local okT, targets = pcall(M.runTargets, q)
+  if okT and type(targets) == "table" then for _, t in ipairs(targets) do add(t.id) end end
+  local ok, rooms = pcall(searchRoom, q)
+  if ok and type(rooms) == "table" then for key in pairs(rooms) do add(key) end end
+  return ids
+end
+function M.mapSearchUnlight()
+  for _, id in ipairs(M.mapSearchLit or {}) do pcall(unHighlightRoom, id) end
+  M.mapSearchLit = {}
+  -- rooms that were lit for something else too
+  for _, id in ipairs(M.mapHighlights or {}) do pcall(highlightRoom, id, 255, 165, 0, 255, 215, 0, 1.2, 220, 80) end
+  if M.mapHighlight then pcall(highlightRoom, M.mapHighlight, 64, 224, 208, 64, 224, 208, 1.5, 200, 60) end
+end
+-- light the matches in the area on show
+function M.mapSearchLight()
+  M.mapSearchUnlight()
+  local q = M.mapSearchQuery
+  if not q then M.mapSearchArea = nil; return M.mapSearchDraw() end
+  local area = M.mapShownArea()
+  M.mapSearchArea = area
+  local all = M.mapSearchRooms(q)
+  local here = 0
+  for _, id in ipairs(all) do
+    if area and getRoomArea(id) == area then
+      local r, g, b = SEARCH_RGB[1], SEARCH_RGB[2], SEARCH_RGB[3]
+      pcall(highlightRoom, id, r, g, b, r, g, b, 1.3, 230, 90)
+      M.mapSearchLit[#M.mapSearchLit + 1] = id
+      here = here + 1
+    end
+  end
+  M.mapSearchCount = { here = here, all = #all }
+  M.mapSearchDraw()
+end
+function M.mapSearchDraw()
+  if not M.mapSearchStatus then return end
+  local q, n = M.mapSearchQuery, M.mapSearchCount
+  local font = (pcall(getFont) and getFont()) or "monospace"
+  local esc = function(x) return (tostring(x):gsub("&", "&amp;"):gsub("<", "&lt;")) end
+  local text = ""
+  if q and n then
+    local col = n.here > 0 and "#78c8ff" or "#808080"
+    text = string.format("<span style=\"font-family:'%s'; color:%s;\">'%s': %d here</span>"
+      .. "<span style=\"font-family:'%s'; color:#808080;\"> · %d in all</span>", font, col, esc(q), n.here, font, n.all)
+  end
+  M.mapSearchStatus:echo(text)
+end
+-- the box: a search lights up and lists; empty (or ×) clears
+function M.mapSearch(q)
+  q = trim(q or "")
+  if q == "" then
+    M.mapSearchQuery, M.mapSearchCount = nil, nil
+    return M.mapSearchLight()
+  end
+  M.mapSearchQuery = q
+  M.mapSearchLight()
+  if tonumber(q) then return M.mapShow(tonumber(q)) end
+  M.placesFind(q)
+end
+-- the map moved to another area (you walked, or it was centred somewhere): light that area's matches
+function M.mapSearchFollow()
+  if M.mapSearchQuery and M.mapShownArea() ~= M.mapSearchArea then pcall(M.mapSearchLight) end
 end
 
 function M.mapZoom(factor)
@@ -7905,6 +7993,7 @@ function M.centerOn(id)
   if not id or not roomExists(id) then return end
   M.mapCenter = id
   centerview(id)
+  if M.mapSearchFollow then M.mapSearchFollow() end
 end
 
 -- the room you're in, for the kill / loot / death records
@@ -10259,6 +10348,10 @@ end
 -- something new about a room (an NPC or tag, a shop listed, a where-is feature, a bookmark): a highlight
 -- that's showing is redone, quietly, so a new match lights up without moving the map
 function M.mapLearned()
+  if M.mapSearchQuery and not M.mapSearchPending then
+    M.mapSearchPending = true
+    tempTimer(0.3, function() M.mapSearchPending = nil; if M.mapSearchQuery then pcall(M.mapSearchLight) end end)
+  end
   if not M.mapHighlightQuery or M.mapRelightPending then return end
   M.mapRelightPending = true
   tempTimer(0.2, function()

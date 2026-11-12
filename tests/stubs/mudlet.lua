@@ -149,7 +149,8 @@ local function box(kind)
     return t
   end }
 end
-Geyser.Container = box("container"); Geyser.VBox = box("vbox"); Geyser.HBox = box("hbox")
+Geyser.Container = box("container"); Geyser.VBox = box("vbox"); Geyser.HBox = box("hbox"); Geyser.Mapper = box("mapper")
+function setMapZoom() end
 Geyser.Fixed, Geyser.Dynamic = "fixed", "dynamic"
 local labelNew = Geyser.Label.new
 Geyser.Label.new = function(self, o, parent) local t = labelNew(self, o, parent); WIDGETS = WIDGETS or {}; WIDGETS[o.name] = t; return t end

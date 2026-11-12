@@ -1223,6 +1223,33 @@ def traveling_sellers():
     eq(sorted(o.ev("LIT").keys()), [10560], "only Rune's")
 
 
+@test
+def map_search_box():
+    o = Oven()
+    o.lua("""LIT = {}; highlightRoom = function(id) LIT[id] = true end; unHighlightRoom = function(id) LIT[id] = nil end
+      roomExists = function(id) return id and id < 1000 end
+      getRoomArea = function(id) return id < 100 and 1 or 2 end
+      getRoomAreaName = function(a) return a == 1 and "Towne of Rune" or "Templeton" end
+      getRoomName = function(id) return "a bakery" end
+      searchRoom = function(q) if q == "bakery" then return { [5] = "a bakery", [6] = "the bakery", [500] = "Templeton bakery" } end return {} end
+      centerview = function() end; getPath = function() return false end
+      SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      sbo.cfg.mapPanel = true; sbo.cfg.map = false; sbo.mapRoom = 1""")
+    o.lua('sbo.createMapPanel()')
+    o.lua('WIDGETS["ovenMapSearch"].action("bakery")')
+    eq(sorted(o.ev("LIT").keys()), [5, 6], "the matches in the area on show light up")
+    st = o.ev("WIDGETS['ovenMapFindStatus'].text")
+    assert "2 here" in st and "3 in all" in st, st
+    o.lua('sbo.centerOn(400)')
+    eq(sorted(o.ev("LIT").keys()), [500], "another area: its matches")
+    o.lua("""sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (450, 'b', 'A baker of bakery goods.', '', 1, 1)")
+      sbo.mapLearned(); runTimers()""")
+    eq(sorted(o.ev("LIT").keys()), [450, 500], "a new match lights up")
+    o.lua('WIDGETS["ovenMapFindClear"].click()')
+    eq(len(o.ev("LIT")), 0, "cleared")
+    eq(o.ev("WIDGETS['ovenMapFindStatus'].text"), "", "status cleared")
+
+
 WHERE_LIST = """Where is what? Features that Towne of Rune might contain that you may be interested in:
 healer              post-office         lockers             bank                
 food                blacksmith          questmaster         music-venue         
