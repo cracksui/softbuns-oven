@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.70.0"
+M.version = "0.70.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -9344,6 +9344,14 @@ M.CMDS = {
     { name = "unpin", args = "{id|all}", desc = "take them off", run = function(r) return legacy("quest unpin " .. r) end },
     { name = "go", args = "[{id}]", desc = "to the next step of a quest", run = function(r) return legacy("quest go " .. r) end },
     { name = "refresh", args = "[{id}]", desc = "re-check pinned quests with the game", run = function(r) return legacy("quest refresh " .. r) end },
+    { name = "clear", args = "{id}", desc = "forget a quest: off the panel, its record gone (read anew next time)",
+      run = function(r)
+        local id = r:match("^#?(%d+)$")
+        if not id then return say("sbo quest clear {quest number}") end
+        local Q = M.quests[id]
+        M.questForget(id); M.saveSettings(); pcall(M.drawQuestTracker)
+        say((Q and Q.name or ("#" .. id)) .. " cleared - Oven reads it anew the next time the game shows it")
+      end },
   } },
   { name = "map", desc = "the map panel: find rooms, shops, signposts, bookmarks", run = function() return M.mapPanelShow() end, subs = {
     { name = "find", args = "{what|#}", desc = "NPCs, tags, rooms, nearest first (#: centre the map)",

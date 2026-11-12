@@ -1567,6 +1567,8 @@ def quest_done_before_taken_again():
     eq(o.ev("sbo.questFinished(sbo.quests['1348'])"), False, "the list says 0/2: in progress")
     o.lua("sbo.pinAllFromList = true; sbo.questPin('all', true); sbo.pinAllFromList = nil")
     eq(list(o.ev("sbo.cfg.questPins").keys()), ["1348"], "pin all")
+    o.lua('sbo.command("quest clear 1348")')
+    eq((o.ev("sbo.quests['1348']"), o.ev("sbo.cfg.questPins['1348']")), (None, None), "sbo quest clear")
 
 
 @test
