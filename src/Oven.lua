@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.53.0"
+M.version = "0.54.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -364,6 +364,9 @@ M.commands = {
   -- recorded only (shown as the game sends it) until a layout exists
   { word = "quest",     min = 3, kind = "quest" },
   { word = "alias",     min = 5, kind = "aliases", needsNoArgs = true },
+  -- a shop's list ("shop list", "sh li", "sh i"): read into the shops table; shown as the game sends it
+  { word = "shop",      min = 2, kind = "shop",
+    argsOk = function(r) return r ~= "" and (("list"):sub(1, #r) == r or ("inventory"):sub(1, #r) == r) end },
 }
 
 function M.classify(cmd)
@@ -375,6 +378,7 @@ function M.classify(cmd)
     if #verb >= def.min and def.word:sub(1, #verb) == verb and not (def.except and def.except[verb]) then
       if def.needsArgs and rest == "" then return nil end
       if def.needsNoArgs and rest ~= "" then return nil end
+      if def.argsOk and not def.argsOk(rest) then return nil end
       if def.word == "look" or def.word == "examine" then
         if directions[rest] then return nil end
         local inside = rest:match("^in%s+(.+)$")
@@ -5481,6 +5485,10 @@ M.shapes = {
     return t:match("^Player Information") or l:match("^%s%s%S") or t:match("^%*")
   end,
   levels = function(t) return t:match("^%[Level:") end,
+  shop = function(t)
+    return t:match("^Welcome to ") or t:match("^You have [%d,]+ gp on hand") or t:match("^No%.%s+Item Name")
+      or t:match("^%d+%)%s") or t:match("^There isn't a shopkeeper") or t:match("^You can't do that")
+  end,
   quest = function(t, l, cap)
     if not cap.questStarted then
       if t:match("^Quest #%d+") or t:match("^This quest %[%d+%]") or t:match("^Usage: quest")
@@ -5937,6 +5945,36 @@ end
 M.addBlockReader("shop_list", "*", function(b)
   local shop = M.parseShop(b.lines)
   if shop then pcall(M.recordShop, M.mapRoom or b.room, shop) end
+end)
+
+-- Stopping in a shop: Oven lists it quietly (once an hour at most), so its stock stays known.
+-- A shop is a room whose NPC the game tags [Shop], or one you've listed before.
+M.shopTried = M.shopTried or {}
+function M.isShopRoom(room)
+  if not room then return false end
+  if M.dbRow("SELECT room FROM shops WHERE room = %s", room) then return true end
+  return M.dbRow("SELECT room FROM room_npcs WHERE room = %s AND instr(lower(ifnull(tags, '')), 'shop') > 0", room) ~= nil
+end
+
+function M.shopAutoList(room, promptLine)
+  if M.cfg.shopList == false or not room or room ~= M.mapRoom then return end
+  -- not while walking through, fighting, or busy; only once you're playing
+  if M.walk or M.running or M.cap or M.learning or M.learnQueue or M.quietNext or M.fighting() or not M.inGame(promptLine) then return end
+  local t = os.time()
+  if M.shopTried[room] and t - M.shopTried[room] < 3600 then return end
+  local r = M.dbRow("SELECT last FROM shops WHERE room = %s", room)
+  if r and tonumber(r.last) and t - tonumber(r.last) < 3600 then return end
+  if not M.isShopRoom(room) then return end
+  M.shopTried[room] = t          -- once an hour, even when the game says no ("There isn't a shopkeeper present.")
+  M.quietly("shop list", "shop", function() end)   -- the shop_list reader saves it
+end
+
+M.addBlockReader("shop_auto", "*", function(b)
+  local room = M.mapRoom
+  if not b.prompt or not room or room == M.shopCheckedRoom then return end
+  M.shopCheckedRoom = room
+  local p = b.lines[#b.lines]
+  tempTimer(1.5, function() pcall(M.shopAutoList, room, p) end)
 end)
 
 -- sbo shops [text]: the shops Oven knows, or where to buy something (cheapest first)
@@ -8565,7 +8603,7 @@ M.CMDS = {
   { name = "map", desc = "the map panel: find rooms, shops, signposts, bookmarks", run = function() return M.mapPanelShow() end, subs = {
     { name = "find", args = "{what|#}", desc = "NPCs, tags, rooms, nearest first (#: centre the map)",
       run = function(r) return M.placesFind(r) end },
-    { name = "shops", args = "[{item}]", desc = "shops you've listed, or who sells an item",
+    { name = "shops", args = "[{item}]", desc = "shops listed (by you, or when you stop in one), or who sells an item",
       run = function(r) return legacy("shops " .. r) end },
     { name = "signposts", desc = "signpost runs and where each ends", run = function() return M.runList() end },
     { name = "mark", args = "[{name}]", desc = "bookmark this room; no name: list them",
@@ -8900,6 +8938,8 @@ M.SETTINGS = {
   { "map", "Map panel", BOOL, function() return onoff(M.cfg.map) end, function(v) legacy("map " .. v) end },
   { "map.panel", "Map panel", BOOL, function() return onoff(M.cfg.mapPanel) end, function(v) legacy("map panel " .. v) end },
   { "map.card", "Map panel", BOOL, function() return onoff(M.cfg.mapCard) end, function(v) legacy("map card " .. v) end },
+  { "map.shoplist", "Map panel", BOOL, function() return onoff(M.cfg.shopList ~= false) end,
+    function(v) M.cfg.shopList = (v == "on"); M.saveSettings(); say("listing shops when you stop in one: " .. v) end },
   { "signposts.look", "Map panel", BOOL, function() return onoff(M.cfg.signLook) end, function(v) legacy("signposts look " .. v) end },
   { "bar", "Prompt bar", BOOL, function() return onoff(M.cfg.bar) end, function(v) legacy("bar " .. v) end },
   { "bar.mode", "Prompt bar", { "gauges", "raw" }, function() return M.cfg.barMode or "gauges" end, function(v) legacy("bar " .. v) end },

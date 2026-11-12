@@ -211,6 +211,7 @@ sbo quest                    the quest panel
 sbo map                      the map panel, centred on you
     find {what|#}            NPCs, tags, rooms, nearest first (#: centre the map)
     shops [{item}]           shops you've listed, or who sells an item
+                             (a shop is listed by itself when you stop in it)
     signposts                signpost runs and where each ends
     mark [{name}]            bookmark this room; no name: list them
     unmark {name}
@@ -266,7 +267,8 @@ Log tab        log.mirror on|off
 Chat tab       chat.mirror on|off
 Quest panel    quest.hud on|off · quest.autopin on|off · quest.blurb on|off
                quest.side left|right · quest.opacity 0-100
-Map panel      map on|off · map.panel on|off · map.card on|off · signposts.look on|off
+Map panel      map on|off · map.panel on|off · map.card on|off · map.shoplist on|off
+               signposts.look on|off
 Prompt bar     bar on|off · bar.mode gauges|raw · bar.session on|off · bar.session.style full|short
                bar.session.place top|bottom · bar.width {n} · bar.lines {n} · bar.font {n}
                bar.bg {r g b} · bar.blanks on|off

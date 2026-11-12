@@ -918,6 +918,54 @@ def command_tree():
 
 
 @test
+def shop_listed_on_arrival():
+    sushi = open(fixture("shop_list.txt"), encoding="utf-8").read().split("\n---\n")[0].split("\n")
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; GAGGED = 0; deleteLine = function() GAGGED = GAGGED + 1 end')
+    o.set_gmcp("char.status", '{ state = "playing" }')
+    o.L.globals().SUSHI = o.L.table_from(sushi)
+    o.lua("""
+      roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
+      centerview = function() end
+      SENT = {}
+      send = function(c)
+        SENT[#SENT + 1] = c
+        sbo.onSend(nil, c)
+        if c == "shop list" then
+          for _, l in ipairs(SUSHI) do line = l; sbo.onLine() end
+          line = "<270hp 550sp 401st>"; sbo.onLine()
+        end
+      end
+      function ARRIVE(id)
+        gmcp.room = { info = { num = tostring(id), wilds = "false" } }
+        sbo.onRoom()
+        line = "Kasan's Sushi Bar"; sbo.onLine()
+        line = "<270hp 550sp 401st>"; sbo.onLine()
+        runTimers()
+      end
+      sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (10515, 'kasan', 'Kasan stands here.', 'Shop', 1, 1)")
+    """)
+    o.lua("ARRIVE(10515)")
+    eq(list(o.ev("SENT").values()), ["shop list"], "listed on arrival")
+    eq(o.rows("SELECT COUNT(*) AS n FROM shop_items WHERE room = 10515")[0]["n"], 5, "and saved")
+    assert o.ev("GAGGED") >= len([l for l in sushi if l.strip()]), "quietly: off the main screen"
+    # not again within the hour; not in a room without a shop
+    o.lua("SENT = {}; ARRIVE(1); ARRIVE(10515)")
+    eq(len(o.ev("SENT")), 0, "once an hour; none elsewhere")
+    # not while walking through, not when switched off
+    o.lua("SENT = {}; sbo.shopTried = {}; sbo.dbx('DELETE FROM shops'); sbo.running = { name = 'rune', started = true }; ARRIVE(1); ARRIVE(10515); sbo.running = nil")
+    eq(len(o.ev("SENT")), 0, "not while running past")
+    o.lua("sbo.command('config map.shoplist off'); sbo.shopTried = {}; ARRIVE(1); ARRIVE(10515)")
+    eq(len(o.ev("SENT")), 0, "switched off")
+    # typed: shown as the game sends it
+    o.lua("GAGGED = 0; sbo.command('config map.shoplist on'); sbo.onSend(nil, 'sh li')")
+    o.feed(*sushi, "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("GAGGED"), 0, "a list you ask for stays on the screen")
+    eq(o.ev("sbo.classify('shout hello')"), None, "shout isn't shop")
+
+
+@test
 def help_ends_at_see_also():
     # help look during the game's auto-run: the next step arrived before any prompt
     lines = open(fixture("help_then_autorun.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
