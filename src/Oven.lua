@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.71.2"
+M.version = "0.71.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6474,6 +6474,7 @@ end
 -- sbo shops [text]: the shops Oven knows, or where to buy something (cheapest first)
 function M.shopLines(width, q)
   q = trim(q or ""):lower()
+  q = q:gsub("^items?%s+", "")   -- "sbo map shops item cheese": the item is cheese
   local out, links = {}, {}
   local function where(room)
     local nm = (room and roomExists(room) and getRoomName(room)) or "?"

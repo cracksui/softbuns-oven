@@ -853,6 +853,8 @@ def shop_lists():
     eq(o.rows("SELECT DISTINCT currency FROM shop_items WHERE room = 10515"), [{"currency": "gold"}], "gold as before")
     out = o.lua('local out = sbo.shopLines(80, "voucher"); local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end; return table.concat(s)')
     assert "rewardunits" in out, out
+    out2 = o.lua('local out = sbo.shopLines(80, "item tuna"); local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end end; return table.concat(s)')
+    assert "A tuna roll" in out2, f"'item' in front is ignored: {out2}"
     # stock changes: the list replaces what that shop had
     o.lua('sbo.mapRoom = 10515')
     o.feed("Welcome to the Sushi Bar!", "No.  Item Name                                    Level Amount       Cost",
