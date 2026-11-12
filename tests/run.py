@@ -1012,6 +1012,56 @@ def own_errands_wait_for_idle():
 
 
 @test
+def shop_refuses_you():
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; GAGGED = {}; deleteLine = function() GAGGED[#GAGGED + 1] = line end; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end')
+    o.set_gmcp("char.status", '{ state = "playing", level = 23 }')
+    o.lua("""
+      sbo.live.level = 23
+      roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
+      getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end
+      getRoomExits = function() return {} end
+      centerview = function() end
+      SENT = {}
+      send = function(c)
+        SENT[#SENT + 1] = c
+        sbo.onSend(nil, c)
+        if c == "shop list" then
+          line = "A Gnomish Travel attendant tells you 'Sorry, but I cannot sell my wares to someone of your level of experience.'"; sbo.onLine()
+          line = "<270hp 550sp 401st>"; sbo.onLine()
+        end
+      end
+      function ARRIVE(id)
+        gmcp.room = { info = { num = tostring(id) } }
+        sbo.onRoom()
+        line = "The Gnomish Travel Corporation, Rune Bureau"; sbo.onLine()
+        line = "<270hp 550sp 401st>"; sbo.onLine()
+        runTimers()
+      end
+      sbo.dbx("INSERT INTO room_npcs (room, key, text, tags, seen, last) VALUES (111125, 'gnome', 'A Gnomish Travel attendant is here.', 'Shop', 1, 1)")
+    """)
+    o.feed("<270hp 550sp 401st>")
+    o.lua("ARRIVE(111125)")
+    eq(list(o.ev("SENT").values()), ["shop list"], "asked")
+    eq(o.rows("SELECT said, level FROM shop_refusals"), [{"said": "Sorry, but I cannot sell my wares to someone of your level of experience.", "level": 23}], "remembered, with your level")
+    assert any("cannot sell my wares" in g for g in o.ev("GAGGED").values()), "Oven's own ask: the refusal kept off the screen"
+    assert any("won't sell to you" in m for m in o.ev("SAYS").values()), "said once, as Oven's note"
+    # same level: not asked again, even after the hour
+    o.lua("SENT = {}; sbo.shopTried = {}; ARRIVE(1); ARRIVE(111125)")
+    eq(len(o.ev("SENT")), 0, "not again at the same level")
+    # a new level: once more
+    o.lua("sbo.live.level = 24; sbo.shopTried = {}; ARRIVE(1); ARRIVE(111125)")
+    eq(list(o.ev("SENT").values()), ["shop list"], "asked again at a new level")
+    card = o.lua('local t = {} for _, r in ipairs(sbo.roomCardLines(111125)) do for _, g in ipairs(r) do t[#t+1] = tostring(g[2] or "") end end return table.concat(t)')
+    assert "won't sell to you" in card, card
+    o.lua('sbo.command("map shops")')
+    # the same words from another shopkeeper (the wedding cleric at #10426)
+    eq(o.ev("sbo.shopRefusal(\"The wedding cleric tells you 'Sorry, but I cannot sell my wares to someone of your level of experience.'\")") is not None, True, "the cleric too")
+    # a player's tell isn't a shop refusal
+    eq(o.ev("sbo.shopRefusal(\"Pip tells you 'I won't sell you my sword'\")"), None, "players are one word")
+
+
+@test
 def help_ends_at_see_also():
     # help look during the game's auto-run: the next step arrived before any prompt
     lines = open(fixture("help_then_autorun.txt"), encoding="utf-8").read().rstrip("\n").split("\n")

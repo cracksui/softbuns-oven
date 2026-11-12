@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.56.0"
+M.version = "0.57.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -178,6 +178,8 @@ local SCHEMA = {
   "CREATE TABLE IF NOT EXISTS shops (room INTEGER PRIMARY KEY, name TEXT, last INTEGER)",
   "CREATE TABLE IF NOT EXISTS shop_items (room INTEGER, no INTEGER, item TEXT, level INTEGER, amount TEXT, cost INTEGER, last INTEGER, PRIMARY KEY (room, item))",
   "CREATE INDEX IF NOT EXISTS shop_items_item ON shop_items (item)",
+  -- a shopkeeper who won't sell to you ("…cannot sell my wares to someone of your level…"), and your level then
+  "CREATE TABLE IF NOT EXISTS shop_refusals (room INTEGER PRIMARY KEY, said TEXT, level INTEGER, t INTEGER)",
   "CREATE TABLE IF NOT EXISTS signposts (room INTEGER PRIMARY KEY, sign TEXT, dests TEXT, exact INTEGER, last INTEGER)",
 }
 
@@ -5510,6 +5512,7 @@ M.shapes = {
   shop = function(t)
     return t:match("^Welcome to ") or t:match("^You have [%d,]+ gp on hand") or t:match("^No%.%s+Item Name")
       or t:match("^%d+%)%s") or t:match("^There isn't a shopkeeper") or t:match("^You can't do that")
+      or (M.shopRefusal(t) ~= nil)
   end,
   quest = function(t, l, cap)
     if not cap.questStarted then
@@ -5964,6 +5967,7 @@ function M.recordShop(room, shop)
   if not known then M.say("new shop: " .. label)
   elseif auto then M.say("shop updated: " .. label) end
   M.dbx("INSERT OR REPLACE INTO shops (room, name, last) VALUES (%s, %s, %s)", room, shop.name, t)
+  M.dbx("DELETE FROM shop_refusals WHERE room = %s", room)
   -- the stock as it is now (what's sold out or gone is dropped from this shop's list)
   M.dbx("DELETE FROM shop_items WHERE room = %s", room)
   for _, it in ipairs(shop.items) do
@@ -5975,6 +5979,39 @@ end
 M.addBlockReader("shop_list", "*", function(b)
   local shop = M.parseShop(b.lines)
   if shop then pcall(M.recordShop, M.mapRoom or b.room, shop) end
+end)
+
+-- "A Gnomish Travel attendant tells you 'Sorry, but I cannot sell my wares to someone of your level of
+-- experience.'" -> what was said (an NPC: more than one word before "tells you"; players are one word)
+local REFUSE = { "cannot sell", "can't sell", "won't sell", "will not sell", "refuse to sell", "don't trade",
+                 "do not trade", "not sell", "won't trade", "will not trade" }
+function M.shopRefusal(t)
+  local who, said = t:match("^(.-) tells you '(.*)'%s*$")
+  if not who or not who:find(" ") then return nil end
+  local low = said:lower()
+  for _, w in ipairs(REFUSE) do if low:find(w, 1, true) then return said end end
+end
+
+function M.myLevel()
+  return tonumber((M.live or {}).level) or tonumber(((M.cfg.char or {}).level))
+end
+
+-- a refusal after a shop list (yours or Oven's): remembered with your level, so Oven doesn't ask again
+-- until that changes
+M.addBlockReader("shop_refusal", "*", function(b)
+  local asked = false
+  for _, c in ipairs(b.cmds or {}) do if M.classify(c) == "shop" then asked = true end end
+  if not asked then return end
+  for _, l in ipairs(b.lines) do
+    local said = M.shopRefusal(trim(l))
+    if said and M.mapRoom then
+      M.dbx("INSERT OR REPLACE INTO shop_refusals (room, said, level, t) VALUES (%s, %s, %s, %s)",
+        M.mapRoom, said, M.myLevel(), os.time())
+      M.noteAuto("shop", M.mapRoom, "refused: " .. said)
+      M.say("won't sell to you: " .. said .. "  (Oven asks again when your level changes)")
+      return
+    end
+  end
 end)
 
 -- Going into a shop: Oven lists it quietly (once an hour at most), so its stock stays known. Straight
@@ -6017,6 +6054,8 @@ function M.shopAutoList(room, promptLine)
   if M.shopTried[room] and t - M.shopTried[room] < 3600 then return M.noteAuto("shop", room, "skipped: tried in the last hour") end
   local r = M.dbRow("SELECT last FROM shops WHERE room = %s", room)
   if r and tonumber(r.last) and t - tonumber(r.last) < 3600 then return M.noteAuto("shop", room, "skipped: listed in the last hour") end
+  local no = M.dbRow("SELECT level FROM shop_refusals WHERE room = %s", room)
+  if no and tonumber(no.level) == M.myLevel() then return M.noteAuto("shop", room, "skipped: won't sell to you at this level") end
   M.shopTried[room] = t          -- once an hour, even when the game says no ("There isn't a shopkeeper present.")
   M.noteAuto("shop", room, "shop list sent")
   M.shopAsked = { room = room, at = t }
@@ -6057,6 +6096,16 @@ function M.shopLines(width, q)
       out[#out + 1] = { { C.item, "  " .. (r.name or "a shop") }, { C.num, "  " .. r.n .. " items" }, { C.dim, r.last and ("  listed " .. M.shortDur(os.time() - tonumber(r.last)) .. " ago") or "" } }
       out[#out + 1] = { { C.dim, "    " .. where(room) } }
       walkLink(room, "walk to " .. (r.name or "#" .. room))
+    end
+    local refused = M.dbRows("SELECT room, said, level FROM shop_refusals ORDER BY t DESC")
+    if #refused > 0 then
+      out[#out + 1] = {}
+      subhead(out, "Won't sell to you yet")
+      for _, r in ipairs(refused) do
+        local room = tonumber(r.room)
+        out[#out + 1] = { { C.dim, "  " .. where(room) .. (r.level and ("  (level " .. r.level .. ")") or "") } }
+        out[#out + 1] = { { C.dim, "    '" .. tostring(r.said) .. "'" } }
+      end
     end
     out[#out + 1] = {}
     out[#out + 1] = { { C.dim, "sbo map shops {item}: who sells it" } }
@@ -6970,6 +7019,10 @@ function M.roomCardLines(id)
   local okSh, shopRow = pcall(M.dbRow, "SELECT s.name, COUNT(i.item) AS n FROM shops s LEFT JOIN shop_items i ON i.room = s.room WHERE s.room = %s GROUP BY s.room", id)
   if okSh and shopRow then
     row({ C.slot, "$ " .. (shopRow.name or "a shop") }, { C.dim, "  " .. tostring(shopRow.n) .. " items (sbo map shops)" })
+  end
+  local okR, ref = pcall(M.dbRow, "SELECT said, level FROM shop_refusals WHERE room = %s", id)
+  if okR and ref then
+    row({ C.slot, "$ won't sell to you" }, { C.dim, "  '" .. tostring(ref.said) .. "'" .. (ref.level and ("  (level " .. ref.level .. ")") or "") })
   end
   local okS, sp = pcall(M.signAt, id)
   if okS and sp then
