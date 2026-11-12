@@ -1572,6 +1572,26 @@ def quest_done_before_taken_again():
 
 
 @test
+def pin_unknown_quest():
+    o = Oven()
+    o.lua("""sbo.cfg.promptPattern = "<%d+hp"; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      sbo.notifyQuest = function(m) SAYS[#SAYS+1] = m end
+      REPLY = {
+        ["quest info 1348"] = { "This quest [1348] is called 'The Lord's New Clothes',", "for Adventurers levels 40 to 90.",
+                                "The Lord's New Clothes consists of:", "Phase 1: Recover and Keep a big sombrero." },
+        ["quest info 9999"] = { "You are not on that quest." } }
+      SENT = {}
+      send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c); for _, l in ipairs(REPLY[c] or {}) do line = l; sbo.onLine() end; line = "<281hp 696sp 457st>"; sbo.onLine() end""")
+    o.lua('sbo.command("quest pin 1348"); runTimers()')
+    eq(list(o.ev("SENT").values()), ["quest info 1348"], "asked the game")
+    eq(o.ev("sbo.quests['1348'].name"), "The Lord's New Clothes", "the card has the quest")
+    eq(o.ev("sbo.cfg.questPins['1348']"), True, "pinned")
+    o.lua('sbo.command("quest pin 9999"); runTimers()')
+    eq(o.ev("sbo.cfg.questPins['9999']"), None, "not yours: unpinned")
+    assert any("isn't a quest you have" in m and "You are not on that quest" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+
+
+@test
 def quest_steps_update():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     o = Oven()

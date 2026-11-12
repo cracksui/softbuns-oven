@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.70.1"
+M.version = "0.70.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2477,7 +2477,14 @@ function M.questPin(id, on)
     end
     M.notifyQuest(n == 0 and "no active quests to pin" or ("pinned " .. n .. " active quest" .. (n == 1 and "" or "s")))
   else
-    M.cfg.questPins[tostring(id)] = on or nil
+    id = tostring(id)
+    M.cfg.questPins[id] = on or nil
+    -- a quest Oven has no record of: ask the game (quietly) so the card has something in it
+    local Q = M.quests[id]
+    if on and (not Q or not Q.name or not Q.phases) then
+      M.questFetch = id
+      M.questRefresh(id)
+    end
   end
   M.saveSettings()
   M.drawQuestTracker()
@@ -7263,6 +7270,18 @@ function M.finish(reason)
     if reason == "prompt" and not M.cfg.bar then deleteLine() end
     local q = M.parseQuests(cap.plain, cap.decho)
     pcall(function() M.rememberQuests(q, M.questReplyBare) end)
+    -- a quest pinned without a record, asked about: the game didn't answer with it - unpinned, and why
+    local f = M.questFetch
+    if f and not M.questReplyBare then
+      M.questFetch = nil
+      if not (q.detail and tostring(q.detail.id) == f) then
+        if M.cfg.questPins then M.cfg.questPins[f] = nil end
+        local said = ""
+        for _, l in ipairs(cap.plain) do if trim(l) ~= "" then said = trim(l); break end end
+        M.notifyQuest("#" .. f .. " isn't a quest you have" .. (said ~= "" and (" - the game says: " .. said) or "") .. " - unpinned")
+        M.saveSettings(); pcall(M.drawQuestTracker)
+      end
+    end
     -- after quest complete, a log with no quests at all: every finished pinned quest was turned in
     if M.questTurnInCheck and M.questReplyBare and #q.list == 0 and not q.detail then
       for id in pairs(M.cfg.questPins or {}) do
