@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.54.0"
+M.version = "0.54.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5947,7 +5947,9 @@ M.addBlockReader("shop_list", "*", function(b)
   if shop then pcall(M.recordShop, M.mapRoom or b.room, shop) end
 end)
 
--- Stopping in a shop: Oven lists it quietly (once an hour at most), so its stock stays known.
+-- Going into a shop: Oven lists it quietly (once an hour at most), so its stock stays known. Straight
+-- away, so popping in and out works (the game answers in order, from the shop); not in shops an Oven
+-- walk or a signpost run only passes through (the walk's last room counts: it's over by then).
 -- A shop is a room whose NPC the game tags [Shop], or one you've listed before.
 M.shopTried = M.shopTried or {}
 function M.isShopRoom(room)
@@ -5974,7 +5976,7 @@ M.addBlockReader("shop_auto", "*", function(b)
   if not b.prompt or not room or room == M.shopCheckedRoom then return end
   M.shopCheckedRoom = room
   local p = b.lines[#b.lines]
-  tempTimer(1.5, function() pcall(M.shopAutoList, room, p) end)
+  tempTimer(0.1, function() pcall(M.shopAutoList, room, p) end)
 end)
 
 -- sbo shops [text]: the shops Oven knows, or where to buy something (cheapest first)
