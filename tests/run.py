@@ -1266,6 +1266,44 @@ def quest_login_daily_pins():
 
 
 @test
+def quest_given_by_another_command():
+    # "use card spaghetti and pesto" hands you a new quest, its details in full
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end')
+    o.set_gmcp("char.status", '{ state = "playing" }')
+    o.feed("<281hp 696sp 457st>")
+    o.lua('sbo.onSend(nil, "use card spaghetti and pesto")')
+    o.feed("This index card will now allow you to cook spaghetti and pesto when it is held.",
+           "This quest [3390] is called 'Cooking Spaghetti and Pesto',",
+           "for Adventurers levels 20 to 240.",
+           "Spaghetti and pesto is an easy meal with a ton of flavor.  It is a popular",
+           "meal in Alyria, and all of the ingredients are fairly easy to find.  ",
+           "Upon successful completion of this quest you can receive:",
+           "*Up to 0 quest points, 0 practice points, 0 experience points,",
+           "0 build points, 0 piety, and 0 gold pieces.",
+           "This quest has no time limit.",
+           "Cooking Spaghetti and Pesto consists of:",
+           "Phase 1: Journey to Li's Diner [The Towne of Xaventry].",
+           "Phase 2: Recover and Keep a plate of spaghetti [Cooking Adventurers].",
+           "Phase 5: Journey to Dlerick's Restaurant.",
+           "For beginning your career as a cook, the Powers have granted thee a Mark.",
+           "",
+           "You have gained the Mark of Cooking!",
+           "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("sbo.quests['3390'] and sbo.quests['3390'].name"), "Cooking Spaghetti and Pesto", "read")
+    eq(o.ev("(sbo.cfg.questPins or {})['3390']"), True, "pinned")
+    ph = o.ev("sbo.quests['3390'].phases[1]")
+    eq((ph.text, ph.area), ("Journey to Li's Diner", "The Towne of Xaventry"), "its steps")
+    assert "quest info" in list(o.ev("SENT").values()), "and the quest log checked quietly"
+    # a quest command's own reply isn't read twice
+    o.lua('SENT = {}; sbo.cfg.questPins = {}; sbo.onSend(nil, "quest info 3390")')
+    o.feed("This quest [3390] is called 'Cooking Spaghetti and Pesto',", "for Adventurers levels 20 to 240.", "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("(sbo.cfg.questPins or {})['3390']"), None, "quest info doesn't pin")
+
+
+@test
 def quest_steps_update():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     o = Oven()

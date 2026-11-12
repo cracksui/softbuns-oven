@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.61.3"
+M.version = "0.62.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6168,21 +6168,37 @@ end
 
 -- a quest the game hands you without a command (the daily quest at login):
 -- "You undertake the quest 'Daily Quest - Feeding Hungry Mouths', #3519." then the quest in full
+-- …or any quest that arrives in full after a command that isn't a quest command ("use card spaghetti and
+-- pesto": "This quest [3390] is called 'Cooking Spaghetti and Pesto', …"): a quest you were just given
 M.addBlockReader("quest_undertaken", "*", function(b)
+  -- the reply to a quest command (quest info 3390) is read by its own capture
+  for _, c in ipairs(b.cmds or {}) do if M.classify(c) == "quest" then return end end
   for i, l in ipairs(b.lines) do
-    if trim(l):match("^You undertake the quest '.-', #%d+%.?$") then
+    local t = trim(l)
+    local undertake = t:match("^You undertake the quest '.-', #%d+%.?$")
+    if undertake or t:match("^This quest %[%d+%] is called '") then
       local rest = {}
-      for j = i + 1, #b.lines - (b.prompt and 1 or 0) do rest[#rest + 1] = b.lines[j] end
+      for j = undertake and (i + 1) or i, #b.lines - (b.prompt and 1 or 0) do rest[#rest + 1] = b.lines[j] end
       local q = M.parseQuests(rest)
       if q.detail and q.detail.id then
         M.questReplyRequest = true
         M.rememberQuests({ list = {}, detail = q.detail }, false)
         M.questReplyRequest = nil
+        -- something else may have changed at the same time (a quest finished that handed you this one):
+        -- check the quest log quietly
+        tempTimer(1.5, function() pcall(M.questLogCheck) end)
       end
       return
     end
   end
 end)
+
+-- a quiet "quest info": the quest panel catches up (finished quests come off it)
+function M.questLogCheck()
+  if M.busyWhy(M.lastStatusPrompt) then return end
+  M.quietQuest = true
+  M.sendOwn("quest info", false)
+end
 
 -- who's here, tagged: saved to the room
 M.addBlockReader("room_npcs", "room", function(b, seg)
