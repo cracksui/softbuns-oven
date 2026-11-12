@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.76.2"
+M.version = "0.76.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3760,6 +3760,7 @@ function M.tabUndock1(key, x, y, holdTab)
     })
     pcall(function() win:newCustomItem("dock into the Oven window", function() M.tabDock(key) end) end)
     M.tabWins[key] = win
+    pcall(function() M.tabWinSize[key] = { win:get_width(), win:get_height() } end)
     if x then
       x = math.max(0, math.min(x - 40, W - cw)); y = math.max(0, math.min(y - 10, H - ch))
       pcall(function() win:move(math.floor(x), math.floor(y)) end)
@@ -3793,6 +3794,23 @@ function M.tabUndock1(key, x, y, holdTab)
   end
   if M.tabOn then M.tabShow(M.tabOn, true) elseif M.container then M.container:hide() end
   M.redrawPage(key)
+end
+
+-- a tab's window moved (not resized) and let go with the mouse over the Oven window's tabs: a tab again
+M.tabWinSize = M.tabWinSize or {}
+function M.onPanelMoved(_, name, w, h)
+  local key = type(name) == "string" and name:match("^ovenTab_(.+)$")
+  if not key or not M.tabIsOut(key) then return end
+  local was = M.tabWinSize[key]
+  M.tabWinSize[key] = { w, h }
+  if was and (was[1] ~= w or was[2] ~= h) then return end   -- resized
+  if not M.container or M.container.hidden or not M.tabBar then return end
+  local ok, x, y = pcall(getMousePosition)
+  local okB, bx, by, bw, bh = pcall(function() return M.tabBar:get_x(), M.tabBar:get_y(), M.tabBar:get_width(), M.tabBar:get_height() end)
+  if not ok or not okB or not tonumber(x) or not tonumber(bx) then return end
+  M.tabTrace(string.format("window %s let go at %d,%d (tabs at %d,%d %dx%d)", key, x, y, bx, by, bw, bh))
+  -- the tab bar, and the window's title just above it
+  if x >= bx and x <= bx + bw and y >= by - 25 and y <= by + bh + 10 then M.tabDock(key) end
 end
 
 function M.tabDock(key)
@@ -9763,7 +9781,7 @@ M.CMDS = {
     { name = "reset", desc = "panels back to Oven's defaults", run = L("layout reset") },
     { name = "undock", args = "{tab}", desc = "a tab in a window of its own (or drag the tab out)",
       run = function(r) return M.tabMove(r, true) end },
-    { name = "dock", args = "{tab}", desc = "a tab back in the Oven window (or its right-click menu)",
+    { name = "dock", args = "{tab}", desc = "a tab back in the Oven window (or drag its window onto the tabs, or its right-click menu)",
       run = function(r) return M.tabMove(r, false) end },
   } },
   { name = "version", desc = "the version you have; update to the newest",
@@ -10895,6 +10913,7 @@ function M.init()
   M.panelsWatch()
   M.questClock()
   M.whereLearnStart()
+  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("AdjustableContainerRepositionFinish", function(...) M.onPanelMoved(...) end)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadDone", M.onDownload)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadError", M.onDownload)
   for _, v in ipairs({ "LEVEL", "EXPERIENCE", "EXPERIENCE_MAX", "EXPERIENCE_TNL", "EXPERIENCE_TO_LEVEL" }) do
