@@ -1465,6 +1465,29 @@ def quest_hint_paragraphs_and_folding():
 
 
 @test
+def quest_hint_colours():
+    import re as _re
+    o = Oven()
+    o.lua('sbo.cfg.questHudBlurb = true; sbo.log = function() end')
+    plain = ["This quest [3390] is called 'Cooking Spaghetti and Pesto',",
+             "that they don't mind the public using.  Type where is cooking-mixing-bowl",
+             "to get directions, and then journey to that kitchen and enter the command",
+             "cook spaghetti and pesto.  ",
+             "Cooking Spaghetti and Pesto consists of:", "Phase 1: Journey to Li's Diner [The Towne of Xaventry]."]
+    decho = ["<192,192,192:0,0,0>This quest [3390] is called 'Cooking Spaghetti and Pesto',<r>",
+             "<192,192,192:0,0,0>that they don't mind the public using.  Type <r><0,255,255:0,0,0>where is cooking-mixing-bowl<r>",
+             "<192,192,192:0,0,0>to get directions, and then journey to that kitchen and enter the command<r>",
+             "<0,255,255:0,0,0>cook spaghetti and pesto<r><192,192,192:0,0,0>.  <r>",
+             "<192,192,192:0,0,0>Cooking Spaghetti and Pesto consists of:<r>", "<192,192,192:0,0,0>Phase 1: Journey to Li's Diner [The Towne of Xaventry].<r>"]
+    o.L.globals().P = o.L.table_from(plain); o.L.globals().D = o.L.table_from(decho)
+    o.lua("local q = sbo.parseQuests(P, D); sbo.rememberQuests(q, false); sbo.cfg.questHintOpen = { ['3390'] = true }")
+    html = "\n".join(o.lua("return (sbo.questCardHtml('3390', sbo.quests['3390']))").values())
+    assert 'rgb(0,255,255)">where' in html and 'rgb(0,255,255)">cooking-mixing-bowl' in html, html
+    text = _re.sub("<[^>]+>", "", html)
+    assert "pesto." in text and "pesto ." not in text, f"no space before the full stop: {text}"
+
+
+@test
 def quest_steps_update():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     o = Oven()

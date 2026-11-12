@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.66.1"
+M.version = "0.67.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2148,7 +2148,7 @@ function M.fixQuestPhases()
   end
 end
 
-function M.parseQuests(raw)
+function M.parseQuests(raw, decho)
   local list, detail, other = {}, nil, {}
   local inPhases = false
   for idx, l in ipairs(raw) do
@@ -2208,6 +2208,11 @@ function M.parseQuests(raw)
         elseif not inPhases and (t ~= "" or (#detail.desc > 0 and detail.desc[#detail.desc] ~= "")) then
           -- keep indentation (lists, continuation lines) and the blank line between paragraphs
           detail.desc[#detail.desc + 1] = (t == "") and "" or rtrim(l)
+          -- its colours too (the game highlights commands: "where is cooking-mixing-bowl")
+          if t ~= "" and decho and decho[idx] then
+            detail.descDecho = detail.descDecho or {}
+            detail.descDecho[#detail.desc] = decho[idx]
+          end
           -- a paragraph also ends where the game says so without a blank line: its last line ends in
           -- two spaces ("…they need to thrive.  "), or a line too long to be one the game wrapped
           if t ~= "" and (l:match("%S%s%s+$") or ulen(rtrim(l)) > 80) then detail.desc[#detail.desc + 1] = "" end
@@ -2322,7 +2327,7 @@ local function nextPhase(Q)
 end
 
 function M.formatters.quest(raw, width)
-  local q = M.parseQuests(raw)
+  local q = M.parseQuests(raw, M.curDecho)
   if #q.list == 0 and not q.detail then return M.formatters.generic(raw, width) end
   M.rememberQuests(q, M.questReplyBare)
   local out = {}
@@ -2469,6 +2474,62 @@ local function hudWrap(text, n, ind)
   return lines
 end
 
+-- "<192,192,192:0,0,0>Type <r><0,255,255:0,0,0>where is cooking-mixing-bowl<r>" -> { {nil, "Type "}, {{0,255,255}, "where is …"} }
+-- (the game's plain grey is nil: drawn dim like the rest of the hint)
+function M.dechoSegs(d)
+  local segs, col, pos = {}, nil, 1
+  while pos <= #d do
+    local a, b, r, g, bl = d:find("<(%d+),(%d+),(%d+):[%d,]*>", pos)
+    local ra, rb = d:find("<r>", pos, true)
+    local na = math.min(a or math.huge, ra or math.huge)
+    if na == math.huge then segs[#segs + 1] = { col, d:sub(pos) }; break end
+    if na > pos then segs[#segs + 1] = { col, d:sub(pos, na - 1) } end
+    if a and a == na then
+      local c = { tonumber(r), tonumber(g), tonumber(bl) }
+      col = (c[1] == 192 and c[2] == 192 and c[3] == 192) and nil or c
+      pos = b + 1
+    else
+      col = nil
+      pos = rb + 1
+    end
+  end
+  local out = {}
+  for _, sg in ipairs(segs) do if sg[2] ~= "" then out[#out + 1] = sg end end
+  return out
+end
+
+-- wrap coloured segments at n characters; continuation lines indented by ind -> lines of segments
+local function segWrap(segs, n, ind)
+  -- words, each made of the pieces that touch across a colour change ("pesto" + ".")
+  local words, prevGlued = {}, false
+  for _, sg in ipairs(segs) do
+    local str = sg[2]
+    for pos, w in str:gmatch("()(%S+)") do
+      if pos == 1 and prevGlued and #words > 0 then
+        local last = words[#words]
+        last.parts[#last.parts + 1] = { sg[1], w }; last.len = last.len + ulen(w)
+      else
+        words[#words + 1] = { parts = { { sg[1], w } }, len = ulen(w) }
+      end
+    end
+    prevGlued = str:match("%S$") ~= nil
+  end
+  local lines, cur, len = {}, {}, 0
+  local fresh = true   -- nothing but the indent on this line yet
+  for _, w in ipairs(words) do
+    if not fresh and len + 1 + w.len > n then
+      lines[#lines + 1] = { cur, len }
+      cur, len, fresh = { { nil, string.rep(" ", ind or 0) } }, ind or 0, true
+    end
+    if not fresh then cur[#cur + 1] = { nil, " " }; len = len + 1 end
+    for _, p in ipairs(w.parts) do cur[#cur + 1] = p end
+    len, fresh = len + w.len, false
+  end
+  if not fresh then lines[#lines + 1] = { cur, len } end
+  return lines
+end
+M.segWrap = segWrap
+
 -- the quest HUD is HUD_COLS characters wide; its text wraps a few short of that, so a font that draws a
 -- little wider than Mudlet's measure of it still fits
 local HUD_WRAP, HUD_COLS = 60, 68
@@ -2574,14 +2635,29 @@ local function questCardHtml(id, Q)
     -- laid out first (paragraphs with a gap between them, lists and headings on their own lines)…
     local lines = {}
     local function put(h, w) lines[#lines + 1] = { h, w } end
+    -- each line's words with the game's colours (highlighted commands); plain grey is drawn dim
+    local function segsOf(i, l)
+      local d = Q.descDecho and Q.descDecho[i]
+      local sg = d and M.dechoSegs(d) or nil
+      if not sg or #sg == 0 then sg = { { nil, l } } end
+      return sg
+    end
+    local function html(segs, keepSpaces)
+      local h = {}
+      for _, sg in ipairs(segs) do
+        local txt = keepSpaces and sg[2]:gsub(" ", "\194\160") or sg[2]
+        h[#h + 1] = span(sg[1] or C.dim, txt)
+      end
+      return table.concat(h)
+    end
     local para = {}
     local function flush()
       if #para > 0 then
-        for _, l in ipairs(hudWrap(table.concat(para, " "), HUD_WRAP, 0)) do put(span(C.dim, " " .. l), ulen(l) + 1) end
+        for _, ln in ipairs(segWrap(para, HUD_WRAP, 0)) do put(span(C.dim, " ") .. html(ln[1]), ln[2] + 1) end
         para = {}
       end
     end
-    for _, l in ipairs(Q.desc) do
+    for i, l in ipairs(Q.desc) do
       if trim(l) == "" then
         flush()
         if #lines > 0 and lines[#lines][2] > 0 then put("", 0) end
@@ -2589,12 +2665,13 @@ local function questCardHtml(id, Q)
         flush()   -- list lines and "You can find:" headings keep their own line, spacing and all
         local line = rtrim(l)
         if ulen(line) <= HUD_WRAP + 4 then
-          put(span(C.dim, " " .. line:gsub(" ", "\194\160")), ulen(line) + 1)
+          local sg = segsOf(i, line)
+          put(span(C.dim, " ") .. html(sg, true), ulen(line) + 1)
         else
-          for _, w in ipairs(hudWrap(line, HUD_WRAP, 4)) do put(span(C.dim, " " .. w), ulen(w) + 1) end
+          for _, ln in ipairs(segWrap(segsOf(i, line), HUD_WRAP, 4)) do put(span(C.dim, " ") .. html(ln[1]), ln[2] + 1) end
         end
       else
-        para[#para + 1] = trim(l)
+        for _, sg in ipairs(segsOf(i, trim(l))) do para[#para + 1] = sg end
       end
     end
     flush()
@@ -6414,9 +6491,11 @@ M.addBlockReader("quest_undertaken", "*", function(b)
     local t = trim(l)
     local undertake = t:match("^You undertake the quest '.-', #%d+%.?$")
     if undertake or t:match("^This quest %[%d+%] is called '") then
-      local rest = {}
-      for j = undertake and (i + 1) or i, #b.lines - (b.prompt and 1 or 0) do rest[#rest + 1] = b.lines[j] end
-      local q = M.parseQuests(rest)
+      local rest, restD = {}, {}
+      for j = undertake and (i + 1) or i, #b.lines - (b.prompt and 1 or 0) do
+        rest[#rest + 1] = b.lines[j]; restD[#rest] = (b.decho or {})[j]
+      end
+      local q = M.parseQuests(rest, restD)
       if q.detail and q.detail.id then
         M.questReplyRequest = true
         M.rememberQuests({ list = {}, detail = q.detail }, false)
@@ -7035,7 +7114,7 @@ function M.finish(reason)
   if cap.quiet and cap.quietKind == "quest" then
     -- tracker refresh: update the quest, draw nothing
     if reason == "prompt" and not M.cfg.bar then deleteLine() end
-    local q = M.parseQuests(cap.plain)
+    local q = M.parseQuests(cap.plain, cap.decho)
     pcall(function() M.rememberQuests(q, M.questReplyBare) end)
     -- after quest complete, a log with no quests at all: every finished pinned quest was turned in
     if M.questTurnInCheck and M.questReplyBare and #q.list == 0 and not q.detail then
