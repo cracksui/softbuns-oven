@@ -1320,7 +1320,6 @@ def item_sets():
        [("a standard issue sword", False), ("a city guard signet ring", True), ("a war banner", False)], "the pieces")
     eq([b.text for b in it.set.bonus.values()], ["+1 knowledge", "sword damage +10%"], "the bonuses")
     eq([a[1] for a in it.affects.values()], ["saving-spell", "personality"], "set bonuses aren't the item's own stats")
-    eq(list(it.notes.values()), ["This item may be repaired 3 times."], "the worn piece isn't a note") if False else None
     assert not any("Item '" in n for n in it.notes.values()), list(it.notes.values())
 
 
