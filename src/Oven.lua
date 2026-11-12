@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.57.1"
+M.version = "0.57.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7017,12 +7017,15 @@ function M.roomCardLines(id)
   end
   row({ C.dim, (areaName ~= "" and (areaName .. "  ·  ") or "") .. (#exits > 0 and ("exits " .. table.concat(exits, " ")) or "no exits mapped") })
   local okSh, shopRow = pcall(M.dbRow, "SELECT s.name, COUNT(i.item) AS n FROM shops s LEFT JOIN shop_items i ON i.room = s.room WHERE s.room = %s GROUP BY s.room", id)
-  if okSh and shopRow then
-    row({ C.slot, "$ " .. (shopRow.name or "a shop") }, { C.dim, "  " .. tostring(shopRow.n) .. " items (sbo map shops)" })
-  end
   local okR, ref = pcall(M.dbRow, "SELECT said, level FROM shop_refusals WHERE room = %s", id)
-  if okR and ref then
-    row({ C.slot, "$ won't sell to you" }, { C.dim, "  '" .. tostring(ref.said) .. "'" .. (ref.level and ("  (level " .. ref.level .. ")") or "") })
+  if not okSh then shopRow = nil end
+  if not okR then ref = nil end
+  if ref then
+    -- won't sell to you: the shop's line in red, and why
+    row({ C.minus, "$ " .. ((shopRow and shopRow.name) or "shop") .. " · won't sell to you" },
+        { C.dim, "  '" .. tostring(ref.said) .. "'" .. (ref.level and ("  (level " .. ref.level .. ")") or "") })
+  elseif shopRow then
+    row({ C.slot, "$ " .. (shopRow.name or "a shop") }, { C.dim, "  " .. tostring(shopRow.n) .. " items (sbo map shops)" })
   end
   local okS, sp = pcall(M.signAt, id)
   if okS and sp then
@@ -7040,25 +7043,12 @@ function M.roomCardLines(id)
   if #npcs > 0 then
     any = true
     row(); row({ M.REC or C.title, "▸ Notable here" })
-    -- [Shop]: green = its stock is known, red = won't sell to you (at your level), orange = not listed yet
-    local shopCol = C.flag
-    if M.dbRow("SELECT room FROM shops WHERE room = %s", id) then shopCol = C.plus
-    elseif M.dbRow("SELECT room FROM shop_refusals WHERE room = %s", id) then shopCol = C.minus end
-    local anyShop = false
     for i, n in ipairs(npcs) do
       if i > MAX then row({ C.dim, string.format("  … and %d more", #npcs - MAX) }); break end
       local r = { { C.dim, "  " } }
-      for _, t in ipairs(n.tags or {}) do
-        local isShop = t:lower() == "shop"
-        anyShop = anyShop or isShop
-        r[#r + 1] = { isShop and shopCol or C.flag, "[" .. t .. "] " }
-      end
+      for _, t in ipairs(n.tags or {}) do r[#r + 1] = { C.flag, "[" .. t .. "] " } end
       r[#r + 1] = { C.text, n.text }
       out[#out + 1] = r
-    end
-    if anyShop then
-      row({ C.dim, "  [Shop] " }, { C.plus, "green" }, { C.dim, ": stock known · " }, { C.flag, "orange" },
-          { C.dim, ": not listed yet · " }, { C.minus, "red" }, { C.dim, ": won't sell to you" })
     end
   end
   -- "enter ..." commands that work here
