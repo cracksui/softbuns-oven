@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.72.1"
+M.version = "0.72.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -362,6 +362,7 @@ M.commands = {
   { word = "examine",   min = 2, kind = "item",     needsArgs = true },  -- bare "ex" (exits) is ignored
   { word = "identify",  min = 2, kind = "item",     needsArgs = true },
   { word = "lore",      min = 3, kind = "item",     needsArgs = true },
+  { word = "read",      min = 3, kind = "item",     needsArgs = true },  -- "read sign": the same reply as look
   { word = "score",     min = 2, kind = "score" },    -- "sc" is score in Materia Magica
   { word = "affects",   min = 2, kind = "affects" },
   { word = "help",      min = 3, kind = "help" },     -- shown as-is in the help window

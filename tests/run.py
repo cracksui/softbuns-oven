@@ -1012,6 +1012,8 @@ def shop_listed_on_arrival():
     o.lua("SENT = {}; sbo.shopTried = {}; sbo.dbx('UPDATE shops SET last = 1'); sbo.shopCheckedRoom = nil; ARRIVE(1); ARRIVE(10515)")
     eq(len(o.ev("SENT")), 0, "a known shop isn't listed again")
     eq(o.ev("sbo.classify('shout hello')"), None, "shout isn't shop")
+    eq(o.ev("(sbo.classify('read sign'))"), "item", "read sign is a look")
+    eq(o.ev("(sbo.classify('read'))"), None, "read on its own isn't")
     # fighting: an enemy named just now, not a stale position
     eq(o.ev("sbo.fighting()"), False, "stale 'fighting' with no enemy")
     o.set_gmcp("char.status", '{ state = "playing", position = "fighting", enemy = "a rat", enemypct = 80 }')
