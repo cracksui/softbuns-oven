@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.54.2"
+M.version = "0.54.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5959,17 +5959,40 @@ function M.isShopRoom(room)
   return M.dbRow("SELECT room FROM room_npcs WHERE room = %s AND instr(lower(ifnull(tags, '')), 'shop') > 0", room) ~= nil
 end
 
+-- what's keeping Oven from doing something by itself right now (nil: nothing)
+function M.busyWhy(promptLine)
+  if M.walk then return "walking" end
+  if M.running then return "running (" .. tostring(M.running.name) .. ")" end
+  if M.cap then return "reading a reply (" .. tostring(M.cap.kind) .. ")" end
+  if M.learning or M.learnQueue then return "looking at items" end
+  if M.quietNext then return "waiting for a quiet reply" end
+  if M.fighting() then return "fighting" end
+  if not M.inGame(promptLine) then return "not in the game (status or prompt)" end
+end
+
+-- the last few things Oven decided to do (or not) by itself: sbo debug state
+M.autoNotes = M.autoNotes or {}
+function M.noteAuto(what, room, result)
+  table.insert(M.autoNotes, string.format("%s  %s  #%s  %s", os.date("%H:%M:%S"), what, tostring(room), result))
+  while #M.autoNotes > 40 do table.remove(M.autoNotes, 1) end
+end
+
 function M.shopAutoList(room, promptLine)
-  if M.cfg.shopList == false or not room or room ~= M.mapRoom then return end
-  -- not while walking through, fighting, or busy; only once you're playing
-  if M.walk or M.running or M.cap or M.learning or M.learnQueue or M.quietNext or M.fighting() or not M.inGame(promptLine) then return end
-  local t = os.time()
-  if M.shopTried[room] and t - M.shopTried[room] < 3600 then return end
-  local r = M.dbRow("SELECT last FROM shops WHERE room = %s", room)
-  if r and tonumber(r.last) and t - tonumber(r.last) < 3600 then return end
+  if M.cfg.shopList == false or not room then return end
   if not M.isShopRoom(room) then return end
+  if room ~= M.mapRoom then return M.noteAuto("shop", room, "skipped: already left") end
+  -- not while walking through, fighting, or busy; only once you're playing
+  local why = M.busyWhy(promptLine)
+  if why then return M.noteAuto("shop", room, "skipped: " .. why) end
+  local t = os.time()
+  if M.shopTried[room] and t - M.shopTried[room] < 3600 then return M.noteAuto("shop", room, "skipped: tried in the last hour") end
+  local r = M.dbRow("SELECT last FROM shops WHERE room = %s", room)
+  if r and tonumber(r.last) and t - tonumber(r.last) < 3600 then return M.noteAuto("shop", room, "skipped: listed in the last hour") end
   M.shopTried[room] = t          -- once an hour, even when the game says no ("There isn't a shopkeeper present.")
-  M.quietly("shop list", "shop", function() end)   -- the shop_list reader saves it
+  M.noteAuto("shop", room, "shop list sent")
+  M.quietly("shop list", "shop", function(lines)
+    M.noteAuto("shop", room, lines and ("reply: " .. #lines .. " lines") or "no reply")
+  end)   -- the shop_list reader saves it
 end
 
 M.addBlockReader("shop_auto", "*", function(b)
@@ -5977,7 +6000,10 @@ M.addBlockReader("shop_auto", "*", function(b)
   if not b.prompt or not room or room == M.shopCheckedRoom then return end
   M.shopCheckedRoom = room
   local p = b.lines[#b.lines]
-  tempTimer(0.1, function() pcall(M.shopAutoList, room, p) end)
+  tempTimer(0.1, function()
+    local ok, err = pcall(M.shopAutoList, room, p)
+    if not ok then M.noteAuto("shop", room, "error: " .. tostring(err)) end
+  end)
 end)
 
 -- sbo shops [text]: the shops Oven knows, or where to buy something (cheapest first)
@@ -8651,6 +8677,8 @@ M.CMDS = {
   { name = "debug", desc = "raw output, GMCP and recordings, for fixing things", subs = {
     { name = "raw", desc = "the last output exactly as the game sent it", run = L("raw") },
     { name = "gmcp", desc = "what the game sends over GMCP (written to oven_gmcp.txt)", run = L("gmcp") },
+    { name = "state", desc = "what Oven is busy with, and why it did (or didn't) do things by itself (oven_state.txt)",
+      run = function() return M.debugState() end },
     { name = "samples", args = "{on|off}", desc = "log raw output to oven_samples.txt", run = function(r) return legacy("samples " .. r) end },
     { name = "record", args = "{start [minutes] | stop | save [note]}", desc = "record game output to oven_record.txt",
       run = function(r)
@@ -8849,6 +8877,28 @@ function M.windowTab(r)
   local t = pick(tabs, r)
   if not t then return say("sbo window tab inspector|help|log|chat") end
   return legacy("tab " .. t.name)
+end
+
+-- sbo debug state: busy flags and recent automatic decisions, shown and written to oven_state.txt
+function M.debugState()
+  local st = M.gmcpGet("char.status") or {}
+  local lines = {
+    "Oven v" .. M.version .. "  " .. os.date("%Y-%m-%d %H:%M:%S"),
+    "room " .. tostring(M.mapRoom) .. " · last prompt " .. tostring(M.lastPromptText),
+    "busy: " .. tostring(M.busyWhy(M.lastPromptText) or "no"),
+    string.format("walk %s · running %s · cap %s · learning %s · learnQueue %s · quietNext %s",
+      tostring(M.walk ~= nil), tostring(M.running and M.running.name), tostring(M.cap and M.cap.kind),
+      tostring(M.learning ~= nil), tostring(M.learnQueue and #M.learnQueue), tostring(M.quietNext and M.quietNext.kind)),
+    string.format("fighting %s (fights %d · status enemy %s, position %s, state %s, %ss ago)", tostring(M.fighting()),
+      (function() local n = 0 for _ in pairs(M.fights or {}) do n = n + 1 end return n end)(), tostring(st.enemy),
+      tostring(st.position), tostring(st.state), M.live.statusAt and tostring(os.time() - M.live.statusAt) or "never"),
+    "shop list " .. tostring(M.cfg.shopList ~= false) .. " · this room a shop: " .. tostring(M.isShopRoom(M.mapRoom)),
+    "", "recent automatic decisions:",
+  }
+  for _, n in ipairs(M.autoNotes or {}) do lines[#lines + 1] = "  " .. n end
+  local f = io.open(getMudletHomeDir() .. "/oven_state.txt", "w")
+  if f then f:write(table.concat(lines, "\n"), "\n"); f:close() end
+  for _, l in ipairs(lines) do say(l) end
 end
 
 -- sbo stop: whatever Oven is doing for you
