@@ -1331,6 +1331,45 @@ def notes_tab():
 
 
 @test
+def tab_dragged_out():
+    o = Oven()
+    o.lua('''sbo.cfg.window = true; sbo.cfg.tabs = true; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end''')
+    o.lua('sbo.command("log")')
+    eq(o.ev("WIDGETS['ovenViewer'].titleText"), "Oven", "the window isn't called Inspector too")
+    # a click is just a click
+    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_log"].click(); MOUSE = {955, 52}; sbo.tabRelease("log")')
+    eq(o.ev("sbo.tabIsOut('log')"), False, "clicked, not dragged")
+    # dragged and let go inside the window: still a tab
+    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_log"].click(); MOUSE = {1100, 200}; sbo.tabRelease("log")')
+    eq(o.ev("sbo.tabIsOut('log')"), False, "dropped inside the window")
+    # dragged out
+    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_log"].click(); MOUSE = {300, 300}; sbo.tabRelease("log")')
+    eq(o.ev("sbo.tabIsOut('log')"), True, "dropped outside: its own window")
+    eq(o.ev("WIDGETS['ovenTab_log'].titleText"), "Log", "titled by its tab")
+    eq(o.ev("WIDGETS['ovenTab_log'].x0"), 260, "where it was dropped")
+    eq(o.ev("WIDGETS['ovenTabs3_log'].shown"), False, "its tab leaves the bar")
+    eq(o.ev("sbo.tabOn"), "view", "the Oven window shows another tab")
+    eq(o.ev("sbo.cfg.tabsOut.log"), True, "remembered")
+    # new content for it shows its window, and leaves the Oven window's tab alone
+    o.lua('WIDGETS["ovenTab_log"]:hide(); sbo.command("log session")')
+    eq(o.ev("WIDGETS['ovenTab_log'].shown"), True, "its window comes back for new content")
+    eq(o.ev("sbo.tabOn"), "view", "...not the Oven window's tab")
+    eq(o.ev("WIDGETS['ovenTabs3Page_view'].shown"), True, "the Inspector still in front")
+    # docked back from its right-click menu
+    o.lua('WIDGETS["ovenTab_log"].items["dock into the Oven window"]()')
+    eq(o.ev("sbo.tabIsOut('log')"), False, "back in the Oven window")
+    eq(o.ev("WIDGETS['ovenTabs3_log'].shown"), True, "its tab is back")
+    eq(o.ev("WIDGETS['ovenTab_log'].shown"), False, "its window gone")
+    eq(o.ev("sbo.cfg.tabsOut.log"), None, "forgotten")
+    # and by command
+    o.lua('sbo.command("window undock notes")')
+    eq(o.ev("sbo.tabIsOut('notes')"), True, "sbo window undock notes")
+    o.lua('sbo.command("window dock notes")')
+    eq(o.ev("sbo.tabIsOut('notes')"), False, "sbo window dock notes")
+    o.lua('sbo.runTimers = nil'); o.lua('runTimers()')
+
+
+@test
 def item_sets():
     o = Oven()
     lines = ["You focus your powers of observation on a city guard signet ring:",

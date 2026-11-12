@@ -71,7 +71,21 @@ Geyser.Label={new=function(self,o) local t={name=o.name} function t:setStyleShee
 function decho2html(s) return (s:gsub("<(%d+),(%d+),(%d+)>","<span c=%1>")) end
 function cecho2html(s) return (s:gsub("<([%w_]+)>","{%1}")) end
 color_table = {gold={255,215,0}, dim_grey={105,105,105}}
-Adjustable.Container.new=function() return {show=function() end,hide=function() end} end
+-- an Adjustable.Container: where it is, shown or not, its title and right-click items
+Adjustable.Container.new=function(self, o)
+  o = o or {}
+  local t = { name = o.name, titleText = o.titleText, shown = true, x0 = 900, y0 = 40, w0 = 500, h0 = 400, items = {} }
+  function t:show() t.shown = true end function t:hide() t.shown = false end
+  function t:get_x() return t.x0 end function t:get_y() return t.y0 end
+  function t:get_width() return t.w0 end function t:get_height() return t.h0 end
+  function t:move(x, y) if tonumber(x) then t.x0, t.y0 = x, y end end function t:resize() end
+  function t:setTitle(s) t.titleText = s end function t:save() end function t:raiseAll() end
+  function t:newCustomItem(n, f) t.items[n] = f end
+  WIDGETS = WIDGETS or {}; if o.name then WIDGETS[o.name] = t end
+  return t
+end
+MOUSE = { 0, 0 }
+function getMousePosition() return MOUSE[1], MOUSE[2] end
 function send(c, e) print("[send "..c.." echo="..tostring(e).."]") end
 -- a tiny fake main buffer for line-number based calls
 BUF = {} CUR = 0
@@ -120,7 +134,9 @@ end
 -- layout widgets: remember who's hidden, so tests can see which tab is in front
 local function box(kind)
   return { new = function(self, o, parent)
-    local t = { name = o.name, kind = kind, parent = parent, shown = true }
+    local t = { name = o.name, kind = kind, parent = parent, container = parent, shown = true }
+    function t:changeContainer(c) t.parent = c; t.container = c end
+    function t:move() end function t:resize() end function t:organize() end
     function t:show() t.shown = true end
     function t:hide() t.shown = false end
     function t:setStyleSheet(s) t.css = s end

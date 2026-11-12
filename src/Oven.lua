@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.75.2"
+M.version = "0.76.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3522,6 +3522,9 @@ function M.createWindow()
   end
   if M.console then M.console:hide() end   -- console used by versions before 0.10
   M.applyTabs()
+  -- with tabs, the tab says what's showing: the window is just Oven's
+  local title = M.cfg.tabs and "Oven" or "Inspector"
+  if M.container.titleText ~= title then pcall(function() M.container:setTitle(title) end) end
 end
 
 -- Tabs along the top of the Inspector window. Each tab is its own page; whatever arrives for a
@@ -3550,7 +3553,8 @@ function M.buildTabs()
     local lab = Geyser.Label:new({ name = TABS_ID .. "_" .. key, width = 96, h_policy = Geyser.Fixed }, M.tabBar)
     lab:echo("<center>" .. t.title .. "</center>")
     pcall(function() lab:setCursor("PointingHand") end)
-    lab:setClickCallback(function() M.tabShow(key) end)
+    lab:setClickCallback(function() M.tabPress(key) end)
+    pcall(function() lab:setReleaseCallback(function() M.tabRelease(key) end) end)
     M.tabLabels[key] = lab
     M.tabPages[key] = Geyser.Container:new({ name = TABS_ID .. "Page_" .. key, x = 0, y = 0, width = "100%", height = "100%" }, M.tabBody)
   end
@@ -3577,8 +3581,23 @@ function M.applyTabs()
     if M.helpContainer then M.helpContainer:hide() end
     if not M.logPg then M.logPg = M.newPage("ovenLog", M.tabPages.log) end
     movePage(M.logPg, M.tabPages.log)
-    M.tabShow(M.tabOn or "view", true)
+    -- tabs that were dragged out before
+    for _, t in ipairs(M.TABS) do if (M.cfg.tabsOut or {})[t.key] then pcall(M.tabUndock, t.key) end end
+    if not M.tabOn or M.tabIsOut(M.tabOn) then
+      M.tabOn = nil
+      for _, t in ipairs(M.TABS) do if not M.tabIsOut(t.key) then M.tabOn = t.key; break end end
+    end
+    if M.tabOn then M.tabShow(M.tabOn, true) end
   else
+    -- no tabs: everything back in one place (they go out again when tabs come back)
+    for key, win in pairs(M.tabWins or {}) do
+      local pg = M.tabPages and M.tabPages[key]
+      if pg and pg.container == win then
+        pcall(function() pg:changeContainer(M.tabBody); pg:move(0, 0); pg:resize("100%", "100%") end)
+        pcall(function() M.tabLabels[key]:resize(96, nil); M.tabLabels[key]:show(); M.tabBar:organize() end)
+        win:hide()
+      end
+    end
     if M.tabBox then M.tabBox:hide() end
     if not M.viewPg then M.viewPg = M.newPage("ovenView", M.container) end
     movePage(M.viewPg, M.container)
@@ -3589,11 +3608,17 @@ end
 M.tabNew = M.tabNew or {}
 function M.tabShow(key, quiet)
   if not M.cfg.tabs or not M.tabPages or not M.tabPages[key] then return end
-  M.tabOn = key
+  if M.tabIsOut(key) then
+    M.tabWins[key]:show()
+    pcall(function() M.tabWins[key]:raiseAll() end)
+  else
+    M.tabOn = key
+  end
   M.tabNew[key] = nil
   for _, t in ipairs(M.TABS) do
-    local on = t.key == key
-    if on then M.tabPages[t.key]:show() else M.tabPages[t.key]:hide() end
+    local on = t.key == M.tabOn
+    if M.tabIsOut(t.key) then -- in its own window
+    elseif on then M.tabPages[t.key]:show() else M.tabPages[t.key]:hide() end
     M.tabLabels[t.key]:setStyleSheet(on and tabOnStyle or tabStyle)
     -- a tab with something new in it that you haven't looked at (chat keeps its own count)
     if t.key ~= "chat" then
@@ -3622,6 +3647,114 @@ local function tabEnd(key, prev, asked)
 end
 M.tabBegin, M.tabEnd = tabBegin, tabEnd
 
+-- A tab dragged out of the Oven window becomes a window of its own (moved and sized like the others,
+-- and remembered). Its right-click menu, or sbo window dock {tab}, puts it back.
+M.tabWins = M.tabWins or {}
+function M.tabIsOut(key)
+  return M.cfg.tabs and (M.cfg.tabsOut or {})[key] and M.tabWins[key] and M.tabPages[key]
+    and M.tabPages[key].container == M.tabWins[key] and true or false
+end
+local function tabTitle(key) for _, t in ipairs(M.TABS) do if t.key == key then return t.title end end end
+-- the window a tab's content shows in
+function M.tabWindowShow(key)
+  M.createWindow()
+  if M.tabIsOut(key) then return M.tabWins[key]:show() end
+  M.container:show()
+end
+
+function M.tabPress(key)
+  local ok, x, y = pcall(getMousePosition)
+  M.tabDrag = ok and tonumber(x) and { key = key, x = x, y = y } or nil
+  M.tabShow(key)
+end
+-- let go outside the Oven window, well away from where it was picked up: its own window there
+function M.tabRelease(key)
+  local d = M.tabDrag
+  M.tabDrag = nil
+  if not d or d.key ~= key then return end
+  local ok, x, y = pcall(getMousePosition)
+  if not ok or not tonumber(x) then return end
+  if math.abs(x - d.x) + math.abs(y - d.y) < 40 then return end
+  local c = M.container
+  local okG, cx, cy, cw, ch = pcall(function() return c:get_x(), c:get_y(), c:get_width(), c:get_height() end)
+  if okG and x >= cx and x <= cx + cw and y >= cy and y <= cy + ch then return end
+  M.tabUndock(key, x, y)
+end
+
+function M.tabUndock(key, x, y)
+  if not M.cfg.tabs or not M.tabPages or not M.tabPages[key] or M.tabIsOut(key) then return end
+  local name = "ovenTab_" .. key
+  local win = M.tabWins[key]
+  if not win then
+    local W, H = getMainWindowSize()
+    local okS, cw, ch = pcall(function() return M.container:get_width(), M.container:get_height() end)
+    cw = okS and tonumber(cw) or W * 0.36; ch = okS and tonumber(ch) or H * 0.5
+    win = Adjustable.Container:new({
+      name = name, titleText = tabTitle(key),
+      x = 0, y = 0, width = math.floor(cw), height = math.floor(ch),
+      adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+      titleTxtColor = "#e6c35c",
+    })
+    pcall(function() win:newCustomItem("dock into the Oven window", function() M.tabDock(key) end) end)
+    M.tabWins[key] = win
+    if x then
+      x = math.max(0, math.min(x - 40, W - cw)); y = math.max(0, math.min(y - 10, H - ch))
+      pcall(function() win:move(math.floor(x), math.floor(y)) end)
+    elseif (M.cfg.panels or {})[name] then
+      M.panelPlace(name, win)
+    else   -- beside the Oven window
+      local okP, px, py = pcall(function() return M.container:get_x(), M.container:get_y() end)
+      px = okP and tonumber(px) or 0; py = okP and tonumber(py) or 0
+      pcall(function() win:move(math.floor(math.max(0, px - cw - 10)), math.floor(py)) end)
+    end
+  elseif x then
+    pcall(function() win:move(math.floor(math.max(0, x - 40)), math.floor(math.max(0, y - 10))) end)
+  end
+  local pg = M.tabPages[key]
+  pg:changeContainer(win)
+  pcall(function() pg:move(0, 0); pg:resize("100%", "100%") end)
+  pg:show()
+  win:show()
+  -- its tab leaves the bar
+  M.tabLabels[key]:hide()
+  pcall(function() M.tabLabels[key]:resize(0, nil); M.tabBar:organize() end)
+  M.cfg.tabsOut = M.cfg.tabsOut or {}
+  if not M.cfg.tabsOut[key] then M.cfg.tabsOut[key] = true; M.saveSettings() end
+  -- the Oven window shows another tab - or goes away once every tab is out
+  if M.tabOn == key or not M.tabOn then
+    M.tabOn = nil
+    for _, t in ipairs(M.TABS) do if not M.tabIsOut(t.key) then M.tabOn = t.key; break end end
+  end
+  if M.tabOn then M.tabShow(M.tabOn, true) elseif M.container then M.container:hide() end
+  M.redrawPage(key)
+end
+
+function M.tabDock(key)
+  local win = M.tabWins[key]
+  local was = M.tabIsOut(key)
+  if M.cfg.tabsOut then M.cfg.tabsOut[key] = nil; M.saveSettings() end
+  if not was then return end
+  M.tabPages[key]:changeContainer(M.tabBody)
+  pcall(function() M.tabPages[key]:move(0, 0); M.tabPages[key]:resize("100%", "100%") end)
+  pcall(function() M.tabLabels[key]:resize(96, nil); M.tabBar:organize() end)
+  M.tabLabels[key]:show()
+  win:hide()
+  M.container:show()
+  M.tabShow(key, true)
+  M.redrawPage(key)
+end
+
+-- a page drawn for one window's width, drawn again for its new one
+function M.redrawPage(key)
+  tempTimer(0.2, function()
+    pcall(function()
+      if key == "view" and M.viewShown then M.viewShow()
+      elseif key == "log" and M.logPg and M.logShown then M.logAdd(M.sessionLines(M.pageCols(M.logPg)), M.logLinks())
+      end
+    end)
+  end)
+end
+
 -- Log tab: session, kills, loot, deaths - with links between them
 function M.logLinks()
   return {
@@ -3633,8 +3766,7 @@ function M.logLinks()
 end
 function M.logAdd(lines, links)
   if not M.cfg.tabs then return M.viewAdd({ lines = lines, links = links or {} }) end
-  M.createWindow()
-  M.container:show()
+  M.tabWindowShow("log")
   M.logShown = true
   local all = {}
   for _, l in ipairs(links or {}) do all[#all + 1] = l end
@@ -3682,7 +3814,7 @@ end
 function M.viewShow()
   M.viewShown = true
   M.createWindow()
-  M.container:show()
+  if M.cfg.tabs then M.tabWindowShow("view") else M.container:show() end
   local h, pos = M.viewHist, M.viewPos or #M.viewHist
   local e = h[pos]
   if not e then return M.pageShow(M.viewPg, { "<128,128,128>Nothing baked yet - try eq, i, score or look at an item." }, "decho") end
@@ -3743,7 +3875,7 @@ end
 function M.helpPage(title, lines, fmt, links)
   M.createHelpWindow()
   if M.cfg.tabs then
-    M.container:show()
+    M.tabWindowShow("help")
     M.helpShown = true
     M.helpPrev = tabBegin("help")
   else
@@ -7110,7 +7242,7 @@ function M.notesRender(filter)
 end
 
 function M.notesShow(filter)
-  M.createWindow(); M.container:show()
+  M.createWindow(); M.tabWindowShow("notes")
   if M.cfg.tabs then M.tabShow("notes") end
   M.notesRender(filter)
 end
@@ -7123,7 +7255,7 @@ function M.chatCommand(b)
     for _, c in ipairs(M.cfg.chatChannels or {}) do if c:lower() == n:lower() then return c end end
   end
   if a == "" then
-    M.createWindow(); M.container:show(); M.tabShow("chat"); return
+    M.tabWindowShow("chat"); M.tabShow("chat"); return
   elseif a == "mute" or a == "unmute" then
     local c = find(rest)
     if not c or c == "All" then return M.say("no channel called '" .. rest .. "' yet - channels: " .. table.concat(M.cfg.chatChannels or {}, ", ")) end
@@ -7143,7 +7275,7 @@ function M.chatCommand(b)
     return M.say(c .. " forgotten (it comes back if it's used again)")
   end
   local c = find(b)
-  if c then M.createWindow(); M.container:show(); M.tabShow("chat"); return M.chatFilter(c) end
+  if c then M.tabWindowShow("chat"); M.tabShow("chat"); return M.chatFilter(c) end
   M.say("sbo chat [channel|all] · sbo chat mute|unmute <channel> · sbo chat clear · sbo chat remove <channel>")
 end
 
@@ -9226,8 +9358,8 @@ function M.legacyCommand(args)
       M.cfg.combatBar and "on" or "off", M.cfg.combatLines and "on" or "off"))
   elseif a == "chat" then return M.chatCommand(b)
   elseif a == "tab" and (b == "inspector" or b == "help" or b == "log" or b == "chat" or b == "notes") then
-    M.createWindow(); M.container:show()
-    M.tabShow(b == "inspector" and "view" or b)
+    local key = b == "inspector" and "view" or b
+    M.tabWindowShow(key); M.tabShow(key)
     return
   elseif a == "mirror" then
     local MIRROR = { inspector = "view", view = "view", help = "help", log = "log", chat = "chat" }
@@ -9561,6 +9693,10 @@ M.CMDS = {
   { name = "window", desc = "where the panels sit", rest = function(r) return M.window051(r) end, subs = {
     { name = "restore", desc = "panels back where you put them", run = L("layout restore") },
     { name = "reset", desc = "panels back to Oven's defaults", run = L("layout reset") },
+    { name = "undock", args = "{tab}", desc = "a tab in a window of its own (or drag the tab out)",
+      run = function(r) return M.tabMove(r, true) end },
+    { name = "dock", args = "{tab}", desc = "a tab back in the Oven window (or its right-click menu)",
+      run = function(r) return M.tabMove(r, false) end },
   } },
   { name = "version", desc = "the version you have; update to the newest",
     run = function() return M.versionInfo() end, subs = {
@@ -9785,6 +9921,24 @@ function M.mapPanelShow()
 end
 
 -- the window tab by any start of its name
+-- sbo window undock / dock {tab}
+function M.tabMove(r, out)
+  local tabs = { { name = "inspector", key = "view" } }
+  for _, t in ipairs(M.TABS) do if t.key ~= "view" then tabs[#tabs + 1] = { name = t.key, key = t.key } end end
+  local t = pick(tabs, r or "")
+  if not t then return say("sbo window " .. (out and "undock" or "dock") .. " inspector|help|log|chat|notes") end
+  if not M.cfg.tabs then return say("tabs are off (sbo config tabs on) - every page has its window already") end
+  M.createWindow()
+  if out then
+    if M.tabIsOut(t.key) then M.tabWins[t.key]:show(); return say(t.name .. " already has its own window") end
+    M.tabUndock(t.key)
+    return say(t.name .. " in its own window - its right-click menu puts it back")
+  end
+  if not M.tabIsOut(t.key) then return say(t.name .. " is already in the Oven window") end
+  M.tabDock(t.key)
+  say(t.name .. " back in the Oven window")
+end
+
 function M.windowTab(r)
   local tabs = { { name = "inspector" }, { name = "help" }, { name = "log" }, { name = "chat" }, { name = "notes" } }
   local t = pick(tabs, r)
@@ -10514,7 +10668,11 @@ M.PANEL_DEFAULTS = {
   ovenMapPanel = { x = "-36%", y = "4%", w = "34%", h = "50%" },
 }
 function M.panelList()
-  return { { "ovenViewer", M.container }, { "ovenHelp", M.helpContainer }, { "ovenMapPanel", M.mapPanel } }
+  local t = { { "ovenViewer", M.container }, { "ovenHelp", M.helpContainer }, { "ovenMapPanel", M.mapPanel } }
+  for _, tab in ipairs(M.TABS or {}) do
+    if M.tabWins and M.tabWins[tab.key] then t[#t + 1] = { "ovenTab_" .. tab.key, M.tabWins[tab.key] } end
+  end
+  return t
 end
 
 local function panelGeom(c)
