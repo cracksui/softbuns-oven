@@ -1429,6 +1429,16 @@ def quest_hint_paragraphs_and_folding():
     assert any("click to fold" in x for x in opened), opened
     o.lua("sbo.questHudClick('3390')")
     assert any("click to open" in x for x in card()), "folded again"
+    # paragraphs with no blank line between them (the daily quest): a line ending in two spaces, or one
+    # longer than the game wraps at, ends its paragraph
+    lines = open(fixture("quest_login_daily.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
+    o.feed(*lines, "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    desc = list(o.ev("sbo.quests['3519'].desc").values())
+    eq(desc[1], "", f"after the DAILY line: {desc}")
+    eq(desc[desc.index("sustenance they need to thrive.") + 1], "", "after 'thrive.  '")
+    assert not any("velocity token" in d for d in desc), f"rewards aren't the hint: {desc}"
+    eq(list(o.ev("sbo.quests['3519'].rewardItems").values()), ["a velocity token", "a dusty curious coin"], "they're rewards")
 
 
 @test

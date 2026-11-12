@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.65.0"
+M.version = "0.65.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2188,6 +2188,10 @@ function M.parseQuests(raw)
         elseif detail.inRewards and detail.rewardNote and not t:match("time limit") and not t:match(" consists of:$") then
           detail.rewardNote = detail.rewardNote .. " " .. t
           if t:match("%.$") then detail.inRewards = false end
+        elseif t:match("^%*The item '.-'%.?$") then
+          -- "*The item 'a velocity token'." - a reward, not part of the hint
+          detail.rewardItems = detail.rewardItems or {}
+          detail.rewardItems[#detail.rewardItems + 1] = t:match("^%*The item '(.-)'")
         elseif detail.inRewards and (t:match("^%*?Up to") or t:match("^[%d,]+ %a")) then
           detail.rewardText = (detail.rewardText and (detail.rewardText .. " ") or "") .. t:gsub("^%*", "")
           if t:match("%.$") then detail.inRewards = false end
@@ -2204,6 +2208,9 @@ function M.parseQuests(raw)
         elseif not inPhases and (t ~= "" or (#detail.desc > 0 and detail.desc[#detail.desc] ~= "")) then
           -- keep indentation (lists, continuation lines) and the blank line between paragraphs
           detail.desc[#detail.desc + 1] = (t == "") and "" or rtrim(l)
+          -- a paragraph also ends where the game says so without a blank line: its last line ends in
+          -- two spaces ("…they need to thrive.  "), or a line too long to be one the game wrapped
+          if t ~= "" and (l:match("%S%s%s+$") or ulen(rtrim(l)) > 80) then detail.desc[#detail.desc + 1] = "" end
         elseif t ~= "" then
           other[#other + 1] = t
         end
