@@ -8252,6 +8252,9 @@ function M.runData()
   M.cfg.runs = M.cfg.runs or {}
   local r = M.cfg.runs
   r.names, r.ends, r.wilds = r.names or {}, r.ends or {}, nil
+  -- before 0.74.1 a run that stopped at a junction signpost had that saved as its end: forget them once,
+  -- they're learned again (correctly) on the next run
+  if not r.endsFixed then r.ends, r.endsFixed = {}, 1 end
   return r
 end
 
