@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.54.1"
+M.version = "0.54.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5014,6 +5014,7 @@ function M.onGmcpStatus()
     L.tnl, c.tnl = tnl, tnl
   end
   L.enemy = (s.enemy and s.enemy ~= "_empty") and s.enemy or nil
+  L.statusAt = os.time()
   L.enemyPct = tonumber(s.enemypct)
   pcall(M.drawBar)
 end
@@ -8215,10 +8216,14 @@ function M.notePickup(loot)
   M.pickupPending[#M.pickupPending + 1] = { name = n, pickup = true }
 end
 
+-- in a fight: one Oven is following (combat mode mxp rounds), or an enemy the game named in the last
+-- 30 seconds. Not char.status's position: the game sends status rarely, and the last one is often from
+-- the middle of a fight hours ago ("fighting" long after it ended).
 function M.fighting()
   if next(M.fights or {}) then return true end
   local st = M.gmcpGet and M.gmcpGet("char.status")
-  return type(st) == "table" and ((st.position == "fighting") or (st.enemy and st.enemy ~= "_empty" and st.enemy ~= "")) or false
+  if type(st) ~= "table" or not st.enemy or st.enemy == "_empty" or st.enemy == "" then return false end
+  return (M.live.statusAt or 0) >= os.time() - 30
 end
 
 function M.pickupFlush(promptLine)

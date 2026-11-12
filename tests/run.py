@@ -922,7 +922,8 @@ def shop_listed_on_arrival():
     sushi = open(fixture("shop_list.txt"), encoding="utf-8").read().split("\n---\n")[0].split("\n")
     o = Oven()
     o.lua('sbo.cfg.promptPattern = "<%d+hp"; GAGGED = 0; deleteLine = function() GAGGED = GAGGED + 1 end')
-    o.set_gmcp("char.status", '{ state = "playing" }')
+    # as in a real session: the game's last status is from a fight hours ago
+    o.set_gmcp("char.status", '{ state = "playing", position = "fighting", enemy = "_empty" }')
     o.L.globals().SUSHI = o.L.table_from(sushi)
     o.lua("""
       roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
@@ -963,6 +964,13 @@ def shop_listed_on_arrival():
     o.L.execute("runTimers()")
     eq(o.ev("GAGGED"), 0, "a list you ask for stays on the screen")
     eq(o.ev("sbo.classify('shout hello')"), None, "shout isn't shop")
+    # fighting: an enemy named just now, not a stale position
+    eq(o.ev("sbo.fighting()"), False, "stale 'fighting' with no enemy")
+    o.set_gmcp("char.status", '{ state = "playing", position = "fighting", enemy = "a rat", enemypct = 80 }')
+    o.lua("sbo.onGmcpStatus()")
+    eq(o.ev("sbo.fighting()"), True, "an enemy, just now")
+    o.lua("sbo.live.statusAt = os.time() - 120")
+    eq(o.ev("sbo.fighting()"), False, "an enemy named two minutes ago and nothing since")
 
 
 @test
