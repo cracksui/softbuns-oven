@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.55.1"
+M.version = "0.55.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6097,11 +6097,15 @@ M.addBlockReader("room_npcs", "room", function(b, seg)
   end
 end)
 
--- playing, not logging in: GMCP char.status says "playing" and the line is your status prompt
+-- playing, not logging in: the line is your status prompt (<291hp 696sp 457st>), and GMCP says so -
+-- char.status "playing", or, since the game sends char.status rarely (some logins not at all), your room
+-- over GMCP. The login screen has neither a status prompt nor a room, so nothing is sent at a password prompt.
 function M.inGame(promptLine)
+  if promptLine == nil or #M.parsePrompt(promptLine).vals == 0 then return false end
   local st = M.gmcpGet and M.gmcpGet("char.status")
-  if type(st) ~= "table" or st.state ~= "playing" then return false end
-  return promptLine ~= nil and #M.parsePrompt(promptLine).vals > 0
+  if type(st) == "table" and st.state ~= nil then return st.state == "playing" end
+  local room = M.gmcpGet and M.gmcpGet("room.info")
+  return type(room) == "table" and tonumber(room.num) ~= nil
 end
 
 -- "Currently defined aliases:" / " 1. 'pp' performs action 'cast 'pressure points''" / "A total of 3/100 aliases."

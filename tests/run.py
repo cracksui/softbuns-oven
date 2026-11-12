@@ -1282,6 +1282,22 @@ def game_aliases():
 
 
 @test
+def in_game_rule():
+    o = Oven()
+    ig = lambda p: o.ev(f'sbo.inGame("{p}")')
+    o.lua("gmcp.char = nil; gmcp.room = nil")
+    eq(ig("Password:"), False, "the login screen")
+    eq(ig("[Mail]<281hp 696sp 457st> "), False, "a prompt, but no sign from GMCP yet")
+    o.lua('gmcp.room = { info = { num = "10614" } }')
+    eq(ig("[Mail]<281hp 696sp 457st> "), True, "no char.status this login (the game sends it rarely): the room will do")
+    eq(ig("Password:"), False, "a room left over from before, at a password prompt: still no")
+    o.lua('gmcp.char = { status = { state = "login" } }')
+    eq(ig("[Mail]<281hp 696sp 457st> "), False, "char.status says not playing: it wins")
+    o.lua('gmcp.char = { status = { state = "playing" } }')
+    eq(ig("[Mail]<281hp 696sp 457st> "), True, "playing")
+
+
+@test
 def quest_target_colours():
     o = Oven(before='''gmcp = { char = { quests = { q52 = { goals = { { phase_number = 1, room_target = 10733 } } } } } }
       roomExists = function() return true end; getRoomName = function(id) return ({ [10733] = "The Entrance to Rune Prison", [77] = "The Edible Loaf" })[id] end
