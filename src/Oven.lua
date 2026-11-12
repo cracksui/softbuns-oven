@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.55.0"
+M.version = "0.55.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5934,6 +5934,14 @@ end
 function M.recordShop(room, shop)
   if not room or not shop then return end
   local t = os.time()
+  local known = M.dbRow("SELECT room FROM shops WHERE room = %s", room) ~= nil
+  -- a line when it's in: a shop seen for the first time, or one Oven just listed by itself (so you
+  -- know you can move on); a list you typed yourself is already on the screen
+  local auto = M.shopAsked and M.shopAsked.room == room and t - M.shopAsked.at <= 10
+  if auto then M.shopAsked = nil end
+  local label = (shop.name or "a shop") .. " · " .. #shop.items .. " item" .. (#shop.items == 1 and "" or "s")
+  if not known then M.say("new shop: " .. label)
+  elseif auto then M.say("shop updated: " .. label) end
   M.dbx("INSERT OR REPLACE INTO shops (room, name, last) VALUES (%s, %s, %s)", room, shop.name, t)
   -- the stock as it is now (what's sold out or gone is dropped from this shop's list)
   M.dbx("DELETE FROM shop_items WHERE room = %s", room)
@@ -5990,6 +5998,7 @@ function M.shopAutoList(room, promptLine)
   if r and tonumber(r.last) and t - tonumber(r.last) < 3600 then return M.noteAuto("shop", room, "skipped: listed in the last hour") end
   M.shopTried[room] = t          -- once an hour, even when the game says no ("There isn't a shopkeeper present.")
   M.noteAuto("shop", room, "shop list sent")
+  M.shopAsked = { room = room, at = t }
   M.quietly("shop list", "shop", function(lines)
     M.noteAuto("shop", room, lines and ("reply: " .. #lines .. " lines") or "no reply")
   end)   -- the shop_list reader saves it

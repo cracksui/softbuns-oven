@@ -921,7 +921,7 @@ def command_tree():
 def shop_listed_on_arrival():
     sushi = open(fixture("shop_list.txt"), encoding="utf-8").read().split("\n---\n")[0].split("\n")
     o = Oven()
-    o.lua('sbo.cfg.promptPattern = "<%d+hp"; GAGGED = 0; deleteLine = function() GAGGED = GAGGED + 1 end')
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; GAGGED = 0; deleteLine = function() GAGGED = GAGGED + 1 end; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end')
     # as in a real session: the game's last status is from a fight hours ago
     o.set_gmcp("char.status", '{ state = "playing", position = "fighting", enemy = "_empty" }')
     o.L.globals().SUSHI = o.L.table_from(sushi)
@@ -949,6 +949,7 @@ def shop_listed_on_arrival():
     o.feed("<270hp 550sp 401st>")          # playing: a status prompt seen
     o.lua("ARRIVE(10515)")
     eq(list(o.ev("SENT").values()), ["shop list"], "listed on arrival")
+    assert any("new shop: the Sushi Bar · 5 items" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
     eq(o.rows("SELECT COUNT(*) AS n FROM shop_items WHERE room = 10515")[0]["n"], 5, "and saved")
     assert o.ev("GAGGED") >= len([l for l in sushi if l.strip()]), "quietly: off the main screen"
     # not again within the hour; not in a room without a shop
@@ -964,6 +965,11 @@ def shop_listed_on_arrival():
     o.feed(*sushi, "<270hp 550sp 401st>")
     o.L.execute("runTimers()")
     eq(o.ev("GAGGED"), 0, "a list you ask for stays on the screen")
+    o.lua("SAYS = {}")
+    o.feed(*sushi, "<270hp 550sp 401st>")
+    assert not any("shop" in m for m in o.ev("SAYS").values()), "a known shop you list yourself: no line"
+    o.lua("SAYS = {}; sbo.shopTried = {}; sbo.dbx('UPDATE shops SET last = 1'); sbo.shopCheckedRoom = nil; ARRIVE(1); ARRIVE(10515)")
+    assert any("shop updated: the Sushi Bar" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
     eq(o.ev("sbo.classify('shout hello')"), None, "shout isn't shop")
     # fighting: an enemy named just now, not a stale position
     eq(o.ev("sbo.fighting()"), False, "stale 'fighting' with no enemy")
