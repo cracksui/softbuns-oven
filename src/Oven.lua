@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.77.2"
+M.version = "0.77.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3832,6 +3832,7 @@ end
 
 -- a page drawn for one window's width, drawn again for its new one
 function M.redrawPage(key)
+  if key == "chat" then return tempTimer(0.2, function() pcall(M.chatChips) end) end
   tempTimer(0.2, function()
     pcall(function()
       if key == "view" and M.viewShown then M.viewShow()
@@ -7214,23 +7215,32 @@ function M.chatChips()
   for _, c in ipairs(M.cfg.chatChannels or {}) do names[#names + 1] = c end
   local total = 0
   for ch, n in pairs(C.unread) do if not muted[ch] then total = total + n end end
+  -- the chips sit in an area of their own and wrap onto more rows when they don't fit across
+  -- (chips from before 0.77.3 were in a single row: put away)
+  if not M.chatChipArea then
+    for _, lab in ipairs(M.chatChipLabels or {}) do pcall(function() lab:hide() end) end
+    M.chatChipLabels = {}
+    M.chatChipArea = Geyser.Container:new({ name = "ovenChatChipArea" }, M.chatBar)
+  end
+  local okW, areaW = pcall(function() return M.chatChipArea:get_width() end)
+  areaW = (okW and tonumber(areaW) and areaW > 50) and areaW or 400
   M.chatChipLabels = M.chatChipLabels or {}
-  local relayout = false
+  local x, row = 0, 0
   for i, name in ipairs(names) do
     local n = name == "All" and total or (C.unread[name] or 0)
     local text = name .. ((n > 0) and (" " .. n) or "")
     local w = math.max(44, 22 + 8 * ulen(text))
+    if x > 0 and x + w > areaW then x, row = 0, row + 1 end
     local lab = M.chatChipLabels[i]
     if not lab then
-      lab = Geyser.Label:new({ name = "ovenChatChip" .. i, width = w, h_policy = Geyser.Fixed }, M.chatBar)
+      lab = Geyser.Label:new({ name = "ovenChatChipW" .. i, x = x, y = row * 24, width = w, height = 24 }, M.chatChipArea)
       pcall(function() lab:setCursor("PointingHand") end)
       M.chatChipLabels[i] = lab
-      relayout = true
-    elseif lab.chipW ~= w then
-      pcall(function() lab:resize(w, lab.get_height and lab:get_height() or 24) end)
-      relayout = true
+    elseif lab.chipW ~= w or lab.chipX ~= x or lab.chipRow ~= row then
+      pcall(function() lab:move(x, row * 24); lab:resize(w, 24) end)
     end
-    lab.chipW = w
+    lab.chipW, lab.chipX, lab.chipRow = w, x, row
+    x = x + w
     lab:echo("<center>" .. (text:gsub("&", "&amp;"):gsub("<", "&lt;")) .. "</center>")
     lab:setStyleSheet(chipCss(C.filter == name, muted[name], n > 0))
     pcall(function() lab:setToolTip(name == "All" and "every channel that isn't muted"
@@ -7242,7 +7252,13 @@ function M.chatChips()
     lab:show()
   end
   for i = #names + 1, #M.chatChipLabels do M.chatChipLabels[i]:hide() end
-  if relayout and M.chatBar.organize then pcall(function() M.chatBar:organize() end) end
+  -- the bar as tall as its rows
+  local h = (row + 1) * 24
+  if M.chatBarH ~= h then
+    M.chatBarH = h
+    pcall(function() M.chatBar:resize(nil, h) end)
+    pcall(function() M.chatBar.container:organize() end)
+  end
   if M.tabLabels and M.tabLabels.chat then
     M.tabLabels.chat:echo("<center>Chat" .. (total > 0 and (" (" .. total .. ")") or "") .. "</center>")
   end
@@ -7280,6 +7296,7 @@ function M.buildChat(page)
   local box = Geyser.VBox:new({ name = "ovenChatBox", x = 0, y = 0, width = "100%", height = "100%" }, page)
   M.chatBar = Geyser.HBox:new({ name = "ovenChatChips", height = 24, v_policy = Geyser.Fixed }, box)
   M.chatChipLabels = {}
+  M.chatChipArea = nil
   M.chatConsole = Geyser.MiniConsole:new({ name = "ovenChatConsole", color = "black" }, box)
   local font, size = pageFont()
   pcall(function() M.chatConsole:setFont(font) end)
@@ -11051,7 +11068,11 @@ function M.init()
   M.panelsWatch()
   M.questClock()
   M.whereLearnStart()
-  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("AdjustableContainerRepositionFinish", function(...) M.onPanelMoved(...) end)
+  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("AdjustableContainerRepositionFinish", function(...)
+    M.onPanelMoved(...)
+    pcall(M.chatChips)
+  end)
+  M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysWindowResizeEvent", function() pcall(M.chatChips) end)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadDone", M.onDownload)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadError", M.onDownload)
   for _, v in ipairs({ "LEVEL", "EXPERIENCE", "EXPERIENCE_MAX", "EXPERIENCE_TNL", "EXPERIENCE_TO_LEVEL" }) do

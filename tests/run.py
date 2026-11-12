@@ -411,7 +411,12 @@ def chat_tab():
     o.lua('sbo.command("chat mute clan"); sbo.chatFilter("All")')
     text = o.ev("WIDGETS.ovenChatConsole.text")
     assert "Moss" not in text and "Wren" in text, f"muted: {text}"
-    assert "line-through" in o.ev("WIDGETS.ovenChatChip3.css"), "muted chip is struck through"
+    assert "line-through" in o.ev("WIDGETS.ovenChatChipW3.css"), "muted chip is struck through"
+    # too many to fit across: they wrap onto another row, and the bar grows
+    o.lua('for _, c in ipairs({"GOSSIP", "NEWBIE", "TRADE", "MUSIC", "QUESTION"}) do table.insert(sbo.cfg.chatChannels, c) end; sbo.chatChips()')
+    assert o.ev("sbo.chatBarH") >= 48, "more than one row"
+    eq(o.ev("WIDGETS.ovenChatChipW1.chipRow"), 0, "All on the first")
+    assert o.ev("WIDGETS.ovenChatChipW12.chipRow") >= 1, "the last on a later row"
     o.lua('sbo.chatFilter("CLAN")')
     assert "Moss" in o.ev("WIDGETS.ovenChatConsole.text"), "a muted channel can still be read on its own"
     # a line arriving is copied in whole (its links still work), not drawn again from its text
