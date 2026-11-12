@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.61.2"
+M.version = "0.61.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6569,6 +6569,18 @@ function M.gmcpDump()
   return names
 end
 
+-- "<281hp 696sp 444st> You receive…" -> "<281hp 696sp 444st> " (a status prompt at the start of a longer line)
+function M.promptHead(l)
+  local from = 1
+  for _ = 1, 4 do
+    local i = l:find(">", from, true)
+    if not i or i > 90 then return nil end
+    local head = l:sub(1, i)
+    if l:sub(i + 1):match("%S") and #M.parsePrompt(head).vals > 0 then return head end
+    from = i + 1
+  end
+end
+
 -- every game line: the work is in onLineWork; while it runs, Oven's own messages wait (see M.log)
 function M.onLine()
   M.inLine = true
@@ -6645,7 +6657,23 @@ function M.onLineWork()
     end
     return   -- otherwise leave it in the main window so you can answer it
   end
-  if isPromptLine() then
+  -- the game went on straight after a prompt, on the same line ("<281hp 696sp 444st> You receive an index
+  -- card containing a recipe."): the prompt part goes to the bar, the rest stays as the game's text
+  local head = M.cfg.bar and M.promptHead(line)
+  if head then
+    do
+      local n = #head + #(line:sub(#head + 1):match("^%s*"))
+      if selectSection(0, n) then
+        local okd, d = pcall(copy2decho)
+        replace("")
+        deselect()
+        M.lastStatusPrompt = head
+        pcall(M.barUpdate, okd and d or head)
+      end
+    end
+    if cap and #cap.plain > 0 then M.finish("prompt") end   -- it was the prompt that ended a reply
+  end
+  if not head and isPromptLine() then
     if cap and #cap.plain > 0 then M.finish("prompt") end
     -- a question the game asks the way it sends a prompt ("Do you really want to quit (y/N)?") isn't
     -- your status: it stays in the game text to be answered. Your prompt has values (<291hp ...>).

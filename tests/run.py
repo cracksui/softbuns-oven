@@ -1479,6 +1479,24 @@ def messages_survive_the_bar():
 
 
 @test
+def prompt_with_text_after_it():
+    # the game went on right after a prompt, on the same line: the prompt to the bar, the rest stays
+    o = Oven()
+    o.lua("""sbo.cfg.promptPattern = "^<%d+hp"; sbo.cfg.bar = true
+      sbo.bar = setmetatable({}, { __index = function() return function() end end })
+      BARS = {}; local bu = sbo.barUpdate; sbo.barUpdate = function(d) BARS[#BARS + 1] = d end
+      SEL = nil; selectSection = function(a, n) SEL = { a, n } return true end
+      REPLACED = nil; replace = function(t) REPLACED = { SEL[1], SEL[2], t } end; deselect = function() end
+      copy2decho = function() return string.sub(line, SEL[1] + 1, SEL[1] + SEL[2]) end""")
+    eq(o.ev('sbo.promptHead("<281hp 696sp 444st> You receive an index card containing a recipe.")'), "<281hp 696sp 444st>", "the head")
+    eq(o.ev('sbo.promptHead("[Mail]<281hp 696sp 444st> You receive a card.")'), "[Mail]<281hp 696sp 444st>", "with tags")
+    eq(o.ev('sbo.promptHead("A sign reads <beware> of the dog.")'), None, "not a prompt")
+    o.feed("<281hp 696sp 444st> You receive an index card containing a recipe.")
+    eq(list(o.ev("REPLACED").values()), [0, 20, ""], "the prompt and its space taken off the line")
+    eq(list(o.ev("BARS").values()), ["<281hp 696sp 444st> "], "and onto the bar")
+
+
+@test
 def quest_target_colours():
     o = Oven(before='''gmcp = { char = { quests = { q52 = { goals = { { phase_number = 1, room_target = 10733 } } } } } }
       roomExists = function() return true end; getRoomName = function(id) return ({ [10733] = "The Entrance to Rune Prison", [77] = "The Edible Loaf" })[id] end
