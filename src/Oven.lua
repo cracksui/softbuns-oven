@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.51.0"
+M.version = "0.51.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8123,85 +8123,6 @@ function M.pickupVerdict(it)
 end
 
 
-M.demo = {
-  eq = {
-    "You are using:",
-    "<worn on finger>     the wedding ring of the caretaker's wife (new)",
-    "<worn on finger>     a bronze ring (new)",
-    "<worn around neck>   a nefarious crab-shaped amulet (new)",
-    "<worn around neck>   an artifact from a galeb duhr (new)",
-    "<worn on torso>      a platinum breastplate (new)",
-    "<worn on head>       a well-used inhaler (new)",
-    "<worn on legs>       a pair of platinum thighguards (new)",
-    "<worn on hands>      a pair of gloves (new)",
-    "<worn on arms>       copper armbands (new)",
-    "<worn as shield>     a tarnished copper shield (new)",
-    "<over shoulders>     a vampire's cape (new)",
-    "<worn around waist>  a dwarven girdle (new)",
-    "<held on hip>        a magical belt pouch (new)",
-    "<worn around wrist>  a bracer of the Beltan knights (new)",
-    "<worn around wrist>  a fine opal bracelet (new)",
-    "<left hand>          a swirling crimson orb (new)",
-    "",
-    "Current Armor Resistance (AR):",
-    "(Head    )  4   (Reduces damage taken by 3.000%)",
-    "(Torso   )  3   (Reduces damage taken by 2.250%)",
-    "(Arms    )  3   (Reduces damage taken by 2.250%)",
-    "(Legs    )  6   (Reduces damage taken by 4.500%)",
-    "(Tail    )  1   (Reduces damage taken by 0.750%)",
-    "Your value if CPKed would be 25,900gp. You have a 34% chance to resist a critical hit.",
-    "You have a 1% chance to reduce spell damage taken by 35%.",
-    "",
-    "Equipped weapon damage:",
-    "With hand to hand, you will deal Low water damage with Max accuracy, at Min range, with a High chance to crit for 2x damage.",
-    "19 Damage: (+17 from weapon) (+2 from skill & strength) ",
-    "98 Accuracy: (+22 from level) (+25 from weapon skill) (+45 from fists) (+5 from agility) (+1 from personality) (+18 when martial arts activates) ",
-    "2 Range:  (+2 from hand to hand)",
-    "22% Critical Hit chance:  (+22 from hand to hand)",
-  },
-  item = {
-    "You focus your powers of observation on a crystal necklace:",
-    "Item 'a crystal necklace' is type armor, alignment 0, made of crystal (in (new) condition),[Study][LTB]",
-    "has keywords 'crystal necklace wisehart', equipped around the neck.",
-    "This item weighs 0 stones and 17 pebbles, and is valued at 6,000 gold. {Cat. 2}",
-    "This level 8 item has the attributes: none",
-    "Armor resistance is 1.",
-    "Relics: ",
-    "  Small (1/1):",
-    "    a tattooed bit of dwarven flesh (new) [Vanishes Sat May  8 01:11:33 2027]",
-    "      Affects saving-spell by 1.",
-    "Affects agility by 1.",
-    "*This item may be repaired 6 times.",
-    "This beautiful necklace made of glinting crystal once belonged to Saint",
-    "Wisehart, a champion of good.  The necklace, composed of a silver chain with",
-    "a downward pointing, triangular pattern of crystals, shines gloriously,",
-    "untouched by time, symbolizing the persistence of clarity.  ",
-  },
-  contents = {
-    "A cute little pixie bag contains:",
-    "     a rugged wooden lance (new)",
-    "     a purple cloak (new)",
-    "     a practice staff (new)",
-    "     a trophy that looks like the boss, Atrascus the King Crab [2026 Edition] (new)",
-    "(  2) a green mushroom (fresh)",
-    "     a torch (new) (unlit)",
-    "( 10) a scroll of 'cure light' (new)",
-    "     a trophy that looks like the boss, the Forest Guardian [2026 Edition] (new)",
-    "A total of 18 (30 max) items weighing 2 sts, 84 pbs (5 sts, 0 pbs max).",
-  },
-}
-
-function M.test()
-  for _, k in ipairs({ "eq", "item", "contents" }) do
-    local cap = { kind = k, target = "", plain = M.demo[k] }
-    local w = columns("main")
-    if M.cfg.main == "replace" then render("main", M.format(cap.kind, cap.target, cap.plain, w)) end
-    if M.cfg.window then
-      M.viewAdd({ lines = M.format(cap.kind, cap.target, cap.plain, M.viewCols()), links = {} })
-    end
-  end
-end
-
 -- numeric setting argument: a number, or blank for the default
 function M.numArg(v, key)
   v = trim(v or "")
@@ -8238,7 +8159,6 @@ function M.legacyCommand(args)
     for i, l in ipairs(last.plain) do
       if last.decho[i] then decho(last.decho[i] .. "\n") else echo(l .. "\n") end
     end
-  elseif a == "test" then M.test()
   elseif a == "update" then return M.update(b)
   elseif a == "compare" then
     if b == "" then
@@ -8589,7 +8509,6 @@ M.CMDS = {
     { name = "restore", desc = "panels back where you put them", run = L("layout restore") },
     { name = "reset", desc = "panels back to Oven's defaults", run = L("layout reset") },
     { name = "clear", desc = "empty the Inspector's history", run = L("clear") },
-    { name = "demo", desc = "see sample layouts", run = L("test") },
   } },
   { name = "version", desc = "the version you have; update to the newest",
     run = function() return M.versionInfo() end, subs = {
@@ -8654,7 +8573,7 @@ M.cmdShortest = shortest
 -- the old commands: what each is now (a tip, once a session, when you type one)
 local OLD = {
   on = "config formatting on", off = "config formatting off", main = "config main", samples = "debug samples",
-  prompt = "config prompt", font = "config font", clear = "window clear", raw = "debug raw", test = "window demo",
+  prompt = "config prompt", font = "config font", clear = "window clear", raw = "debug raw",
   pin = "gear compare against {item}", unpin = "gear compare against", tabs = "config tabs / tabs.auto",
   layout = "window restore / reset", combat = "config combat / combat.bar / combat.lines", tab = "window tab",
   mirror = "config mirror.{tab}", helpwindow = "config help.window", slots = "config eq.slots", learn = "gear learn",

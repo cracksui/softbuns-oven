@@ -66,7 +66,6 @@ separate profiles, install it in each.
 
 | Type this | What happens |
 |---|---|
-| `sbo window demo` | Shows a demo, so you can see what the layouts look like. |
 | `score` | Your score, reorganised: level and exp-to-level first. This also teaches the prompt bar your max HP / SP / ST. |
 | `eq` | Your equipment as a table, with armor and weapon breakdowns. |
 | `look <something you wear>` | The item's stats, laid out. Do this for your worn gear once — Oven remembers it, so later items are compared against what you wear. |
@@ -226,7 +225,6 @@ sbo window
     restore                  panels back where you put them
     reset                    panels back to the defaults
     clear                    empty the Inspector's history
-    demo                     sample layouts
 
 sbo version                  the version you have
     update [force|{file}]    get the newest (force: reinstall; or a local .mpackage)

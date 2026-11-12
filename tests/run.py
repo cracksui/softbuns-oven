@@ -149,7 +149,7 @@ def lua51_syntax():
 @test
 def commands_run():
     o = Oven()
-    for c in ["", "session", "test", "deaths", "record window", "kills", "gear"]:
+    for c in ["", "session", "deaths", "record window", "kills", "gear"]:
         o.lua(f'sbo.command("{c}")')
 
 
@@ -1368,7 +1368,7 @@ def upgrade_in_session():
     if not prev:
         return "skipped (no previous release in git)"
     o = Oven(prev=prev.replace("@@REPO@@", "x/y"), src="CREATED = {}\n" + SRC)
-    o.lua('sbo.showHelp("item", {" [1087] general"}) sbo.viewAdd({lines={{{"white","eq"}}}, links={}}) sbo.command("") sbo.command("test")')
+    o.lua('sbo.showHelp("item", {" [1087] general"}) sbo.viewAdd({lines={{{"white","eq"}}}, links={}}) sbo.command("") sbo.command("")')
     made = list(o.ev("CREATED").values())
     bad = [m for m in made if "MAIN SCREEN" in m]
     assert not bad, f"panels on the main screen after upgrading: {bad}"
