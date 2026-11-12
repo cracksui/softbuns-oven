@@ -362,7 +362,7 @@ def quest_info_typed_updates_pins():
 def inspector_tabs():
     o = Oven()
     o.lua('''sbo.cfg.window = true
-      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log", "chat" }) do if WIDGETS["ovenTabs2Page_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end''')
+      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log", "chat" }) do if WIDGETS["ovenTabs3Page_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end''')
     o.lua('sbo.viewAdd({ lines = { { { "white", "an item" } } }, links = {} })')
     eq(o.ev("FRONT()"), "view", "an item: Inspector tab")
     o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES", "Character classes in Alyria are as follows:" })')
@@ -372,11 +372,11 @@ def inspector_tabs():
     o.lua('sbo.command("session")')
     eq(o.ev("FRONT()"), "log", "session: Log tab")
     o.lua('sbo.command("kills")'); eq(o.ev("FRONT()"), "log", "kills: Log tab")
-    o.lua('WIDGETS.ovenTabs2_view.click()'); eq(o.ev("FRONT()"), "view", "clicking a tab")
+    o.lua('WIDGETS.ovenTabs3_view.click()'); eq(o.ev("FRONT()"), "view", "clicking a tab")
     o.lua('sbo.command("tab help")'); eq(o.ev("FRONT()"), "help", "sbo tab help")
-    eq(o.ev("WIDGETS.ovenTabs2_help.css").count("e6c35c"), 1, "the front tab is highlighted")
+    eq(o.ev("WIDGETS.ovenTabs3_help.css").count("e6c35c"), 1, "the front tab is highlighted")
     o.lua('sbo.command("tabs off")')
-    eq(o.ev("WIDGETS.ovenTabs2Box.shown"), False, "tabs off hides the bar")
+    eq(o.ev("WIDGETS.ovenTabs3Box.shown"), False, "tabs off hides the bar")
     o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES" })')
     assert o.ev("sbo.helpContainer") is not None, "tabs off: help gets its own window again"
     bad = [m for m in o.ev("CREATED").values() if "MAIN SCREEN" in m]
@@ -395,10 +395,10 @@ def chat_tab():
     eq(list(o.ev("sbo.cfg.chatChannels").values()), ["CLAN", "Tells", "YELL", "ANNOUNCEMENT", "HINT", "NOVICE"], "channels learned in order")
     eq(o.ev("sbo.cfg.chatGameChannels.SHOUT"), True, "the channel list is read")
     eq(o.ev("sbo.cfg.chatGameChannels.AUCTION"), False, "off channels too")
-    eq(o.ev("WIDGETS.ovenTabs2Page_view.shown"), True, "chat doesn't take the window's focus")
-    eq(o.ev("WIDGETS.ovenTabs2_chat.text"), "<center>Chat (8)</center>", "unread count on the tab")
+    eq(o.ev("WIDGETS.ovenTabs3Page_view.shown"), True, "chat doesn't take the window's focus")
+    eq(o.ev("WIDGETS.ovenTabs3_chat.text"), "<center>Chat (8)</center>", "unread count on the tab")
     o.lua('sbo.command("tab chat")')
-    eq(o.ev("WIDGETS.ovenTabs2_chat.text"), "<center>Chat</center>", "read once the tab is open")
+    eq(o.ev("WIDGETS.ovenTabs3_chat.text"), "<center>Chat</center>", "read once the tab is open")
     text = o.ev("WIDGETS.ovenChatConsole.text")
     assert "Bramble" in text and "Wren" in text, text
     o.lua('sbo.chatFilter("Tells")')
@@ -475,18 +475,18 @@ def quest_timers():
 def tabs_auto_off():
     o = Oven()
     o.lua('''sbo.cfg.window = true
-      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log", "chat" }) do if WIDGETS["ovenTabs2Page_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end
+      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log", "chat" }) do if WIDGETS["ovenTabs3Page_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end
       sbo.viewAdd({ lines = { { { "white", "an item" } } }, links = {} })
       sbo.command("tabs auto off")''')
     eq(o.ev("sbo.cfg.tabAuto"), False, "setting saved")
     o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES", "Character classes" })')
     eq(o.ev("FRONT()"), "view", "a help page doesn't take the window")
-    eq(o.ev("WIDGETS.ovenTabs2_help.text"), "<center>Help •</center>", "the Help tab is marked")
+    eq(o.ev("WIDGETS.ovenTabs3_help.text"), "<center>Help •</center>", "the Help tab is marked")
     assert "(in window)" in o.ev("CREATED[#CREATED]"), "the page was still drawn in its tab"
     o.lua('sbo.command("tab help")')
-    eq((o.ev("FRONT()"), o.ev("WIDGETS.ovenTabs2_help.text")), ("help", "<center>Help</center>"), "looking clears the mark")
+    eq((o.ev("FRONT()"), o.ev("WIDGETS.ovenTabs3_help.text")), ("help", "<center>Help</center>"), "looking clears the mark")
     o.lua('sbo.viewAdd({ lines = { { { "white", "another" } } }, links = {} })')
-    eq((o.ev("FRONT()"), o.ev("WIDGETS.ovenTabs2_view.text")), ("help", "<center>Inspector •</center>"), "an item while reading help")
+    eq((o.ev("FRONT()"), o.ev("WIDGETS.ovenTabs3_view.text")), ("help", "<center>Inspector •</center>"), "an item while reading help")
     o.lua('sbo.command("kills")')
     eq(o.ev("FRONT()"), "log", "sbo kills, typed, still switches")
     o.lua('sbo.command("tabs auto on"); sbo.showHelp("x", { "[1 ] X" })')
@@ -1234,6 +1234,36 @@ def loot_that_binds():
     eq(f("A pair of boots glows softly as you take it."), "you|a pair of boots", "a name with an -s word")
     eq(f("A bottle of pesto: you can't carry so much weight."), "nil", "not picked up")
     eq(f("You get a sword."), "you|a sword", "as before")
+
+
+@test
+def notes_tab():
+    o = Oven()
+    o.lua('''sbo.cfg.window = true; sbo.cfg.tabs = true; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      roomExists = function() return true end; getRoomName = function(id) return "Palace Kitchen and Bakery" end
+      gmcp.room = { info = { num = "28840", zone = "Palace of Diocletian" } }; sbo.mapRoom = 28840
+      WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end''')
+    o.lua('sbo.command("notes")')
+    eq(o.ev("WIDGETS['ovenTabs3Page_notes'].shown"), True, "sbo notes: the Notes tab")
+    # typed in the box
+    o.lua('WIDGETS["ovenNotesInput"].action("cook gives pesto for 250 gold")')
+    eq(o.rows("SELECT text, room, room_name, area FROM notes"),
+       [{"text": "cook gives pesto for 250 gold", "room": 28840, "room_name": "Palace Kitchen and Bakery", "area": "Palace of Diocletian"}], "kept, with where")
+    o.lua('sbo.command("notes add the daily resets at midnight")')
+    text = o.ev("WIDGETS['ovenNotesConsole'].text")
+    assert "cook gives pesto" in text and "daily resets" in text and "Palace Kitchen" in text, text
+    # its links: walk there, delete
+    links = o.ev("WIDGETS['ovenNotesConsole'].links")
+    go = [l for l in links.values() if "[go]" in l[1]][0]
+    go[2]()
+    eq(o.ev("WALKED"), 28840, "[go] walks to where it was written")
+    o.lua('sbo.command("notes find pesto")')
+    text = o.ev("WIDGETS['ovenNotesConsole'].text")
+    assert "pesto" in text and "daily resets" not in text, text
+    o.lua('sbo.command("notes remove 1")')
+    eq(len(o.rows("SELECT id FROM notes")), 1, "removed")
+    # kept for good: in the database
+    eq(o.rows("SELECT text FROM notes"), [{"text": "the daily resets at midnight"}], "in the database")
 
 
 @test

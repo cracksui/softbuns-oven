@@ -184,7 +184,7 @@ your group's lowest health, mount stamina - still comes from the prompt.
 ## Commands
 
 Every part of the screen has one word, used for its command, its title and its settings: the
-**inspector**, **help**, **log** and **chat** tabs, the **quest** panel and the **map** panel. The word on
+**inspector**, **help**, **log**, **chat** and **notes** tabs, the **quest** panel and the **map** panel. The word on
 its own opens that part (`sbo log` opens the Log tab, `sbo map` the map panel); `sbo help {word}` lists
 its commands. Every setting lives under `sbo config`, named after the part it changes (`chat.mirror`,
 `quest.opacity`, `bar.width`).
@@ -241,6 +241,12 @@ sbo chat [{channel}|all]     the Chat tab
     mute / unmute {channel}  keep a channel out of All
     remove {channel}         drop a channel's chip
     clear                    empty the Chat tab
+
+sbo notes                    the Notes tab: notes you keep, each with the room you
+                             wrote it in ([go] walks back); type in its box + Enter
+    add {text}               keep a note
+    find {text}              only the notes with it
+    remove {n}               remove note number n
 
 sbo help [{word}|all]        the Help tab: the menu, one word's commands, or all
 

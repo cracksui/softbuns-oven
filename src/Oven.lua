@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.67.2"
+M.version = "0.68.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -184,6 +184,8 @@ local SCHEMA = {
   -- the directions the game gives; start + dirs kept too)
   "CREATE TABLE IF NOT EXISTS where_features (area TEXT, feature TEXT, PRIMARY KEY (area, feature))",
   "CREATE TABLE IF NOT EXISTS where_rooms (area TEXT, feature TEXT, room INTEGER, start INTEGER, dirs TEXT, t INTEGER, PRIMARY KEY (area, feature))",
+  -- your notes (the Notes tab), each with where you were when you wrote it
+  "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, t INTEGER, text TEXT, room INTEGER, room_name TEXT, area TEXT)",
   "CREATE TABLE IF NOT EXISTS signposts (room INTEGER PRIMARY KEY, sign TEXT, dests TEXT, exact INTEGER, last INTEGER)",
 }
 
@@ -3389,8 +3391,8 @@ end
 -- Tabs along the top of the Inspector window. Each tab is its own page; whatever arrives for a
 -- tab (an item, a help page, the session) brings it to the front.
 M.TABS = { { key = "view", title = "Inspector" }, { key = "help", title = "Help" }, { key = "log", title = "Log" },
-           { key = "chat", title = "Chat" } }
-local TABS_ID = "ovenTabs2"   -- new widget names whenever the set of tabs changes (an update mid-session)
+           { key = "chat", title = "Chat" }, { key = "notes", title = "Notes" } }
+local TABS_ID = "ovenTabs3"   -- new widget names whenever the set of tabs changes (an update mid-session)
 local tabStyle = [[
   QLabel { background-color: rgba(24,24,32,255); color: #808080; border: 1px solid #333; border-bottom: none;
            border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 10px; margin-right: 2px; }
@@ -3417,6 +3419,7 @@ function M.buildTabs()
     M.tabPages[key] = Geyser.Container:new({ name = TABS_ID .. "Page_" .. key, x = 0, y = 0, width = "100%", height = "100%" }, M.tabBody)
   end
   pcall(M.buildChat, M.tabPages.chat)
+  pcall(M.buildNotes, M.tabPages.notes)
   -- the rest of the bar stays empty
   M.tabFill = Geyser.Label:new({ name = TABS_ID .. "Fill" }, M.tabBar)
   M.tabFill:setStyleSheet("background-color: rgba(20,20,28,0); border-bottom: 1px solid #555;")
@@ -6875,6 +6878,93 @@ function M.buildChat(page)
   M.chatRender()
 end
 
+---------------------------------------------------------------------------
+-- The Notes tab: notes you keep, each with where you were (click to walk back there). Type one in the
+-- box at the bottom and press Enter, or sbo notes add {text}.
+---------------------------------------------------------------------------
+function M.buildNotes(page)
+  local box = Geyser.VBox:new({ name = "ovenNotesBox", x = 0, y = 0, width = "100%", height = "100%" }, page)
+  M.notesConsole = Geyser.MiniConsole:new({ name = "ovenNotesConsole", color = "black" }, box)
+  local font, size = pageFont()
+  pcall(function() M.notesConsole:setFont(font) end)
+  pcall(function() M.notesConsole:setFontSize(size) end)
+  pcall(function() M.notesConsole:enableAutoWrap() end)
+  pcall(function() M.notesConsole:enableScrollBar() end)
+  M.notesInput = Geyser.CommandLine:new({ name = "ovenNotesInput", height = 26, v_policy = Geyser.Fixed }, box)
+  pcall(function() M.notesInput:setStyleSheet([[
+    background-color: rgba(24,24,32,255); color: #d0d0d0; border: 1px solid #333;
+    qproperty-placeholderText: "write a note and press Enter - it's kept with the room you're in";]]) end)
+  M.notesInput:setAction(function(text)
+    pcall(function() M.notesInput:clear() end)
+    M.noteAdd(text)
+  end)
+  M.notesRender()
+end
+
+function M.noteAdd(text)
+  text = trim(text or "")
+  if text == "" then return end
+  local room = M.mapRoom
+  local name = room and roomExists(room) and getRoomName(room) or nil
+  M.dbx("INSERT INTO notes (t, text, room, room_name, area) VALUES (%s, %s, %s, %s, %s)", os.time(), text, room, name, M.areaNow())
+  local r = M.dbRow("SELECT MAX(id) AS id FROM notes")
+  M.notesRender()
+  M.say("note #" .. tostring(r and r.id) .. " kept" .. (name and (" (at " .. name .. ")") or ""))
+end
+
+function M.noteRemove(n)
+  n = tonumber(n)
+  if not n or not M.dbRow("SELECT id FROM notes WHERE id = %s", n) then return M.say("no note #" .. tostring(n)) end
+  M.dbx("DELETE FROM notes WHERE id = %s", n)
+  M.notesRender(M.notesFilter)
+  M.say("note #" .. n .. " removed")
+end
+
+local function noteLink(text, fn, hint)
+  local ok = pcall(function() M.notesConsole:dechoLink(text, fn, hint, true) end)
+  if not ok then pcall(function() M.notesConsole:decho(text) end) end
+end
+
+function M.notesRender(filter)
+  M.notesFilter = (filter and filter ~= "") and filter or nil
+  if not M.notesConsole then return end
+  pcall(function() M.notesConsole:clear() end)
+  local q = M.notesFilter and M.notesFilter:lower() or ""
+  local rows = M.dbRows([[SELECT id, t, text, room, room_name, area FROM notes
+    WHERE %s = '' OR instr(lower(text || ' ' || ifnull(room_name, '') || ' ' || ifnull(area, '')), %s) > 0 ORDER BY id]], q, q)
+  local con = M.notesConsole
+  if M.notesFilter then
+    pcall(function() con:decho(string.format("<230,195,92>notes with '%s'  <90,90,100>(%d)  ", M.notesFilter, #rows)) end)
+    noteLink("<135,206,250>show all", function() M.notesRender() end, "every note")
+    pcall(function() con:decho("\n\n") end)
+  end
+  if #rows == 0 then
+    pcall(function() con:decho("<90,90,100>" .. (M.notesFilter and "No note has that in it." or
+      "Your notes go here, kept for good. Type one in the box below and press Enter - it remembers the room you're in, so you can walk back to it.") .. "\n") end)
+    return
+  end
+  for _, r in ipairs(rows) do
+    local id, room = tonumber(r.id), tonumber(r.room)
+    local where = {}
+    if r.room_name then where[#where + 1] = r.room_name end
+    if r.area and r.area ~= "" then where[#where + 1] = r.area end
+    pcall(function() con:decho(string.format("<90,90,100>#%d  %s%s  ", id, os.date("%Y-%m-%d %H:%M", tonumber(r.t) or 0),
+      #where > 0 and ("  ·  " .. table.concat(where, " · ")) or "")) end)
+    if room then
+      noteLink("<135,206,250>[go]", function() M.mapWalkTo(room) end, "walk to " .. (r.room_name or ("#" .. room)))
+      pcall(function() con:decho(" ") end)
+    end
+    noteLink("<120,120,130>[delete]", function() M.noteRemove(id) end, "remove note #" .. id)
+    pcall(function() con:decho("\n<215,215,215>" .. tostring(r.text):gsub("<", "&lt;") .. "\n\n") end)
+  end
+end
+
+function M.notesShow(filter)
+  M.createWindow(); M.container:show()
+  if M.cfg.tabs then M.tabShow("notes") end
+  M.notesRender(filter)
+end
+
 function M.chatCommand(b)
   local a, rest = b:match("^(%S*)%s*(.-)$")
   a = a:lower()
@@ -8937,7 +9027,7 @@ function M.legacyCommand(args)
     say(string.format("combat mode mxp: target bar %s, round lines and summaries %s",
       M.cfg.combatBar and "on" or "off", M.cfg.combatLines and "on" or "off"))
   elseif a == "chat" then return M.chatCommand(b)
-  elseif a == "tab" and (b == "inspector" or b == "help" or b == "log" or b == "chat") then
+  elseif a == "tab" and (b == "inspector" or b == "help" or b == "log" or b == "chat" or b == "notes") then
     M.createWindow(); M.container:show()
     M.tabShow(b == "inspector" and "view" or b)
     return
@@ -9250,6 +9340,14 @@ M.CMDS = {
     { name = "remove", args = "{channel}", desc = "drop a channel's chip", run = function(r) return M.chatCommand("forget " .. r) end },
     { name = "clear", desc = "empty the Chat tab", run = function() return M.chatCommand("clear") end },
   } },
+  { name = "notes", desc = "the Notes tab: notes you keep, each with where you were",
+    run = function() return M.notesShow() end, subs = {
+    { name = "add", args = "{text}", desc = "keep a note (or type it in the tab's box)", run = function(r)
+      if trim(r) == "" then return say("sbo notes add {text}") end
+      M.noteAdd(r); M.notesShow() end },
+    { name = "find", args = "{text}", desc = "only the notes with it", run = function(r) return M.notesShow(r) end },
+    { name = "remove", args = "{n}", desc = "remove note number n", run = function(r) return M.noteRemove(r) end },
+  } },
   { name = "help", args = "[{group}|all]", desc = "the Help tab: this menu, a group's commands, or all of them",
     run = function(r) return M.help(r) end },
   { name = "window", desc = "where the panels sit", rest = function(r) return M.window051(r) end, subs = {
@@ -9460,7 +9558,7 @@ end
 
 -- the window tab by any start of its name
 function M.windowTab(r)
-  local tabs = { { name = "inspector" }, { name = "help" }, { name = "log" }, { name = "chat" } }
+  local tabs = { { name = "inspector" }, { name = "help" }, { name = "log" }, { name = "chat" }, { name = "notes" } }
   local t = pick(tabs, r)
   if not t then return say("sbo window tab inspector|help|log|chat") end
   return legacy("tab " .. t.name)
