@@ -130,14 +130,14 @@ in each room are kept in a database in your profile folder (`oven.db`), so nothi
 
 - **Automatic:** look at an item and it's compared with whatever you wear in that slot
   (run `eq` and look at your worn item once so Oven knows it).
-- **Pin one item:** `sbo gear compare against <name>` (or click **pin for comparing** under an item in the
-  Inspector) — everything you look at next is compared against it. Handy in shops. `sbo gear compare against` stops.
+- **Pin one item:** `sbo eq compare against <name>` (or click **pin for comparing** under an item in the
+  Inspector) — everything you look at next is compared against it. Handy in shops. `sbo eq compare against` stops.
 - **Any two:** `sbo compare` compares the last two items you looked at;
   `sbo compare hook vs dagger` compares any two remembered items by part of their names.
-- `sbo gear items` lists what Oven remembers.
-- `sbo gear learn worn` looks at every worn item Oven doesn't know yet (the `?` in `eq`) in one go, quietly,
+- `sbo eq items` lists what Oven remembers.
+- `sbo eq learn worn` looks at every worn item Oven doesn't know yet (the `?` in `eq`) in one go, quietly,
   then shows your `eq` again with their stats filled in.
-- `sbo gear learn carried` does the same for everything you carry, then looks inside each container (bags,
+- `sbo eq learn carried` does the same for everything you carry, then looks inside each container (bags,
   backpacks) and at what's in them, and shows your inventory again. If the game won't let Oven look at an
   item while it's in a container, it says so after the first try and skips the rest.
 
@@ -150,12 +150,12 @@ stat's points, as value × weight, for both items), and `sbo upgrades` lists, sl
 best item you carry (your last `i`, and inside the bags you've looked in) that beats your gear - `sbo upgrades
 all` searches every item you've ever looked at, shops included. Each suggestion says what makes the difference
 (`+6 ar · −2.2 hp`); click it (or `sbo upgrades 2`) for the full comparison. The build starts from your class (Materia Magica's 16 classes each map to monk, melee, caster, healer,
-thief, tank or paladin - and Oven reads `help classes` to place any it doesn't know by their group); `sbo gear build` shows the weights, `sbo gear build set strength 4` changes one, `sbo gear build pvp`
-makes and switches to a new build, `sbo gear build reset` / `sbo gear build auto` go back. Stats already at their
-maximum in `score` (Strength 20/20) count a quarter, since more of them is mostly wasted; `sbo gear build` shows
+thief, tank or paladin - and Oven reads `help classes` to place any it doesn't know by their group); `sbo eq build` shows the weights, `sbo eq build set strength 4` changes one, `sbo eq build pvp`
+makes and switches to a new build, `sbo eq build reset` / `sbo eq build auto` go back. Stats already at their
+maximum in `score` (Strength 20/20) count a quarter, since more of them is mostly wasted; `sbo eq build` shows
 where each stat stands and, once you've read your race's help page, your race's maximums. Race pages'
 weapon bonuses count too (a dwarf's +10% with bashing weapons makes a maul score higher; where a page
-names no number, 10% is assumed - `sbo gear build set weapon:staff 20` sets your own). Your race's built-in
+names no number, 10% is assumed - `sbo eq build set weapon:staff 20` sets your own). Your race's built-in
 weaknesses, which the game reports as you log in (a sahuagin's *maladapted*: disease resistance -25), make
 matching resistances on gear count for more.
 
@@ -173,11 +173,16 @@ your group's lowest health, mount stamina - still comes from the prompt.
 
 ## Commands
 
-Type `sbo` for the menu. A group word on its own (`sbo gear`) lists that group's commands, and every
-setting lives under `sbo config`. Any start of a word works when only one command starts that way, like
-the game's own `que re`: `sbo ge up` is `sbo gear upgrades`, `sbo conf bar.w 12` is
-`sbo config bar.width 12`. When a start fits more than one (`sbo co`: compare or config), Oven lists
-them rather than guessing. `oven` works as well as `sbo`.
+Every part of the screen has one word, used for its command, its title and its settings: the
+**inspector**, **help**, **log** and **chat** tabs, the **quest** panel and the **map** panel. The word on
+its own opens that part (`sbo log` opens the Log tab, `sbo map` the map panel); `sbo help {word}` lists
+its commands. Every setting lives under `sbo config`, named after the part it changes (`chat.mirror`,
+`quest.opacity`, `bar.width`).
+
+Any start of a word works when only one command starts that way, like the game's own `que re`:
+`sbo e up` is `sbo eq upgrades`, `sbo conf bar.w 12` is `sbo config bar.width 12`. When a start fits
+more than one (`sbo co`: compare or config), Oven lists them rather than guessing. `oven` works as
+well as `sbo`.
 
 ```
 sbo                          the menu
@@ -185,7 +190,7 @@ sbo go {what}                walk/run to a trainer, shop, quest, NPC,
                              room #, bookmark (signpost runs when quicker)
 sbo stop                     stop a walk, or anything Oven is doing for you
 
-sbo gear
+sbo eq                       equipment and items (shown in the Inspector)
     compare [{a} vs {b}]     the last two items looked at, or two by name
     compare against [{item}] compare every look to one item; no item: stop
     upgrades [all|{n}]       best upgrade per slot; n: its full comparison
@@ -193,21 +198,24 @@ sbo gear
     items                    the items Oven remembers
     build [{name}|set|reset|auto]   gear-score weights
 
-sbo quest
-    pin {id|all}             onto the quest HUD
+sbo quest                    the quest panel
+    pin {id|all}             onto the panel
     unpin {id|all}
     go [{id}]                to the next step
     refresh [{id}]           re-check pinned quests
 
-sbo places
+sbo map                      the map panel, centred on you
     find {what|#}            NPCs, tags, rooms, nearest first (#: centre the map)
     shops [{item}]           shops you've listed, or who sells an item
     signposts                signpost runs and where each ends
     mark [{name}]            bookmark this room; no name: list them
     unmark {name}
-    loadmap [{file}]         load a map file
+    load [{file}]            load a map file
 
-sbo log
+sbo inspector                the Inspector tab
+    clear                    empty its history
+
+sbo log                      the Log tab
     kills                    what you've killed, counts and exp
     loot [{text}]            pickups and where; text searches
     deaths                   recent deaths, with what led up to them
@@ -220,11 +228,11 @@ sbo chat [{channel}|all]     the Chat tab
     remove {channel}         drop a channel's chip
     clear                    empty the Chat tab
 
-sbo window
-    tab {name}               inspector | help | log | chat
-    restore                  panels back where you put them
-    reset                    panels back to the defaults
-    clear                    empty the Inspector's history
+sbo help [{word}|all]        the Help tab: the menu, one word's commands, or all
+
+sbo window                   where the panels sit
+    restore                  back where you put them
+    reset                    back to the defaults
 
 sbo version                  the version you have
     update [force|{file}]    get the newest (force: reinstall; or a local .mpackage)
@@ -241,28 +249,33 @@ sbo config                   every setting, grouped, with its value
 sbo config {name} {value}    change one (sbo set works too)
 ```
 
-Shortcuts: `sbo compare` and `sbo upgrades` work without `gear`.
+Shortcuts: `sbo compare` and `sbo upgrades` work without `eq`.
 
 ### Settings (`sbo config`)
 
 ```
-Display      formatting on|off · main replace|keep · window on|off · help.window on|off
-             tabs on|off · tabs.auto on|off · mirror.inspector|help|log|chat on|off · font {n}
-Gear and eq  gear.autocompare · gear.pickuplook · eq.stats · eq.empty · eq.donation (on|off)
-             eq.slots short|full · eq.gamecolors on|off
-Quests       quest.hud on|off · quest.autopin on|off · quest.blurb on|off
-             quest.side left|right · quest.opacity 0-100
-Map          map on|off · map.panel on|off · map.card on|off · signposts.look on|off
-Prompt bar   bar on|off · bar.mode gauges|raw · bar.session on|off · bar.session.style full|short
-             bar.session.place top|bottom · bar.width {n} · bar.lines {n} · bar.font {n}
-             bar.bg {r g b} · bar.blanks on|off
-Combat       combat on|off · combat.bar on|off · combat.lines on|off
-Updates      update.auto on|off · record.window {n} · prompt {pattern}
+Display        formatting on|off · main replace|keep · window on|off · tabs on|off
+               tabs.auto on|off · font {n}
+Inspector tab  inspector.mirror on|off
+Help tab       help.window on|off · help.mirror on|off
+Log tab        log.mirror on|off
+Chat tab       chat.mirror on|off
+Quest panel    quest.hud on|off · quest.autopin on|off · quest.blurb on|off
+               quest.side left|right · quest.opacity 0-100
+Map panel      map on|off · map.panel on|off · map.card on|off · signposts.look on|off
+Prompt bar     bar on|off · bar.mode gauges|raw · bar.session on|off · bar.session.style full|short
+               bar.session.place top|bottom · bar.width {n} · bar.lines {n} · bar.font {n}
+               bar.bg {r g b} · bar.blanks on|off
+Combat bar     combat on|off · combat.bar on|off · combat.lines on|off
+Equipment      eq.autocompare · eq.pickuplook · eq.stats · eq.empty · eq.donation (on|off)
+               eq.slots short|full · eq.gamecolors on|off
+Updates        update.auto on|off · record.window {n} · prompt {pattern}
 ```
 
-A number setting goes back to its default with `default` (`sbo config bar.width default`).
+`*.mirror` also shows that tab's output on the main screen. A number setting goes back to its default
+with `default` (`sbo config bar.width default`).
 
-The commands from before 0.51 (`sbo run`, `sbo eqstats off`, `sbo map find`…) still work; the first
+Older commands (`sbo run`, `sbo eqstats off`, 0.51's `sbo gear` and `sbo places`…) still work; the first
 time you use one, Oven tells you its new form.
 
 ## Updating

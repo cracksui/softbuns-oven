@@ -809,7 +809,7 @@ def command_tree():
         o.lua('sbo.typedCommand(CMD)' if typed else 'sbo.command(CMD)')
         return " | ".join(o.ev("SAYS").values())
     # every command in the tree (and the menu, group lists, help all) runs
-    for c in ["", "help all", "help gear", "config", "config bar", "version", "stop"]:
+    for c in ["", "help all", "help eq", "help log", "config", "config bar", "version", "stop", "inspector", "log", "map", "quest", "chat"]:
         says(c)
     for e in o.ev("sbo.CMDS").values():
         if e.subs:
@@ -827,9 +827,9 @@ def command_tree():
     says("set eq.stats of")
     eq(o.ev("sbo.cfg.eqStats"), False, "set eq.stats of(f)")
     assert "could be" in says("co"), "co: compare or config"
-    assert "could be" in says("g"), "g: gear or go"
+    assert "could be" in says("g"), "g: go or (0.51's) gear"
     assert "bar.session is" in says("config b.s"), "matched part by part: b.s = bar.session"
-    assert "could be" in says("config m.c"), "m.c: map.card or mirror.chat"
+    assert "could be" in says("config e.s"), "e.s: eq.stats or eq.slots"
     r = says("config eq.stats")
     assert "eq.stats is off" in r, r
     assert "takes" in says("config eq.slots wide")
@@ -839,8 +839,19 @@ def command_tree():
     eq(o.ev("sbo.cfg.eqStats"), True, "old form works")
     assert "tip" not in says("eqstats off"), "the tip once"
     assert "tip" not in says("kills", typed=False), "not for Oven's own calls"
-    r = says("map find road")
-    assert "places find" in r, r
+    # 0.51's names: still work, with a tip once
+    r = says("gear items")
+    assert "sbo gear is sbo eq now" in r, r
+    r = says("ge up")
+    assert "no command" not in r and "could be" not in r, f"0.51's short form ge up still works: {r}"
+    o.lua('sbo.cfg.mirror.chat = true')
+    says("config mirror.chat off")
+    eq(o.ev("sbo.cfg.mirror.chat"), False, "an old setting name")
+    says("config chat.mirror on")
+    eq(o.ev("sbo.cfg.mirror.chat"), True, "the new one")
+    assert "tip" in says("window clear"), "window clear -> inspector clear"
+    assert "tip" in says("map panel off"), "an old map form"
+    eq(o.ev("sbo.cfg.mapPanel"), False, "still works")
     # quest.hud
     says("config quest.hud off")
     eq(o.ev("sbo.cfg.questHud"), False, "quest HUD off")
@@ -857,13 +868,13 @@ def command_tree():
     eq(o.rows("SELECT COUNT(*) AS n FROM kills")[0]["n"], 0, "cleared on the second ask")
     # learn: worn, then carried
     o.lua('SENT = {}; sbo.eqNames = {}')
-    says("gear learn")
+    says("eq learn")
     assert "inventory" in list(o.ev("SENT").values()), list(o.ev("SENT").values())
     # compare against
     o.lua('sbo.remember({ name = "a fine vest", worn = "on body", level = 1, affects = {}, raw = {} })')
-    says("gear compare against fine vest")
+    says("eq compare against fine vest")
     assert o.ev("sbo.pinned") is not None, "comparing against it"
-    assert "no longer comparing" in says("gear comp against")
+    assert "no longer comparing" in says("e comp against")
     eq(o.ev("sbo.pinned"), None, "stopped")
     # version
     assert "v" + o.ev("sbo.version") in says("version")
