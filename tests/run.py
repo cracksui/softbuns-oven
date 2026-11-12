@@ -1125,6 +1125,9 @@ def traveling_sellers():
     assert "[Shop] [Traveling] A slender, older man" in card and "seen in 4 rooms" in card, card
     out = o.lua('local out = sbo.shopLines(80, ""); local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end; return table.concat(s)')
     assert "Traveling sellers" in out and "hurdy-gurdy" in out and "seen in 4 rooms" in out, out
+    assert "sbo map highlight hurdy-gurdy" in out, "the command, on its line"
+    first = o.lua('local _, links = sbo.shopLines(80, ""); return links[1][1]')
+    assert first.startswith("highlight the path of A slender"), first
     eq(o.ev("sbo.isTraveler('kasan the samurai is here.')"), False, "one room: a shopkeeper")
     # light up his path on the map; centred on the latest sighting; cleared again
     o.lua("""LIT = {}; highlightRoom = function(id) LIT[id] = true end; unHighlightRoom = function(id) LIT[id] = nil end

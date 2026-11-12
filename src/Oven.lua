@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.61.1"
+M.version = "0.61.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6120,12 +6120,17 @@ function M.shopLines(width, q)
       for _, tr in ipairs(travelers) do
         local at = M.dbRow("SELECT room FROM room_npcs WHERE key = %s ORDER BY last DESC LIMIT 1", tr.key)
         local room = at and tonumber(at.room)
+        -- a word to find it by: the description's last long word ("hurdy-gurdy")
+        local word = tr.text:lower():gsub("[%.!]+$", "")
+        local pick = ""
+        for w in word:gmatch("[%a%-']+") do if #w >= #pick then pick = w end end
         out[#out + 1] = { { C.text, "  " .. tr.text }, { C.dim, "  · seen in " .. tr.n .. " rooms" } }
+        out[#out + 1] = { { C.dim, "    → " }, { C.key, "sbo map highlight " .. pick }, { C.dim, " lights up its path" } }
         if room then
           out[#out + 1] = { { C.dim, "    last seen " .. where(room) .. (tr.last and ("  " .. M.shortDur(os.time() - tonumber(tr.last)) .. " ago") or "") } }
-          walkLink(room, "walk to where " .. tr.text:sub(1, 30) .. "… was last seen")
-          local txt = tr.text
-          links[#links + 1] = { "highlight the path of " .. txt:sub(1, 30) .. "…", function() M.mapHighlightAll(txt:sub(1, 40)) end }
+          -- first among the links under the page (before each shop's walk link)
+          table.insert(links, 1, { "highlight the path of " .. tr.text:sub(1, 30) .. "…", function() M.mapHighlightAll(pick) end })
+          table.insert(links, 2, { "walk to where " .. tr.text:sub(1, 30) .. "… was last seen", function() M.mapWalkTo(room) end })
         end
       end
     end
