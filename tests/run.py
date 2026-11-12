@@ -1592,6 +1592,18 @@ def pin_unknown_quest():
 
 
 @test
+def formatting_off_still_reads():
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.cfg.enabled = false; GAGGED = 0; deleteLine = function() GAGGED = GAGGED + 1 end')
+    o.lua('sbo.onSend(nil, "quest info 1348")')
+    o.feed("This quest [1348] is called 'The Lord's New Clothes',", "for Adventurers levels 40 to 90.",
+           "The Lord's New Clothes consists of:", "Phase 1: Recover and Keep a big sombrero [Towne of Rune].", "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("sbo.quests['1348'] and sbo.quests['1348'].name"), "The Lord's New Clothes", "formatting off: still read")
+    eq(o.ev("GAGGED"), 0, "and the game's text left alone")
+
+
+@test
 def quest_steps_update():
     reply = open(fixture("quest_request.txt"), encoding="utf-8").read().rstrip("\n").split("\n")
     o = Oven()

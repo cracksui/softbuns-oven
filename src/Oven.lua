@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.70.2"
+M.version = "0.71.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5636,6 +5636,8 @@ function M.start(kind, target, cmd)
             hasLayout = M.formatters[kind] ~= nil }
   if kind == "help" then M.cap.gag = M.cfg.helpWindow
   else M.cap.gag = M.cfg.main == "replace" and M.cap.hasLayout end
+  -- formatting off: read it, show nothing of Oven's - the game's text stays as it is
+  if not M.cfg.enabled then M.cap.gag, M.cap.readOnly = false, true end
   if M.quietQuest and kind == "quest" then
     M.cap.quiet, M.cap.gag, M.cap.quietKind = true, true, "quest"
     M.quietQuest = nil
@@ -5682,7 +5684,7 @@ function M.onSend(_, cmd)
   pcall(M.noteLootCommand, cmd)
   pcall(M.noteEnterCommand, cmd)
   pcall(M.noteRunCommand, cmd)
-  if not M.cfg.enabled then return end
+  -- (formatting off: replies are still read - quests, items, eq - just left as the game sends them)
   local kind, target = M.classify(cmd)
   if not kind then return end
   if M.cap then
@@ -7348,6 +7350,15 @@ function M.finish(reason)
 
   -- draw after the game's text for this packet has been processed
   tempTimer(0, function()
+    if cap.readOnly then
+      -- formatting off: only what Oven learns from it (quests, items, eq, carried, maxes)
+      if worth then pcall(M.format, cap.kind, cap.target, cap.plain, columns("main"), cap.decho) end
+      if cap.kind == "eq" then pcall(M.updateEqNames, cap.plain) end
+      if cap.kind == "contents" then pcall(M.updateCarried, cap) end
+      if cap.kind == "score" then pcall(M.updateMaxes, cap.plain) end
+      if cap.kind == "item" then pcall(M.afterItem, cap.plain, nil) end
+      return
+    end
     if cap.kind == "help" then
       if replace then
         moveCursorEnd("main")
