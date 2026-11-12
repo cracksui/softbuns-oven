@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.60.0"
+M.version = "0.61.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6124,6 +6124,8 @@ function M.shopLines(width, q)
         if room then
           out[#out + 1] = { { C.dim, "    last seen " .. where(room) .. (tr.last and ("  " .. M.shortDur(os.time() - tonumber(tr.last)) .. " ago") or "") } }
           walkLink(room, "walk to where " .. tr.text:sub(1, 30) .. "… was last seen")
+          local txt = tr.text
+          links[#links + 1] = { "highlight the path of " .. txt:sub(1, 30) .. "…", function() M.mapHighlightAll(txt:sub(1, 40)) end }
         end
       end
     end
@@ -8812,6 +8814,8 @@ M.CMDS = {
     { name = "mark", args = "[{name}]", desc = "bookmark this room; no name: list them",
       run = function(r) return legacy("mark " .. r) end },
     { name = "unmark", args = "{name}", desc = "remove a bookmark", run = function(r) return legacy("unmark " .. r) end },
+    { name = "highlight", args = "[{what}]", desc = "light up every room with it (a traveler's path, trainers…); nothing: clear",
+      run = function(r) return M.mapHighlightAll(r) end },
     { name = "load", args = "[{file}]", desc = "load a map file (map/mm_map.dat)", run = function(r) return legacy("map load " .. r) end },
   } },
   { name = "inspector", desc = "the Inspector tab: game layouts, comparisons, lists", run = function() return M.windowTab("inspector") end, subs = {
@@ -9095,6 +9099,35 @@ function M.compareAgainst(item)
   local was = M.pinned and (M.pinned.name or M.pinned)
   M.pinned = nil; M.saveItems()
   say(was and ("no longer comparing against " .. tostring(was)) or "not comparing against anything (sbo eq compare against {item})")
+end
+
+-- sbo map highlight {what}: every room with it, lit up on the map (the best kind of match only: a tag or
+-- NPC over a room name), centred on the latest sighting; no argument clears them
+function M.mapHighlightAll(q)
+  for _, id in ipairs(M.mapHighlights or {}) do pcall(unHighlightRoom, id) end
+  M.mapHighlights = {}
+  q = trim(q or "")
+  if q == "" then return say("map highlights cleared") end
+  local okT, targets = pcall(M.runTargets, q)
+  if not okT or type(targets) ~= "table" or #targets == 0 then return say("no rooms Oven knows with '" .. q .. "'") end
+  local best = math.huge
+  for _, t in ipairs(targets) do best = math.min(best, t.rank or 9) end
+  local latest, latestAt
+  for _, t in ipairs(targets) do
+    if (t.rank or 9) == best then
+      pcall(highlightRoom, t.id, 255, 165, 0, 255, 215, 0, 1.2, 220, 80)
+      M.mapHighlights[#M.mapHighlights + 1] = t.id
+      local r = M.dbRow("SELECT MAX(last) AS last FROM room_npcs WHERE room = %s AND instr(lower(text), %s) > 0", t.id, q:lower())
+      local at = r and tonumber(r.last) or 0
+      if not latestAt or at > latestAt then latest, latestAt = t.id, at end
+    end
+  end
+  if latest then
+    if M.mapPanel and M.cfg.mapPanel then pcall(M.showMapPanel, true) end
+    pcall(M.centerOn, latest)
+  end
+  say(string.format("%d room%s lit up on the map for '%s'%s  (sbo map highlight clears them)", #M.mapHighlights,
+    #M.mapHighlights == 1 and "" or "s", q, (latestAt and latestAt > 0) and (" · centred on the latest sighting, " .. M.shortDur(os.time() - latestAt) .. " ago") or ""))
 end
 
 -- sbo map find: a room number centres the map; otherwise NPCs, tags and rooms, nearest first

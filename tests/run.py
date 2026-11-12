@@ -1126,6 +1126,15 @@ def traveling_sellers():
     out = o.lua('local out = sbo.shopLines(80, ""); local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end; return table.concat(s)')
     assert "Traveling sellers" in out and "hurdy-gurdy" in out and "seen in 4 rooms" in out, out
     eq(o.ev("sbo.isTraveler('kasan the samurai is here.')"), False, "one room: a shopkeeper")
+    # light up his path on the map; centred on the latest sighting; cleared again
+    o.lua("""LIT = {}; highlightRoom = function(id) LIT[id] = true end; unHighlightRoom = function(id) LIT[id] = nil end
+      CENTRE = nil; sbo.centerOn = function(id) CENTRE = id end; sbo.log = function() end""")
+    o.lua('sbo.command("map highlight hurdy-gurdy")')
+    eq(sorted(o.ev("LIT").keys()), [10475, 10476, 10477, 10515], "every room he's been seen in")
+    eq(o.ev("CENTRE"), 10477, "centred on where he was last seen")
+    o.lua('sbo.command("map hi")')
+    eq(len(o.ev("LIT")), 0, "cleared")
+    o.lua('sbo.command("map highlight trainer")')
 
 
 @test
