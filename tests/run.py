@@ -1151,6 +1151,73 @@ def traveling_sellers():
     eq(sorted(o.ev("LIT").keys()), [10560], "only Rune's")
 
 
+WHERE_LIST = """Where is what? Features that Towne of Rune might contain that you may be interested in:
+healer              post-office         lockers             bank                
+food                blacksmith          questmaster         music-venue         
+When you do find what you're looking for, you might also try WHERE IS <feature> TRACK to track towards your destination automatically."""
+
+
+@test
+def where_is():
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end')
+    o.set_gmcp("char.status", '{ state = "playing" }')
+    o.L.globals().WL = o.L.table_from(WHERE_LIST.split("\n"))
+    o.lua("""
+      -- a street: 1 -s-> 2 -s-> 3 -w-> 4 -w-> 5 (the food)
+      EX = { [1] = { south = 2 }, [2] = { north = 1, south = 3 }, [3] = { north = 2, west = 4 }, [4] = { east = 3, west = 5 }, [5] = { east = 4 } }
+      roomExists = function(id) return EX[tonumber(id)] ~= nil end
+      getRoomExits = function(id) return EX[tonumber(id)] end
+      getRoomName = function(id) return "Room " .. id end
+      getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end
+      centerview = function() end; highlightRoom = function() end; unHighlightRoom = function() end
+      getPath = function(a, b) speedWalkDir, speedWalkPath = { "s" }, { tostring(b) } return true end
+      sbo.cfg.map = true
+      function AT(id) gmcp.room = { info = { num = tostring(id), zone = "Towne of Rune" } }; sbo.onRoom() end
+      SENT = {}
+      REPLY = { ["where is"] = WL, ["where is food"] = { "You sense that food may be located s, s, w, w." },
+                ["where is bank"] = { "You sense that bank may be located s, s, w, w, w, w, w, w, w, w, w, s." },
+                ["where is questmaster"] = { "You sense that questmaster may be located n, n." } }
+      send = function(c)
+        SENT[#SENT + 1] = c
+        sbo.onSend(nil, c)
+        for _, l in ipairs(REPLY[c] or { "Huh?" }) do line = l; sbo.onLine() end
+        line = "<281hp 696sp 457st>"; sbo.onLine()
+      end
+      AT(1)
+    """)
+    o.feed("<281hp 696sp 457st>")
+    # you type it: the area's features, and where food is (worked out on the map)
+    o.lua('send("where is"); send("where is food")')
+    eq(sorted(r["feature"] for r in o.rows("SELECT feature FROM where_features WHERE area = 'Towne of Rune'")),
+       ["bank", "blacksmith", "food", "healer", "lockers", "music-venue", "post-office", "questmaster"], "the features")
+    eq(o.rows("SELECT room, start, dirs FROM where_rooms WHERE feature = 'food'"), [{"room": 5, "start": 1, "dirs": "s, s, w, w"}], "food: room 5")
+    # directions off the map: kept, no room
+    o.lua('send("where is bank")')
+    eq([r.get("room") for r in o.rows("SELECT room, dirs FROM where_rooms WHERE feature = 'bank'")], [None], "off the map: no room, directions kept")
+    # sbo go food: from anywhere, the room it learned
+    o.lua("WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; AT(3); SENT = {}")
+    o.lua('sbo.command("go food")')
+    eq(o.ev("WALKED"), 5, "sbo go food")
+    # something Oven hasn't found yet but the area has: it asks the game
+    o.lua('SENT = {}; sbo.command("go questmaster")')
+    assert "where is questmaster" in list(o.ev("SENT").values()), list(o.ev("SENT").values())
+    # learning by itself while you're idle: one feature at a time
+    o.lua("runTimers(); sbo.whereAsked = {}; SENT = {}; sbo.lastUserCmdAt = nil; sbo.whereLearnTick()")
+    sent = list(o.ev("SENT").values())
+    eq(len(sent), 1, f"one question: {sent}")
+    assert sent[0].startswith("where is ") and sent[0] not in ("where is food",), sent
+    o.lua("SENT = {}; sbo.cfg.whereLearn = false; sbo.whereLearnTick()")
+    eq(len(o.ev("SENT")), 0, "switched off")
+    # typing: no learning
+    o.lua("sbo.cfg.whereLearn = true; SENT = {}; sbo.onSend(nil, 'look'); sbo.whereLearnTick()")
+    eq(len([c for c in o.ev("SENT").values() if c.startswith("where")]), 0, "not while you're typing")
+    # where is (players) isn't read as a feature question
+    eq(o.ev("sbo.classify('where')"), None, "plain where")
+    card = o.lua('getRoomExits = function() return {} end; local t = {} for _, r in ipairs(sbo.roomCardLines(5)) do for _, g in ipairs(r) do t[#t+1] = tostring(g[2] or "") end end return table.concat(t)')
+    assert "where is food" in card, card
+
+
 @test
 def help_ends_at_see_also():
     # help look during the game's auto-run: the next step arrived before any prompt

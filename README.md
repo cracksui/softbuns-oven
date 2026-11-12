@@ -127,6 +127,12 @@ Quests with a time limit show the time left next to their name on the quest pane
 minutes, red under 10), and the prompt bar shows the one running out soonest (`quest 8h16m`). The game
 gives limits in Alyrian minutes; one is 15 real seconds.
 
+The game's `where is` only points at things in the area you're in. Oven remembers each answer as a
+room (following the directions on the map), so `sbo go food` works from anywhere; for something it
+hasn't found yet, it asks the game (walking to the right area first, if another area has it). While
+you're idle it also learns each area's features by itself, one question at a time
+(`sbo config map.wherelearn off` to stop).
+
 ## Comparing gear
 
 Every item you look at is remembered (it survives logging out). Items, loot, kills, deaths and what's
@@ -190,8 +196,9 @@ well as `sbo`.
 
 ```
 sbo                          the menu
-sbo go {what}                walk/run to a trainer, shop, quest, NPC,
-                             room #, bookmark (signpost runs when quicker)
+sbo go {what}                walk/run to a trainer, shop, quest, NPC, room #,
+                             bookmark, or a "where is" feature (food, bank…);
+                             signpost runs when quicker
 sbo stop                     stop a walk, or anything Oven is doing for you
 
 sbo eq                       equipment and items (shown in the Inspector)
@@ -270,6 +277,7 @@ Chat tab       chat.mirror on|off
 Quest panel    quest.hud on|off · quest.autopin on|off · quest.blurb on|off
                quest.side left|right · quest.opacity 0-100
 Map panel      map on|off · map.panel on|off · map.card on|off · map.shoplist on|off
+               map.wherelearn on|off
                signposts.look on|off
 Prompt bar     bar on|off · bar.mode gauges|raw · bar.session on|off · bar.session.style full|short
                bar.session.place top|bottom · bar.width {n} · bar.lines {n} · bar.font {n}

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.63.0"
+M.version = "0.64.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -180,6 +180,10 @@ local SCHEMA = {
   "CREATE INDEX IF NOT EXISTS shop_items_item ON shop_items (item)",
   -- a shopkeeper who won't sell to you ("…cannot sell my wares to someone of your level…"), and your level then
   "CREATE TABLE IF NOT EXISTS shop_refusals (room INTEGER PRIMARY KEY, said TEXT, level INTEGER, t INTEGER)",
+  -- the game's "where is": each area's feature list, and where each feature is (worked out on the map from
+  -- the directions the game gives; start + dirs kept too)
+  "CREATE TABLE IF NOT EXISTS where_features (area TEXT, feature TEXT, PRIMARY KEY (area, feature))",
+  "CREATE TABLE IF NOT EXISTS where_rooms (area TEXT, feature TEXT, room INTEGER, start INTEGER, dirs TEXT, t INTEGER, PRIMARY KEY (area, feature))",
   "CREATE TABLE IF NOT EXISTS signposts (room INTEGER PRIMARY KEY, sign TEXT, dests TEXT, exact INTEGER, last INTEGER)",
 }
 
@@ -367,6 +371,9 @@ M.commands = {
   -- recorded only (shown as the game sends it) until a layout exists
   { word = "quest",     min = 3, kind = "quest" },
   { word = "alias",     min = 5, kind = "aliases", needsNoArgs = true },
+  -- "where is" / "where is food": read for the area's features and where they are; shown as the game sends it
+  { word = "where",     min = 5, kind = "where",
+    argsOk = function(r) return r == "is" or r:match("^is%s") ~= nil end },
   -- a shop's list ("shop list", "sh li", "sh i"): read into the shops table; shown as the game sends it
   { word = "shop",      min = 2, kind = "shop",
     argsOk = function(r) return r ~= "" and (("list"):sub(1, #r) == r or ("inventory"):sub(1, #r) == r) end },
@@ -5527,6 +5534,10 @@ M.shapes = {
     return t:match("^Player Information") or l:match("^%s%s%S") or t:match("^%*")
   end,
   levels = function(t) return t:match("^%[Level:") end,
+  where = function(t, l)
+    return t:match("^Where is what%?") or t:match("^You sense that ") or t:match("^When you do find")
+      or (l:match("^[%w%-]+%s%s") and not t:match("[%.!?']$")) or t:match("^[%w%-]+$") ~= nil
+  end,
   shop = function(t)
     return t:match("^Welcome to ") or t:match("^You have [%d,]+ gp on hand") or t:match("^No%.%s+Item Name")
       or t:match("^%d+%)%s") or t:match("^There isn't a shopkeeper") or t:match("^You can't do that")
@@ -6103,6 +6114,166 @@ function M.shopOnArrive(id)
   M.shopCheckedRoom = id
   local ok, err = pcall(M.shopAutoList, id, M.lastStatusPrompt or M.lastPromptText)
   if not ok then M.noteAuto("shop", id, "error: " .. tostring(err)) end
+end
+
+---------------------------------------------------------------------------
+-- "where is": the game points you at things in the area you're in. Oven remembers where each one is
+-- (following the directions on the map), so sbo go finds them from anywhere; and it learns each area's
+-- features by itself while you're idle (sbo config map.wherelearn).
+---------------------------------------------------------------------------
+local DIR_FULL = { n = "north", s = "south", e = "east", w = "west", ne = "northeast", nw = "northwest",
+                   se = "southeast", sw = "southwest", u = "up", d = "down" }
+
+function M.areaNow()
+  local info = M.gmcpGet("room.info")
+  return type(info) == "table" and info.zone and tostring(info.zone) or nil
+end
+
+-- follow "s, s, w" on the map from a room; nil if a step isn't mapped
+function M.followDirs(from, dirs)
+  local id = from
+  for d in tostring(dirs):gmatch("[^,%s]+") do
+    if not id or not roomExists(id) then return nil end
+    local ok, ex = pcall(getRoomExits, id)
+    if not ok or type(ex) ~= "table" then return nil end
+    local full = DIR_FULL[d:lower()] or d:lower()
+    id = tonumber(ex[full] or ex[d:lower()])
+    if not id then return nil end
+  end
+  return id
+end
+
+-- "Where is what? Features that Towne of Rune might contain …:" then the names in columns
+-- "You sense that food may be located s, s, w, w, w, w, w, w, w, w, w, s."
+function M.readWhere(lines, area)
+  local inList, listArea, features = false, nil, {}
+  local answers = {}
+  for _, l in ipairs(lines) do
+    local t = trim(l)
+    local a = t:match("^Where is what%? Features that (.-) might contain")
+    if a then inList, listArea = true, a
+    elseif t:match("^When you do find") then inList = false
+    elseif inList and t ~= "" then
+      for f in t:gmatch("%S+") do features[#features + 1] = f:lower() end
+    end
+    local what, dirs = t:match("^You sense that (.-) may be located (.-)%.?$")
+    if what then answers[#answers + 1] = { feature = what:lower(), dirs = dirs } end
+  end
+  return listArea or area, features, answers
+end
+
+M.addBlockReader("where_is", "*", function(b)
+  local area = M.areaNow()
+  local listArea, features, answers = M.readWhere(b.lines, area)
+  if #features > 0 and listArea then
+    for _, f in ipairs(features) do
+      M.dbx("INSERT OR IGNORE INTO where_features (area, feature) VALUES (%s, %s)", listArea, f)
+    end
+  end
+  for _, a in ipairs(answers) do
+    local here = M.mapRoom
+    local room = here and M.followDirs(here, a.dirs)
+    M.dbx("INSERT OR REPLACE INTO where_rooms (area, feature, room, start, dirs, t) VALUES (%s, %s, %s, %s, %s, %s)",
+      area or listArea or "", a.feature, room, here, a.dirs, os.time())
+    M.noteAuto("where", room, a.feature .. (room and "" or " (directions go off the map)"))
+  end
+end)
+
+-- where a feature is, from what Oven has learned: rows of { area, feature, room }
+function M.whereRooms(q)
+  q = (q or ""):lower()
+  return M.dbRows("SELECT area, feature, room FROM where_rooms WHERE room IS NOT NULL AND (feature = %s OR instr(feature, %s) = 1)", q, q)
+end
+
+-- the areas whose feature list has it
+function M.whereAreas(q)
+  q = (q or ""):lower()
+  local out = {}
+  for _, r in ipairs(M.dbRows("SELECT DISTINCT area FROM where_features WHERE feature = %s OR instr(feature, %s) = 1", q, q)) do
+    out[#out + 1] = r.area
+  end
+  return out
+end
+
+-- sbo go {feature} when Oven doesn't know the room yet: ask the game here (it only answers about this
+-- area), then walk there; in another area that has it, walk to that area first and ask on arrival
+function M.whereGo(q)
+  q = trim(q or ""):lower()
+  local area = M.areaNow()
+  local areas = M.whereAreas(q)
+  local hereHas = false
+  for _, a in ipairs(areas) do if area and a:lower() == area:lower() then hereHas = true end end
+  if hereHas or #areas == 0 then
+    if M.busyWhy(M.lastStatusPrompt) then return false end
+    M.quietly("where is " .. q, "where", function()
+      local r = M.dbRow("SELECT room, dirs FROM where_rooms WHERE area = %s AND feature = %s", area or "", q)
+      if r and tonumber(r.room) then
+        M.say("where is " .. q .. ": " .. ((roomExists(tonumber(r.room)) and getRoomName(tonumber(r.room))) or "") .. " #" .. r.room)
+        M.mapWalkTo(tonumber(r.room))
+      elseif r and r.dirs then
+        M.say("where is " .. q .. ": " .. r.dirs .. " (off the map - letting the game lead: where is " .. q .. " track)")
+        M.sendOwn("where is " .. q .. " track", false)
+      else
+        M.say("the game doesn't know a '" .. q .. "' in " .. (area or "this area"))
+      end
+    end)
+    return true
+  end
+  -- another area has it: walk to the nearest room there, then ask
+  local best, bestSteps
+  local okA, areaTable = pcall(getAreaTable)
+  for _, a in ipairs(areas) do
+    local aid = okA and type(areaTable) == "table" and areaTable[a]
+    local okR, rooms = pcall(getAreaRooms, aid)
+    if aid and okR and type(rooms) == "table" then
+      local n = 0
+      for _, rid in pairs(rooms) do
+        n = n + 1
+        if n > 60 then break end
+        if M.mapRoom and getPath(M.mapRoom, rid) and (not bestSteps or #speedWalkDir < bestSteps) then best, bestSteps = rid, #speedWalkDir end
+      end
+    end
+  end
+  if not best then
+    M.say("'" .. q .. "' is in " .. table.concat(areas, ", ") .. " - Oven has no route there on the map")
+    return true
+  end
+  M.say(string.format("'%s' is in %s: walking there, then asking the game", q, table.concat(areas, ", ")))
+  M.whereAfterWalk = q
+  M.mapWalkTo(best)
+  return true
+end
+
+-- learning an area by itself: its feature list once, then where each one is - one question at a time,
+-- only while you're idle and not walking, fighting or busy, and only while you're still in that area
+function M.whereLearnTick()
+  if M.cfg.whereLearn == false then return end
+  local area = M.areaNow()
+  if not area or area == "" then return end
+  local p = M.lastStatusPrompt
+  if M.busyWhy(p) or not M.userIdle(3) then return end
+  local list = M.dbRows("SELECT feature FROM where_features WHERE area = %s", area)
+  if #list == 0 then
+    M.whereAsked = M.whereAsked or {}
+    if M.whereAsked[area .. "|"] then return end
+    M.whereAsked[area .. "|"] = os.time()
+    M.noteAuto("where", M.mapRoom, "asking for " .. area .. "'s features")
+    return M.quietly("where is", "where", function() end)
+  end
+  M.whereAsked = M.whereAsked or {}
+  for _, r in ipairs(list) do
+    local f = r.feature
+    if not M.dbRow("SELECT feature FROM where_rooms WHERE area = %s AND feature = %s", area, f)
+       and not M.whereAsked[area .. "|" .. f] then
+      M.whereAsked[area .. "|" .. f] = os.time()
+      return M.quietly("where is " .. f, "where", function() end)
+    end
+  end
+end
+
+function M.whereLearnStart()
+  if M.whereTimer then killTimer(M.whereTimer) end
+  M.whereTimer = tempTimer(4, function() pcall(M.whereLearnTick) end, true)   -- repeating
 end
 
 -- sbo shops [text]: the shops Oven knows, or where to buy something (cheapest first)
@@ -6966,7 +7137,9 @@ function M.onRoom()
       w.step = w.step + 1
       if w.step > #w.dirs then
         M.walk = nil
-        if w.thenRun then M.runStart(w.thenRun, w.target) else M.notifyWalk("arrived") end
+        if w.thenRun then M.runStart(w.thenRun, w.target)
+        elseif M.whereAfterWalk then local q = M.whereAfterWalk; M.whereAfterWalk = nil; tempTimer(0.5, function() pcall(M.whereGo, q) end)
+        else M.notifyWalk("arrived") end
       else
         M.walkStep()
       end
@@ -7148,6 +7321,12 @@ function M.roomCardLines(id)
         { C.dim, "  '" .. tostring(ref.said) .. "'" .. (ref.level and ("  (level " .. ref.level .. ")") or "") })
   elseif shopRow then
     row({ C.slot, "$ " .. (shopRow.name or "a shop") }, { C.dim, "  " .. tostring(shopRow.n) .. " items (sbo map shops)" })
+  end
+  local okW, wrows = pcall(M.dbRows, "SELECT feature FROM where_rooms WHERE room = %s ORDER BY feature", id)
+  if okW and #wrows > 0 then
+    local f = {}
+    for _, r in ipairs(wrows) do f[#f + 1] = r.feature end
+    row({ C.slot, "◎ where is " .. table.concat(f, ", ") }, { C.dim, "  (sbo go " .. f[1] .. ")" })
   end
   local okS, sp = pcall(M.signAt, id)
   if okS and sp then
@@ -7984,6 +8163,10 @@ function M.runTargets(q)
   for _, r in ipairs(M.dbRows("SELECT name, room FROM marks WHERE name = %s OR instr(name, %s) = 1", q, q)) do
     add(r.room, "bookmark '" .. r.name .. "'", r.name == q and 0 or 0.5)
   end
+  -- the game's "where is" features Oven has found ("food" in Towne of Rune)
+  for _, r in ipairs(M.whereRooms(q)) do
+    add(r.room, "where is " .. r.feature .. " (" .. tostring(r.area) .. ")", r.feature == q and 0.7 or 0.8)
+  end
   local npcRooms = {}
   for _, r in ipairs(M.dbRows("SELECT room, text, tags FROM room_npcs WHERE instr(lower(tags), %s) > 0 OR instr(lower(text), %s) > 0", single, q)) do
     npcRooms[r.room] = npcRooms[r.room] or {}
@@ -8037,6 +8220,10 @@ function M.mapRun(arg)
   local here = M.mapRoom or M.currentRoom()
   if not here or not roomExists(here) then return say("Oven doesn't know where you are on the map yet - move one room first") end
   local targets, fromNotes = M.runTargets(q)
+  if #targets == 0 or (not fromNotes and #M.whereAreas(q) > 0) then
+    -- a feature the game knows by name (where is food): ask it
+    if not all and (#M.whereAreas(q) > 0 or #targets == 0) and q:match("^[%w%-]+$") and M.whereGo(q) then return end
+  end
   if #targets == 0 then return say("nothing called '" .. q .. "' that Oven has seen, and no room on the map by that name") end
   -- walking distance to each (the nearest 60 candidates are plenty)
   local reach = {}
@@ -8833,7 +9020,7 @@ local function legacy(cmd) return M.legacyCommand(cmd) end
 
 -- each entry: name, args (shown), desc, run(rest); a group has subs (and may have run for no sub)
 M.CMDS = {
-  { name = "go", args = "{what}", desc = "walk/run to a trainer, shop, quest, NPC, room #, bookmark",
+  { name = "go", args = "{what}", desc = "walk/run to a trainer, shop, quest, NPC, room #, bookmark, or a where-is feature",
     run = function(r)
       if r == "" then return say("sbo go {what}: a trainer, shop, quest, NPC name, room #, bookmark or signpost run") end
       if r:lower() == "stop" then return M.stopAll() end
@@ -9297,6 +9484,8 @@ M.SETTINGS = {
   { "map", "Map panel", BOOL, function() return onoff(M.cfg.map) end, function(v) legacy("map " .. v) end },
   { "map.panel", "Map panel", BOOL, function() return onoff(M.cfg.mapPanel) end, function(v) legacy("map panel " .. v) end },
   { "map.card", "Map panel", BOOL, function() return onoff(M.cfg.mapCard) end, function(v) legacy("map card " .. v) end },
+  { "map.wherelearn", "Map panel", BOOL, function() return onoff(M.cfg.whereLearn ~= false) end,
+    function(v) M.cfg.whereLearn = (v == "on"); M.saveSettings(); say("learning each area's 'where is' features while you're idle: " .. v) end },
   { "map.shoplist", "Map panel", BOOL, function() return onoff(M.cfg.shopList ~= false) end,
     function(v) M.cfg.shopList = (v == "on"); M.saveSettings(); say("listing shops when you stop in one: " .. v) end },
   { "signposts.look", "Map panel", BOOL, function() return onoff(M.cfg.signLook) end, function(v) legacy("signposts look " .. v) end },
@@ -9786,6 +9975,7 @@ end
 function M.teardown()
   if M.panelTimer then killTimer(M.panelTimer); M.panelTimer = nil end
   if M.questClockTimer then killTimer(M.questClockTimer); M.questClockTimer = nil end
+  if M.whereTimer then killTimer(M.whereTimer); M.whereTimer = nil end
   pcall(M.panelsSave)
   pcall(M.dbClose)
   if M.handlers then for _, h in ipairs(M.handlers) do killAnonymousEventHandler(h) end end
@@ -9846,6 +10036,7 @@ function M.init()
   end)
   M.panelsWatch()
   M.questClock()
+  M.whereLearnStart()
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadDone", M.onDownload)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("sysDownloadError", M.onDownload)
   for _, v in ipairs({ "LEVEL", "EXPERIENCE", "EXPERIENCE_MAX", "EXPERIENCE_TNL", "EXPERIENCE_TO_LEVEL" }) do
