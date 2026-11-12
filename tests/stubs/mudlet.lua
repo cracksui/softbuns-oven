@@ -135,7 +135,9 @@ end
 -- layout widgets: remember who's hidden, so tests can see which tab is in front
 local function box(kind)
   return { new = function(self, o, parent)
-    local t = { name = o.name, kind = kind, parent = parent, container = parent, shown = true }
+    local t = { name = o.name, kind = kind, parent = parent, container = parent, shown = true, windows = {}, windowList = {} }
+    if parent and parent.windows then parent.windows[#parent.windows + 1] = o.name; parent.windowList[o.name] = t end
+    function t:remove(w) t.windowList[w.name] = nil; for i, n in ipairs(t.windows) do if n == w.name then table.remove(t.windows, i) break end end end
     function t:changeContainer(c) t.parent = c; t.container = c end
     function t:move() end function t:resize() end function t:organize() end
     function t:show() t.shown = true end
@@ -153,7 +155,9 @@ Geyser.Container = box("container"); Geyser.VBox = box("vbox"); Geyser.HBox = bo
 function setMapZoom() end
 Geyser.Fixed, Geyser.Dynamic = "fixed", "dynamic"
 local labelNew = Geyser.Label.new
-Geyser.Label.new = function(self, o, parent) local t = labelNew(self, o, parent); WIDGETS = WIDGETS or {}; WIDGETS[o.name] = t; return t end
+Geyser.Label.new = function(self, o, parent) local t = labelNew(self, o, parent); WIDGETS = WIDGETS or {}; WIDGETS[o.name] = t
+  if parent and parent.windows then parent.windows[#parent.windows + 1] = o.name; parent.windowList[o.name] = t end
+  return t end
 
 -- a one-line text box: setAction(fn) gets what's typed (tests call t.action)
 Geyser.CommandLine = { new = function(self, o, parent)

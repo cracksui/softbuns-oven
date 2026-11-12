@@ -417,6 +417,9 @@ def chat_tab():
     assert o.ev("sbo.chatBarH") >= 48, "more than one row"
     eq(o.ev("WIDGETS.ovenChatChipW1.chipRow"), 0, "All on the first")
     assert o.ev("WIDGETS.ovenChatChipW12.chipRow") >= 1, "the last on a later row"
+    # an old chip left in the bar by an update is taken out
+    o.lua('Geyser.Label:new({ name = "ovenChatChip1", width = 60 }, sbo.chatBar); sbo.chatChips()')
+    eq(list(o.ev("sbo.chatBar.windows").values()), ["ovenChatChipArea"], "only the chip area in the bar")
     o.lua('sbo.chatFilter("CLAN")')
     assert "Moss" in o.ev("WIDGETS.ovenChatConsole.text"), "a muted channel can still be read on its own"
     # a line arriving is copied in whole (its links still work), not drawn again from its text

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.77.4"
+M.version = "0.77.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7225,6 +7225,21 @@ function M.chatChips()
     end
     M.chatChipLabels = {}
     M.chatChipArea = Geyser.Container:new({ name = "ovenChatChipArea" }, M.chatBar)
+    pcall(function() M.chatBar:organize() end)
+  end
+  -- anything else still in the bar (chips from before an update) would push the area off the side
+  local strays = false
+  for _, wname in ipairs(M.chatBar.windows or {}) do
+    if wname ~= M.chatChipArea.name then strays = true end
+  end
+  if strays then
+    for _, wname in ipairs({ unpack(M.chatBar.windows) }) do
+      local w = M.chatBar.windowList[wname]
+      if w and w ~= M.chatChipArea then
+        pcall(function() w:hide() end)
+        pcall(function() M.chatBar:remove(w) end)
+      end
+    end
     pcall(function() M.chatBar:organize() end)
   end
   local okW, areaW = pcall(function() return M.chatChipArea:get_width() end)
