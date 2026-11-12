@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.77.0"
+M.version = "0.77.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7043,6 +7043,12 @@ M.addChatPattern("spoken", function(l)
   local who, verb, msg = l:match("^(%u[^']-) (%l+),? '(.*)'%s*$")
   if who and SPOKEN[verb] then return SPOKEN[verb], who, msg end
 end)
+-- the auction channel: "[AUCTION] ...", "AUCTION: ...", "Auction: ...", "(Auction) ..."
+M.addChatPattern("auction", function(l)
+  local rest = l:match("^%[[Aa][Uu][Cc][Tt][Ii][Oo][Nn]%]:?%s*(.+)$") or l:match("^%([Aa]uction%)%s*(.+)$")
+    or l:match("^AUCTION:%s*(.+)$") or l:match("^Auction:%s*(.+)$")
+  if rest then return "AUCTION", nil, rest end
+end)
 -- "Local Hint: ...", "Personalized Hint: ..."
 M.addChatPattern("hint", function(l)
   local kind, msg = l:match("^(%u%l+ Hint): (.+)$")
@@ -7079,7 +7085,8 @@ M.addChatPattern("say", function(l)
 end)
 
 function M.chatFind(l)
-  if not l:find("'", 1, true) and not l:match("^%[%u") and not l:find(" Hint: ", 1, true) then return end
+  if not l:find("'", 1, true) and not l:match("^%[%u") and not l:find(" Hint: ", 1, true)
+    and not l:match("^%(?[Aa][Uu][Cc][Tt][Ii][Oo][Nn]") then return end
   for _, p in ipairs(M.chatPatterns) do
     local ok, ch, who, msg = pcall(p.find, l)
     if ok and ch then return ch, who, msg end
@@ -7165,6 +7172,15 @@ end
 -- chips: All, then each channel in the order it first spoke; counts are unread lines
 function M.chatChips()
   if not M.chatBar then return end
+  -- AUCTION has a chip before anything's been said on it
+  if not M.cfg.chatAuctionChip then
+    M.cfg.chatAuctionChip = true
+    M.cfg.chatChannels = M.cfg.chatChannels or {}
+    local has = false
+    for _, c in ipairs(M.cfg.chatChannels) do if c == "AUCTION" then has = true end end
+    if not has then table.insert(M.cfg.chatChannels, "AUCTION") end
+    M.saveSettings()
+  end
   local C, muted = M.chat, M.cfg.chatMuted or {}
   local names = { "All" }
   for _, c in ipairs(M.cfg.chatChannels or {}) do names[#names + 1] = c end

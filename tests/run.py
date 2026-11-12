@@ -392,7 +392,7 @@ def chat_tab():
     eq(got, [("CLAN", "Moss"), ("CLAN", None), ("CLAN", "Bramble"), ("Tells", "Wren"),
              ("YELL", "A voice"), ("ANNOUNCEMENT", "A sepulchral voice"), ("HINT", "Local Hint"), ("NOVICE", None)],
        "chat lines (news once a channel is known; no NPC talk, room lines, help pages)")
-    eq(list(o.ev("sbo.cfg.chatChannels").values()), ["CLAN", "Tells", "YELL", "ANNOUNCEMENT", "HINT", "NOVICE"], "channels learned in order")
+    eq(list(o.ev("sbo.cfg.chatChannels").values()), ["AUCTION", "CLAN", "Tells", "YELL", "ANNOUNCEMENT", "HINT", "NOVICE"], "AUCTION from the start, then channels learned in order")
     eq(o.ev("sbo.cfg.chatGameChannels.SHOUT"), True, "the channel list is read")
     eq(o.ev("sbo.cfg.chatGameChannels.AUCTION"), False, "off channels too")
     eq(o.ev("WIDGETS.ovenTabs3Page_view.shown"), True, "chat doesn't take the window's focus")
@@ -411,9 +411,14 @@ def chat_tab():
     o.lua('sbo.command("chat mute clan"); sbo.chatFilter("All")')
     text = o.ev("WIDGETS.ovenChatConsole.text")
     assert "Moss" not in text and "Wren" in text, f"muted: {text}"
-    assert "line-through" in o.ev("WIDGETS.ovenChatChip2.css"), "muted chip is struck through"
+    assert "line-through" in o.ev("WIDGETS.ovenChatChip3.css"), "muted chip is struck through"
     o.lua('sbo.chatFilter("CLAN")')
     assert "Moss" in o.ev("WIDGETS.ovenChatConsole.text"), "a muted channel can still be read on its own"
+    # the auction channel, however it's written
+    for l in ["[AUCTION] Pip is auctioning a gnarled staff (min 500 gold).", "AUCTION: Pip bids 600 gold.",
+              "Auction: the staff is sold to Wren.", "(Auction) Going once..."]:
+        eq(o2.ev(f'(sbo.chatFind([[{l}]]))'), "AUCTION", l)
+    eq(o2.ev('(sbo.chatFind([[The auction house is closed.]]))'), None, "not just any mention")
 
 
 @test
