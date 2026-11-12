@@ -1272,6 +1272,26 @@ def map_search_box():
     eq(o.ev("WIDGETS['ovenMapFindStatus'].text"), "", "status cleared")
 
 
+@test
+def scan_marks():
+    o = Oven()
+    o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      SEL = {}; selectString = function(s) SEL[#SEL+1] = s; return 0 end
+      BG = nil; setBgColor = function(r, g, b) BG = r .. "," .. g .. "," .. b end""")
+    o.lua('sbo.command("scan mark centipede"); sbo.command("sc mark Wavering Shadow")')
+    eq(list(o.ev("sbo.cfg.scanMarks").values()), ["centipede", "Wavering Shadow"], "kept")
+    o.feed("A burrowing centipede is close by to the east.", "An undead corpse is right here to the west.",
+           "A wavering shadow is a brief walk away to the west.", "You don't see anything to the north.")
+    eq(list(o.ev("SEL").values()), ["A burrowing centipede", "A wavering shadow"], "marked names light up, others don't")
+    eq(o.ev("BG"), "110,20,20", "on a dark red")
+    o.lua('sbo.command("scan unmark centipede")')
+    eq(list(o.ev("sbo.cfg.scanMarks").values()), ["Wavering Shadow"], "unmarked")
+    eq(o.ev("(sbo.scanParse('A priestess is not far off to the south.'))"), "A priestess", "a scan line")
+    eq(o.ev("(sbo.scanParse('You say the priest is fine.'))"), None, "not a scan line")
+    o.lua('SAYS = {}; sbo.command("st")')
+    assert "nothing to stop" in o.ev("SAYS[1]"), "sbo st is still stop"
+
+
 WHERE_LIST = """Where is what? Features that Towne of Rune might contain that you may be interested in:
 healer              post-office         lockers             bank                
 food                blacksmith          questmaster         music-venue         

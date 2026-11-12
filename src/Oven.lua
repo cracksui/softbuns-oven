@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.77.5"
+M.version = "0.78.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7481,9 +7481,60 @@ function M.onLine()
   if not ok then error(err, 0) end
 end
 
+---------------------------------------------------------------------------
+-- Scan marks: names you've marked light up in the game's scan
+-- ("A burrowing centipede is close by to the east.")
+---------------------------------------------------------------------------
+function M.scanParse(l)
+  local who, dist, dir = l:match("^(%u.-) is ([%a ]-) to the (%a+)%.%s*$")
+  if not who then who, dist, dir = l:match("^(%u.-) is ([%a ]-) (%a+) you%.%s*$") end
+  if who and dist ~= "" and #who < 80 then return who, dist, dir end
+end
+function M.scanMarked(who)
+  local w = who:lower()
+  for _, m in ipairs(M.cfg.scanMarks or {}) do
+    if w:find(m:lower(), 1, true) then return m end
+  end
+end
+function M.scanLight(l)
+  if not (M.cfg.scanMarks and M.cfg.scanMarks[1]) then return end
+  local who = M.scanParse(l)
+  if not who or not M.scanMarked(who) then return end
+  if selectString(who, 1) > -1 then
+    setBgColor(110, 20, 20)
+    setFgColor(255, 230, 90)
+    pcall(setBold, true)
+    deselect()
+    resetFormat()
+  end
+end
+function M.scanMark(r, on)
+  r = trim(r or "")
+  if r == "" then return M.say("sbo scan " .. (on and "mark" or "unmark") .. " {name}") end
+  M.cfg.scanMarks = M.cfg.scanMarks or {}
+  local list = M.cfg.scanMarks
+  for i, m in ipairs(list) do
+    if m:lower() == r:lower() then
+      if on then return M.say("'" .. m .. "' is already marked") end
+      table.remove(list, i); M.saveSettings()
+      return M.say("'" .. m .. "' unmarked")
+    end
+  end
+  if not on then return M.say("'" .. r .. "' isn't marked - sbo scan shows what is") end
+  list[#list + 1] = r
+  M.saveSettings()
+  M.say("'" .. r .. "' marked: it stands out when you scan")
+end
+function M.scanMarksShow()
+  local list = M.cfg.scanMarks or {}
+  if not list[1] then return M.say("nothing marked - sbo scan mark {name} lights it up in your scans") end
+  M.say("marked in scans: " .. table.concat(list, ", ") .. "  (sbo scan unmark {name})")
+end
+
 function M.onLineWork()
   local cap = M.cap
   pcall(M.observe, line)
+  pcall(M.scanLight, line)
   pcall(M.chatGrab, line)
   pcall(M.recordLine, line, isPromptLine())
   if isPromptLine() and #M.parsePrompt(line).vals > 0 then M.lastStatusPrompt = line end
@@ -9944,6 +9995,12 @@ M.CMDS = {
       M.noteAdd(r); M.notesShow() end },
     { name = "find", args = "{text}", desc = "only the notes with it", run = function(r) return M.notesShow(r) end },
     { name = "remove", args = "{n}", desc = "remove note number n", run = function(r) return M.noteRemove(r) end },
+  } },
+  { name = "scan", min = 2, desc = "targets you've marked stand out in the game's scan",
+    run = function() return M.scanMarksShow() end, subs = {
+    { name = "mark", args = "{name}", desc = "light up anyone whose name has this in it", run = function(r) return M.scanMark(r, true) end },
+    { name = "unmark", args = "{name}", desc = "stop lighting them up", run = function(r) return M.scanMark(r, false) end },
+    { name = "clear", desc = "unmark everyone", run = function() M.cfg.scanMarks = {}; M.saveSettings(); say("scan marks cleared") end },
   } },
   { name = "help", args = "[{group}|all]", desc = "the Help tab: this menu, a group's commands, or all of them",
     run = function(r) return M.help(r) end },
