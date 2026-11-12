@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.75.0"
+M.version = "0.75.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7336,7 +7336,8 @@ function M.finish(reason)
     local v, a = tostring(cap.cmd or ""):lower():match("^%s*(%a+)%s+(%a+)")
     -- the game takes short forms: "que re", "quest com"
     local isQuest = cap.kind == "quest" and v ~= nil and #v >= 3 and ("quest"):sub(1, #v) == v and #a >= 2
-    M.questReplyRequest = isQuest and ("request"):sub(1, #a) == a
+    -- taking a quest: quest request, or quest undertake {id} (tutorials, sub-quests)
+    M.questReplyRequest = isQuest and (("request"):sub(1, #a) == a or ("undertake"):sub(1, #a) == a)
     -- looking a quest up (quest info / quest status) never pins it
     M.questReplyInfo = isQuest and (("info"):sub(1, #a) == a or ("status"):sub(1, #a) == a)
     if isQuest and ("complete"):sub(1, #a) == a and not cap.quiet then
