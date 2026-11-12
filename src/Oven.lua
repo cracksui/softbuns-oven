@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.71.0"
+M.version = "0.71.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -9645,7 +9645,7 @@ function M.debugState()
   local lines = {
     "Oven v" .. M.version .. "  " .. os.date("%Y-%m-%d %H:%M:%S"),
     "room " .. tostring(M.mapRoom) .. " · last prompt " .. tostring(M.lastPromptText),
-    "busy: " .. tostring(M.busyWhy(M.lastStatusPrompt or M.lastPromptText) or "no"),
+    "busy: " .. tostring(M.busyWhy(M.lastStatusPrompt or M.lastPromptText) or "no") .. " · formatting " .. (M.cfg.enabled and "on" or "OFF"),
     string.format("walk %s · running %s · cap %s · learning %s · learnQueue %s · quietNext %s",
       tostring(M.walk ~= nil), tostring(M.running and M.running.name), tostring(M.cap and M.cap.kind),
       tostring(M.learning ~= nil), tostring(M.learnQueue and #M.learnQueue), tostring(M.quietNext and M.quietNext.kind)),
@@ -9939,7 +9939,8 @@ function M.configList(only)
       local cur = s[4]()
       out[#out + 1] = { { C.key, "  " .. pad(s[1], kw + 2) }, { (cur == "on") and C.plus or ((cur == "off") and C.dim or C.num), pad(cur, 10) },
                         { C.dim, valuesText(s) } }
-      if s[3] == BOOL then
+      -- (no one-click link for formatting: too big a switch to flip by a stray click)
+      if s[3] == BOOL and s[1] ~= "formatting" then
         local key = s[1]
         links[#links + 1] = { key .. " → " .. (cur == "on" and "off" or "on"), function()
           M.config(key .. " " .. (s[4]() == "on" and "off" or "on")); M.configList(only) end }
@@ -9974,6 +9975,10 @@ end
 
 function M.menu()
   local lines = { "", "<orange>Soft Bun's Oven<reset> <dim_grey>v" .. M.version .. "  ·  `oven` works as well as `sbo`<reset>", "" }
+  if not M.cfg.enabled then
+    lines[#lines + 1] = "<tomato>formatting is off<reset> <dim_grey>- the game's text is left as it is (sbo config formatting on, or sbo on)<reset>"
+    lines[#lines + 1] = ""
+  end
   local w = 0
   local function shownOf(e) return e.name .. ((not e.subs and e.args) and (" " .. e.args:gsub("[{}]", "")) or "") end
   for _, e in ipairs(M.CMDS) do if not e.alias and not e.shortcut then w = math.max(w, ulen(shownOf(e))) end end
