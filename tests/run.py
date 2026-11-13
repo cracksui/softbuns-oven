@@ -194,6 +194,57 @@ def quest_phase_counter():
 
 
 @test
+def friends_where():
+    me, pal = Oven(), Oven()
+    for o in (me, pal):
+        o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+          SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end
+          GAGGED = 0; deleteLine = function() GAGGED = GAGGED + 1 end
+          gmcp.char = { status = { state = "playing" } }
+          sbo.lastStatusPrompt = "<281hp 696sp 457st>"
+          roomExists = function(id) return tonumber(id) == 10522 or tonumber(id) == 10438 end
+          getRoomName = function(id) return "Garden of Life" end
+          getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end
+          WALK = nil; sbo.mapWalkTo = function(id) WALK = id end""")
+    pal.lua('sbo.mapRoom = 10522')
+    me.lua('sbo.mapRoom = 10438')
+    # not a friend yet: told no, and Pal sees that someone asked
+    me.lua('sbo.command("go @pal")')
+    ask = me.ev("SENT[#SENT]")
+    assert ask.startswith("tell pal #oven where "), ask
+    nonce = ask.split()[-1]
+    pal.feed(f"Me tells you '#oven where {nonce}'")
+    pal.lua("runTimers()")
+    eq(pal.ev("GAGGED"), 1, "the asking tell is kept off Pal's screen")
+    no = pal.ev("SENT[#SENT]")
+    eq(no, f"tell me #oven no {nonce}", "a non-friend is told no")
+    assert any("asked where you are" in x for x in pal.ev("SAYS").values()), "Pal is told someone asked"
+    me.feed(f"Pal tells you '#oven no {nonce}'"); me.lua("runTimers()")
+    assert any("hasn't added you" in x for x in me.ev("SAYS").values()), list(me.ev("SAYS").values())
+    eq(me.ev("WALK"), None, "no walk")
+    # friends: the room comes back and Oven walks there
+    pal.lua('sbo.command("friend add me"); SENT = {}; sbo.friendAnswered = {}')
+    me.lua('sbo.command("friend add pal"); SAYS = {}; sbo.command("go pal")')
+    nonce = me.ev("SENT[#SENT]").split()[-1]
+    me.lua("GAGGED = 0"); me.feed(f"You tell Pal '#oven where {nonce}'")
+    eq(me.ev("GAGGED"), 1, "your own tell is hidden too")
+    pal.feed(f"Me tells you '#oven where {nonce}'"); pal.lua("runTimers()")
+    at = pal.ev("SENT[#SENT]")
+    eq(at, f"tell me #oven at {nonce} 10522", "a friend is told the room")
+    me.feed(f"Pal tells you, '#oven at {nonce} 10522'"); me.lua("runTimers()")
+    eq(me.ev("WALK"), 10522, "walks to Pal")
+    # a stale or made-up answer does nothing
+    me.lua("WALK = nil"); me.feed("Pal tells you '#oven at beef 10438'"); me.lua("runTimers()")
+    eq(me.ev("WALK"), None, "only answers to what was asked")
+    # offline
+    me.lua('SAYS = {}; sbo.command("friend where pal")'); me.feed("They aren't here."); me.lua("runTimers()")
+    assert any("isn't online" in x for x in me.ev("SAYS").values()), list(me.ev("SAYS").values())
+    # nothing is sent outside the game
+    me.lua('gmcp.char.status.state = "login"; SENT = {}; sbo.lastStatusPrompt = nil; sbo.lastPromptText = nil; sbo.command("go pal")')
+    eq(len(list(me.ev("SENT").values())), 0, "not in the game: nothing sent")
+
+
+@test
 def mobs_seen():
     o = Oven()
     o.replay(fixture("rooms.txt"))

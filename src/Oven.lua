@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.82.0"
+M.version = "0.83.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7905,6 +7905,126 @@ function M.onLine()
 end
 
 ---------------------------------------------------------------------------
+-- Friends: one Oven asks another where its player is, by tell ("sbo go roarke").
+-- A tell "#oven where <id>" is answered "#oven at <id> <room>" - only to the friends
+-- you've added (anyone else gets "#oven no <id>", and you're told they asked).
+-- Both sides keep these tells off the screen.
+---------------------------------------------------------------------------
+M.friendAsks = M.friendAsks or {}
+local function friendKey(n) return trim(n or ""):lower() end
+function M.isFriend(n)
+  local k = friendKey(n)
+  for _, f in ipairs(M.cfg.friends or {}) do if f == k then return true end end
+  return false
+end
+local function cap1(n) return (n:gsub("^%l", string.upper)) end
+
+function M.friendAdd(n)
+  local k = friendKey(n)
+  if not k:match("^%a+$") then return M.say("sbo friend add {name}: a player's name") end
+  M.cfg.friends = M.cfg.friends or {}
+  if not M.isFriend(k) then M.cfg.friends[#M.cfg.friends + 1] = k; M.saveSettings() end
+  M.say(cap1(k) .. " is a friend: their Oven can ask yours where you are (sbo go " .. k .. " works both ways once they add you too)")
+end
+function M.friendRemove(n)
+  local k = friendKey(n)
+  local kept = {}
+  for _, f in ipairs(M.cfg.friends or {}) do if f ~= k then kept[#kept + 1] = f end end
+  M.cfg.friends = kept; M.saveSettings()
+  M.say(cap1(k) .. " removed - their Oven won't be told where you are")
+end
+function M.friendList()
+  local l = M.cfg.friends or {}
+  if not l[1] then return M.say("no friends yet - sbo friend add {name} lets their Oven ask yours where you are") end
+  local names = {}
+  for _, f in ipairs(l) do names[#names + 1] = cap1(f) end
+  M.say("friends (their Oven can ask where you are): " .. table.concat(names, ", ") .. "  ·  sbo go {name} to walk to one")
+end
+
+-- ask: then(room) with their room number, or nil and why
+function M.friendAsk(n, thenDo)
+  local k = friendKey(n)
+  if not k:match("^%a+$") then return M.say("whose? sbo friend where {name}") end
+  if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return M.say("not in the game yet") end
+  local old = M.friendAsks[k]
+  if old and old.timer then killTimer(old.timer) end
+  local id = string.format("%04x", math.random(0, 65535))
+  local A = { id = id, thenDo = thenDo, at = os.time() }
+  M.friendAsks[k] = A
+  A.timer = tempTimer(12, function()
+    if M.friendAsks[k] == A then
+      M.friendAsks[k] = nil
+      M.say("no answer from " .. cap1(k) .. " - they may not be online, not use Oven, or not be in the game right now")
+    end
+  end)
+  M.say("asking " .. cap1(k) .. "'s Oven where they are…")
+  M.sendOwn("tell " .. k .. " #oven where " .. id, false)
+end
+
+-- what a friend's Oven said: walk, or show
+function M.friendWhere(n, walk)
+  M.friendAsk(n, function(room, why)
+    local who = cap1(friendKey(n))
+    if not room then return M.say(who .. ": " .. why) end
+    if not roomExists(room) then return M.say(who .. " is in room #" .. room .. ", which isn't on your map") end
+    local name = getRoomName(room) or ("#" .. room)
+    local a = getRoomArea(room)
+    local where = name .. ((a and getRoomAreaName(a)) and (" (" .. getRoomAreaName(a) .. ")") or "")
+    if M.mapRoom == room then return M.say(who .. " is right here") end
+    if walk then
+      M.say(who .. " is at " .. where .. " - on the way")
+      return M.mapWalkTo(room)
+    end
+    M.say(who .. " is at " .. where .. "  ·  sbo go " .. friendKey(n) .. " to walk there")
+    pcall(M.mapShow, room)
+  end)
+end
+
+M.friendAnswered = M.friendAnswered or {}
+-- a line that's Oven talking to Oven: true = handled (and gagged)
+function M.wireLine(l)
+  local t = trim(l)
+  -- your own tell, as the game repeats it
+  if t:match("^You tell %u[%w%-']*,? '#oven [^']*'$") then return true end
+  local who, msg = t:match("^(%u[%w%-']*) tells you,? '#oven (.-)'$")
+  if not who then return false end
+  local k = friendKey(who)
+  local verb, id, rest = msg:match("^(%a+) (%x+)%s*(.-)%s*$")
+  if not verb then return true end
+  if verb == "where" then
+    if not M.isFriend(k) then
+      -- once a minute at most per asker
+      if os.time() - (M.friendAnswered[k] or 0) >= 60 then
+        M.friendAnswered[k] = os.time()
+        tempTimer(0, function()
+          M.say(who .. "'s Oven asked where you are - not told (sbo friend add " .. k .. " to let it)")
+          if M.inGame(M.lastStatusPrompt or M.lastPromptText) then M.sendOwn("tell " .. k .. " #oven no " .. id, false) end
+        end)
+      end
+      return true
+    end
+    if os.time() - (M.friendAnswered[k] or 0) < 3 then return true end
+    M.friendAnswered[k] = os.time()
+    local room = M.mapRoom or tonumber((G("room.info") or {}).num)
+    tempTimer(0, function()
+      if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return end
+      M.sendOwn("tell " .. k .. " #oven at " .. id .. " " .. (room and tostring(room) or "?"), false)
+      M.say("told " .. who .. "'s Oven where you are")
+    end)
+    return true
+  end
+  local A = M.friendAsks[k]
+  if not A or A.id ~= id then return true end         -- not an answer to anything asked
+  M.friendAsks[k] = nil
+  if A.timer then killTimer(A.timer) end
+  local room = tonumber(rest)
+  local why = verb == "no" and "hasn't added you as a friend (they type sbo friend add and your name)"
+    or "their Oven doesn't know which room they're in"
+  tempTimer(0, function() if A.thenDo then A.thenDo(verb == "at" and room or nil, why) end end)
+  return true
+end
+
+---------------------------------------------------------------------------
 -- Scan marks: names you've marked light up in the game's scan
 -- ("A burrowing centipede is close by to the east.")
 ---------------------------------------------------------------------------
@@ -8015,6 +8135,21 @@ end
 
 function M.onLineWork()
   local cap = M.cap
+  -- Oven talking to Oven (tells starting "#oven"): handled, and kept off the screen
+  if line:find("#oven ", 1, true) then
+    local okW, mine = pcall(M.wireLine, line)
+    if okW and mine then pcall(deleteLine); return end
+  end
+  if next(M.friendAsks) and trim(line) == "They aren't here." then
+    -- the game's answer to a tell to someone who isn't online
+    for k, A in pairs(M.friendAsks) do
+      if os.time() - A.at <= 3 then
+        M.friendAsks[k] = nil
+        if A.timer then killTimer(A.timer) end
+        tempTimer(0, function() if A.thenDo then A.thenDo(nil, "isn't online") end end)
+      end
+    end
+  end
   pcall(M.observe, line)
   pcall(M.scanLight, line)
   pcall(M.chatGrab, line)
@@ -10466,9 +10601,19 @@ M.CMDS = {
     run = function(r)
       if r == "" then return say("sbo go {what}: a trainer, shop, quest, NPC name, room #, bookmark or signpost run") end
       if r:lower() == "stop" then return M.stopAll() end
+      -- a friend (or a player Oven knows): ask their Oven where they are, then walk there
+      local who = r:lower():match("^@?(%a+)$")
+      if who and (r:sub(1, 1) == "@" or M.isFriend(who)) then return M.friendWhere(who, true) end
       return M.mapRun(r)
     end },
   { name = "stop", desc = "stop a walk, or anything Oven is doing for you", run = function() return M.stopAll() end },
+  { name = "friend", min = 2, desc = "friends whose Oven can ask yours where you are (and you theirs)",
+    run = function() return M.friendList() end, subs = {
+    { name = "add", args = "{name}", desc = "let their Oven ask where you are", run = function(r) return M.friendAdd(r) end },
+    { name = "remove", args = "{name}", desc = "stop telling them", run = function(r) return M.friendRemove(r) end },
+    { name = "list", desc = "your friends", run = function() return M.friendList() end },
+    { name = "where", args = "{name}", desc = "ask their Oven where they are, and show it on the map", run = function(r) return M.friendWhere(r, false) end },
+  } },
   { name = "eq", desc = "equipment and items: compare, upgrades, learn, builds (shown in the Inspector)", subs = {
     { name = "compare", args = "[{a} vs {b}]", desc = "the last two items looked at, or two by name",
       run = function(r)
