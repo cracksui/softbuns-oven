@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.1.0"
+M.version = "1.1.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4966,8 +4966,9 @@ function M.noteSpellHelp(lines)
   end
 end
 
--- help 1085 (combat): damage by where a blow lands
-M.BODY_DAMAGE = { head = 1.2, torso = 1, arms = 0.65, legs = 0.75, tail = 0.5, wings = 0.5, wing = 0.5 }
+-- damage by where a blow lands: help 3499 (adventurer's guide xb, updated 2024-11-25). help 1085 (combat)
+-- gives slightly different numbers (arms 65%, legs 75%, tail and wings 50%); the guide is the dated one.
+M.BODY_DAMAGE = { head = 1.2, torso = 1, arms = 0.7, legs = 0.7, tail = 0.6, wings = 0.6, wing = 0.6 }
 
 -- how hard you're hit: learned from your fights (hp lost ÷ hits taken, round by round)
 function M.noteHitTaken(hits, lost)
@@ -5858,7 +5859,7 @@ function M.buildLines(width)
   for _, l in ipairs(locs) do
     local mod = M.BODY_DAMAGE[l[1]] or 1
     line("AR " .. l[1], { { C.num, pad(tostring(l[2]), 4) },
-      { C.dim, string.format("takes %.1f%% off a hit there · a hit there does %d%% (help 1085)", l[2] * rate, mod * 100) } })
+      { C.dim, string.format("takes %.1f%% off a hit there · a hit there does %d%% (help 3499)", l[2] * rate, mod * 100) } })
   end
   if base.defense then
     line("of a hit gets through", { { C.num, string.format("%.1f%%", base.defense.through[1] * 100) },
