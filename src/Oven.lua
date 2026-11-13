@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.5.0"
+M.version = "1.5.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6275,6 +6275,8 @@ M.HELP_BATCHES = {
   -- then the pages most likely to show how defenses are worked out
   { name = "the rules on scripts, and defenses",
     pages = { "1879", "2125", "2509", "2528", "2543", "2263", "2270", "2678", "1985", "2046", "status" } },
+  { name = "damage: strength, enhanced damage, your weapons",
+    pages = { "1344", "1519", "1740", "1739", "1348", "2066", "1702", "2220", "2135", "1744" } },
 }
 local WORTH = { "combat", "attack", "defen", "damage", "dodge", "parry", "block", "evasion", "armor", "resist",
   "accuracy", "crit", "skill power", "complexity", "spell", "magic", "cast", "regen", "heal", "strength",
