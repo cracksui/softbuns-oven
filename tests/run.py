@@ -686,6 +686,13 @@ def combat_model():
     m = o.ev("sbo.combatModel(STAFF, MACE)")
     eq(round(m.offense.parts.accuracy[2]), 55 + 29 - 25, "+29 weapon accuracy, -25 from losing staff skill")
     assert m.offense.pct < 0, "worse: a skill you don't have, and far less crit"
+    # attacks per round (help 2258 + help haste: +10 attack speed)
+    eq(o.ev("sbo.attacksPerRound(10)"), 1.1, "no extra-attack skills: 10 speed = a 10% second attack")
+    o.lua("sbo.cfg.skills['second attack'] = { lrnd = 95 }")
+    eq(round(o.ev("sbo.attacksPerRound(10)"), 2), 2.05, "95% second attack: 5 to finish it, 5 into third attack")
+    o.lua("sbo.cfg.skills['second attack'] = nil")
+    m = o.ev("sbo.combatModel(nil, { extra = { { 'Casts', { { 'x', \"'haste'\" } } } } })")
+    eq(round(m.offense.pct, 1), 10.0, "haste on gear: +10% damage per round")
 
 
 @test

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.96.0"
+M.version = "0.97.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4934,6 +4934,32 @@ local function attrAfter(stat, d)
   return now, after
 end
 
+-- help 2258: attacks per round from your extra-attack skills and your attack speed
+M.EXTRA_ATTACKS = { "second attack", "third attack", "fourth attack", "fifth attack" }
+function M.attacksPerRound(speed)
+  local left, n = math.max(0, speed or 0), 1
+  local skills = M.cfg.skills or {}
+  for _, k in ipairs(M.EXTRA_ATTACKS) do
+    local have = tonumber((skills[k] or {}).lrnd) or 0
+    local add = math.min(100 - have, left)
+    left = left - add
+    n = n + (have + add) / 100
+  end
+  return n + left / 100
+end
+-- attack speed from what you wear (affects, and haste cast by gear)
+function M.wornAttackSpeed()
+  local sp = 0
+  for _, nm in ipairs(M.eqNames or {}) do
+    local it = M.items[nm]
+    if it then
+      sp = sp + (modelStats(it)["attack-speed"] or 0)
+      if (M.itemEffects(it))["spell:haste"] then sp = sp + 10 end
+    end
+  end
+  return sp
+end
+
 -- the model: what swapping `old` (may be nil) for `new` does. Returns
 -- { offense = {pct, now, after, notes}, defense = {...}, casting = {...}, estimates = {…} } or nil, why
 function M.combatModel(old, new)
@@ -4990,9 +5016,15 @@ function M.combatModel(old, new)
        + attrPart("strength", 0, 20) + attrPart("wisdom", 0, 20)
   crit2 = crit2 + d("crit-chance")
   local function swing(D, A, C) return D * math.max(1, math.min(98, A)) / 100 * (1 + C / 100) end
-  local e1, e2 = swing(dmg, acc, crit), swing(dmg2, acc2, crit2)
+  -- attacks per round (help 2258): attack speed raises your extra-attack skills, one after another,
+  -- up to 100; what's left is a further chance of an attack. Haste gives +10 attack speed (help haste).
+  local speed1 = M.wornAttackSpeed()
+  local speed2 = speed1 + d("attack-speed") + 10 * (((M.itemEffects(new or {}))["spell:haste"] and 1 or 0)
+                                                    - ((M.itemEffects(old or {}))["spell:haste"] and 1 or 0))
+  local n1, n2 = M.attacksPerRound(speed1), M.attacksPerRound(speed2)
+  local e1, e2 = swing(dmg, acc, crit) * n1, swing(dmg2, acc2, crit2) * n2
   res.offense = { pct = (e2 / e1 - 1) * 100, now = e1, after = e2,
-                  parts = { damage = { dmg, dmg2 }, accuracy = { acc, acc2 }, crit = { crit, crit2 } } }
+                  parts = { damage = { dmg, dmg2 }, accuracy = { acc, acc2 }, crit = { crit, crit2 }, attacks = { n1, n2 } } }
 
   -- defense ---------------------------------------------------------------
   local locs = M.cfg.arLoc or {}
@@ -5022,7 +5054,7 @@ function M.combatModel(old, new)
   -- what has no formula yet: listed, and scored with the weights (marked ~ where shown)
   -- (agility and strength are only partly covered: their dodging and damage are estimated, at HALF)
   local known = { damage = 1, ["damage-prcnt"] = 1, accuracy = 1, luck = 1, personality = 1,
-                  wisdom = 1, ["crit-chance"] = 1, hp = 1, ar = 1, ["spell-points"] = 1 }
+                  wisdom = 1, ["crit-chance"] = 1, hp = 1, ar = 1, ["spell-points"] = 1, ["attack-speed"] = 1 }
   local keys = {}
   for k in pairs(a) do keys[k] = true end
   for k in pairs(b) do keys[k] = true end
@@ -5069,7 +5101,7 @@ function M.estimatePoints(old, new, w, m)
   for k in pairs(eb) do keys[k] = true end
   for k in pairs(keys) do
     local dv = (eb[k] or 0) - (ea[k] or 0)
-    if dv ~= 0 then
+    if dv ~= 0 and k ~= "spell:haste" then   -- haste is in the model (attack speed)
       pts = pts + dv * M.statWeight(w, k)
       names[#names + 1] = k:gsub("^spell:", ""):gsub("^skill:", "")
     end
@@ -5497,7 +5529,7 @@ function M.upgradeLines(width, all, role)
   end
   if shown > 0 then
     if M.combatModel(nil, nil) then
-      out[#out + 1] = { { C.dim, "offense = expected damage per swing (damage × hit chance × crit), defense = effective hit points (hp ÷ damage" } }
+      out[#out + 1] = { { C.dim, "offense = expected damage per round (damage × hit chance × crit × attacks), defense = effective hit points (hp ÷ damage" } }
       out[#out + 1] = { { C.dim, "through your AR), casting = spell points - from your eq's numbers and the game's formulas. ~est = what has no" } }
       out[#out + 1] = { { C.dim, "formula yet (spells on gear, resistances, dodging…), valued with your build's weights" } }
     end
@@ -5863,7 +5895,7 @@ function M.compareLines(a, b, width)
           p == 0 and "=" or string.format("%+.1f%%", p), p })
         at = at + 1
       end
-      row("Dmg per swing", m.offense, "%.1f")
+      row("Dmg per round", m.offense, "%.1f")
       row("Effective HP", m.defense, "%.0f")
       row("Spell points", m.casting, "%.0f")
     end
