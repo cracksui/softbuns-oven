@@ -637,8 +637,14 @@ def upgrade_gains_and_losses():
         grants = { { 'parry', '100%', 'block' } } }""")
     gain, lose = o.ev("function() return sbo.upgradeDiff(OLD, NEW, select(2, sbo.activeBuild())) end")()
     g = [x.text for x in gain.values()]; l = [x.text for x in lose.values()]
-    assert "+5 ar" in g and "+13 hp" in g and "parry 100%" in g, g
+    assert "+5 ar-torso" in g and "+13 hp" in g and "parry 100%" in g, g
     assert "−2 accuracy" in l and "casts sanctuary" in l, l
+    # AR: "Affects ar" covers every location; an item's own AR only where it's worn (ar-torso), a share of it
+    o.lua("sbo.cfg.arLoc = { head = 5, torso = 16, arms = 14, legs = 18, tail = 5 }")
+    eq(o.ev("sbo.itemStats({ ar = '10', worn = 'on the legs' })['ar-legs']"), 10, "a legs item's AR is legs AR")
+    eq(o.ev("sbo.itemStats({ ar = '1', worn = 'worn as a shield' })['ar-arms']"), 1, "a shield covers the arms")
+    w = "select(2, sbo.activeBuild())"
+    eq(round(o.ev(f"sbo.statWeight({w}, 'ar') / sbo.statWeight({w}, 'ar-legs')"), 2), 5.0, "all five locations vs one")
     # by role: the plate is more defense (AR, hp) and less offense (accuracy) than the garb
     d = o.ev("sbo.roleScores(NEW)").defense - o.ev("sbo.roleScores(OLD)").defense
     assert d > 0, d

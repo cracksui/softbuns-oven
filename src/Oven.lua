@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.94.0"
+M.version = "0.95.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -748,8 +748,11 @@ end
 function M.arLocationFor(worn)
   if not worn then return nil end
   local w = worn:lower()
-  for _, pair in ipairs({ { "head", "head" }, { "body", "torso" }, { "torso", "torso" }, { "arms", "arms" },
-                          { "legs", "legs" }, { "tail", "tail" } }) do
+  -- where an item's own AR counts (worked out from eq's AR by location against what's worn):
+  -- the neck and waist cover the torso, hands, wrists and a shield the arms, feet the legs
+  for _, pair in ipairs({ { "head", "head" }, { "neck", "torso" }, { "body", "torso" }, { "torso", "torso" },
+                          { "waist", "torso" }, { "shield", "arms" }, { "hands", "arms" }, { "wrist", "arms" },
+                          { "arms", "arms" }, { "finger", "arms" }, { "feet", "legs" }, { "legs", "legs" }, { "tail", "tail" } }) do
     if w:find(pair[1], 1, true) then return pair[2] end
   end
 end
@@ -4707,6 +4710,14 @@ local function weightOf(w, stat)
   return M.statWeight(w, stat)
 end
 function M.statWeight(w, stat)
+  -- AR in one location: AR's weight (which covers all of them) shared out over your locations
+  -- (eq shows them: head, torso, arms, legs - and tail for some races)
+  local loc = stat:match("^ar%-(%a+)$")
+  if loc and w[stat] == nil then
+    local n = 0
+    for _ in pairs(M.cfg.arLoc or {}) do n = n + 1 end
+    return (w.ar or M.effectWeights.ar or 3) / (n > 0 and n or 4)
+  end
   local sp = stat:match("^spell:(.+)$")
   if sp and w[stat] == nil then return select(2, M.spellInfo(sp)) end
   local D = M.effectWeights
@@ -4727,7 +4738,13 @@ function M.itemStats(it)
       if a[1] and v then s[a[1]] = (s[a[1]] or 0) + v end
     end
   end
-  if tonumber(it.ar) then s.ar = (s.ar or 0) + tonumber(it.ar) end
+  -- "Affects ar by N" covers every location; an item's own "Armor resistance is N" covers where
+  -- it's worn (ar-torso, ar-arms…), like the game's own ar-arms / ar-legs affects
+  if tonumber(it.ar) and tonumber(it.ar) ~= 0 then
+    local loc = M.arLocationFor(it.worn)
+    local k = loc and ("ar-" .. loc) or "ar"
+    s[k] = (s[k] or 0) + tonumber(it.ar)
+  end
   local wp = it.weapon
   if wp then
     local function r(x) return RANK[tostring(x or ""):lower()] end
