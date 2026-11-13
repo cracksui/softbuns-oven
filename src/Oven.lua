@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.90.0"
+M.version = "0.91.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2218,10 +2218,20 @@ function M.noteTrain(raw)
   M.cfg.char = M.cfg.char or {}
   local c = M.cfg.char
   c.stats, c.trainCost = c.stats or {}, c.trainCost or {}
+  -- the train table shows what you've TRAINED; score shows that plus your gear (capped at the maximum).
+  -- Kept apart: stats = with gear (score), trained = without
+  c.trained = c.trained or {}
   for _, r in ipairs(tr.rows) do
     local k = r.name:lower()
     c.trainCost[k] = r.cost
-    if k ~= "hp" and k ~= "sp" and k ~= "st" then c.stats[k] = { cur = r.cur, max = r.max } end
+    if k ~= "hp" and k ~= "sp" and k ~= "st" then
+      local old = c.trained[k]
+      -- trained one more since score was read: your total goes up one too (until score says otherwise)
+      local st = c.stats[k]
+      if old and st and st.cur and r.cur > old.cur and st.cur < r.max then st.cur = math.min(r.max, st.cur + (r.cur - old.cur)) end
+      if not st then c.stats[k] = { cur = r.cur, max = r.max } end
+      c.trained[k] = { cur = r.cur, max = r.max }
+    end
   end
   if tr.prac then c.practices = tr.prac end
   M.saveSettings()
@@ -4718,7 +4728,10 @@ function M.itemStats(it)
     local function r(x) return RANK[tostring(x or ""):lower()] end
     if r(wp.dmgLevel) then s["weapon-damage"] = r(wp.dmgLevel) end
     if r(wp.accuracy) then s["weapon-accuracy"] = r(wp.accuracy) end
-    if r(wp.critChance) then s["weapon-crit"] = r(wp.critChance) end
+    -- crit chance isn't evenly spaced (help 2468: Min 2%, Low 7%, Average 14%, High 22%, Max 31%):
+    -- counted by the real chance, on the same scale (Low = 1); damage and accuracy are (76…112, 16…45)
+    local CRIT = { 2, 7, 14, 22, 31 }
+    if r(wp.critChance) then s["weapon-crit"] = CRIT[r(wp.critChance)] / 7 end
   end
   for k, v in pairs(M.itemEffects(it)) do s[k] = (s[k] or 0) + v end
   return s
@@ -5127,8 +5140,10 @@ function M.trainLines(width)
     return out
   end
   local rows = {}
+  local trained = c.trained or {}
   for k, st in pairs(stats) do
     local cur, mx = tonumber(st.cur), tonumber(st.max)
+    local base = trained[k] and tonumber(trained[k].cur)
     if cur and mx then
       local e = M.TRAIN_EFFECT[k] or { text = "" }
       local wt = w[k] or 0
@@ -5136,7 +5151,9 @@ function M.trainLines(width)
       local val = wt + (k == primary and 0.5 or 0)
       local hit = e.hit or (e.above and cur >= e.above and 1) or 0
       local cost = tonumber((c.trainCost or {})[k])
+      -- training raises your total only until it reaches the maximum: gear may already fill the rest
       rows[#rows + 1] = { k = k, cur = cur, max = mx, room = math.max(0, mx - cur), wt = wt, val = val, hit = hit, e = e,
+                          base = base, gear = base and (cur - base) or nil,
                           cost = cost, per = cost and cost > 0 and val / cost * 100 or nil }
     end
   end
@@ -5163,19 +5180,27 @@ function M.trainLines(width)
   out[#out + 1] = {}
   local haveCost = (c.trainCost or {}).strength ~= nil or next(c.trainCost or {}) ~= nil
   if c.practices then out[#out + 1] = { { C.dim, "  you have " }, { C.num, tostring(c.practices) }, { C.dim, " practices" } } end
-  out[#out + 1] = { { C.dim, "  " .. pad("attribute", 13) .. pad("now", 8) .. pad("left", 6) .. pad("per point", 11)
+  local haveBase = next(trained) ~= nil
+  out[#out + 1] = { { C.dim, "  " .. pad("attribute", 13) .. pad("now", 8) .. (haveBase and pad("trained", 9) or "") .. pad("left", 6) .. pad("per point", 11)
     .. (haveCost and pad("cost", 6) or "") .. "what a point does" } }
   for _, r in ipairs(rows) do
     local done = r.room == 0
-    local row = { { done and C.dim or C.key, "  " .. pad(r.k, 13) }, { done and C.flag or C.text, pad(r.cur .. "/" .. r.max, 8) },
-      { done and C.dim or C.num, pad(done and "max" or tostring(r.room), 6) },
-      { r.val > 0 and C.num or C.dim, pad(string.format("%.1f", r.val), 11) } }
+    local row = { { done and C.dim or C.key, "  " .. pad(r.k, 13) }, { done and C.flag or C.text, pad(r.cur .. "/" .. r.max, 8) } }
+    if haveBase then
+      row[#row + 1] = { C.dim, pad(r.base and (r.base .. (r.gear and r.gear > 0 and (" +" .. r.gear) or "")) or "?", 9) }
+    end
+    addAll(row, { { done and C.dim or C.num, pad(done and "max" or tostring(r.room), 6) },
+      { r.val > 0 and C.num or C.dim, pad(string.format("%.1f", r.val), 11) } })
     if haveCost then row[#row + 1] = { C.text, pad(r.cost and tostring(r.cost) or "?", 6) } end
     row[#row + 1] = { C.dim, r.e.text .. (r.k == primary and " · primary" or "") }
     out[#out + 1] = row
   end
   out[#out + 1] = {}
   out[#out + 1] = { { C.dim, "per point = the attribute's weight in your build (sbo eq build); the primary attribute gets +0.5." } }
+  if haveBase then
+    out[#out + 1] = { { C.dim, "now = with your gear (score), trained = what you've trained +what gear adds. left = what training can still add to now:" } }
+    out[#out + 1] = { { C.dim, "  past the maximum it adds nothing while you wear that gear (it only frees the gear for something else)." } }
+  end
   out[#out + 1] = { { C.dim, haveCost and "ranked by value per practice (per point ÷ cost); it follows the game as you train."
     or "type train once (at a trainer) and Oven adds what each costs, and ranks by value per practice." } }
   out[#out + 1] = { { C.dim, "once an attribute is at its maximum, more of it on gear counts a quarter - so training it makes that gear worth less." } }

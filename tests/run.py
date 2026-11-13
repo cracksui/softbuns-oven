@@ -648,9 +648,12 @@ def training_advice():
              "Attribute Name        Current Stat   Practice Cost", "knowledge                 13/21           60",
              "agility                    9/17           80"]
     o.lua("runTimers()")
-    o.ev("sbo.noteTrain")(o.L.table_from(TRAIN))
+    # the train table shows what's trained (gear comes on top, in score): training once more = one more in total
+    o.ev("sbo.noteTrain")(o.L.table_from([l.replace("13/21", "8/21") for l in TRAIN]))
+    o.ev("sbo.noteTrain")(o.L.table_from([l.replace("13/21", "9/21") for l in TRAIN]))
     o.lua("runTimers()")
     assert "13/21" in page() and "12/21" not in page(), f"redrawn with the new number: {page()}"
+    assert "9 +4" in page(), f"trained 9, gear +4: {page()}"
     eq(o.ev("sbo.cfg.char.trainCost.knowledge"), 60, "and what it costs")
 
 
