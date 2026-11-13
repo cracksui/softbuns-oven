@@ -791,6 +791,22 @@ def help_fetch():
     o.lua(TICK); o.lua(TICK); o.lua(TICK)
     assert "DODGING ATTACKS" in open(o.ev("sbo.helpFile")).read()
     assert any("2 pages saved" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    # a long page (a list): 3 screens, then out of the pager - not a stream of "c"s
+    o.lua('SENT = {}; sbo.cfg.helpSaved = {}; sbo.command("debug help 2488")')
+    o.feed("[2488 ] LIST OF ALL HELP ENTRIES", " [1000] magical items - a", "[C]ontinue [R]edraw [B]ack [E]xit: ")
+    o.feed(" [1001] more - b", "[C]ontinue [R]edraw [B]ack [E]xit: ")
+    o.feed(" [1002] more - c", "[C]ontinue [R]edraw [B]ack [E]xit: ")
+    sent = list(o.ev("SENT").values())
+    eq(sent, ["help 2488", "c", "c", "e"], f"two more screens, then exit: {sent}")
+    o.lua('sbo.command("debug help stop")')
+    # you type while it reads: it stops, and your command isn't swallowed
+    o.lua('SENT = {}; SAYS = {}; sbo.cfg.helpSaved = {}; sbo.command("debug help 3480, 3481")')
+    o.feed("[3480 ] ADVENTURER'S GUIDE", "some text")
+    o.lua('sbo.onSend(nil, "look")')
+    eq(o.ev("sbo.helpFetch"), None, "stopped")
+    eq(o.ev("sbo.cap and sbo.cap.gag"), None, "nothing hidden any more")
+    o.lua("runTimers()")
+    assert any("you typed" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
     # nothing before you're in the game
     o.lua('SENT = {}'); o.set_gmcp("char.status", '{ state = "login" }')
     o.lua('sbo.command("debug help haste")')

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.4.3"
+M.version = "1.4.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6269,9 +6269,8 @@ M.HELP_BATCHES = {
     pages = { "1406", "1023", "2136", "1372", "2261", "2262", "2387", "1709", "defense", "defenses", "avoid", "evade", "riposte" } },
   { name = "help headers and defense details",
     pages = { "1082", "1127", "1109", "1803" } },
-  -- help _filter <word> searches every help page for a word (help 1082)
-  { name = "armor, and every page that mentions defenses",
-    pages = { "1155", "_filter acrobatics", "_filter dodge", "_filter parry", "_filter defense" } },
+  -- (help _filter <word> was meant to search every page for a word - help 1082 - but it lists them all)
+  { name = "armor, and every page that mentions defenses", pages = { "1155" } },
 }
 local WORTH = { "combat", "attack", "defen", "damage", "dodge", "parry", "block", "evasion", "armor", "resist",
   "accuracy", "crit", "skill power", "complexity", "spell", "magic", "cast", "regen", "heal", "strength",
@@ -6390,6 +6389,9 @@ function M.helpFetchNext()
     for _, l in ipairs(plain or {}) do if trim(l):match("^%[%s*%d+%s*%]%s+%u") then isPage = true; break end end
     if topic:match("^%d+$") and not isPage then
       savedIndex()[topic] = true
+    elseif M.lastCutShort then
+      M.lastCutShort = nil
+      savedIndex()[topic:lower()] = true   -- a long list, not a page: noted, not saved
     elseif plain and #plain > 0 then
       M.helpSave(topic, plain)
       H.saved = H.saved + 1
@@ -7701,6 +7703,20 @@ function M.onSend(_, cmd)
   else
     M.lastUserCmdAt = now()
     if M.scanTrack and not tostring(cmd):lower():match("^%s*scan%s*$") then pcall(M.scanTrackStop, "tracking stopped (you took over)") end
+    -- reading help pages in the background: you come first - it stops, and the page it was on
+    -- isn't swallowing your command's output
+    if M.helpFetch then
+      local H = M.helpFetch
+      M.helpFetch = nil
+      if H.timer then killTimer(H.timer) end
+      if M.cap and M.cap.quiet and M.cap.kind == "help" then
+        M.cap.gag, M.cap.quiet, M.cap.quietKind, M.cap.quietFn = false, false, nil, nil
+        M.cap = nil
+      end
+      M.quietNext = nil
+      pcall(M.drawBar)
+      tempTimer(0, function() M.say(string.format("help reading stopped (you typed) - %d page%s saved; sbo debug help next carries on", H.saved, H.saved == 1 and "" or "s")) end)
+    end
   end
   -- everything below sees what an alias stands for ("qr" -> "quest request"), recordings too
   cmd = M.expandAlias(cmd)
@@ -9715,6 +9731,15 @@ function M.onLineWork()
   if not cap and not M.cfg.bar then return end
   -- the game's pager: "[C]ontinue [R]edraw [B]ack [E]xit:"
   if line:match("^%s*%[C%]ontinue") then
+    -- a page Oven fetched for itself (sbo debug help): 3 screens at most - then out of the pager,
+    -- so a page that turns out to be a long list doesn't become a stream of "c"s
+    if cap and cap.kind == "help" and cap.quiet and (cap.pages or 1) >= 3 then
+      if cap.gag then deleteLine() end
+      cap.cutShort = true
+      M.sendOwn("e", false)
+      tempTimer(0, function() M.finish("pager") end)
+      return
+    end
     if cap and cap.kind == "help" and (cap.pages or 1) < 30 then
       -- keep reading the help page into the window: answer the pager ourselves
       cap.pages = (cap.pages or 1) + 1
@@ -9890,6 +9915,7 @@ function M.finish(reason)
     return
   end
   if cap.quiet and cap.quietKind == "fn" then
+    M.lastCutShort = cap.cutShort
     -- a reply Oven asked for itself (sbo eq learn carried): hand it over, draw nothing
     if reason == "prompt" and not M.cfg.bar then deleteLine() end
     local fn = cap.quietFn
