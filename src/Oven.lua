@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.5.1"
+M.version = "1.5.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4877,6 +4877,9 @@ function M.noteCombat(raw)
         parts[(why:gsub("^from ", ""))] = tonumber((num:gsub("^%+%-", "-"):gsub("^%-%+", "-"):gsub("^%+", "")))
       end
       local key = label:lower()
+      -- "(38% chance for +3 from enhanced damage)": a bonus on some hits, not in the total
+      local ch, plus = rest:match("%((%d+)%% chance for %+(%d+) from enhanced damage%)")
+      if key == "damage" and ch then c.enhanced = { chance = tonumber(ch), plus = tonumber(plus) } end
       if key == "damage" then c.damage, c.dmgParts = tonumber(v), parts
       elseif key == "accuracy" then c.accuracy, c.accParts = tonumber(v), parts
       elseif key == "range" then c.range = tonumber(v)
@@ -5072,6 +5075,8 @@ function M.combatModel(old, new)
 
   -- offense ---------------------------------------------------------------
   local dmg, acc, crit = c.damage, c.accuracy, c.crit or 0
+  -- enhanced damage (eq: "38% chance for +3"): on average, chance × bonus more per hit
+  if c.enhanced then dmg = dmg + c.enhanced.chance / 100 * c.enhanced.plus end
   local dmg2, acc2, crit2 = dmg, acc, crit
   -- flat damage and damage-prcnt (help 1920: "your melee damage, as a percentage of your base damage")
   local base = (c.dmgParts or {})["weapon"] or dmg
@@ -5873,6 +5878,10 @@ function M.buildLines(width)
   for k, v in pairs(cb.dmgParts or {}) do parts[#parts + 1] = string.format("%+d %s", v, k) end
   table.sort(parts)
   line("damage per hit", { { C.num, tostring(cb.damage) }, { C.dim, #parts > 0 and ("   " .. table.concat(parts, ", ")) or "" } })
+  if cb.enhanced then
+    line("enhanced damage", { { C.num, string.format("+%.1f", cb.enhanced.chance / 100 * cb.enhanced.plus) },
+      { C.dim, string.format("   on average: %d%% of hits do +%d (your eq)", cb.enhanced.chance, cb.enhanced.plus) } })
+  end
   local hit = math.max(1, math.min(98, cb.accuracy))
   line("hit chance", { { C.num, hit .. "%" }, { C.dim, cb.accuracy > 98 and ("   (accuracy " .. cb.accuracy .. ", capped at 98)") or "   (your accuracy, help 1747)" } })
   line("critical hits", { { C.num, (cb.crit or 0) .. "%" }, { C.dim, "   for double damage (help 2468)" } })
@@ -5892,7 +5901,7 @@ function M.buildLines(width)
   end
   local P = base.offense.parts
   line("damage per round", { { C.plus, string.format("%.1f", base.offense.now) },
-    { C.dim, string.format("   = %d × %.0f%% hit × %.2f (crits) × %.2f attacks", cb.damage, math.min(98, P.accuracy[1]), 1 + (cb.crit or 0) / 100, P.attacks[1]) } })
+    { C.dim, string.format("   = %.1f × %.0f%% hit × %.2f (crits) × %.2f attacks", P.damage[1], math.min(98, P.accuracy[1]), 1 + (cb.crit or 0) / 100, P.attacks[1]) } })
 
   -- defense
   head("Defense")
@@ -6277,6 +6286,8 @@ M.HELP_BATCHES = {
     pages = { "1879", "2125", "2509", "2528", "2543", "2263", "2270", "2678", "1985", "2046", "status" } },
   { name = "damage: strength, enhanced damage, your weapons",
     pages = { "1344", "1519", "1740", "1739", "1348", "2066", "1702", "2220", "2135", "1744" } },
+  { name = "strength and damage types",
+    pages = { "1519", "2220", "1744" } },
 }
 local WORTH = { "combat", "attack", "defen", "damage", "dodge", "parry", "block", "evasion", "armor", "resist",
   "accuracy", "crit", "skill power", "complexity", "spell", "magic", "cast", "regen", "heal", "strength",

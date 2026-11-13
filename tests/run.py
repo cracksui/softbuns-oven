@@ -667,6 +667,14 @@ def combat_model():
     o.lua("""sbo.cfg.char.class = 'monk'; sbo.cfg.char.stats = { agility = { cur = 9, max = 17 }, strength = { cur = 10, max = 20 } }
       sbo.cfg.maxes = { hp = 365, sp = 875 }; sbo.cfg.arLoc = { head = 5, torso = 16, arms = 14, legs = 18, tail = 5 }; sbo.cfg.arRate = 0.75
       sbo.cfg.skills = { staff = { lrnd = 85 }, mace = { lrnd = 0 } }""")
+    # enhanced damage from eq: "38% chance for +3" -> +1.14 on average, on top of the 57
+    o.ev("sbo.noteCombat")(o.L.table_from(["57 Damage: (+46 from weapon) (+9 from skill & strength) (38% chance for +3 from enhanced damage)",
+        "55 Accuracy: (+16 from weapon)", "31% Critical Hit chance:"]))
+    eq(round(o.ev("sbo.combatModel(nil, nil)").offense.parts.damage[1], 2), 58.14, "57 + 38% of 3")
+    o.ev("sbo.noteCombat")(o.L.table_from([
+        "57 Damage: (+46 from weapon) (+9 from skill & strength) (+1 from weapon skillpower)",
+        "55 Accuracy: (+7 from level) (+25 from weapon skill) (+16 from weapon) (+5 from agility)",
+        "31% Critical Hit chance:  (+31 from staff)", "You have a 46% chance to resist a critical hit."]))
     m = o.ev("sbo.combatModel(nil, { affects = { { 'damage-prcnt', '5' } } })")
     # 5% of the weapon's 46 = +2.3 damage on 57: +4.0% per swing
     eq(round(m.offense.pct, 1), 4.0, "damage-prcnt from the weapon's base damage")
