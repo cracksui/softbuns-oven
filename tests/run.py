@@ -563,6 +563,17 @@ def bar_group_health():
 
 
 @test
+def death_saves_the_fight():
+    o = Oven()
+    eq(o.ev("sbo.cfg.recWindow"), 3000, "keeps about an hour of hunting")
+    o.lua("SAVED = {}; sbo.windowSave = function(why) SAVED[#SAVED + 1] = why return 1 end")
+    o.feed("The world goes black as a shifting shadow crushes the life from you, and tears your head from your body.")
+    o.feed("Your disembodied soul rises from your ravaged corpse.")
+    o.lua("runTimers()")
+    eq(list(o.ev("SAVED").values()), ["you died"], "saved the moment you die, not after the maze")
+
+
+@test
 def ship_prompt():
     import re as _re
     o = Oven()

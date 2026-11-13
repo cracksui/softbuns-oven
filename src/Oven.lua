@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.84.2"
+M.version = "0.85.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -30,7 +30,7 @@ M.defaults = {
   maxTime      = 4,          -- hard limit on how long a capture can last
   maxLines     = 120,
   samples      = true,       -- write raw captures to oven_samples.txt (for tuning the parsers)
-  recWindow    = 300,        -- blocks of recent game output kept in memory (0 = off); saved on demand / on death
+  recWindow    = 3000,       -- blocks of recent game output kept in memory (0 = off); saved on demand / on death
   fontSize     = 10,
   -- Lua pattern for your prompt, used in addition to telnet GA/EOR detection.
   -- Default: a line that is just <...> containing a digit, e.g. "<120hp 80sp 90st>".
@@ -91,6 +91,7 @@ function M.loadSettings()
     local c = table.concat(t.barBg, ",")
     if c == "28,30,42" or c == "18,19,26" then t.barBg = nil end
   end
+  if t.recWindow == 300 then t.recWindow = nil end   -- 0.85.0: 300 was too short to hold a whole fight
   for k, v in pairs(M.defaults) do
     if t[k] == nil then t[k] = v end
   end
@@ -6660,7 +6661,7 @@ function M.recordLine(l, prompt)
   M.recCur = { lines = {}, cmds = {} }
   b.prompt = prompt
   pcall(M.onBlock, b)
-  local max = tonumber(M.cfg.recWindow) or 300
+  local max = tonumber(M.cfg.recWindow) or 3000
   if max > 0 then
     W.blocks[#W.blocks + 1] = b
     while #W.blocks > max do table.remove(W.blocks, 1) end
@@ -8249,6 +8250,11 @@ function M.onLineWork()
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
   -- It goes on the bar; it's never part of a command's output.
   pcall(M.noteLootContext, line)
+  -- the moment you die: save the fight now, before the walk out of the death maze pushes it
+  -- out of memory (the death itself is logged at "restore your soul", where the body is)
+  if line:find("^%s*Your disembodied soul rises from your ravaged corpse") and not M.rec then
+    tempTimer(1, function() pcall(M.windowSave, "you died") end)
+  end
   if line:find("^%s*The Powers take pity on you and restore your soul to your body") then
     M.sess.deathsLive = (M.sess.deathsLive or 0) + 1
     pcall(M.noteRoomDeath)
