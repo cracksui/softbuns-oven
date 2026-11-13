@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.2.0"
+M.version = "1.2.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6252,6 +6252,7 @@ function M.helpFetchStart(arg)
   if arg:lower() == "stop" then
     local H = M.helpFetch
     M.helpFetch = nil
+    pcall(M.drawBar)
     return M.say(H and string.format("help fetching stopped - %d pages saved", H.saved) or "not fetching help")
   end
   -- gently: at most 15 pages a command, one every 6 seconds - like someone reading them
@@ -6263,6 +6264,7 @@ function M.helpFetchStart(arg)
     H.limit = math.huge
     local idx = savedIndex()
     for n = 1000, 3700 do if not idx[tostring(n)] then H.queue[#H.queue + 1] = tostring(n) end end
+    H.total, H.done = #H.queue, 0
     M.helpFetch = H
     M.say(string.format("fetching every help page into oven_help.txt: %d to go, one every couple of seconds while you're idle"
       .. " - sbo debug help stop to pause (run it again to carry on)", #H.queue))
@@ -6278,6 +6280,7 @@ function M.helpFetchStart(arg)
     end
   end
   if #H.queue == 0 then return M.say("which pages? sbo debug help 3479-3492") end
+  H.total, H.done = math.min(#H.queue, H.limit), 0
   M.helpFetch = H
   M.say(string.format("fetching %d help page%s%s into oven_help.txt - sbo debug help stop to stop", #H.queue,
     #H.queue == 1 and "" or "s", H.crawl and " (and what they link to)" or ""))
@@ -6300,6 +6303,7 @@ function M.helpFetchNext()
   end
   if not topic or H.saved >= H.limit then
     M.helpFetch = nil
+    pcall(M.drawBar)
     local b = M.helpBatchName
     M.helpBatchName = nil
     if b and b.i and #H.queue == 0 then
@@ -6314,6 +6318,8 @@ function M.helpFetchNext()
   H.seen[topic:lower()] = true
   M.quietly("help " .. topic, "help", function(plain)
     if M.helpFetch ~= H then return end
+    H.done = (H.done or 0) + 1
+    pcall(M.drawBar)
     -- a number with no page ("There were no direct matches…"): noted, not saved
     local isPage = false
     for _, l in ipairs(plain or {}) do if trim(l):match("^%[%s*%d+%s*%]%s+%u") then isPage = true; break end end
@@ -6337,7 +6343,10 @@ function M.helpFetchNext()
         -- " [1347] dodge - move out of the way of an attack": the SEE ALSO pages, followed by number
         for _, l in ipairs(plain) do
           local n = l:match("^%s*%[%s*(%d+)%s*%]%s+%S")
-          if n and not H.seen[n] and not savedIndex()[n] then H.queue[#H.queue + 1] = n end
+          if n and not H.seen[n] and not savedIndex()[n] then
+            H.queue[#H.queue + 1] = n
+            H.total = math.min(H.limit, (H.done or 0) + #H.queue)
+          end
         end
       end
     end
@@ -6969,6 +6978,14 @@ function M.drawBar()
     -- aboard a ship: right after your pools, where your mount's stamina goes when you ride
     if p.ship then addAll(out, M.shipSegs(p.ship, gwidth)) end
     addAll(out, tail)
+    -- help pages being read (sbo debug help): how far along - at the far right, out of the way
+    local HF = M.helpFetch
+    if HF and (HF.total or 0) > 0 then
+      local done = math.min(HF.total, HF.done or 0)
+      out[#out + 1] = { C.dim, "   help " }
+      out[#out + 1] = { C.num, done .. "/" .. HF.total .. " " }
+      addAll(out, M.gauge(done, HF.total, 6))
+    end
     if p.rest ~= "" then out[#out + 1] = { C.text, "   " .. p.rest } end
     return out
   end

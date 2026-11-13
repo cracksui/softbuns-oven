@@ -777,6 +777,12 @@ def help_fetch():
     text = open(o.ev("sbo.helpFile")).read()
     assert "===== help 3480 [3480]" in text and "Dodging is 1% per 2 agility." in text, text
     eq(list(o.ev("SENT").values())[-1], "help 1347", "crawl: then what it links to")
+    # progress on the prompt bar while it reads
+    o.lua("""sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300, sp = 600, st = 450 }
+      sbo.bar = setmetatable({ rawEcho = function(self, h) BAR = h end }, { __index = function() return function() end end })
+      sbo.lastPromptText = "<270hp 550sp 401st>"; sbo.drawBar()""")
+    bar = __import__("re").sub("<[^>]+>", "", o.ev("BAR") or "")
+    assert "help 1/2" in bar and bar.index("help 1/2") > bar.index("ST"), f"at the right, after the vitals: {bar}"
     o.feed("[1347 ] DODGING ATTACKS", "dodge - move out of the way", "<270hp 550sp 401st>")
     o.lua(TICK); o.lua(TICK); o.lua(TICK)
     assert "DODGING ATTACKS" in open(o.ev("sbo.helpFile")).read()
