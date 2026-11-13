@@ -2317,6 +2317,13 @@ def prompt_with_text_after_it():
     o.feed("<281hp 696sp 444st> You receive an index card containing a recipe.")
     eq(list(o.ev("REPLACED").values()), [0, 20, ""], "the prompt and its space taken off the line")
     eq(list(o.ev("BARS").values()), ["<281hp 696sp 444st> "], "and onto the bar")
+    # aboard a ship
+    eq(o.ev('sbo.promptHead("[Mail](120hull --dir ANCHOR --wind 452, 1210) ship info")'), "[Mail](120hull --dir ANCHOR --wind 452, 1210)", "a ship's prompt")
+    eq(o.ev('sbo.promptHead("Roarke (the bold) waves.")'), None, "brackets in game text")
+    o.lua("BARS = {}; GAG = 0; deleteLine = function() GAG = GAG + 1 end; isPrompt = function() return true end")
+    o.feed("[Mail](120hull --dir ANCHOR --wind 452, 1210) ")
+    eq(len(list(o.ev("BARS").values())), 1, "the ship prompt goes to the bar")
+    eq(o.ev("GAG"), 1, "and off the game text")
 
 
 @test

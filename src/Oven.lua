@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.84.0"
+M.version = "0.84.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7921,11 +7921,15 @@ end
 -- "<281hp 696sp 444st> You receive…" -> "<281hp 696sp 444st> " (a status prompt at the start of a longer line)
 function M.promptHead(l)
   local from = 1
-  for _ = 1, 4 do
-    local i = l:find(">", from, true)
+  for _ = 1, 6 do
+    -- a prompt ends at ">" (<281hp ...>) or, aboard a ship, ")" ((120hull ... 452, 1210))
+    local i = l:find("[>%)]", from)
     if not i or i > 90 then return nil end
     local head = l:sub(1, i)
-    if l:sub(i + 1):match("%S") and #M.parsePrompt(head).vals > 0 then return head end
+    if l:sub(i + 1):match("%S") then
+      local pp = M.parsePrompt(head)
+      if #pp.vals > 0 or pp.ship then return head end
+    end
     from = i + 1
   end
 end
@@ -8235,7 +8239,10 @@ function M.onLineWork()
   pcall(M.scanLight, line)
   pcall(M.chatGrab, line)
   pcall(M.recordLine, line, isPromptLine())
-  if isPromptLine() and #M.parsePrompt(line).vals > 0 then M.lastStatusPrompt = line end
+  if isPromptLine() then
+    local pl = M.parsePrompt(line)
+    if #pl.vals > 0 or pl.ship then M.lastStatusPrompt = line end
+  end
   pcall(M.noteRoomLine, line)
   pcall(M.noteKillContext, line)
   -- "(Mount: 764st)": your mount's stamina, sent just before each prompt while riding.
@@ -8326,7 +8333,8 @@ function M.onLineWork()
     if cap and #cap.plain > 0 then M.finish("prompt") end
     -- a question the game asks the way it sends a prompt ("Do you really want to quit (y/N)?") isn't
     -- your status: it stays in the game text to be answered. Your prompt has values (<291hp ...>).
-    local status = #M.parsePrompt(line).vals > 0
+    local pl = M.parsePrompt(line)
+    local status = #pl.vals > 0 or pl.ship ~= nil   -- a ship's prompt is your status too
     if status then M.promptHasVals = true end
     if M.cfg.bar and (status or not M.promptHasVals) then
       local d = selectionDecho() or line
