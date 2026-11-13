@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.4.4"
+M.version = "1.4.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6271,6 +6271,10 @@ M.HELP_BATCHES = {
     pages = { "1082", "1127", "1109", "1803" } },
   -- (help _filter <word> was meant to search every page for a word - help 1082 - but it lists them all)
   { name = "armor, and every page that mentions defenses", pages = { "1155" } },
+  -- picked from the game's full help index: the rules on scripts first (Oven does some things for you),
+  -- then the pages most likely to show how defenses are worked out
+  { name = "the rules on scripts, and defenses",
+    pages = { "1879", "2125", "2509", "2528", "2543", "2263", "2270", "2678", "1985", "2046", "status" } },
 }
 local WORTH = { "combat", "attack", "defen", "damage", "dodge", "parry", "block", "evasion", "armor", "resist",
   "accuracy", "crit", "skill power", "complexity", "spell", "magic", "cast", "regen", "heal", "strength",
