@@ -960,6 +960,42 @@ def signpost_runs():
 
 
 @test
+def mounted_run():
+    # on a mount the game says "traveling", not "running" (recorded 2026-11-13: Oven took the run
+    # for failed after 6 seconds, and its first step on foot halted the gryphon)
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.cfg.map = true; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end')
+    o.lua(MAP_GAME)
+    o.set_gmcp("char.status", '{ state = "playing" }')
+    o.lua("""
+      RUN_HOOK = function()
+        if not SIGNS[HERE] then return false end
+        LINES("You start traveling with a winged gryphon.", "<270hp 550sp 401st>")
+        STEP = 0
+        return true
+      end
+      -- the gryphon moves on a room each time timers tick (a second or so in the game)
+      local tick = 0
+      MOVE = function()
+        if not STEP then return end
+        STEP = STEP + 1
+        if STEP == 1 then AT(200); LINES("You take note of the directions on a weatherbeaten signpost near Townton, and head east.", "You travel eastward on a winged gryphon.", "<270hp 550sp 401st>")
+        elseif STEP == 2 then AT(250); LINES("You travel eastward on a winged gryphon.", "     A weatherbeaten signpost is firmly planted here.", "Your travel abruptly comes to a halt.", "<270hp 550sp 401st>"); STEP = nil end
+      end
+      sbo.dbx("INSERT OR REPLACE INTO signposts (room, sign, dests, exact, last) VALUES (120, 'a post', 'rune=east', 1, 1)")
+    """)
+    o.lua("AT(120); SENT = {}; sbo.mapWalkTo(255); PUMP1()")
+    eq(list(o.ev("SENT").values()), ["run rune"], "runs from the signpost")
+    # the run's 6-second check fires while the gryphon is still going
+    o.lua("for id, t in pairs(timers) do if t[1] == 6 then timers[id] = nil; t[2]() end end")
+    eq(o.ev("sbo.running and sbo.running.started"), True, "still running: the start was seen")
+    o.lua("MOVE(); MOVE(); PUMP()")
+    eq(o.ev("HERE"), 255, "arrived")
+    assert not any("walking instead" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    eq(o.ev("sbo.runData().ends.rune"), 250, "the end is learned from a mounted run too")
+
+
+@test
 def run_stops_at_a_signpost_on_the_way():
     o = Oven()
     o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.cfg.map = true; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end')
@@ -1191,7 +1227,7 @@ def shop_listed_on_arrival():
     o.lua("SENT = {}; ARRIVE(1); ARRIVE(10515)")
     eq(len(o.ev("SENT")), 0, "once; none elsewhere")
     # not while walking through, not when switched off
-    o.lua("SENT = {}; sbo.shopTried = {}; sbo.dbx('DELETE FROM shops'); sbo.running = { name = 'rune', started = true }; ARRIVE(1); ARRIVE(10515); sbo.running = nil")
+    o.lua("SENT = {}; sbo.shopTried = {}; sbo.dbx('DELETE FROM shops'); sbo.running = { name = 'rune', started = true }; ARRIVE(1); sbo.running = { name = 'rune', started = true }; ARRIVE(10515); sbo.running = nil")
     eq(len(o.ev("SENT")), 0, "not while running past")
     o.lua("sbo.command('config map.shoplist off'); sbo.shopTried = {}; ARRIVE(1); ARRIVE(10515)")
     eq(len(o.ev("SENT")), 0, "switched off")

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.85.0"
+M.version = "0.85.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -9540,6 +9540,7 @@ function M.runFailed(why)
   M.running = nil
   if not R then return end
   if R.timer then pcall(killTimer, R.timer) end
+  if R.quiet then pcall(killTimer, R.quiet) end
   if R.target then
     M.notifyWalk("run " .. R.name .. ": " .. why .. " - walking instead")
     M.mapWalkTo(R.target, true)
@@ -9551,6 +9552,7 @@ function M.runStopped(atSign)
   M.running = nil
   if not R then return end
   if R.timer then pcall(killTimer, R.timer) end
+  if R.quiet then pcall(killTimer, R.quiet) end
   local here = M.mapRoom
   -- stopped at a signpost on the way (a junction), the destination still far off: run on from here.
   -- Even at the run's saved end (an older Oven saved junctions as ends): running again either moves you on
@@ -9597,10 +9599,25 @@ M.addBlockReader("signpost_runs", "*", function(b)
     if t:match("signpost is firmly planted here%.$") then atSign = true end
     local R = M.running
     if R then
-      if t == "You start running." then R.started = true end
+      -- on foot "You start running."; mounted "You start traveling with a winged gryphon."
+      if t == "You start running." or t:match("^You start traveling with ") then R.started = true end
       if t == "That only works in the wilds!" then M.runFailed("only works in the wilds") end
-      if t == "You stop running." then M.runStopped(atSign) end
+      if t == "You stop running." or t:match("^You stop traveling") or t:match("^Your travels? .-comes? to an? %a+%.$")
+         or t:match("^Your travels? .-ends?%.$") then
+        M.runStopped(atSign)
+      end
     end
+  end
+  -- a run that's stopped without saying so in a way Oven knows: no new room for a while
+  local R = M.running
+  if R and R.started then
+    if R.quiet then pcall(killTimer, R.quiet) end
+    R.quiet = tempTimer(8, function()
+      if M.running ~= R then return end
+      R.quiet = nil
+      local here = M.mapRoom
+      M.runStopped(here and M.signAt(here) ~= nil)
+    end)
   end
   if sign and next(sign.dests) then M.noteSignpost(sign) end
   if atSign and b.prompt and M.mapRoom then
