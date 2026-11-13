@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.5.3"
+M.version = "1.5.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6294,6 +6294,9 @@ M.HELP_BATCHES = {
     pages = { "1344", "1519", "1740", "1739", "1348", "2066", "1702", "2220", "2135", "1744" } },
   { name = "strength and damage types",
     pages = { "1519", "2220", "1744" } },
+  -- what a spell point is worth in a fight: the cost and damage of your attack spells
+  { name = "your attack spells (what spell points buy)",
+    pages = { "2619", "1490", "1487", "2481", "2037", "spell damage" } },
 }
 local WORTH = { "combat", "attack", "defen", "damage", "dodge", "parry", "block", "evasion", "armor", "resist",
   "accuracy", "crit", "skill power", "complexity", "spell", "magic", "cast", "regen", "heal", "strength",
