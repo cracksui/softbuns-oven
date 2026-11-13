@@ -2352,6 +2352,43 @@ def combat_mxp_lines():
 
 
 @test
+def combat_line_in_place():
+    o = Oven()
+    # a fake main window: decho appends to BUF, the last entry is the line being written
+    o.lua('''BUF = { "" }
+      decho = function(w, t) if t == nil then t = w end t = t:gsub("<[^>]+>", "")
+        local parts = {} for seg in (t .. "\\n"):gmatch("([^\\n]*)\\n") do parts[#parts + 1] = seg end
+        BUF[#BUF] = BUF[#BUF] .. parts[1]
+        for i = 2, #parts do BUF[#BUF + 1] = parts[i] end end
+      getCurrentLine = function() return BUF[#BUF] end
+      function GAME(t) BUF[#BUF] = BUF[#BUF] .. t; BUF[#BUF + 1] = "" end
+      function ROUND(pct, dist) gmcp.char = gmcp.char or {}; gmcp.char.combat_mxp = { opponent_hp_percent = pct, opponent_hits = 0,
+        your_hp_percent = 100, your_weapon_range = 2, you_defend = 0, opponent_misses = 1, opponent_name = "a mental patient",
+        opponent_defends = 0, you_hit = 1, you_miss = 0, distance_to_opponent = dist or 2 }; handlers["gmcp.char.combat_mxp"]() end
+      sbo.lastPromptText = "<281hp 696sp 457st>"''')
+    o.lua('ROUND(90); GAME(""); GAME("<281hp 696sp 457st>"); ROUND(70); GAME(""); ROUND(50)')
+    buf = [x for x in o.ev("BUF").values() if x.strip()]
+    fights = [x for x in buf if x.startswith("⚔")]
+    eq(len(fights), 1, f"one line for the fight: {buf}")
+    assert "50%" in fights[0] and "▼20" in fights[0] and "round 3" in fights[0] and "~3 to go" in fights[0], fights[0]
+    assert "<281hp" in buf[0], f"the prompt stays: {buf}"
+    # other game text in between: a new line from then on
+    o.lua('GAME("A mental patient screams in pain."); ROUND(40, 3)')
+    fights = [x for x in o.ev("BUF").values() if x.startswith("⚔")]
+    eq(len(fights), 2, "a new line after other text")
+    assert "out of reach (3 › 2)" in fights[1], fights[1]
+    # killed: the exp and gold go in the summary, which takes the fight line's place
+    o.feed("A mental patient has been slain!")
+    o.feed("You receive 1,444 experience points.")
+    o.feed("You take 146 gold coins.")
+    o.lua("runTimers()")
+    fights = [x for x in o.ev("BUF").values() if x.startswith("⚔")]
+    eq(len(fights), 2, f"the summary replaced the live line: {fights}")
+    s = fights[1]
+    assert "slain" in s and "4 rounds" in s and "+1,444 xp" in s and "+146 gold" in s, s
+
+
+@test
 def combat_bar():
     o = Oven()
     o.lua('''sbo.cfg.bar = true; BARS = {}
@@ -2372,9 +2409,12 @@ def combat_bar():
     assert "you hit 1/1" in bar, bar
     eq(o.ev("sbo.cbar.shown"), True, "shown while fighting")
     eq(o.ev("sbo.cbar.y < 900 - 20"), True, "above the prompt bar")
+    o.lua('gmcp.char.combat_mxp.opponent_hp_percent = 50; gmcp.char.combat_mxp.distance_to_opponent = 3; handlers["gmcp.char.combat_mxp"]()')
+    bar = o.ev("BARS.ovenCombatBarLabel")
+    assert "▼12" in bar and "OUT OF REACH (3 › 2)" in bar and "~5 to go" in bar, bar
     o.lua('ROUND("a wolf", 30, 0)')
     bar = o.ev("BARS.ovenCombatBarLabel")
-    assert bar.index("a wolf") < bar.index("others:") < bar.index("a mental patient 62%"), f"the latest in full, the other compressed: {bar}"
+    assert bar.index("a wolf") < bar.index("others:") < bar.index("a mental patient 50%"), f"the latest in full, the other compressed: {bar}"
     # twenty of them: as many as fit, lowest health first, then "+N more"
     o.lua('for i = 1, 20 do ROUND("a goblin " .. i, 100 - i * 4, 1) end; ROUND("a wolf", 30, 1)')
     bar = o.ev("BARS.ovenCombatBarLabel")

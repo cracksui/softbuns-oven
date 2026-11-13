@@ -91,8 +91,9 @@ function send(c, e) print("[send "..c.." echo="..tostring(e).."]") end
 -- a tiny fake main buffer for line-number based calls
 BUF = {} CUR = 0
 function getLineNumber() return CUR end
-function getLines(a, b) local t = {} for i = a, b - 1 do t[#t+1] = BUF[i+1] end return t end
-function moveCursor(x, y) CUR = y return true end
+function getLines(a, b, c) if type(a) == "string" then a, b = b, c end
+  local t = {} for i = a, b - 1 do t[#t+1] = BUF[i+1] end return t end
+function moveCursor(x, y, z) if type(x) == "string" then y = z end CUR = y return true end
 function moveCursorEnd() CUR = #BUF - 1 end
 function deleteLine() if BUF[CUR+1] then table.remove(BUF, CUR+1) end end
 function setFgColor(w,r,g,b) io.write("{"..r..","..g..","..b.."}") end

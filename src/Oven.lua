@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.80.1"
+M.version = "0.81.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5451,10 +5451,23 @@ function M.drawCombatBar()
   for _, F in ipairs(fights) do if (F.seq or 0) > (cur.seq or 0) then cur = F end end
   local function col(p) p = tonumber(p) or 0; return p >= 70 and C.plus or (p >= 35 and C.title or C.minus) end
   local pctv = tonumber(cur.lastPct) or 0
-  local segs = { { col(pctv), M.pctBar(pctv, 8) }, { col(pctv), string.format(" %3d%%", pctv) }, { C.item, "  " .. cur.name },
-    { C.dim, string.format("    you hit %d/%d", cur.hit, cur.hit + cur.miss + cur.parried) },
-    { C.dim, string.format("  ·  it hit %d/%d", cur.took, cur.took + cur.missed + cur.defended) } }
-  if #fights == 1 then segs[#segs + 1] = { C.dim, string.format("  ·  round %d", cur.rounds) } end
+  local segs = { { col(pctv), M.pctBar(pctv, 8) }, { col(pctv), string.format(" %3d%%", pctv) } }
+  local d = cur.drop
+  if d and d > 0 then segs[#segs + 1] = { C.plus, " ▼" .. d }
+  elseif d and d < 0 then segs[#segs + 1] = { C.minus, " ▲" .. -d } end
+  segs[#segs + 1] = { C.item, "  " .. cur.name }
+  -- out of reach: right after the name, where it's seen
+  if (cur.range or 0) > 0 and (cur.dist or 0) > cur.range then
+    segs[#segs + 1] = { C.flag, string.format("  OUT OF REACH (%d › %d)", cur.dist, cur.range) }
+  end
+  segs[#segs + 1] = { C.dim, string.format("    you hit %d/%d", cur.hit, cur.hit + cur.miss + cur.parried) }
+  segs[#segs + 1] = { C.dim, string.format("  ·  it hit %d/%d", cur.took, cur.took + cur.missed + cur.defended) }
+  local _, eta = M.fightMomentum(cur)
+  if #fights == 1 then
+    segs[#segs + 1] = { C.dim, string.format("  ·  round %d", cur.rounds) .. (eta and string.format(" · ~%d to go", eta) or "") }
+  elseif eta then
+    segs[#segs + 1] = { C.dim, string.format("  ·  ~%d to go", eta) }
+  end
   local others = {}
   for _, F in ipairs(fights) do if F ~= cur then others[#others + 1] = F end end
   table.sort(others, function(a, b) return (tonumber(a.lastPct) or 0) < (tonumber(b.lastPct) or 0) end)
@@ -5898,6 +5911,31 @@ end
 M.pctBar = pctBar
 local function hpCol(p) p = tonumber(p) or 0; return p >= 70 and C.plus or (p >= 35 and C.title or C.minus) end
 
+-- how a fight is going, from its health % over the rounds: the last round's change and,
+-- at the average so far, roughly how many rounds are left
+function M.fightMomentum(F)
+  local pct = tonumber(F.lastPct) or 0
+  local eta
+  if F.rounds >= 2 and (F.pct0 or 0) > pct and pct > 0 then
+    local per = (F.pct0 - pct) / (F.rounds - 1)
+    eta = math.ceil(pct / per)
+  end
+  return F.drop, eta
+end
+
+-- "▼9" (it lost 9% this round) / "▲3" (it healed); nothing when it didn't change
+local function dropSegs(F, segs)
+  local d = F.drop
+  if d and d > 0 then segs[#segs + 1] = { C.plus, " ▼" .. d }
+  elseif d and d < 0 then segs[#segs + 1] = { C.minus, " ▲" .. -d } end
+end
+
+local function reachSegs(F, segs)
+  if (F.range or 0) > 0 and (F.dist or 0) > F.range then
+    segs[#segs + 1] = { C.flag, string.format("   out of reach (%d › %d)", F.dist, F.range) }
+  end
+end
+
 function M.onCombatRound()
   local r = G("char.combat_mxp")
   if type(r) ~= "table" or not r.opponent_name then return end
@@ -5909,7 +5947,7 @@ function M.onCombatRound()
   if not F then
     M.fightOrder = (M.fightOrder or 0) + 1
     F = { key = key, name = r.opponent_name, rounds = 0, hit = 0, miss = 0, parried = 0, took = 0, missed = 0, defended = 0,
-          order = M.fightOrder }
+          order = M.fightOrder, started = os.time() }
     M.fights[key] = F
   end
   M.fight = F
@@ -5917,7 +5955,11 @@ function M.onCombatRound()
   F.hit, F.miss, F.parried = F.hit + n("you_hit"), F.miss + n("you_miss"), F.parried + n("opponent_defends")
   F.took, F.missed, F.defended = F.took + n("opponent_hits"), F.missed + n("opponent_misses"), F.defended + n("you_defend")
   M.roundSeq = (M.roundSeq or 0) + 1
-  F.lastPct, F.at, F.seq = n("opponent_hp_percent"), os.time(), M.roundSeq
+  local pct = n("opponent_hp_percent")
+  F.drop = F.lastPct and (F.lastPct - pct) or nil
+  F.pct0 = F.pct0 or pct
+  F.lastPct, F.at, F.seq = pct, os.time(), M.roundSeq
+  F.dist, F.range, F.you = n("distance_to_opponent"), n("your_weapon_range"), n("your_hp_percent")
   F.room = F.room or tonumber((G("room.info") or {}).num)
   -- rounds come every few seconds; none for a while = the fight's over (combat mode changed, it ended
   -- some way Oven didn't see). The game doesn't send char.status while you fight, so don't wait on it.
@@ -5925,9 +5967,10 @@ function M.onCombatRound()
   F.timer = tempTimer(10, function() F.timer = nil; if M.fights[key] == F then M.fightSummary(nil, F) end end)
   pcall(M.drawCombatBar)
   if not M.cfg.combatLines then return end
-  -- "⚔ a mental patient ██▌░░ 27%   you hit 1 · it missed 1   you 100%"
+  -- "⚔ a mental patient ██▌░░ 27% ▼9   you 1 hit · it 1 missed   you 100%   round 3 · ~2 to go"
   local segs = { { C.dim, "⚔ " }, { C.item, r.opponent_name .. " " },
-                 { hpCol(r.opponent_hp_percent), pctBar(r.opponent_hp_percent, 8) }, { hpCol(r.opponent_hp_percent), string.format(" %d%%", n("opponent_hp_percent")) } }
+                 { hpCol(pct), pctBar(pct, 8) }, { hpCol(pct), string.format(" %d%%", pct) } }
+  dropSegs(F, segs)
   local mine, theirs = {}, {}
   local function add(list, k, word, col) if n(k) > 0 then list[#list + 1] = { col, n(k) .. " " .. word } end end
   add(mine, "you_hit", "hit", C.plus); add(mine, "you_miss", "missed", C.dim); add(mine, "opponent_defends", "blocked", C.dim)
@@ -5942,12 +5985,12 @@ function M.onCombatRound()
   end
   list("you", mine); list("it", theirs)
   segs[#segs + 1] = { C.dim, "   you " }
-  segs[#segs + 1] = { hpCol(r.your_hp_percent), n("your_hp_percent") .. "%" }
-  -- out of reach: say so
-  if n("distance_to_opponent") > n("your_weapon_range") and n("your_weapon_range") > 0 then
-    segs[#segs + 1] = { C.flag, string.format("   out of reach (%d, your range %d)", n("distance_to_opponent"), n("your_weapon_range")) }
-  end
-  M.combatEcho(segs)
+  segs[#segs + 1] = { hpCol(F.you), F.you .. "%" }
+  local _, eta = M.fightMomentum(F)
+  segs[#segs + 1] = { C.dim, string.format("   round %d", F.rounds) }
+  if eta then segs[#segs + 1] = { C.dim, string.format(" · ~%d to go", eta) } end
+  reachSegs(F, segs)
+  M.combatLine(F, segs)
 end
 
 -- a line in the game text, above the prompt
@@ -5962,6 +6005,66 @@ function M.combatEcho(segs)
   decho("main", ((cur ~= "") and "\n" or "") .. table.concat(t) .. "<r>\n")
 end
 
+-- is this main-window line one of the game's prompts?
+local function promptText(t)
+  t = trim(t or "")
+  if t == "" then return false end
+  if M.lastPromptText and t == trim(M.lastPromptText) then return true end
+  return M.cfg.promptPattern ~= "" and t:match(M.cfg.promptPattern) ~= nil
+end
+
+-- the fight's line, kept up to date: while nothing but prompts and blank lines has come in since
+-- the last one, it's taken out and drawn again at the bottom, so a fight is one line, not one per round
+function M.combatLine(F, segs, final)
+  if M.inLine then
+    tempTimer(0, function() M.combatLine(F, segs, final) end)
+    return
+  end
+  local L = M.liveCombat
+  if L and (not final or L.F == F) then
+    pcall(function()
+      moveCursorEnd("main")
+      local last = getLineNumber("main")
+      if type(last) ~= "number" or last < L.n or last - L.n > 8 then return end
+      local lines = getLines("main", L.n, last + 1)
+      if type(lines) ~= "table" or lines[1] ~= L.text then return end
+      for i = 2, #lines do
+        local t = lines[i] or ""
+        if t:match("%S") and not promptText(t) then return end
+      end
+      -- bottom up: the blank lines after it, then the line itself (prompts stay)
+      for i = #lines - 1, 1, -1 do
+        local t = lines[i] or ""
+        if i == 1 or not t:match("%S") then moveCursor("main", 0, L.n + i - 1); deleteLine("main") end
+      end
+      moveCursorEnd("main")
+    end)
+  end
+  M.combatEcho(segs)
+  M.liveCombat = nil
+  if final then return end
+  local plain = {}
+  for _, sg in ipairs(segs) do plain[#plain + 1] = sg[2] end
+  pcall(function()
+    moveCursorEnd("main")
+    local ln = getLineNumber("main")
+    if type(ln) == "number" and ln >= 1 then M.liveCombat = { F = F, n = ln - 1, text = table.concat(plain) } end
+  end)
+end
+
+local function fightTime(sec)
+  sec = math.max(0, sec or 0)
+  if sec < 60 then return sec .. "s" end
+  return string.format("%dm %02ds", math.floor(sec / 60), sec % 60)
+end
+
+local function commas(n)
+  local s = tostring(math.floor(n))
+  local k
+  repeat s, k = s:gsub("^(%-?%d+)(%d%d%d)", "%1,%2") until k == 0
+  return s
+end
+
 -- the fight is over (it died, or you stopped fighting): one line for the whole fight
 function M.fightSummary(how, F)
   F = F or M.fight
@@ -5969,14 +6072,40 @@ function M.fightSummary(how, F)
   if (M.fights or {})[F.key] == F then M.fights[F.key] = nil end
   if M.fight == F then M.fight = nil end
   if F.timer then killTimer(F.timer); F.timer = nil end
+  if F.endTimer then killTimer(F.endTimer); F.endTimer = nil end
+  for i, E in ipairs(M.fightsEnding or {}) do if E == F then table.remove(M.fightsEnding, i) break end end
   pcall(M.drawCombatBar)
   if not F or F.rounds == 0 or not M.cfg.combatLines then return end
   local function rate(a, b) return (a + b) > 0 and string.format(" (%d%%)", math.floor(a * 100 / (a + b) + 0.5)) or "" end
-  M.combatEcho({ { C.dim, "⚔ " }, { C.item, F.name }, { C.dim, how and ("  " .. how) or "" },
-    { C.dim, string.format("  ·  %d round%s  ·  you hit ", F.rounds, F.rounds == 1 and "" or "s") },
-    { C.plus, F.hit .. "/" .. (F.hit + F.miss + F.parried) }, { C.dim, rate(F.hit, F.miss + F.parried) },
+  local segs = { { C.dim, "⚔ " }, { C.item, F.name }, { how == "slain" and C.plus or C.dim, how and ("  " .. how) or "" },
+    { C.dim, string.format("  ·  %d round%s", F.rounds, F.rounds == 1 and "" or "s") },
+    { C.dim, F.started and ("  ·  " .. fightTime((F.at or os.time()) - F.started + 3)) or "" },
+    { C.dim, "  ·  you hit " }, { C.plus, F.hit .. "/" .. (F.hit + F.miss + F.parried) }, { C.dim, rate(F.hit, F.miss + F.parried) },
     { C.dim, "  ·  it hit " }, { C.minus, F.took .. "/" .. (F.took + F.missed + F.defended) }, { C.dim, rate(F.took, F.missed + F.defended) },
-    { C.dim, F.defended > 0 and ("  ·  you defended " .. F.defended) or "" } })
+    { C.dim, F.defended > 0 and ("  ·  you defended " .. F.defended) or "" } }
+  if how ~= "slain" and F.lastPct then
+    segs[#segs + 1] = { C.dim, "  ·  left at " }
+    segs[#segs + 1] = { hpCol(F.lastPct), F.lastPct .. "%" }
+  end
+  if F.xp then segs[#segs + 1] = { C.dim, "  ·  " }; segs[#segs + 1] = { C.num, "+" .. commas(F.xp) .. " xp" } end
+  if F.gold then segs[#segs + 1] = { C.dim, "  ·  " }; segs[#segs + 1] = { C.title, "+" .. commas(F.gold) .. " gold" } end
+  M.combatLine(F, segs, true)
+end
+
+-- after "has been slain!": the exp and gold lines that follow belong to the fight's summary,
+-- which is drawn at the prompt (or a moment later)
+function M.noteFightLoot(l)
+  local E = M.fightsEnding and M.fightsEnding[#M.fightsEnding]
+  if not E then return end
+  local xp = l:match("^%s*You receive ([%d,]+) experience")
+  local gold = l:match("^%s*You take ([%d,]+) gold coins?") or l:match("^%s*You get ([%d,]+) gold coins?")
+  if xp then E.xp = (E.xp or 0) + (tonumber((xp:gsub(",", ""))) or 0) end
+  if gold then E.gold = (E.gold or 0) + (tonumber((gold:gsub(",", ""))) or 0) end
+end
+function M.fightsFlush()
+  local list = M.fightsEnding or {}
+  M.fightsEnding = nil
+  for _, F in ipairs(list) do M.fightSummary(F.endHow, F) end
 end
 
 -- "X has been slain!" for the one you're fighting, or no longer fighting: the fight's over
@@ -5986,9 +6115,14 @@ function M.noteFightEnd(l)
   local function bare(x) return (x:lower():gsub("^the ", ""):gsub("^an? ", "")) end
   for _, F in pairs(M.fights or {}) do
     if bare(who) == bare(F.name) then
-      -- after the line has been drawn (echoing while a line is being read would join the two)
       if F.timer then killTimer(F.timer); F.timer = nil end
-      tempTimer(0, function() M.fightSummary("slain", F) end)
+      M.fights[F.key] = nil
+      if M.fight == F then M.fight = nil end
+      pcall(M.drawCombatBar)
+      F.endHow = "slain"
+      M.fightsEnding = M.fightsEnding or {}
+      M.fightsEnding[#M.fightsEnding + 1] = F
+      F.endTimer = tempTimer(1.5, function() F.endTimer = nil; M.fightSummary("slain", F) end)
       return
     end
   end
@@ -6045,6 +6179,7 @@ function M.barUpdate(d)
   local ok, r = pcall(getBorderRight)
   if ok and r and r ~= M.barRight then M.layoutBar() end
   M.lastPromptDecho, M.lastPromptText = d, line
+  if M.fightsEnding then tempTimer(0, function() pcall(M.fightsFlush) end) end
   M.drawBar()
 end
 
@@ -7728,6 +7863,7 @@ function M.onLineWork()
     pcall(M.drawBar)
   end
   if M.fights and next(M.fights) then pcall(M.noteFightEnd, line) end
+  if M.fightsEnding then pcall(M.noteFightLoot, line) end
   local doneQuest = line:match("^%s*All parts of your quest '(.+)' are complete%.?%s*$")
   -- "You inform Lord Agrippa you have completed your quest 'Jail Time'." - turned in
   local turnedIn = not doneQuest and line:match("^%s*You inform .- you have completed your quest '(.+)'%.?%s*$")
