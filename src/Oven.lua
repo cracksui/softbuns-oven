@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.85.1"
+M.version = "0.86.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -387,6 +387,9 @@ M.commands = {
   { word = "where",     min = 5, kind = "where",
     argsOk = function(r) return r == "is" or r:match("^is%s") ~= nil end },
   -- a shop's list ("shop list", "sh li", "sh i"): read into the shops table; shown as the game sends it
+  -- "auction info": the item on auction, laid out like any item
+  { word = "auction",   min = 3, kind = "item",
+    argsOk = function(r) local w = r:match("^(%S+)") return w ~= nil and ("info"):sub(1, #w) == w end },
   { word = "shop",      min = 2, kind = "shop",
     argsOk = function(r) return r ~= "" and (("list"):sub(1, #r) == r or ("inventory"):sub(1, #r) == r) end },
 }
@@ -1352,6 +1355,35 @@ M.itemExtras = {
   { "^There are (%d+) out of (%d+) (%a+) of (.-) in this vessel%.?$",
     function(a, b, u, what) return "Holds", { { C.num, a }, { C.dim, "/" .. b .. " " .. u .. " of " }, { C.item, what } } end },
 }
+table.insert(M.itemExtras, { "^This %a+ has the additional attributes:%s*(.-)%.?$",
+  function(a) return "Also", { { C.flag, a } } end })
+
+-- "auction info": the imp's tablet around an item's identify. Returns the lines with the auction's
+-- own taken out (blanked, so line numbers - and colours - stay put) and what they said.
+function M.auctionLines(raw)
+  local A, out = nil, {}
+  for i, l in ipairs(raw) do
+    local t = trim(l)
+    local from = t:match("^This item is up for auction from (.-)%.?$")
+    local min = t:match("^The minimum bid on this item is %[([%d,]+)%]")
+    local cur, by = t:match("^The current bid on this item is %[([%d,]+)%].-by (.-)%.?$")
+    if not cur then cur = t:match("^The current bid on this item is %[([%d,]+)%]") end
+    local imp = t:match("^A small imp appears before you") or t:match("^The imp shows you a tablet")
+    if from or min or cur or imp or t:match("^No bids on this item") or (A and t:lower():find("bid", 1, true) and not t:match("^Item '")) then
+      A = A or { other = {} }
+      if from then A.from = from
+      elseif min then A.min = min
+      elseif cur then A.cur, A.by = cur, by
+      elseif t:match("^No bids") then A.none = true
+      elseif not imp then A.other[#A.other + 1] = t end
+      out[i] = ""
+    else
+      out[i] = l
+    end
+  end
+  return out, A
+end
+
 function M.itemExtra(t)
   for _, e in ipairs(M.itemExtras) do
     local a, b, c, d = t:match(e[1])
@@ -1466,7 +1498,7 @@ function M.parseItem(raw)
       it.set.worn, it.set.total = t:match("^You are currently wearing (%d+) of (%d+)")
       lastKnown = i
     elseif it.set and t:match("^%S%s*Item '.-'%s*$") then
-      local mark, name = t:match("^(%S)%s*Item '(.-)'")
+      local mark, name = t:match("^(%S)%s*Item '(.*)'%s*$")   -- to the last quote: "a chronomancer's phasing vest"
       it.set.pieces[#it.set.pieces + 1] = { name = name, worn = mark ~= "-" }
       lastKnown = i
     elseif it.set and t:match("%(Requires %d+ items?%)%.?$") then
@@ -1584,6 +1616,8 @@ function M.formatMob(raw, width)
 end
 
 function M.formatters.item(raw, width)
+  local auction
+  raw, auction = M.auctionLines(raw)
   local it = M.parseItem(raw)
   if not it or not it.name then
     local out, title = M.formatMob(raw, width)
@@ -1593,6 +1627,18 @@ function M.formatters.item(raw, width)
   local out = {}
   local cells = {}
   local function add(k, segs) if segs then cells[#cells + 1] = { k, segs } end end
+  if auction then
+    -- for sale: who's selling, and what it takes to win it
+    local segs = { { C.dim, "from " }, { C.item, auction.from or "?" } }
+    if auction.min then segs[#segs + 1] = { C.dim, "  ·  minimum bid " }; segs[#segs + 1] = { C.num, auction.min }; segs[#segs + 1] = { C.dim, " gp" } end
+    if auction.cur then
+      segs[#segs + 1] = { C.dim, "  ·  current bid " }; segs[#segs + 1] = { C.title, auction.cur }; segs[#segs + 1] = { C.dim, " gp" }
+      if auction.by then segs[#segs + 1] = { C.dim, " by " }; segs[#segs + 1] = { C.item, auction.by } end
+    elseif auction.none then segs[#segs + 1] = { C.dim, "  ·  no bids yet" } end
+    kvLine(out, "Auction", 9, segs, width)
+    for _, x in ipairs(auction.other) do kvLine(out, "", 9, { { C.text, x } }, width) end
+    out[#out + 1] = {}
+  end
   add("Type", it.type and { { C.item, it.type } })
   add("Level", it.level and { { C.num, it.level } })
   add("Material", it.material and { { C.item, it.material } })
@@ -1664,8 +1710,11 @@ function M.formatters.item(raw, width)
   for _, x in ipairs(it.extra) do kvLine(out, x[1], kw, x[2], width) end
   if it.special then kvLine(out, "Special", kw, { { C.flag, it.special } }, width) end
   for n, g in ipairs(it.grants) do
-    kvLine(out, n == 1 and "Grants" or "", kw,
-      { { C.slot, g[1] }, { C.num, " " .. g[2] }, { C.dim, "  " .. g[3] } }, width)
+    -- "… (Requires 5 items)": a set bonus - say so in words
+    local desc, need = tostring(g[3]):match("^(.-)%s*%(Requires (%d+) items?%)$")
+    local segs = { { C.slot, g[1] }, { C.num, " " .. g[2] }, { C.dim, "  " .. (desc or g[3]) } }
+    if need then segs[#segs + 1] = { C.flag, "  ·  with " .. need .. " set pieces" } end
+    kvLine(out, n == 1 and "Grants" or "", kw, segs, width)
   end
   if it.contents then
     subhead(out, "Contents")

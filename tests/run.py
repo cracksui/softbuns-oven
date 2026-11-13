@@ -562,6 +562,41 @@ def bar_group_health():
     assert i < plain.find("HP"), f"group comes first: {plain}"
 
 
+AUCTION_INFO = """A small imp appears before you in a puff of smoke.
+The imp shows you a tablet upon which is written:
+This item is up for auction from Pip.
+Item 'a tester's phasing barrier' is type armor, alignment 0, made of energy (in (new) condition),[Study][LTB]
+has keywords 'energy shield phasing barrier testers', equipped as a shield.
+This item weighs 0 stones and 2 pebbles, and is valued at 35,200 gold. {Cat. 6}
+This level 241 item has the attributes: magic-resistant no-dispel
+Armor resistance is 6.
+This armor has the additional attributes: reflect-magic
+Affects damage by -26.
+*This item may be repaired 4 times.
+This is part of the 'A Tester's Phasing Kit' set.
+- Item 'a tester's phasing barrier'
+- Item 'a tester's phasing goggles'
+Grants knowledge at 100%: slow time - room affect that doubles the casting time of all spells (Requires 2 items).
+A plain shield of shimmering energy, made for testing.  
+The minimum bid on this item is [35,000] gp.
+No bids on this item have been received."""
+
+
+@test
+def auction_info():
+    o = Oven()
+    eq(o.ev("(sbo.classify('auction info'))"), "item", "auction info is read like an item")
+    eq(o.ev("(sbo.classify('auction bid 5000'))"), None, "a bid isn't")
+    r = o.sbo.format("item", "", o.L.table_from(AUCTION_INFO.split("\n")), 90)
+    f = o.ev("function(rows) local s={} for _,r in ipairs(rows) do for _,g in ipairs(r) do s[#s+1]=tostring(g[2]) end s[#s+1]='\\n' end return table.concat(s) end")
+    out = f(r)
+    auc = next(l for l in out.split("\n") if l.startswith("Auction"))
+    assert "from Pip" in auc and "35,000" in auc and "no bids yet" in auc, auc
+    assert "imp" not in out and "minimum bid on this item" not in out, f"the tablet's own lines are gone: {out}"
+    assert "a tester's phasing goggles" in out, f"set pieces with apostrophes whole: {out}"
+    assert "reflect-magic" in out and "with 2 set pieces" in out, out
+
+
 @test
 def death_saves_the_fight():
     o = Oven()
