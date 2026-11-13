@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.9.2"
+M.version = "1.9.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5932,8 +5932,10 @@ end
 
 -- your attack abilities: the ones Oven knows about that you've learned
 function M.myAbilities()
-  if not M.cfg.abilitiesRead then
-    M.cfg.abilitiesRead = true
+  -- read again whenever Oven learns to read more from the pages (2: practice costs)
+  local READER = 2
+  if M.cfg.abilitiesRead ~= READER then
+    M.cfg.abilitiesRead = READER
     pcall(M.abilitiesFromHelpFile)
   end
   local out = {}

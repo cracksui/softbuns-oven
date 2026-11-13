@@ -732,13 +732,20 @@ def attack_abilities():
         "*Deals flames/lightning (2.2 base) damage."]))
     o.ev("sbo.noteAbilityHelp")(o.L.table_from(["[1348 ] KICK", "*Combat proficiency (10% complexity)",
         "*Character (Offensive) target, 2 second usage time", "*Deals bash/bash (1.3 base) damage."]))
-    o.lua("sbo.cfg.abilitiesRead = true; sbo.cfg.skills = { spark = { lrnd = 50 }, kick = { lrnd = 100 } }")
+    o.lua("sbo.cfg.abilitiesRead = 2; sbo.cfg.skills = { spark = { lrnd = 50 }, kick = { lrnd = 100 } }")
     mine = o.ev("sbo.myAbilities()")
     eq([x.name for x in mine.values()], ["kick", "spark"], "best per use first: 1.3 at 100% vs 2.2 at 50%")
     eq(round(o.ev("sbo.myAbilities()[2].perCost"), 2), 2.24, "spark: 1.1 per use, per 100 sp")
     lines = o.ev("sbo.abilitySwapLines(nil, { affects = { { 'fire-damage', '3' }, { 'damage-kick', '2' } } })")
     t = {x.name: x.text for x in lines.values()}
     eq(t, {"kick": "+2 damage-kick", "spark": "+3 fire-damage"}, "gear that boosts them")
+    # an install that read the pages before practice costs were read: read again (from oven_help.txt)
+    import tempfile
+    hf = tempfile.mktemp()
+    open(hf, "w").write("===== help 1487 [1487] | x\n[1487 ] SPARK\n*Pyromancy spell (5% complexity)\n*Costs 1.6 practices per percent learned.\n*Spell Points Required: 49\n*Deals flames/lightning (2.2 base) damage.\n===== end\n")
+    o.lua(f"sbo.helpFile = '{hf}'; sbo.cfg.abilitiesRead = true; sbo.cfg.abilities.spark.practice = nil")
+    o.ev("sbo.myAbilities()")
+    eq(o.ev("sbo.cfg.abilities.spark.practice"), 1.6, "practice cost read on the second reading")
     # practise next: the most damage per use for the practices, up to 75%
     o.ev("sbo.noteAbilityHelp")(o.L.table_from(["[1490 ] CAUSE LIGHT", "*Diamancy spell (8% complexity)",
         "*Costs 1.8 practices per percent learned.", "*Spell Points Required: 54", "*Deals energy/pain (2.4 base) damage."]))
