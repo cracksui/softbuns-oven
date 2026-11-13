@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.3.0"
+M.version = "1.4.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5169,10 +5169,15 @@ function M.combatModel(old, new)
   if hit and hit > 0 and d("resilience") ~= 0 then
     m2 = m2 * math.max(0.05, 1 - d("resilience") / hit)
   end
+  -- what your defenses avoid, as measured in your fights (the same before and after a swap: no help
+  -- page says how gear changes it)
+  local dl = (M.cfg.char or {}).defenseLog
+  local avoid = 0
+  if dl and (dl.avoided + dl.landed) >= 20 then avoid = dl.avoided / (dl.avoided + dl.landed) end
   if n > 0 and hp > 0 then
-    m1, m2 = m1 / n, m2 / n
+    m1, m2 = m1 / n * (1 - avoid), m2 / n * (1 - avoid)
     local eh1, eh2 = hp / m1, hp2 / m2
-    res.defense = { pct = (eh2 / eh1 - 1) * 100, now = eh1, after = eh2, through = { m1, m2 }, hp = { hp, hp2 } }
+    res.defense = { pct = (eh2 / eh1 - 1) * 100, now = eh1, after = eh2, through = { m1, m2 }, hp = { hp, hp2 }, avoid = avoid }
   end
 
   -- regeneration (help 2334) -------------------------------------------------
@@ -5846,7 +5851,7 @@ do -- (own scope)
 -- sbo eq build: your character in combat, worked out from your gear and attributes with the game's
 -- formulas - by category: offense, defense, recovery, casting - then your attributes and what training
 -- each would change. Nothing here is weighted: what has no formula in the help is listed as such.
-local NOT_CALCULATED = "dodging and parrying (agility, the defense skills), what strength adds to damage, how much "
+local NOT_CALCULATED = "how gear and agility change what you avoid (it's measured, as it is), what strength adds to damage, how much "
   .. "cheaper a spell gets per point of spell comprehension, how often weapon specials and procs fire, resistances "
   .. "(they depend on what you fight), granted skills, and spells whose help Oven hasn't read"
 
@@ -5908,7 +5913,7 @@ function M.buildLines(width)
       { C.dim, string.format("takes %.1f%% off a hit there · a hit there does %d%% (help 3499)", l[2] * rate, mod * 100) } })
   end
   if base.defense then
-    line("of a hit gets through", { { C.num, string.format("%.1f%%", base.defense.through[1] * 100) },
+    line("damage getting through", { { C.num, string.format("%.1f%%", base.defense.through[1] * 100) },
       { C.dim, "   averaged over where hits land (each place equally likely - no help page says otherwise)" } })
     local tot = M.wornTotals()
     local res, ht = tot.resilience or 0, tonumber(c.hitTaken)
@@ -5917,8 +5922,17 @@ function M.buildLines(width)
         or "   off each hit (Oven learns how hard you're hit as you fight)" } })
     end
     if cb.critResist then line("crit resistance", { { C.num, cb.critResist .. "%" }, { C.dim, "   (from eq)" } }) end
+    local dl = c.defenseLog
+    local tries = dl and (dl.avoided + dl.landed) or 0
+    if tries >= 20 then
+      line("attacks you avoid", { { C.num, string.format("%.0f%%", base.defense.avoid * 100) },
+        { C.dim, string.format("   your defenses (dodge, parry…), measured: %d of %d attacks over %d rounds", dl.avoided, tries, dl.rounds) } })
+    else
+      line("attacks you avoid", { { C.dim, string.format("measuring - %d attacks so far (counted from 20; no help page gives the chances)", tries) } })
+    end
     line("effective hit points", { { C.plus, string.format("%.0f", base.defense.now) },
-      { C.dim, string.format("   = %d hp ÷ %.1f%% getting through", hp, base.defense.through[1] * 100) } })
+      { C.dim, string.format("   = %d hp ÷ %.1f%% of attacks' damage getting through%s", hp, base.defense.through[1] * 100,
+        (base.defense.avoid or 0) > 0 and " (after what you avoid and your AR)" or " (your AR)") } })
   end
 
   -- recovery
@@ -7401,6 +7415,15 @@ function M.onCombatRound()
     pcall(M.noteHitTaken, n("opponent_hits"), M.lastRoundHP - hpNow)
   end
   M.lastRoundHP = hpNow
+  -- your defenses at work (dodge, parry, acrobatics…): attacks you avoided against the ones that landed.
+  -- No help page gives their chances, so they're measured, fight by fight
+  local dl = (M.cfg.char or {}).defenseLog or { avoided = 0, landed = 0, missed = 0, rounds = 0 }
+  dl.avoided = dl.avoided + n("you_defend")
+  dl.landed = dl.landed + n("opponent_hits")
+  dl.missed = dl.missed + n("opponent_misses")
+  dl.rounds = dl.rounds + 1
+  M.cfg.char = M.cfg.char or {}
+  M.cfg.char.defenseLog = dl
   F.hit, F.miss, F.parried = F.hit + n("you_hit"), F.miss + n("you_miss"), F.parried + n("opponent_defends")
   F.took, F.missed, F.defended = F.took + n("opponent_hits"), F.missed + n("opponent_misses"), F.defended + n("you_defend")
   M.roundSeq = (M.roundSeq or 0) + 1
