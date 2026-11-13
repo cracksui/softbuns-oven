@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.93.0"
+M.version = "0.94.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4707,6 +4707,8 @@ local function weightOf(w, stat)
   return M.statWeight(w, stat)
 end
 function M.statWeight(w, stat)
+  local sp = stat:match("^spell:(.+)$")
+  if sp and w[stat] == nil then return select(2, M.spellInfo(sp)) end
   local D = M.effectWeights
   local v = w[stat]
   if v == nil then v = D[stat] end
@@ -4775,7 +4777,14 @@ function M.itemEffects(it)
     for _, sg in ipairs(x[2] or {}) do text = text .. tostring(sg[2]) end
     if k == "Effect" then
       add("weapon-special", tonumber(text:match("by (%d+)%%")) or 5)
-    elseif k == "Casts" then add("casts", 1)
+    elseif k == "Casts" then
+      local sp = (text:match("^'(.-)'") or text:match("^(.-)%s%s") or text):lower()
+      -- with charges (a wand, a staff): worth its charges, up to 20
+      local ch
+      for _, y in ipairs(it.extra or {}) do
+        if y[1] == "Charges" then ch = tonumber(tostring((y[2] or {})[1] and y[2][1][2] or "")) end
+      end
+      add("spell:" .. sp, ch and math.min(1, ch / 20) or 1)
     elseif k == "Use" then add("use", 1)
     elseif k == "Also" then
       for a in text:gmatch("[%w%-]+") do add("attr:" .. a:lower(), 1) end
@@ -4786,7 +4795,11 @@ function M.itemEffects(it)
     for _, b in ipairs(it.bonus or {}) do
       local t = table.concat(b, " "):lower()
       if t:find("chance", 1, true) or t:find(" will, if ", 1, true) or t:find("frequency", 1, true) then
-        add("proc", t:find("when fighting", 1, true) and 0.25 or 1)
+        -- what it does: heals you (defense), hurts them (offense), or something else
+        local kind = (t:find("heal", 1, true) or t:find("restor", 1, true)) and "heal"
+          or ((t:find("damage", 1, true) or t:find("weaken", 1, true) or t:find("poison", 1, true) or t:find("drain", 1, true)) and "hit")
+          or "other"
+        add("proc:" .. kind, t:find("when fighting", 1, true) and 0.25 or 1)
       end
     end
     for _, b in ipairs((it.set or {}).bonus or {}) do add("set-bonus", setShare(b.need)) end
@@ -4796,7 +4809,7 @@ end
 
 -- what every build gets for these unless it says otherwise
 -- (and a few common stats builds tend to leave out: +2 accuracy or +5% damage shouldn't count 0)
-M.effectWeights = { ["skill:*"] = 4, ["weapon-special"] = 0.3, casts = 1.5, use = 1, proc = 2,
+M.effectWeights = { ["skill:*"] = 4, ["weapon-special"] = 0.3, casts = 1.5, use = 1, proc = 2, ["proc:*"] = 2,
                     ["set-bonus"] = 2, ["attr:*"] = 2,
                     accuracy = 1.5, ["damage-prcnt"] = 1, luck = 1, ["healing-self-prcnt"] = 0.5,
                     ["reflected-spell-prcnt"] = 0.15, ["damage-splash-prcnt"] = 0.3, ["*-res"] = 0.1,
@@ -4822,6 +4835,140 @@ function M.statCapped(stat)
 end
 
 -- each stat's part of an item's gear score: { stat, value, weight, capped, boost, points }
+---------------------------------------------------------------------------
+-- Roles: what each stat and effect does for you - offense, defense, casting (spells and healing) or
+-- utility. An item's gear score splits into the four, and a build can lean towards some of them.
+-- Sources: help 1153 (attributes), 1747 (the accuracy formula), 1920 (affect attributes), 2258
+-- (attack/defense speed), and the help summaries of the spells and skills.
+---------------------------------------------------------------------------
+M.ROLES = { "offense", "defense", "casting", "utility" }
+local R_OFF, R_DEF, R_CAST, R_UTIL = { offense = 1 }, { defense = 1 }, { casting = 1 }, { utility = 1 }
+M.STAT_ROLE = {
+  -- attributes: split by what help 1153 / 1747 say they do
+  agility = { offense = 0.5, defense = 0.5 },            -- to hit, and being missed
+  strength = { offense = 0.8, utility = 0.2 },            -- weapon damage; carrying
+  luck = { offense = 0.3, defense = 0.2, utility = 0.5 }, -- a little to hit; "just about everything"
+  personality = { offense = 0.3, utility = 0.7 },
+  vitality = R_DEF, courage = R_DEF,
+  knowledge = { casting = 0.8, utility = 0.2 },           -- spells; learning
+  wisdom = { casting = 0.5, utility = 0.5 }, sanity = R_CAST,
+  -- pools
+  hp = R_DEF, ["hp-regen"] = R_DEF, ["hp-regen-prcnt"] = R_DEF, ["hp-regen-max"] = R_DEF,
+  ["spell-points"] = R_CAST, ["sp-regen"] = R_CAST, ["sp-regen-prcnt"] = R_CAST, ["sp-regen-max"] = R_CAST,
+  stamina = R_UTIL, ["stamina-regen"] = R_UTIL, ["stamina-regen-prcnt"] = R_UTIL, ["st-regen-max"] = R_UTIL,
+  -- fighting
+  ar = R_DEF, resilience = R_DEF, ["defense-speed"] = R_DEF, ["extra-defense-speed"] = R_DEF,
+  ["healing-self-prcnt"] = R_DEF, ["healed-by-others-prcnt"] = R_DEF,
+  ["melee-vamp-prcnt"] = { offense = 0.5, defense = 0.5 }, ["skill-vamp-prcnt"] = { offense = 0.5, defense = 0.5 },
+  ["reflected-spell-prcnt"] = R_OFF, ["ar-mitigation"] = R_OFF, ["attack-speed"] = R_OFF,
+  -- casting
+  SCC = R_CAST, ["spells-learned"] = R_CAST, ["spell-accuracy"] = R_CAST, ["spellcasting-priority"] = R_CAST,
+  ["healing-others-prcnt"] = R_CAST, ["heal-splash-prcnt"] = R_CAST, ["spellbook-capacity"] = R_CAST,
+  -- the rest of life
+  orienteering = R_UTIL, dig = R_UTIL, search = R_UTIL, ["mount-speed"] = R_UTIL, ["running-speed"] = R_UTIL,
+  ["transport-speed"] = R_UTIL, ["experience-gained-percent"] = R_UTIL, ["weight-modifier"] = R_UTIL,
+  ["weight-modifier-prcnt"] = R_UTIL, ["inventory-capacity"] = R_UTIL, ["proficiencies-learned"] = R_UTIL,
+  ["set-bonus"] = R_UTIL, use = R_UTIL,
+}
+-- families: the first that fits
+local ROLE_FAMILY = {
+  { "^spell%-damage", R_CAST }, { "^ar%-", R_DEF }, { "%-res$", R_DEF }, { "^saving%-", R_DEF },
+  { "^weapon%-", R_OFF }, { "damage", R_OFF }, { "^crit%-", R_OFF }, { "accuracy$", R_OFF },
+  { "^fistfighting$", R_OFF }, { "activation", R_OFF },
+}
+
+-- spells on gear (and granted): role, and what it's worth (gear-score points, as if always on).
+-- From the spells' help summaries: haste "speeds up the target" (extra attacks - help 2258),
+-- fireshield "grants the target protection from harm", cure critical "heals damage sustained by
+-- the target", and so on. A spell that isn't here counts 1 point of utility.
+M.SPELLS = {
+  haste = { R_OFF, 6 }, ["battle rage"] = { R_OFF, 3 }, ["giant strength"] = { R_OFF, 2.5 }, strength = { R_OFF, 2 },
+  bless = { { offense = 0.5, defense = 0.5 }, 2 }, ["combat focus"] = { R_OFF, 2 }, ["cunning strike"] = { R_OFF, 2 },
+  ["demigod visage"] = { R_OFF, 3 }, ["animate weapon"] = { R_OFF, 2 },
+  ["faerie fire"] = { R_OFF, 1.5 }, curse = { R_OFF, 1.5 }, malediction = { R_OFF, 1.5 }, blindness = { R_OFF, 1.5 },
+  diminishment = { R_OFF, 2 }, bleakness = { R_OFF, 1.5 }, weaken = { R_OFF, 1.5 },
+  sanctuary = { R_DEF, 6 }, fireshield = { R_DEF, 4 }, ["spell shield"] = { R_DEF, 4 }, glacierskin = { R_DEF, 3 },
+  ["stone skin"] = { R_DEF, 3 }, stoneskin = { R_DEF, 3 }, armor = { R_DEF, 2 }, shield = { R_DEF, 2 },
+  ["protection from good"] = { R_DEF, 2 }, ["protection from evil"] = { R_DEF, 2 }, ["battle march"] = { R_DEF, 2 },
+  blink = { R_DEF, 1.5 }, ["combat blink"] = { R_DEF, 2 }, ["telekinetic shield"] = { R_DEF, 3 },
+  regenerate = { R_DEF, 2 }, ["regenerate cartilage"] = { R_DEF, 1 }, ["blessing of ithrilis"] = { R_UTIL, 1 },
+  ["cure light"] = { R_CAST, 1 }, ["cure serious"] = { R_CAST, 1.5 }, ["cure critical"] = { R_CAST, 2 },
+  heal = { R_CAST, 3 }, ["consume gore"] = { R_CAST, 2 }, ["cosmic understanding"] = { R_CAST, 3 },
+  concentration = { R_CAST, 2 }, ["mental clarity"] = { R_CAST, 1.5 }, counterspell = { R_CAST, 1.5 },
+  levitation = { R_UTIL, 1 }, fly = { R_UTIL, 1.5 }, ["underwater breathing"] = { R_UTIL, 1 },
+  ["detect invisible"] = { R_UTIL, 1 }, ["detect magic"] = { R_UTIL, 0.5 }, infravision = { R_UTIL, 1 },
+  farsight = { R_UTIL, 0.5 }, ["sense life"] = { R_UTIL, 1 }, ["falcon gaze"] = { R_UTIL, 0.5 },
+  invisibility = { R_UTIL, 1 }, ["improved invisibility"] = { R_UTIL, 1.5 }, light = { R_UTIL, 0.5 },
+  ["shadow light"] = { R_UTIL, 0.5 }, refresh = { R_UTIL, 1 }, ["word of recall"] = { R_UTIL, 1 },
+  ["cure disease"] = { R_UTIL, 1 }, ["cure poison"] = { R_UTIL, 1 }, ["cure blindness"] = { R_UTIL, 1 },
+  ["remove curse"] = { R_UTIL, 1 }, ["pass door"] = { R_UTIL, 1 },
+}
+-- skills an item can grant: their role (worth: skill:* per 100% you'd gain)
+M.SKILL_ROLE = {
+  parry = R_DEF, dodge = R_DEF, acrobatics = R_DEF, ["shield block"] = R_DEF, ["blind fighting"] = R_DEF,
+  ["second defense"] = R_DEF, ["third defense"] = R_DEF, ["fourth defense"] = R_DEF, ["fifth defense"] = R_DEF,
+  ["second attack"] = R_OFF, ["third attack"] = R_OFF, ["fourth attack"] = R_OFF, ["fifth attack"] = R_OFF,
+  ["enhanced damage"] = R_OFF, ["martial arts"] = R_OFF, ["hand to hand"] = R_OFF, kick = R_OFF, bash = R_OFF,
+  ["pressure points"] = R_OFF, ["strike of death"] = R_OFF, ["cleaving blow"] = R_OFF,
+  meditation = R_CAST, ["keen insight"] = R_CAST, premonitions = R_UTIL, ["remote sensing"] = R_UTIL,
+}
+
+function M.spellInfo(name)
+  local e = M.SPELLS[(name or ""):lower()]
+  if e then return e[1], e[2] end
+  return R_UTIL, 1
+end
+
+-- what a stat (or effect) does: { role = share }
+function M.statRole(stat)
+  if M.STAT_ROLE[stat] then return M.STAT_ROLE[stat] end
+  local sp = stat:match("^spell:(.+)$")
+  if sp then return (M.spellInfo(sp)) end
+  local sk = stat:match("^skill:(.+)$")
+  if sk then return M.SKILL_ROLE[sk] or (M.spellInfo(sk)) end
+  if stat:match("^attr:") then return R_DEF end
+  if stat:match("^proc") then
+    local kind = stat:match("^proc:(%a+)")
+    return (kind == "heal" and R_DEF) or (kind == "hit" and R_OFF) or R_UTIL
+  end
+  for _, f in ipairs(ROLE_FAMILY) do if stat:find(f[1]) then return f[2] end end
+  return R_UTIL
+end
+
+-- your build's lean: how much each role counts (1 = as is). sbo eq build role offense 1.5
+function M.roleMix()
+  local mix = {}
+  local name = M.activeBuild()
+  local m = (M.cfg.roleMix or {})[name] or {}
+  for _, r in ipairs(M.ROLES) do mix[r] = tonumber(m[r]) or 1 end
+  return mix
+end
+
+-- an item's gear score in each role { offense = , defense = , casting = , utility = } (before the lean)
+function M.roleScores(it, w)
+  local out = { offense = 0, defense = 0, casting = 0, utility = 0 }
+  for _, p in ipairs(M.scoreParts(it, w) or {}) do
+    for r, share in pairs(p.roles or {}) do out[r] = (out[r] or 0) + p.base * share end
+  end
+  return out
+end
+
+-- "offense +4.2 · defense −1 · utility +1.5": the difference between two items (or one item), role by role
+function M.roleDiffSegs(a, b, w)
+  local ra, rb = a and M.roleScores(a, w) or {}, M.roleScores(b, w)
+  local segs = {}
+  for _, r in ipairs(M.ROLES) do
+    local d = math.floor(((rb[r] or 0) - (ra[r] or 0)) * 10 + 0.5) / 10
+    if d ~= 0 then
+      if #segs > 0 then segs[#segs + 1] = { C.dim, " · " } end
+      segs[#segs + 1] = { C.dim, r .. " " }
+      local sign = a and (d > 0 and "+" or "−") or (d < 0 and "−" or "")
+      segs[#segs + 1] = { d > 0 and C.plus or C.minus, sign .. tostring(math.abs(d)) }
+    end
+  end
+  return segs
+end
+
 function M.scoreParts(it, w)
   if not it then return nil end
   if not w then local _; _, w = M.activeBuild() end
@@ -4832,12 +4979,17 @@ function M.scoreParts(it, w)
     end
   end
   local parts = {}
+  local mix = M.roleMix()
   for stat, v in pairs(M.itemStats(it)) do
     local capped = M.statCapped(stat) and true or false
     local wt = weightOf(w, stat)
     local b = stat:match("^weapon%-") and boost or 1
-    parts[#parts + 1] = { stat = stat, value = v, weight = wt, capped = capped, boost = b,
-                          points = v * wt * (capped and CAPPED or 1) * b }
+    local base = v * wt * (capped and CAPPED or 1) * b
+    local roles = M.statRole(stat)
+    local lean = 0
+    for r, share in pairs(roles) do lean = lean + share * (mix[r] or 1) end
+    parts[#parts + 1] = { stat = stat, value = v, weight = wt, capped = capped, boost = b, roles = roles,
+                          base = base, points = base * lean }
   end
   table.sort(parts, function(x, y)
     if math.abs(x.points) ~= math.abs(y.points) then return math.abs(x.points) > math.abs(y.points) end
@@ -4873,7 +5025,10 @@ function M.scoreLine(it)
   local bname, w = M.activeBuild()
   local sc = M.gearScore(it, w)
   if not sc then return nil end
-  local segs = { { C.key, "Gear score " }, { C.num, tostring(sc) }, { C.dim, "  (" .. bname .. " build)" } }
+  local segs = { { C.key, "Gear score " }, { C.num, tostring(sc) }, { C.dim, "  (" .. bname .. " build" } }
+  local rs = M.roleDiffSegs(nil, it, w)
+  if #rs > 0 then segs[#segs + 1] = { C.dim, ": " }; addAll(segs, rs) end
+  segs[#segs + 1] = { C.dim, ")" }
   local worn = M.wornLike(it, w)
   local wearing = false
   for _, n in ipairs(M.eqNames or {}) do if n == it.name then wearing = true end end
@@ -4928,10 +5083,14 @@ function M.carriedItems()
   return out
 end
 
-function M.upgradeLines(width, all)
+function M.upgradeLines(width, all, role)
   local bname, w = M.activeBuild()
   local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
-  local out = { header("gear", "", width, "Upgrades  (" .. bname .. " build" .. (all and ", everything seen" or "") .. ")") }
+  local out = { header("gear", "", width, "Upgrades  (" .. bname .. " build" .. (role and (", " .. role .. " only") or "")
+    .. (all and ", everything seen" or "") .. ")") }
+  -- by one role: an item's score in that role alone
+  local score = function(it) return M.gearScore(it, w) end
+  if role then score = function(it) return it and (math.floor(M.roleScores(it, w)[role] * 10 + 0.5) / 10) or nil end end
   local carried = not all and M.carriedItems() or nil
   if not all and not carried then
     out[#out + 1] = { { C.dim, "type i (and look in your bags) so Oven knows what you carry - or sbo upgrades all for everything you've seen" } }
@@ -4951,7 +5110,7 @@ function M.upgradeLines(width, all)
   -- two of a kind: only the weaker one is up for replacing
   local weakest = {}
   for _, it in ipairs(wearing) do
-    local s = M.gearScore(it, w) or 0
+    local s = score(it) or 0
     if not weakest[it.worn] or s < weakest[it.worn].s then weakest[it.worn] = { it = it, s = s } end
   end
   if #wearing == 0 then out[#out + 1] = { { C.dim, "type eq and look at your gear first (sbo eq learn does it in one go)" } }; return out end
@@ -4964,7 +5123,7 @@ function M.upgradeLines(width, all)
   for _, it in ipairs(wearing) do perWorn[it.worn] = (perWorn[it.worn] or 0) + 1 end
   -- the weaker of two goes first, so it gets the better upgrade (in the order you wear things)
   local firstAt, sc = {}, {}
-  for i, it in ipairs(wearing) do firstAt[it.worn] = firstAt[it.worn] or i; sc[it] = M.gearScore(it, w) or 0 end
+  for i, it in ipairs(wearing) do firstAt[it.worn] = firstAt[it.worn] or i; sc[it] = score(it) or 0 end
   local order = {}
   for i, it in ipairs(wearing) do order[i] = it end
   table.sort(order, function(x, y)
@@ -4976,12 +5135,12 @@ function M.upgradeLines(width, all)
   for _, cur in ipairs(wearing) do
    slotsSeen[cur.worn] = (slotsSeen[cur.worn] or 0) + 1
    if weakest[cur.worn] and (weakest[cur.worn].it == cur or (perWorn[cur.worn] or 0) > 1) then
-    local cs = M.gearScore(cur, w)
+    local cs = score(cur)
     local best, bs
     for _, r in ipairs(byWorn[cur.worn] or {}) do
       local tooHigh = lvl and tonumber(r.level) and tonumber(r.level) > lvl
       if not isWorn[r.name] and not used[r.name] and not tooHigh and (all or carried[r.name]) then
-        local s = M.gearScore(M.items[r.name], w)
+        local s = score(M.items[r.name])
         if s and s > cs and (not bs or s > bs) then best, bs = r.name, s end
       end
     end
@@ -4995,6 +5154,12 @@ function M.upgradeLines(width, all)
       local where = carried and carried[best]
       if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where } end
       out[#out + 1] = row
+      local rsegs = M.roleDiffSegs(cur, bestIt, w)
+      if #rsegs > 0 then
+        local r = { { C.dim, pad("", 26) } }
+        addAll(r, rsegs)
+        out[#out + 1] = r
+      end
       -- what you'd gain and lose: stats (by how much they matter to your build), then what the items do
       local gain, lose = M.upgradeDiff(cur, bestIt, w)
       for _, side in ipairs({ { "gains ", gain, C.plus }, { "loses ", lose, C.minus } }) do
@@ -5141,6 +5306,17 @@ function M.buildLines(width)
   elseif c.class then
     out[#out + 1] = { { C.dim, "help " .. c.class:lower() .. " once and Oven puts your class's primary attribute on top" } }
   end
+  -- roles: what the build leans towards
+  local mix = M.roleMix()
+  local rsegs = { { C.title, "Roles  " } }
+  for i, r in ipairs(M.ROLES) do
+    if i > 1 then rsegs[#rsegs + 1] = { C.dim, " · " } end
+    rsegs[#rsegs + 1] = { C.key, r .. " " }
+    rsegs[#rsegs + 1] = { mix[r] == 1 and C.num or C.flag, "×" .. tostring(mix[r]) }
+  end
+  rsegs[#rsegs + 1] = { C.dim, "   (sbo eq build role defense 1.5 - gear scores split by role in upgrades, compare and looks)" }
+  out[#out + 1] = {}
+  out[#out + 1] = rsegs
   -- attributes: weights, where you stand, training (one table)
   out[#out + 1] = {}
   M.trainSection(out)
@@ -5154,7 +5330,8 @@ function M.buildLines(width)
   end
   -- what items do beyond their numbers, and the common stats every build gets unless it sets them
   local EXPLAIN = { ["skill:*"] = "a skill it grants (per 100% you don't already have)", ["weapon-special"] = "a weapon special, per % of damage it adds",
-    casts = "a spell it casts", use = "something it does when used", proc = "a chance to do something in a fight (1/4 if only vs one foe)",
+    casts = "(old) a spell it casts - now each spell by its own worth", use = "something it does when used",
+    ["proc:*"] = "a chance to do something in a fight (1/4 if only vs one foe)", proc = "(old) a chance in a fight",
     ["set-bonus"] = "each bonus of its set (scaled by how close it gets you)", ["attr:*"] = "an attribute it gives you (reflect-magic…)" }
   local dk = {}
   for k in pairs(M.effectWeights) do if w[k] == nil then dk[#dk + 1] = k end end
@@ -5298,6 +5475,20 @@ function M.buildCommand(b)
   b = trim(b or "")
   local w = M.cfg.window and M.viewCols() or columns("main")
   if b == "" then return M.viewLive(M.buildLines) end
+  -- sbo eq build role defense 1.5: how much a role counts in this build
+  local rname, rv = b:lower():match("^role%s+(%a+)%s+([%d%.]+)$")
+  if rname then
+    local role
+    for _, r in ipairs(M.ROLES) do if r:sub(1, #rname) == rname then role = r end end
+    if not role then return M.say("roles: offense, defense, casting, utility - sbo eq build role defense 1.5") end
+    local name = M.activeBuild()
+    M.cfg.roleMix = M.cfg.roleMix or {}
+    M.cfg.roleMix[name] = M.cfg.roleMix[name] or {}
+    M.cfg.roleMix[name][role] = tonumber(rv)
+    M.saveSettings()
+    M.dataChanged()
+    return M.say(string.format("%s build: %s counts ×%s", name, role, rv))
+  end
   M.dataChanged()   -- weights change: the page on show (upgrades, compare…) follows
   local stat, val = b:match("^set%s+(%S+)%s+(%-?[%d%.]+)$")
   if stat then
@@ -5349,6 +5540,19 @@ function M.compareLines(a, b, width)
   if okS and okB and sa and sb then
     local d = math.floor((sb - sa) * 10 + 0.5) / 10
     table.insert(rows, 1, { "Gear score", tostring(sa), tostring(sb), d == 0 and "=" or ((d > 0 and "+" or "") .. d), d })
+    -- and its parts, role by role
+    local okR, ra, rb = pcall(function() return M.roleScores(a), M.roleScores(b) end)
+    if okR then
+      local at = 2
+      for _, r in ipairs(M.ROLES) do
+        local x, y = math.floor(ra[r] * 10 + 0.5) / 10, math.floor(rb[r] * 10 + 0.5) / 10
+        if x ~= 0 or y ~= 0 then
+          local dd = math.floor((y - x) * 10 + 0.5) / 10
+          table.insert(rows, at, { "  " .. r, tostring(x), tostring(y), dd == 0 and "=" or ((dd > 0 and "+" or "") .. dd), dd })
+          at = at + 1
+        end
+      end
+    end
   end
   for _, r in ipairs(rows) do
     local dcol = r[5] > 0 and C.plus or (r[5] < 0 and C.minus or C.dim)
@@ -10947,8 +11151,13 @@ function M.legacyCommand(args)
       if not u then return say("no upgrade #" .. n .. " - type sbo upgrades first") end
       return M.compareNames(u.cur, u.best)
     end
-    local all = b == "all"
-    M.viewLive(function(w) return M.upgradeLines(w, all) end)
+    -- sbo upgrades [all] [offense|defense|casting|utility]: everything seen, and/or by one role only
+    local all, role = false, nil
+    for word in b:lower():gmatch("%a+") do
+      if word == "all" then all = true
+      else for _, r in ipairs(M.ROLES) do if r:sub(1, #word) == word and #word >= 3 then role = r end end end
+    end
+    M.viewLive(function(w) return M.upgradeLines(w, all, role) end)
     return
   elseif a == "mark" then if b == "" then return M.listMarks() end return M.markRoom(b)
   elseif a == "marks" then return M.listMarks()
@@ -11171,7 +11380,7 @@ M.CMDS = {
         return legacy("compare " .. r)
       end },
     { name = "compare against", args = "[{item}]", desc = "compare every look to one item; no item: stop", listOnly = true },
-    { name = "upgrades", args = "[all|{n}]", desc = "best upgrade per slot (all: anything seen; n: compare it)",
+    { name = "upgrades", args = "[all] [offense|defense|casting|utility]|{n}", desc = "best upgrade per slot (all: anything seen; a role: by that role only; n: compare it)",
       run = function(r)
         if tonumber(r) then return legacy("upgrades compare " .. r) end
         return legacy("upgrades " .. r)

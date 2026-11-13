@@ -607,8 +607,13 @@ def gear_score_effects():
       PLAIN = { name = 'a plain hook', type = 'weapon', worn = 'wielded' }""")
     e = o.ev("sbo.itemEffects(HOOK)")
     eq(round(e["skill:parry"], 2), 0.6, "parry at 100%, you have 40%: worth the 60% you'd gain")
-    for k in ("weapon-special", "proc", "casts", "attr:reflect-magic"):
+    for k in ("weapon-special", "proc:hit", "spell:sanctuary", "attr:reflect-magic"):
         assert e[k], f"{k} counted"
+    # roles: sanctuary is defense, the poison proc offense, parry defense
+    r = o.ev("sbo.roleScores(HOOK)")
+    assert r.defense > 6 and r.offense > 2, dict(r)
+    eq(o.ev("(sbo.spellInfo('haste')).offense"), 1, "haste is offense")
+    assert o.ev("select(2, sbo.spellInfo('haste'))") > o.ev("select(2, sbo.spellInfo('levitation'))"), "haste is worth more"
     assert o.ev("sbo.gearScore(HOOK)") > o.ev("sbo.gearScore(PLAIN)") + 8, "effects add up"
     o.lua("sbo.cfg.skills.parry.lrnd = 100")
     eq(o.ev("sbo.itemEffects(HOOK)['skill:parry']"), None, "a skill you already have maxed adds nothing")
@@ -634,6 +639,15 @@ def upgrade_gains_and_losses():
     g = [x.text for x in gain.values()]; l = [x.text for x in lose.values()]
     assert "+5 ar" in g and "+13 hp" in g and "parry 100%" in g, g
     assert "−2 accuracy" in l and "casts sanctuary" in l, l
+    # by role: the plate is more defense (AR, hp) and less offense (accuracy) than the garb
+    d = o.ev("sbo.roleScores(NEW)").defense - o.ev("sbo.roleScores(OLD)").defense
+    assert d > 0, d
+    assert o.ev("sbo.roleScores(OLD)").offense > o.ev("sbo.roleScores(NEW)").offense
+    # leaning the build towards defense makes the plate score higher
+    before = o.ev("sbo.gearScore(NEW)")
+    o.lua("sbo.command('eq build role defense 2')")
+    assert o.ev("sbo.gearScore(NEW)") > before, "a defensive lean favours the plate"
+    eq(o.ev("sbo.roleMix().defense"), 2, "kept")
 
 
 @test
