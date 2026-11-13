@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.79.0"
+M.version = "0.80.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1025,6 +1025,49 @@ local function renderSlots(out, slots, width, withStats)
           addAll(l, lines[i])
           out[#out + 1] = l
         end
+      end
+    end
+  end
+  -- everything the stats column adds up to, under the list
+  if withStats then
+    local ar, sums, order, known, worn = 0, {}, {}, 0, 0
+    for _, r in ipairs(slots) do
+      if not r.empty then
+        worn = worn + 1
+        local it = M.items and M.items[(stripConds(r[2]))]
+        if it then
+          known = known + 1
+          ar = ar + (tonumber(it.ar) or 0)
+          for _, list in ipairs({ it.affects or {}, it.relicAffects or {} }) do
+            for _, af in ipairs(list) do
+              if not sums[af[1]] then order[#order + 1] = af[1] end
+              sums[af[1]] = (sums[af[1]] or 0) + (tonumber(af[2]) or 0)
+            end
+          end
+        end
+      end
+    end
+    if known > 0 then
+      local units = {}
+      if ar ~= 0 then units[#units + 1] = { { C.key, "AR " }, { C.num, tostring(ar) } } end
+      for _, k in ipairs(order) do
+        local v = sums[k]
+        if v ~= 0 then
+          units[#units + 1] = { { v >= 0 and C.plus or C.minus, (v >= 0 and "+" or "") .. v }, { C.item, " " .. k } }
+        end
+      end
+      if #units == 0 then units[1] = { { C.dim, "—" } } end
+      out[#out + 1] = { { C.dim, string.rep(" ", slotW) .. " ├" .. string.rep("─", math.max(4, width - slotW - 2)) } }
+      local pre = { { C.slot, pad("total", slotW) }, { C.dim, " │ " } }
+      local lines = flowUnits(units, math.max(10, width - indent))
+      for i, ln in ipairs(lines) do
+        local l = i == 1 and { unpack(pre) } or { { C.text, string.rep(" ", slotW) }, { C.dim, " │ " } }
+        addAll(l, ln)
+        out[#out + 1] = l
+      end
+      if known < worn then
+        out[#out + 1] = { { C.text, string.rep(" ", slotW) }, { C.dim, " │ " },
+          { C.dim, string.format("from %d of %d items - the ones marked ? haven't been looked at", known, worn) } }
       end
     end
   end

@@ -1327,6 +1327,23 @@ def scan_track():
     eq(o.ev("sbo.scanTrack"), None, "you typed something: it stops")
 
 
+@test
+def eq_stat_totals():
+    o = Oven()
+    o.lua("""sbo.cfg.eqStats = true
+      sbo.items["a silver ring"] = { ar = 2, affects = { { "strength", 2 }, { "hit-roll", 1 } } }
+      sbo.items["a cloak"] = { ar = 5, affects = { { "strength", 1 }, { "dexterity", -1 } } }""")
+    out = o.lua("""local rows = sbo.formatters.eq({ "You are using:", "<worn on finger>      a silver ring",
+        "<worn about body>    a cloak", "<held>               a torch" }, 90)
+      local s = {} for _, r in ipairs(rows) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end
+      return table.concat(s)""")
+    tot = [l for l in out.split("\n") if l.strip().startswith("total")]
+    assert tot, out
+    t = tot[0]
+    assert "AR 7" in t and "+3 strength" in t and "+1 hit-roll" in t and "-1 dexterity" in t, t
+    assert "from 2 of 3 items" in out, out
+
+
 WHERE_LIST = """Where is what? Features that Towne of Rune might contain that you may be interested in:
 healer              post-office         lockers             bank                
 food                blacksmith          questmaster         music-venue         
