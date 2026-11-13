@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.8.0"
+M.version = "1.8.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6011,9 +6011,16 @@ function M.abilitySection(out, width)
   end
   -- what to practise next: the most damage per use for the practices, up to 75% (help 2438: skill power
   -- only works from 75%; help 1145: practising past 75% costs much more)
+  -- only what would end up better than the best you already have (otherwise there's no point)
+  -- (against the same resource: spells against your best spell, skills against your best skill)
+  local bestBy = {}
+  local function res(ab) return ab.a.sp and "sp" or "st" end
+  for _, ab in ipairs(list) do
+    if not ab.a.cooldown and ab.per > (bestBy[res(ab)] or 0) then bestBy[res(ab)] = ab.per end
+  end
   local cand = {}
   for _, ab in ipairs(list) do
-    if ab.pct < 75 and ab.a.practice and ab.a.practice > 0 then
+    if ab.pct < 75 and ab.a.practice and ab.a.practice > 0 and ab.a.base * 0.75 > (bestBy[res(ab)] or 0) + 0.005 then
       local gain = ab.a.base * (75 - ab.pct) / 100
       local cost = (75 - ab.pct) * ab.a.practice
       cand[#cand + 1] = { ab = ab, gain = gain, cost = cost, rate = ab.a.base / 100 / ab.a.practice }
@@ -6021,7 +6028,7 @@ function M.abilitySection(out, width)
   end
   table.sort(cand, function(x, y) return x.rate > y.rate end)
   if #cand > 0 then
-    out[#out + 1] = { { C.dim, "  practise next (most damage per use for the practices, up to 75%):" } }
+    out[#out + 1] = { { C.dim, "  practise next (would beat your best spell or skill now - most damage for the practices, to 75%):" } }
     for i, x in ipairs(cand) do
       if i > 3 then break end
       out[#out + 1] = { { C.dim, "    " .. (i == 1 and "→ " or "  ") }, { i == 1 and C.slot or C.key, pad(x.ab.name, 20) },
