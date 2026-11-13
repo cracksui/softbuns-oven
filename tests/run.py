@@ -640,6 +640,18 @@ def training_advice():
     assert "+0.5% to hit" in agi and "8 " in agi, agi
     vit = next(l for l in out.split("\n") if l.strip().startswith("vitality"))
     assert "max" in vit, "at max: nothing left to train"
+    # the page follows the game: train knowledge, and the page on show is drawn again
+    o.lua("sbo.cfg.window = true; sbo.command('eq train')")
+    page = lambda: o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html")
+    assert "12/21" in page(), page()
+    TRAIN = ["You have 394 practice sessions.", "You may train the following vital statistics:",
+             "Attribute Name        Current Stat   Practice Cost", "knowledge                 13/21           60",
+             "agility                    9/17           80"]
+    o.lua("runTimers()")
+    o.ev("sbo.noteTrain")(o.L.table_from(TRAIN))
+    o.lua("runTimers()")
+    assert "13/21" in page() and "12/21" not in page(), f"redrawn with the new number: {page()}"
+    eq(o.ev("sbo.cfg.char.trainCost.knowledge"), 60, "and what it costs")
 
 
 @test

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.89.0"
+M.version = "0.90.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2210,6 +2210,25 @@ function M.parseTrain(raw)
   return #rows > 0 and { rows = rows, prac = prac } or nil
 end
 
+-- the train table is where your attributes stand right now (and what training each costs): kept, so
+-- the gear score and sbo eq train follow it
+function M.noteTrain(raw)
+  local tr = M.parseTrain(raw)
+  if not tr then return false end
+  M.cfg.char = M.cfg.char or {}
+  local c = M.cfg.char
+  c.stats, c.trainCost = c.stats or {}, c.trainCost or {}
+  for _, r in ipairs(tr.rows) do
+    local k = r.name:lower()
+    c.trainCost[k] = r.cost
+    if k ~= "hp" and k ~= "sp" and k ~= "st" then c.stats[k] = { cur = r.cur, max = r.max } end
+  end
+  if tr.prac then c.practices = tr.prac end
+  M.saveSettings()
+  M.dataChanged()
+  return true
+end
+
 function M.formatters.skills(raw, width)
   local tr = M.parseTrain(raw)
   if tr then
@@ -2246,6 +2265,7 @@ function M.formatters.skills(raw, width)
       M.cfg.skills[skillKey(r.name)] = { lrnd = r.lrnd, cmplx = r.cmplx, rec = r.rec, group = r.group }
     end
     M.saveSettings()
+    M.dataChanged()
     local out = {}
     local first = tbl.kind == "spells" and "Spell" or "Proficiency"
     local nameW = ulen(first)
@@ -3812,7 +3832,7 @@ function M.tabShow(key, quiet)
   end
   -- a tab nothing has been shown in yet
   if not quiet then
-    if key == "view" and not M.viewShown then M.viewShow()
+    if key == "view" and (not M.viewShown or M.viewStale) then M.viewShow()
     elseif key == "log" and not M.logShown then M.logAdd(M.sessionLines(M.pageCols(M.logPg)), M.logLinks())
     elseif key == "chat" then M.chatSeen()
     elseif key == "help" and not M.helpShown then
@@ -4049,6 +4069,32 @@ function M.viewOut(lines, links)
   render("main", lines)
 end
 
+-- a page that's drawn from Oven's data, not from what the game sent once: make(width) -> lines, links.
+-- It's drawn again whenever that data changes (M.dataChanged) while it's the page on show.
+function M.viewLive(make)
+  if M.cfg.window then
+    local lines, links = make(M.viewCols())
+    M.viewAdd({ lines = lines, links = links or {}, make = make })
+    if M.cfg.mirror.view == false then return end
+  end
+  render("main", (make(columns("main"))))
+end
+
+-- something the Inspector's pages are drawn from changed (your stats, gear, items, build, skills):
+-- the page on show is drawn again, a moment later (several changes at once draw once)
+function M.dataChanged()
+  if M.dataTimer then return end
+  M.dataTimer = tempTimer(0.3, function()
+    M.dataTimer = nil
+    local e = M.viewHist[M.viewPos or #M.viewHist]
+    if not (e and e.make and M.viewShown) then return end
+    -- on a tab that isn't showing: drawn when you go back to it
+    if M.cfg.tabs and M.tabOn ~= "view" and not M.tabIsOut("view") then M.viewStale = true; return end
+    if not M.cfg.tabs and M.container and M.container.hidden then M.viewStale = true; return end
+    pcall(M.viewShow)
+  end)
+end
+
 -- a Log report: make(width) -> lines, links. In the Log tab (and on the main screen too with
 -- sbo mirror log on), or on the main screen when the window is off
 function M.logOut(make)
@@ -4082,6 +4128,11 @@ function M.viewShow()
   local h, pos = M.viewHist, M.viewPos or #M.viewHist
   local e = h[pos]
   if not e then return M.pageShow(M.viewPg, { "<128,128,128>Nothing baked yet - try eq, i, score or look at an item." }, "decho") end
+  M.viewStale = nil
+  if e.make then
+    local ok, lines, links = pcall(e.make, math.min(M.pageCols(M.viewPg), 110))
+    if ok and lines then e.lines, e.links = lines, links or {} end
+  end
   local links = {}
   for _, l in ipairs(e.links or {}) do links[#links + 1] = l end
   if pos > 1 then
@@ -4269,6 +4320,7 @@ function M.remember(it)
   M.recent[#M.recent + 1] = it.name
   while #M.recent > 40 do table.remove(M.recent, 1) end
   M.saveItems()
+  M.dataChanged()
 end
 
 function M.updateEqNames(raw)
@@ -4277,7 +4329,7 @@ function M.updateEqNames(raw)
     local _, item = parseSlot(l)
     if item then names[#names + 1] = (stripConds(item)) end
   end
-  if #names > 0 then M.eqNames = names; M.saveItems() end
+  if #names > 0 then M.eqNames = names; M.saveItems(); M.dataChanged() end
 end
 
 -- find a remembered item by (part of) its name; most recently seen wins
@@ -4827,6 +4879,7 @@ end
 -- sessions; a container's contents only count while the container is in your inventory.
 function M.updateCarried(cap)
   if cap.kind ~= "contents" then return end
+  M.dataChanged()
   local names = M.listNames(cap.plain)
   local first = trim(cap.plain[1] or "")
   local c = M.cfg.carried or { inv = {}, bags = {} }
@@ -5082,18 +5135,23 @@ function M.trainLines(width)
       -- the primary attribute also adds to how many skills improve by themselves as you level
       local val = wt + (k == primary and 0.5 or 0)
       local hit = e.hit or (e.above and cur >= e.above and 1) or 0
-      rows[#rows + 1] = { k = k, cur = cur, max = mx, room = math.max(0, mx - cur), wt = wt, val = val, hit = hit, e = e }
+      local cost = tonumber((c.trainCost or {})[k])
+      rows[#rows + 1] = { k = k, cur = cur, max = mx, room = math.max(0, mx - cur), wt = wt, val = val, hit = hit, e = e,
+                          cost = cost, per = cost and cost > 0 and val / cost * 100 or nil }
     end
   end
+  -- best value for the practices, once the costs are known (from the game's train table)
   table.sort(rows, function(a, b)
     if (a.room > 0) ~= (b.room > 0) then return a.room > 0 end
-    if a.val ~= b.val then return a.val > b.val end
+    local av, bv = a.per or a.val, b.per or b.val
+    if av ~= bv then return av > bv end
     return a.k < b.k
   end)
   local best = rows[1]
   if best and best.room > 0 then
     out[#out + 1] = { { C.dim, "train next: " }, { C.slot, best.k }, { C.dim, string.format("  (%d → %d of %d)", best.cur, best.cur + 1, best.max) } }
     local segs = { { C.dim, "  +1 is worth " }, { C.num, string.format("%.1f", best.val) }, { C.dim, " gear-score points in your " .. bname .. " build" } }
+    if best.cost then segs[#segs + 1] = { C.dim, string.format(", for %d practices", best.cost) } end
     if best.hit > 0 then
       segs[#segs + 1] = { C.dim, string.format(" · +%s%% to hit; all %d left: +%s%%", tostring(best.hit), best.room, tostring(best.hit * best.room)) }
     end
@@ -5103,17 +5161,23 @@ function M.trainLines(width)
     out[#out + 1] = { { C.plus, "every attribute is at its maximum" } }
   end
   out[#out + 1] = {}
-  out[#out + 1] = { { C.dim, "  " .. pad("attribute", 13) .. pad("now", 8) .. pad("left", 6) .. pad("per point", 11) .. "what a point does" } }
+  local haveCost = (c.trainCost or {}).strength ~= nil or next(c.trainCost or {}) ~= nil
+  if c.practices then out[#out + 1] = { { C.dim, "  you have " }, { C.num, tostring(c.practices) }, { C.dim, " practices" } } end
+  out[#out + 1] = { { C.dim, "  " .. pad("attribute", 13) .. pad("now", 8) .. pad("left", 6) .. pad("per point", 11)
+    .. (haveCost and pad("cost", 6) or "") .. "what a point does" } }
   for _, r in ipairs(rows) do
     local done = r.room == 0
     local row = { { done and C.dim or C.key, "  " .. pad(r.k, 13) }, { done and C.flag or C.text, pad(r.cur .. "/" .. r.max, 8) },
       { done and C.dim or C.num, pad(done and "max" or tostring(r.room), 6) },
-      { r.val > 0 and C.num or C.dim, pad(string.format("%.1f", r.val), 11) },
-      { C.dim, r.e.text .. (r.k == primary and " · primary" or "") } }
+      { r.val > 0 and C.num or C.dim, pad(string.format("%.1f", r.val), 11) } }
+    if haveCost then row[#row + 1] = { C.text, pad(r.cost and tostring(r.cost) or "?", 6) } end
+    row[#row + 1] = { C.dim, r.e.text .. (r.k == primary and " · primary" or "") }
     out[#out + 1] = row
   end
   out[#out + 1] = {}
   out[#out + 1] = { { C.dim, "per point = the attribute's weight in your build (sbo eq build); the primary attribute gets +0.5." } }
+  out[#out + 1] = { { C.dim, haveCost and "ranked by value per practice (per point ÷ cost); it follows the game as you train."
+    or "type train once (at a trainer) and Oven adds what each costs, and ranks by value per practice." } }
   out[#out + 1] = { { C.dim, "once an attribute is at its maximum, more of it on gear counts a quarter - so training it makes that gear worth less." } }
   out[#out + 1] = { { C.dim, "to hit is capped at 98% (90% for gnomes): past that, agility and luck only help in their other ways." } }
   return out
@@ -5122,8 +5186,8 @@ end
 function M.buildCommand(b)
   b = trim(b or "")
   local w = M.cfg.window and M.viewCols() or columns("main")
-  local function show(lines) M.viewOut(lines) end
-  if b == "" then return show(M.buildLines(w)) end
+  if b == "" then return M.viewLive(M.buildLines) end
+  M.dataChanged()   -- weights change: the page on show (upgrades, compare…) follows
   local stat, val = b:match("^set%s+(%S+)%s+(%-?[%d%.]+)$")
   if stat then
     local name, cur = M.activeBuild()
@@ -5243,7 +5307,7 @@ function M.compare(a, b, entry)
     entry.lines[#entry.lines + 1] = {}
     addAll(entry.lines, M.compareLines(a, b, M.viewCols()))
   elseif M.cfg.window then
-    M.viewOut(M.compareLines(a, b, M.viewCols()))
+    M.viewLive(function(w) return M.compareLines(a, b, w) end)
   else
     render("main", M.compareLines(a, b, columns("main")))
   end
@@ -5984,7 +6048,7 @@ function M.onGmcpMaxStats()
       end
     end
   end
-  if changed then M.saveSettings(); pcall(M.drawBar) end
+  if changed then M.saveSettings(); pcall(M.drawBar); M.dataChanged() end
 end
 
 -- char.worth: gold, bank, quest points, practices
@@ -8812,10 +8876,33 @@ function M.finish(reason)
       local lines = M.format(cap.kind, cap.target, cap.plain, M.viewCols(), cap.decho)
       if lines then entry = { lines = lines, links = M.pendingLinks or {} } end
       M.pendingLinks = nil
+      -- eq, inventory, score: laid out again from the same reply when what they show changes
+      -- (an item learned fills the eq stats column; a trained stat moves score's numbers)
+      if entry and (cap.kind == "eq" or cap.kind == "contents" or cap.kind == "score") then
+        local kind, target, plain, dch = cap.kind, cap.target, cap.plain, cap.decho
+        entry.make = function(w)
+          M.pendingLinks = nil
+          local l = M.format(kind, target, plain, w, dch)
+          local k = M.pendingLinks or {}
+          M.pendingLinks = nil
+          return l, k
+        end
+      end
     end
     if cap.kind == "eq" then M.updateEqNames(cap.plain) end
     if cap.kind == "contents" then pcall(M.updateCarried, cap) end
-    if cap.kind == "score" then M.updateMaxes(cap.plain); M.drawBar() end
+    if cap.kind == "score" then M.updateMaxes(cap.plain); M.drawBar(); M.dataChanged() end
+    if cap.kind == "skills" then
+      pcall(M.noteTrain, cap.plain)
+      -- you trained something ("train knowledge"): read the table again, quietly, so everything follows
+      local what = tostring(cap.cmd or ""):lower():match("^%s*tra?i?n?%s+(%a+)")
+      if what and tostring(cap.cmd):lower():match("^%s*tra") then
+        tempTimer(0.5, function()
+          if M.cap or M.quietNext or not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return end
+          M.quietly("train", "skills", function(plain) if plain then pcall(M.noteTrain, plain) end end)
+        end)
+      end
+    end
     if cap.kind == "item" then M.afterItem(cap.plain, entry) end
     if entry then M.viewAdd(entry) end
   end)
@@ -10749,7 +10836,8 @@ function M.legacyCommand(args)
       if not u then return say("no upgrade #" .. n .. " - type sbo upgrades first") end
       return M.compareNames(u.cur, u.best)
     end
-    M.viewOut(M.upgradeLines(M.cfg.window and M.viewCols() or columns("main"), b == "all"))
+    local all = b == "all"
+    M.viewLive(function(w) return M.upgradeLines(w, all) end)
     return
   elseif a == "mark" then if b == "" then return M.listMarks() end return M.markRoom(b)
   elseif a == "marks" then return M.listMarks()
@@ -10987,7 +11075,7 @@ M.CMDS = {
       end },
     { name = "items", desc = "the items Oven remembers", run = L("items") },
     { name = "train", desc = "which attribute to train next, and what each point does", run = function()
-        M.viewOut(M.trainLines(M.cfg.window and M.viewCols() or columns("main"))) end },
+        M.viewLive(M.trainLines) end },
     { name = "build", args = "[{name}|set|reset|auto]", desc = "gear-score weights (set: a stat and its weight)",
       run = function(r) return legacy("build " .. r) end },
   } },
