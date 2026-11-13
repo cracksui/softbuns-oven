@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.2.3"
+M.version = "1.2.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5912,7 +5912,7 @@ end
 -- training: which attribute to raise next - what one more point really changes (the model above),
 -- for what it costs (the game's train table)
 M.TRAIN_EFFECT = {
-  knowledge = "cheaper spells, faster learning (no formula in the help)",
+  knowledge = "faster learning (no formula); cheaper spells only while your SCC is below its cap (help 1613)",
   courage = "resisting magical fear (no formula in the help)",
   strength = "weapon damage (no formula in the help); +1% to hit above 20",
   wisdom = "self-improvement; +1% to hit above 20",
@@ -6214,7 +6214,8 @@ local function worthReading(name, summary)
   for _, w in ipairs(WORTH) do if s:find(w, 1, true) then return true end end
   return false
 end
--- the next batch: the first stored one not read yet, else up to 15 linked pages not read yet
+-- the next batch: the first stored one not read yet (only pages picked for them - following every
+-- link snowballed into pages about other classes' skills)
 function M.helpNextBatch()
   local idx = savedIndex()
   M.cfg.helpBatchesDone = M.cfg.helpBatchesDone or {}
@@ -6226,11 +6227,6 @@ function M.helpNextBatch()
       M.cfg.helpBatchesDone[b.name] = true
     end
   end
-  local left = {}
-  for _, pg in ipairs(M.cfg.helpLinked or {}) do
-    if not idx[pg] then left[#left + 1] = pg; if #left >= 15 then break end end
-  end
-  if #left > 0 then return "pages the last ones link to", left end
 end
 
 function M.helpFetchStart(arg)

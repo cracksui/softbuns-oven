@@ -803,7 +803,7 @@ def help_fetch():
     o.lua("for _, p in ipairs(sbo.HELP_BATCHES[1].pages) do sbo.cfg.helpSaved[p] = true end")
     eq(o.ev("(sbo.helpNextBatch())"), "casting and spell cost", "batch 1 read: batch 2 is next")
     o.lua("for _, p in ipairs(sbo.HELP_BATCHES[2].pages) do sbo.cfg.helpSaved[p] = true end; sbo.cfg.helpLinked = { '1347', '9001' }")
-    eq(o.ev("(sbo.helpNextBatch())"), "pages the last ones link to", "then the pages they link to")
+    eq(o.ev("(sbo.helpNextBatch())"), None, "then done: links aren't followed on their own")
 
 
 @test
