@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.84.1"
+M.version = "0.84.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5551,18 +5551,18 @@ end
 -- the ship part of the bar: "SHIP ███ 120/120 · anchored · heading — · wind — · 452,1210"
 local SHIP_STATES = { ANCHOR = "anchored", DOCK = "docked", DOCKED = "docked" }
 function M.shipSegs(S, gw)
-  local out = { { C.dim, "   " }, { C.key, "SHIP " } }
+  local out = { { C.key, "SHIP " } }
   local mx = M.shipHullMax
   if not mx or (S.hull or 0) > mx then mx = S.hull; M.shipHullMax = mx end
-  if gw > 0 and S.hull then addAll(out, M.gauge(S.hull, mx, gw)); out[#out + 1] = { C.dim, " " } end
-  local pct = (S.hull and mx and mx > 0) and S.hull * 100 / mx or 100
-  out[#out + 1] = { pct >= 70 and C.plus or (pct >= 35 and C.title or C.minus), tostring(S.hull or "?") }
-  out[#out + 1] = { C.dim, "/" .. tostring(mx or "?") .. " hull" }
+  if gw > 0 and S.hull then addAll(out, M.gauge(S.hull, mx, gw)) end
+  out[#out + 1] = { C.num, " " .. tostring(S.hull or "?") }
+  out[#out + 1] = { C.dim, "/" .. tostring(mx or "?") }
   local function none(v) return (not v or v:match("^%-+$")) and "—" or v:lower() end
   if S.state then out[#out + 1] = { C.dim, " · " }; out[#out + 1] = { C.flag, SHIP_STATES[S.state] or S.state:lower() } end
   if S.dir then out[#out + 1] = { C.dim, " · heading " }; out[#out + 1] = { C.text, none(S.dir) } end
   if S.wind then out[#out + 1] = { C.dim, " · wind " }; out[#out + 1] = { C.text, none(S.wind) } end
   if S.x then out[#out + 1] = { C.dim, string.format(" · %d,%d", S.x, S.y) } end
+  out[#out + 1] = { C.dim, "   " }
   return out
 end
 
@@ -5644,8 +5644,9 @@ function M.drawBar()
       out[#out + 1] = { C.num, " " .. cur }
       out[#out + 1] = { C.dim, "/" .. mx .. "   " }
     end
-    addAll(out, tail)
+    -- aboard a ship: right after your pools, where your mount's stamina goes when you ride
     if p.ship then addAll(out, M.shipSegs(p.ship, gwidth)) end
+    addAll(out, tail)
     if p.rest ~= "" then out[#out + 1] = { C.text, "   " .. p.rest } end
     return out
   end

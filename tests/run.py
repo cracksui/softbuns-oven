@@ -579,7 +579,8 @@ def ship_prompt():
     o.feed("Hull Strength:        120/120")
     o.lua("sbo.drawBar()")
     plain = _re.sub("<[^>]+>", "", o.ev("BAR") or "")
-    assert "SHIP" in plain and "96/120 hull" in plain and "anchored" in plain and "452,1210" in plain, plain
+    assert "SHIP" in plain and "96/120" in plain and "anchored" in plain and "452,1210" in plain, plain
+    assert plain.find("ST ") < plain.find("SHIP"), f"right after your pools, where the mount goes: {plain}"
     assert "(96hull" not in plain, f"not the raw text: {plain}"
 
 
