@@ -786,6 +786,18 @@ def help_fetch():
     o.lua('sbo.command("debug help haste")')
     eq(len(list(o.ev("SENT").values())), 0, "not at a login prompt")
     o.lua('sbo.command("debug help stop")')
+    # stored batches: sbo debug help next reads the first, then the second, then what they link to
+    o.set_gmcp("char.status", '{ state = "playing" }')
+    o.lua("SENT = {}; SAYS = {}")
+    o.lua('sbo.command("debug help next")')
+    first = list(o.ev("SENT").values())
+    eq(first[0], "help 2438", f"batch 1 starts: {first}")
+    eq(o.ev("sbo.helpBatchName.name"), "skill power and defenses", "the stored batch")
+    o.lua('sbo.command("debug help stop"); sbo.helpBatchName = nil')
+    o.lua("for _, p in ipairs(sbo.HELP_BATCHES[1].pages) do sbo.cfg.helpSaved[p] = true end")
+    eq(o.ev("(sbo.helpNextBatch())"), "casting and spell cost", "batch 1 read: batch 2 is next")
+    o.lua("for _, p in ipairs(sbo.HELP_BATCHES[2].pages) do sbo.cfg.helpSaved[p] = true end; sbo.cfg.helpLinked = { '1347', '9001' }")
+    eq(o.ev("(sbo.helpNextBatch())"), "pages the last ones link to", "then the pages they link to")
 
 
 @test

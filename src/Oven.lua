@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.1.2"
+M.version = "1.2.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6196,9 +6196,56 @@ local function savedIndex()
   return M.cfg.helpSaved
 end
 
+-- batches of pages worth reading for the combat model, read one per `sbo debug help next`. After those,
+-- the combat-related pages they link to (SEE ALSO) make the next batches.
+M.HELP_BATCHES = {
+  { name = "skill power and defenses",
+    pages = { "2438", "2083", "1613", "1784", "1723", "1716", "2018", "1982", "1983", "2348", "1993", "2284" } },
+  { name = "casting and spell cost",
+    pages = { "1354", "2276", "1850", "1022", "2063", "2224", "1458", "2322", "2472", "1925" } },
+}
+local WORTH = { "combat", "attack", "defen", "damage", "dodge", "parry", "block", "evasion", "armor", "resist",
+  "accuracy", "crit", "skill power", "complexity", "spell", "magic", "cast", "regen", "heal", "strength",
+  "agility", "knowledge", "wisdom", "vitality", "sanity", "luck", "speed", "proficiency", "weapon", "shield",
+  "reduc", "absorb", "bonus" }
+local function worthReading(name, summary)
+  local s = ((name or "") .. " " .. (summary or "")):lower()
+  for _, w in ipairs({ "dungeon", "towne", "castle", "village", "island", "clan hall" }) do if s:find(w, 1, true) then return false end end
+  for _, w in ipairs(WORTH) do if s:find(w, 1, true) then return true end end
+  return false
+end
+-- the next batch: the first stored one not read yet, else up to 15 linked pages not read yet
+function M.helpNextBatch()
+  local idx = savedIndex()
+  M.cfg.helpBatchesDone = M.cfg.helpBatchesDone or {}
+  for i, b in ipairs(M.HELP_BATCHES) do
+    if not M.cfg.helpBatchesDone[b.name] then
+      local left = {}
+      for _, pg in ipairs(b.pages) do if not idx[pg] then left[#left + 1] = pg end end
+      if #left > 0 then return b.name, left, i end
+      M.cfg.helpBatchesDone[b.name] = true
+    end
+  end
+  local left = {}
+  for _, pg in ipairs(M.cfg.helpLinked or {}) do
+    if not idx[pg] then left[#left + 1] = pg; if #left >= 15 then break end end
+  end
+  if #left > 0 then return "pages the last ones link to", left end
+end
+
 function M.helpFetchStart(arg)
   arg = trim(arg or "")
+  if arg:lower() == "next" then
+    local name, pages, i = M.helpNextBatch()
+    if not name then return M.say("nothing left to read: every batch is done and nothing they link to looks like combat, stats or spells") end
+    M.helpBatchName = { name = name, i = i }
+    return M.helpFetchStart(table.concat(pages, ", "))
+  end
   if arg == "" then
+    local name, pages = M.helpNextBatch()
+    if name then
+      M.say(string.format("next batch: %s (%d pages) - sbo debug help next to read it", name, #pages))
+    end
     return M.say("sbo debug help 3479-3492 · sbo debug help haste, dodge · sbo debug help crawl dodge · sbo debug help stop"
       .. " - pages go to oven_help.txt")
   end
@@ -6253,7 +6300,16 @@ function M.helpFetchNext()
   end
   if not topic or H.saved >= H.limit then
     M.helpFetch = nil
-    return M.say(string.format("help fetching done: %d page%s saved to oven_help.txt", H.saved, H.saved == 1 and "" or "s"))
+    local b = M.helpBatchName
+    M.helpBatchName = nil
+    if b and b.i and #H.queue == 0 then
+      M.cfg.helpBatchesDone = M.cfg.helpBatchesDone or {}
+      M.cfg.helpBatchesDone[b.name] = true
+      M.saveSettings()
+    end
+    local nextName, nextPages = M.helpNextBatch()
+    return M.say(string.format("help fetching done: %d page%s saved to oven_help.txt%s", H.saved, H.saved == 1 and "" or "s",
+      nextName and string.format(" · next: %s (%d pages) - sbo debug help next", nextName, #nextPages) or ""))
   end
   H.seen[topic:lower()] = true
   M.quietly("help " .. topic, "help", function(plain)
@@ -6267,6 +6323,16 @@ function M.helpFetchNext()
       M.helpSave(topic, plain)
       H.saved = H.saved + 1
       pcall(M.noteSpellHelp, plain)
+      -- links worth reading later make the next batches
+      M.cfg.helpLinked = M.cfg.helpLinked or {}
+      local known = {}
+      for _, pg in ipairs(M.cfg.helpLinked) do known[pg] = true end
+      for _, l in ipairs(plain) do
+        local n, name, summary = l:match("^%s*%[%s*(%d+)%s*%]%s+(.-)%s+%-%s+(.+)$")
+        if n and not known[n] and not savedIndex()[n] and worthReading(name, summary) then
+          M.cfg.helpLinked[#M.cfg.helpLinked + 1] = n; known[n] = true
+        end
+      end
       if H.crawl then
         -- " [1347] dodge - move out of the way of an attack": the SEE ALSO pages, followed by number
         for _, l in ipairs(plain) do
@@ -12139,7 +12205,7 @@ M.CMDS = {
   } },
   { name = "debug", desc = "raw output, GMCP and recordings, for fixing things", subs = {
     { name = "raw", desc = "the last output exactly as the game sent it", run = L("raw") },
-    { name = "help", args = "{pages|topics|crawl topic|all|stop}", desc = "fetch help pages quietly into oven_help.txt (3479-3492, haste, crawl dodge, all)",
+    { name = "help", args = "{next|pages|topics|crawl topic|all|stop}", desc = "read help pages quietly into oven_help.txt - next: the next stored batch",
       run = function(r) return M.helpFetchStart(r) end },
     { name = "gmcp", desc = "what the game sends over GMCP (written to oven_gmcp.txt)", run = L("gmcp") },
     { name = "state", desc = "what Oven is busy with, and why it did (or didn't) do things by itself (oven_state.txt)",
