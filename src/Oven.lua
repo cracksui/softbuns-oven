@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.2.4"
+M.version = "1.3.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5014,6 +5014,28 @@ function M.wornTotals()
   return tot, hasted
 end
 
+-- help 1613: spell complexity comprehension. Per class: a baseline, the average of two attributes,
+-- and so much a level; the more it's above a spell's complexity, the fewer points the spell takes.
+-- At most 65 + 7 per class.
+M.SCC_CLASS = {
+  ranger = { 20, "knowledge", "courage", 0.71 }, wizard = { 17, "knowledge", "personality", 0.72 },
+  psionic = { 17, "knowledge", "sanity", 0.72 }, monk = { 15, "knowledge", "vitality", 0.72 },
+  priest = { 8, "wisdom", "courage", 0.65 }, witch = { 8, "wisdom", "strength", 0.65 },
+  druid = { 8, "wisdom", "personality", 0.65 }, shaman = { 8, "wisdom", "luck", 0.65 },
+  paladin = { 5, "courage", "vitality", 0.5 }, bard = { 5, "personality", "luck", 0.53 },
+}
+-- your SCC (single-class: the formula as written), what it would be with `extra` attribute points, and the cap
+function M.sccFor(extra)
+  local c = M.cfg.char or {}
+  local k = M.SCC_CLASS[(c.class or ""):lower()]
+  if not k then return nil end
+  local st = c.stats or {}
+  local function v(a) return math.min((st[a] or {}).max or 99, ((st[a] or {}).cur or 0) + ((extra or {})[a] or 0)) end
+  local raw = k[1] + (v(k[2]) + v(k[3])) / 2 + k[4] * (tonumber(c.level) or 0)
+  local cap = 65 + 7
+  return math.min(cap, raw), cap, raw, k
+end
+
 -- help 2258: attacks per round from your extra-attack skills and your attack speed
 M.EXTRA_ATTACKS = { "second attack", "third attack", "fourth attack", "fifth attack" }
 function M.attacksPerRound(speed)
@@ -5099,11 +5121,29 @@ function M.combatModel(old, new)
        + attrPart("strength", 0, 20) + attrPart("wisdom", 0, 20)
   crit2 = crit2 + d("crit-chance")
   local function swing(D, A, C) return D * math.max(1, math.min(98, A)) / 100 * (1 + C / 100) end
+  -- martial arts (help 1784): with hand to hand, a hook, throwing star, nunchaku or staff, when it succeeds:
+  -- +25% accuracy (eq lists it: "+19 when martial arts activates") and a flashy extra hit a round.
+  -- How often it succeeds: "determined by how knowledgeable the practitioner is" - read as your %
+  local ma = tonumber(((M.cfg.skills or {})["martial arts"] or {}).lrnd) or 0
+  local maAcc = (c.accParts or {})["when martial arts activates"] or 0
+  local function maWeapon(it, fallback)
+    if not it or not it.weapon then return fallback end
+    for _, kind in ipairs({ "hand to hand", "hook", "throwing star", "nunchaku", "staff" }) do
+      if M.weaponIs(it, kind) then return true end
+    end
+    return false
+  end
+  local maNow = ma > 0 and (maAcc > 0)
+  local maAfter = maNow
+  if (old and old.weapon) or (new and new.weapon) then maAfter = maNow and maWeapon(new, true) or (ma > 0 and maWeapon(new, false)) end
+  local pMA = ma / 100
   -- attacks per round (help 2258): attack speed raises your extra-attack skills, one after another,
   -- up to 100; what's left is a further chance of an attack. Haste gives +10 attack speed (help haste).
   local speed1 = M.wornAttackSpeed()
   local speed2 = speed1 + d("attack-speed")
   local n1, n2 = M.attacksPerRound(speed1), M.attacksPerRound(speed2)
+  if maNow then acc, n1 = acc + pMA * maAcc, n1 + pMA end
+  if maAfter then acc2, n2 = acc2 + pMA * (maAcc > 0 and maAcc or 25), n2 + pMA end
   local e1, e2 = swing(dmg, acc, crit) * n1, swing(dmg2, acc2, crit2) * n2
   res.offense = { pct = (e2 / e1 - 1) * 100, now = e1, after = e2,
                   parts = { damage = { dmg, dmg2 }, accuracy = { acc, acc2 }, crit = { crit, crit2 }, attacks = { n1, n2 } } }
@@ -5806,9 +5846,9 @@ do -- (own scope)
 -- sbo eq build: your character in combat, worked out from your gear and attributes with the game's
 -- formulas - by category: offense, defense, recovery, casting - then your attributes and what training
 -- each would change. Nothing here is weighted: what has no formula in the help is listed as such.
-local NOT_CALCULATED = "dodging and parrying (agility, the defense skills), what strength adds to damage, knowledge's "
-  .. "cheaper spells, how often weapon specials and procs fire, resistances (they depend on what you fight), "
-  .. "granted skills, and spells whose help Oven hasn't read"
+local NOT_CALCULATED = "dodging and parrying (agility, the defense skills), what strength adds to damage, how much "
+  .. "cheaper a spell gets per point of spell comprehension, how often weapon specials and procs fire, resistances "
+  .. "(they depend on what you fight), granted skills, and spells whose help Oven hasn't read"
 
 function M.buildLines(width)
   local c = M.cfg.char or {}
@@ -5845,8 +5885,14 @@ function M.buildLines(width)
   end
   line("attacks per round", { { C.num, string.format("%.2f", n) },
     { C.dim, "   " .. (#ex > 0 and table.concat(ex, ", ") or "no extra-attack skills") .. (speed > 0 and (", attack speed " .. speed) or "") .. " (help 2258)" } })
+  local ma = tonumber(((M.cfg.skills or {})["martial arts"] or {}).lrnd) or 0
+  local maAcc = (cb.accParts or {})["when martial arts activates"]
+  if ma > 0 and maAcc then
+    line("martial arts", { { C.num, ma .. "%" }, { C.dim, string.format("   when it succeeds: +%d accuracy and a flashy extra hit (help 1784; how often read as your %%)", maAcc) } })
+  end
+  local P = base.offense.parts
   line("damage per round", { { C.plus, string.format("%.1f", base.offense.now) },
-    { C.dim, string.format("   = %d × %d%% × %.2f (crits) × %.2f attacks", cb.damage, hit, 1 + (cb.crit or 0) / 100, n) } })
+    { C.dim, string.format("   = %d × %.0f%% hit × %.2f (crits) × %.2f attacks", cb.damage, math.min(98, P.accuracy[1]), 1 + (cb.crit or 0) / 100, P.attacks[1]) } })
 
   -- defense
   head("Defense")
@@ -5885,6 +5931,12 @@ function M.buildLines(width)
   -- casting
   head("Casting")
   line("spell points", { { C.num, tostring((M.cfg.maxes or {}).sp or "?") } })
+  local scc, cap, raw = M.sccFor()
+  local shown = (c.comp or {}).SCC
+  if scc then
+    line("spell comprehension", { { C.num, tostring(shown or math.floor(scc)) }, { C.dim, string.format("   of at most %d%s - the further above a spell's complexity, the fewer points it takes (help 1613)",
+      cap, raw >= cap and " (at the cap: knowledge won't make spells cheaper)" or "") } })
+  end
 
   -- attributes: what one more point would change (the same model)
   out[#out + 1] = {}
@@ -5945,6 +5997,16 @@ function M.trainSection(out)
       local v = 0
       if m then for _, r in ipairs(M.ROLES) do if m[r] then v = v + m[r].pct * (mix[r] or 1) end end end
       local cost = tonumber((c.trainCost or {})[k])
+      -- an attribute your class's spell comprehension uses (help 1613): what +1 does to it
+      local s0, sCap, sRaw, sk = M.sccFor()
+      if sk and (k == sk[2] or k == sk[3]) and room > 0 then
+        local s1 = M.sccFor({ [k] = 1 })
+        if s1 > s0 then
+          cats[#cats + 1] = { "Casting", { { C.dim, "spell comprehension " }, { C.text, string.format("%.1f→", s0) }, { C.plus, string.format("%.1f", s1) } } }
+        else
+          cats[#cats + 1] = { "Casting", { { C.dim, "spell comprehension already at its cap (" .. sCap .. ")" } } }
+        end
+      end
       rows[#rows + 1] = { k = k, cur = cur, max = mx, room = room, cats = cats, v = v, cost = cost,
                           per = cost and cost > 0 and v / (cost * steps) or nil, base = trained[k] and tonumber(trained[k].cur), steps = steps }
     end
@@ -6203,6 +6265,8 @@ M.HELP_BATCHES = {
     pages = { "2438", "2083", "1613", "1784", "1723", "1716", "2018", "1982", "1983", "2348", "1993", "2284" } },
   { name = "casting and spell cost",
     pages = { "1354", "2276", "1850", "1022", "2063", "2224", "1458", "2322", "2472", "1925" } },
+  { name = "how defenses work",
+    pages = { "1406", "1023", "2136", "1372", "2261", "2262", "2387", "1709", "defense", "defenses", "avoid", "evade", "riposte" } },
 }
 local WORTH = { "combat", "attack", "defen", "damage", "dodge", "parry", "block", "evasion", "armor", "resist",
   "accuracy", "crit", "skill power", "complexity", "spell", "magic", "cast", "regen", "heal", "strength",
@@ -6669,6 +6733,12 @@ function M.updateMaxes(raw)
         M.cfg.char.stats = M.cfg.char.stats or {}
         M.cfg.char.stats[k:lower()] = { cur = tonumber(cur), max = tonumber(mx) }
       end
+    end
+    -- "* SCC:  72 WEA:  44 DEF: 100 COM:  92 TEK: 100 MYS: 100": your comprehension ratings (help 1613)
+    if l:find("SCC:", 1, true) then
+      M.cfg.char = M.cfg.char or {}
+      M.cfg.char.comp = {}
+      for key, v in l:gmatch("(%u%u%u):%s*(%d+)") do M.cfg.char.comp[key] = tonumber(v) end
     end
   end
   M.saveSettings()

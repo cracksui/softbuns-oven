@@ -740,7 +740,11 @@ def training_advice():
     agi = next(l for l in out.split("\n") if l.strip().startswith("agility"))
     assert "hit 55→55.5%" in agi, agi
     kn = next(l for l in out.split("\n") if l.strip().startswith("knowledge"))
-    assert "no formula" in kn, kn
+    assert "spell comprehension" in kn, f"knowledge: what it does to SCC (help 1613): {kn}"
+    o.lua("sbo.cfg.char.level = 56; sbo.cfg.char.stats.vitality = { cur = 19, max = 19 }; sbo.cfg.char.stats.knowledge = { cur = 19, max = 21 }")
+    kn = next(l for l in f(o.ev("sbo.buildLines(100)")).split("\n") if l.strip().startswith("knowledge"))
+    assert "at its cap (72)" in kn, f"a level 56 monk is at the cap: {kn}"
+    o.lua("sbo.cfg.char.stats.knowledge = { cur = 12, max = 21 }")
     vit = next(l for l in out.split("\n") if l.strip().startswith("vitality"))
     assert "maximum" in vit, "at max: nothing left to train"
     # the page follows the game: train knowledge, and the page on show is drawn again
@@ -802,7 +806,7 @@ def help_fetch():
     o.lua('sbo.command("debug help stop"); sbo.helpBatchName = nil')
     o.lua("for _, p in ipairs(sbo.HELP_BATCHES[1].pages) do sbo.cfg.helpSaved[p] = true end")
     eq(o.ev("(sbo.helpNextBatch())"), "casting and spell cost", "batch 1 read: batch 2 is next")
-    o.lua("for _, p in ipairs(sbo.HELP_BATCHES[2].pages) do sbo.cfg.helpSaved[p] = true end; sbo.cfg.helpLinked = { '1347', '9001' }")
+    o.lua("for i = 2, #sbo.HELP_BATCHES do for _, p in ipairs(sbo.HELP_BATCHES[i].pages) do sbo.cfg.helpSaved[p] = true end end; sbo.cfg.helpLinked = { '1347', '9001' }")
     eq(o.ev("(sbo.helpNextBatch())"), None, "then done: links aren't followed on their own")
 
 
