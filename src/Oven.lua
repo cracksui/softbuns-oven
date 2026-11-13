@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.5.2"
+M.version = "1.5.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5283,11 +5283,14 @@ function M.swapCategories(m)
   local r = {}
   if m.hpRegen then arrow(r, "hp/tick", m.hpRegen.now, m.hpRegen.after) end
   if m.spRegen then arrow(r, "sp/tick", m.spRegen.now, m.spRegen.after) end
-  if #r > 0 then out[#out + 1] = { "Recovery", r } end
+  if #r > 0 then
+    if m.recovery then pct(r, m.recovery.pct) end
+    out[#out + 1] = { "Recovery", r }
+  end
   if m.casting then
     local c = {}
     arrow(c, "spell points", m.casting.now, m.casting.after)
-    if #c > 0 then out[#out + 1] = { "Casting", c } end
+    if #c > 0 then pct(c, m.casting.pct); out[#out + 1] = { "Casting", c } end
   end
   return out
 end
@@ -5698,7 +5701,10 @@ function M.upgradeLines(width, all, role)
       local row
       if bm then
         out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name } }
-        row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best } }
+        local tv = math.floor(bs * 10 + 0.5) / 10
+        row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best },
+          { tv > 0 and C.plus or C.minus, string.format("  %s%s%% overall", tv > 0 and "+" or "−", tostring(math.abs(tv))) },
+          { C.dim, " (the categories' changes added up" .. ((function() local mx = M.roleMix(); for _, r in ipairs(M.ROLES) do if mx[r] ~= 1 then return ", with your lean" end end return "" end)()) .. ")" } }
       else
         out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name }, { C.dim, "  " .. cs } }
         row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
