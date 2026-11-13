@@ -708,6 +708,12 @@ def combat_model():
     eq(round(o.ev("sbo.cfg.char.hitTaken")), 30, "30 hp a hit")
     r = o.ev("sbo.combatModel(nil, { affects = { { 'resilience', '3' } } })").defense.pct
     assert 9 < r < 13, f"3 off a 30-damage hit: ~10% less damage, ~11% more effective hp: {r}"
+    # regeneration (help 2334): haste halves it; sanity tiers speed up spell points
+    m = o.ev("sbo.combatModel(nil, { extra = { { 'Casts', { { 'x', \"'haste'\" } } } } })")
+    eq(round(m.hpRegen.pct), -50, "hasted: half the hp regen")
+    o.lua("sbo.cfg.char.stats.sanity = { cur = 16, max = 18 }")
+    m = o.ev("sbo.combatModel(nil, { affects = { { 'sanity', '2' } } })")
+    eq(round(m.spRegen.pct, 1), 12.5, "sanity 16 -> 18: divisor 9 -> 8, +12.5% spell point regen")
 
 
 @test

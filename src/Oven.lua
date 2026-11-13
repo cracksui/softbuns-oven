@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.98.0"
+M.version = "0.99.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4979,6 +4979,40 @@ function M.noteHitTaken(hits, lost)
   c.hitSamples = (c.hitSamples or 0) + 1
 end
 
+-- help 2334 (healing): hit point and spell point regeneration per tick. Worked out at half your
+-- points, standing (the "otherwise" case), the same for every item - so a swap's change is real.
+local SANITY_DIV = { { 4, 14 }, { 7, 13 }, { 9, 12 }, { 12, 11 }, { 14, 10 }, { 16, 9 }, { 18, 8 }, { 20, 7 },
+                     { 21, 6 }, { 23, 5 }, { 25, 4 } }
+local function sanityDiv(san)
+  -- (the page writes "15 - (…)", but high sanity recovers faster (help 1153): the list is the divisor)
+  for _, t in ipairs(SANITY_DIV) do if san <= t[1] then return t[2] end end
+  return 4
+end
+function M.regenTick(tot, vit, san, hasted)
+  local mh, ms = tonumber((M.cfg.maxes or {}).hp) or 0, tonumber((M.cfg.maxes or {}).sp) or 0
+  local hp = math.max(5, (mh / 2) / math.max(1, 15 - vit / 2)) / 2
+  hp = hp * (100 + (tot["hp-regen-prcnt"] or 0)) / 100
+  if hasted then hp = hp / 2 end
+  hp = math.min(350 + (tot["hp-regen-max"] or 0), hp + (tot["hp-regen"] or 0))
+  local sp = math.max(5, (ms / 2) / sanityDiv(san)) / 2
+  sp = sp * (100 + (tot["sp-regen-prcnt"] or 0)) / 100
+  if hasted then sp = sp / 2 end
+  sp = math.min(250 + (tot["sp-regen-max"] or 0), sp + (tot["sp-regen"] or 0))
+  return hp, sp
+end
+-- what you wear, added up (for regen: totals of the regen stats, and whether something hastes you)
+function M.wornTotals()
+  local tot, hasted = {}, false
+  for _, nm in ipairs(M.eqNames or {}) do
+    local it = M.items[nm]
+    if it then
+      for k, v in pairs(modelStats(it)) do tot[k] = (tot[k] or 0) + v end
+      if (M.itemEffects(it))["spell:haste"] then hasted = true end
+    end
+  end
+  return tot, hasted
+end
+
 -- help 2258: attacks per round from your extra-attack skills and your attack speed
 M.EXTRA_ATTACKS = { "second attack", "third attack", "fourth attack", "fifth attack" }
 function M.attacksPerRound(speed)
@@ -5100,18 +5134,40 @@ function M.combatModel(old, new)
     res.defense = { pct = (eh2 / eh1 - 1) * 100, now = eh1, after = eh2, through = { m1, m2 }, hp = { hp, hp2 } }
   end
 
-  -- casting ---------------------------------------------------------------
+  -- regeneration (help 2334) -------------------------------------------------
+  local tot1, h1 = M.wornTotals()
+  local tot2 = {}
+  for k, v in pairs(tot1) do tot2[k] = v end
+  for k in pairs(a) do tot2[k] = (tot2[k] or 0) - (a[k] or 0) end
+  for k in pairs(b) do tot2[k] = (tot2[k] or 0) + (b[k] or 0) end
+  local h2 = h1
+  local hOld, hNew = old and (M.itemEffects(old))["spell:haste"], new and (M.itemEffects(new))["spell:haste"]
+  if hNew and not h1 then h2 = true end
+  if hOld and not hNew then h2 = false end   -- (another worn item may still haste you; rare)
+  local st = (M.cfg.char or {}).stats or {}
+  local vit1, san1 = tonumber((st.vitality or {}).cur) or 15, tonumber((st.sanity or {}).cur) or 15
+  local _, vit2 = attrAfter("vitality", d("vitality")); vit2 = vit2 or vit1
+  local _, san2 = attrAfter("sanity", d("sanity")); san2 = san2 or san1
+  local hr1, sr1 = M.regenTick(tot1, vit1, san1, h1)
+  local hr2, sr2 = M.regenTick(tot2, vit2, san2, h2)
+  if hr1 > 0 then res.hpRegen = { pct = (hr2 / hr1 - 1) * 100, now = hr1, after = hr2 } end
+  if sr1 > 0 then res.spRegen = { pct = (sr2 / sr1 - 1) * 100, now = sr1, after = sr2 } end
+
+  -- casting: spell points, and how fast they come back ---------------------------------
   local sp = tonumber((M.cfg.maxes or {}).sp) or 0
   if sp > 0 then
     local sp2 = sp + d("spell-points")
-    res.casting = { pct = (sp2 / sp - 1) * 100, now = sp, after = sp2, regen = d("sp-regen") }
+    local pool = (sp2 / sp - 1) * 100
+    res.casting = { pct = res.spRegen and (pool + res.spRegen.pct) / 2 or pool, now = sp, after = sp2, pool = pool }
   end
 
   -- what has no formula yet: listed, and scored with the weights (marked ~ where shown)
   -- (agility and strength are only partly covered: their dodging and damage are estimated, at HALF)
   local known = { damage = 1, ["damage-prcnt"] = 1, accuracy = 1, luck = 1, personality = 1,
                   wisdom = 1, ["crit-chance"] = 1, hp = 1, ar = 1, ["spell-points"] = 1, ["attack-speed"] = 1,
-                  ["damage-to-evil-prcnt"] = 1, ["damage-to-good-prcnt"] = 1 }
+                  ["damage-to-evil-prcnt"] = 1, ["damage-to-good-prcnt"] = 1,
+                  ["hp-regen"] = 1, ["hp-regen-prcnt"] = 1, ["hp-regen-max"] = 1, ["sp-regen"] = 1, ["sp-regen-prcnt"] = 1,
+                  ["sp-regen-max"] = 1, sanity = 1, vitality = 1 }
   if tonumber((M.cfg.char or {}).hitTaken) then known.resilience = 1 end
   local keys = {}
   for k in pairs(a) do keys[k] = true end
@@ -5139,6 +5195,7 @@ function M.modelSegs(old, new)
   add("offense", m.offense)
   add("defense", m.defense)
   add("casting", m.casting)
+  add("hp regen", m.hpRegen)
   return segs, m
 end
 
@@ -5196,6 +5253,8 @@ function M.upgradeValue(old, new, w, role)
   for _, r in ipairs({ "offense", "defense", "casting" }) do
     if m[r] then v = v + m[r].pct * (mix[r] or 1) end
   end
+  -- hp regen: it runs at a third while you fight (help 2334), so a third of it counts toward defense
+  if m.hpRegen then v = v + m.hpRegen.pct / 3 * (mix.defense or 1) end
   local est, names = M.estimatePoints(old, new, w, m)
   est = est * M.weightToPct(w)
   m.est, m.estNames = est, names
