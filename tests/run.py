@@ -761,6 +761,34 @@ def training_advice():
 
 
 @test
+def help_fetch():
+    o = Oven()
+    o.lua("""sbo.cfg.promptPattern = "<%d+hp"; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end
+      sbo.lastUserCmdAt = -100""")
+    o.set_gmcp("char.status", '{ state = "playing" }')
+    o.feed("<270hp 550sp 401st>")
+    o.lua('sbo.command("debug help crawl 3480")')
+    eq(list(o.ev("SENT").values()), ["help 3480"], "the first page, quietly")
+    o.feed("[3480 ] ADVENTURER'S GUIDE XB", "Dodging is 1% per 2 agility.", "SEE ALSO:",
+           " [1347] dodge - move out of the way of an attack", "<270hp 550sp 401st>")
+    TICK = "local due = {} for id, t in pairs(timers) do if t[1] <= 1 then due[#due + 1] = id end end for _, id in ipairs(due) do local t = timers[id]; if t then timers[id] = nil; t[2]() end end"
+    o.lua(TICK); o.lua(TICK)
+    text = open(o.ev("sbo.helpFile")).read()
+    assert "===== help 3480 [3480]" in text and "Dodging is 1% per 2 agility." in text, text
+    eq(list(o.ev("SENT").values())[-1], "help 1347", "crawl: then what it links to")
+    o.feed("[1347 ] DODGING ATTACKS", "dodge - move out of the way", "<270hp 550sp 401st>")
+    o.lua(TICK); o.lua(TICK); o.lua(TICK)
+    assert "DODGING ATTACKS" in open(o.ev("sbo.helpFile")).read()
+    assert any("2 pages saved" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    # nothing before you're in the game
+    o.lua('SENT = {}'); o.set_gmcp("char.status", '{ state = "login" }')
+    o.lua('sbo.command("debug help haste")')
+    eq(len(list(o.ev("SENT").values())), 0, "not at a login prompt")
+    o.lua('sbo.command("debug help stop")')
+
+
+@test
 def death_saves_the_fight():
     o = Oven()
     eq(o.ev("sbo.cfg.recWindow"), 3000, "keeps about an hour of hunting")

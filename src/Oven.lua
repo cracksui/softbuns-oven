@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.0.0"
+M.version = "1.1.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6178,6 +6178,123 @@ function M.compareNames(qa, qb)
   M.compare(a, b)
 end
 
+---------------------------------------------------------------------------
+-- sbo debug help: fetch help pages from the game, one after another, and keep them in oven_help.txt
+-- (for reading the game's formulas). Quiet: each page is read like any reply Oven asks for itself,
+-- the pager is answered, nothing is drawn. Only while you're in the game, not fighting, and not typing.
+--   sbo debug help 3479-3492        a run of page numbers
+--   sbo debug help haste, dodge     topics
+--   sbo debug help crawl dodge      that page, then the pages its SEE ALSO lists, and theirs… (up to 40)
+--   sbo debug help stop
+---------------------------------------------------------------------------
+do
+M.helpFile = getMudletHomeDir() .. "/oven_help.txt"
+
+local function savedIndex()
+  M.cfg.helpSaved = M.cfg.helpSaved or {}
+  return M.cfg.helpSaved
+end
+
+function M.helpFetchStart(arg)
+  arg = trim(arg or "")
+  if arg == "" then
+    return M.say("sbo debug help 3479-3492 · sbo debug help haste, dodge · sbo debug help crawl dodge · sbo debug help stop"
+      .. " - pages go to oven_help.txt")
+  end
+  if arg:lower() == "stop" then
+    local H = M.helpFetch
+    M.helpFetch = nil
+    return M.say(H and string.format("help fetching stopped - %d pages saved", H.saved) or "not fetching help")
+  end
+  local H = { queue = {}, seen = {}, saved = 0, crawl = false, limit = 40 }
+  local rest = arg:match("^crawl%s+(.+)$")
+  if rest then H.crawl = true; arg = rest end
+  -- every page, by number (skipping what's saved: stop any time, run it again to go on)
+  if arg:lower() == "all" then
+    H.limit = math.huge
+    local idx = savedIndex()
+    for n = 1000, 3700 do if not idx[tostring(n)] then H.queue[#H.queue + 1] = tostring(n) end end
+    M.helpFetch = H
+    M.say(string.format("fetching every help page into oven_help.txt: %d to go, one every couple of seconds while you're idle"
+      .. " - sbo debug help stop to pause (run it again to carry on)", #H.queue))
+    return M.helpFetchNext()
+  end
+  for part in arg:gmatch("[^,]+") do
+    part = trim(part)
+    local a, b = part:match("^(%d+)%s*%-%s*(%d+)$")
+    if a then
+      for n = tonumber(a), math.min(tonumber(b), tonumber(a) + 200) do H.queue[#H.queue + 1] = tostring(n) end
+    elseif part ~= "" then
+      H.queue[#H.queue + 1] = part
+    end
+  end
+  if #H.queue == 0 then return M.say("which pages? sbo debug help 3479-3492") end
+  M.helpFetch = H
+  M.say(string.format("fetching %d help page%s%s into oven_help.txt - sbo debug help stop to stop", #H.queue,
+    #H.queue == 1 and "" or "s", H.crawl and " (and what they link to)" or ""))
+  M.helpFetchNext()
+end
+
+-- the next page, when the moment is right
+function M.helpFetchNext()
+  local H = M.helpFetch
+  if not H then return end
+  if H.timer then killTimer(H.timer); H.timer = nil end
+  local function later(s) H.timer = tempTimer(s, function() H.timer = nil; M.helpFetchNext() end) end
+  if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return later(5) end
+  if M.cap or M.quietNext or M.fighting() or M.walk or M.running or not M.userIdle(2) then return later(1.5) end
+  local topic
+  while #H.queue > 0 do
+    topic = table.remove(H.queue, 1)
+    if not H.seen[topic:lower()] then break end
+    topic = nil
+  end
+  if not topic or H.saved >= H.limit then
+    M.helpFetch = nil
+    return M.say(string.format("help fetching done: %d page%s saved to oven_help.txt", H.saved, H.saved == 1 and "" or "s"))
+  end
+  H.seen[topic:lower()] = true
+  M.quietly("help " .. topic, "help", function(plain)
+    if M.helpFetch ~= H then return end
+    -- a number with no page ("There were no direct matches…"): noted, not saved
+    local isPage = false
+    for _, l in ipairs(plain or {}) do if trim(l):match("^%[%s*%d+%s*%]%s+%u") then isPage = true; break end end
+    if topic:match("^%d+$") and not isPage then
+      savedIndex()[topic] = true
+    elseif plain and #plain > 0 then
+      M.helpSave(topic, plain)
+      H.saved = H.saved + 1
+      pcall(M.noteSpellHelp, plain)
+      if H.crawl then
+        -- " [1347] dodge - move out of the way of an attack": the SEE ALSO pages, followed by number
+        for _, l in ipairs(plain) do
+          local n = l:match("^%s*%[%s*(%d+)%s*%]%s+%S")
+          if n and not H.seen[n] and not savedIndex()[n] then H.queue[#H.queue + 1] = n end
+        end
+      end
+    end
+    later(1)
+  end)
+end
+
+function M.helpSave(topic, plain)
+  local f = io.open(M.helpFile, "a")
+  if not f then return end
+  local num = nil
+  for _, l in ipairs(plain) do num = num or trim(l):match("^%[%s*(%d+)%s*%]%s+%u") end
+  f:write("===== help " .. topic .. (num and (" [" .. num .. "]") or "") .. " | " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n")
+  for _, l in ipairs(plain) do
+    -- the pager's prompt isn't part of the page
+    if not l:match("^%s*%[C%]ontinue") then f:write(l, "\n") end
+  end
+  f:write("===== end\n\n")
+  f:close()
+  savedIndex()[topic:lower()] = true
+  if num then savedIndex()[num] = true end
+  M.saveSettings()
+end
+end
+
 -- after an item look: remember it, offer links, auto-compare
 function M.afterItem(raw, entry)
   local ok, it = pcall(M.parseItem, raw)
@@ -12020,6 +12137,8 @@ M.CMDS = {
   } },
   { name = "debug", desc = "raw output, GMCP and recordings, for fixing things", subs = {
     { name = "raw", desc = "the last output exactly as the game sent it", run = L("raw") },
+    { name = "help", args = "{pages|topics|crawl topic|all|stop}", desc = "fetch help pages quietly into oven_help.txt (3479-3492, haste, crawl dodge, all)",
+      run = function(r) return M.helpFetchStart(r) end },
     { name = "gmcp", desc = "what the game sends over GMCP (written to oven_gmcp.txt)", run = L("gmcp") },
     { name = "state", desc = "what Oven is busy with, and why it did (or didn't) do things by itself (oven_state.txt)",
       run = function() return M.debugState() end },
