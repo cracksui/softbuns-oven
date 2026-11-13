@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.86.0"
+M.version = "0.87.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4615,13 +4615,28 @@ function M.activeBuild()
   return name, w
 end
 
-local function weightOf(w, stat)
-  if w[stat] then return w[stat] end
+-- a family key: "damage-*" covers damage-anything, "*-res" any resistance
+local function family(w, stat)
   local best, bestLen
   for k, v in pairs(w) do
-    if k:sub(-1) == "*" and stat:sub(1, #k - 1) == k:sub(1, -2) and (not bestLen or #k > bestLen) then best, bestLen = v, #k end
+    if #k > 1 then
+      local hit = (k:sub(-1) == "*" and stat:sub(1, #k - 1) == k:sub(1, -2))
+               or (k:sub(1, 1) == "*" and stat:sub(-(#k - 1)) == k:sub(2))
+      if hit and (not bestLen or #k > bestLen) then best, bestLen = v, #k end
+    end
   end
-  return best or 0
+  return best
+end
+-- your build's own weight for the stat, then the defaults' exact one, then a family of yours,
+-- then a default family, then your build's catch-all "*"
+local function weightOf(w, stat)
+  local D = M.effectWeights
+  local v = w[stat]
+  if v == nil then v = D[stat] end
+  if v == nil then v = family(w, stat) end
+  if v == nil then v = family(D, stat) end
+  if v == nil then v = w["*"] end
+  return v or 0
 end
 
 -- an item's stats as { stat = value }: affects, relic affects, AR, and a weapon's ratings
@@ -4641,8 +4656,70 @@ function M.itemStats(it)
     if r(wp.accuracy) then s["weapon-accuracy"] = r(wp.accuracy) end
     if r(wp.critChance) then s["weapon-crit"] = r(wp.critChance) end
   end
+  for k, v in pairs(M.itemEffects(it)) do s[k] = (s[k] or 0) + v end
   return s
 end
+
+-- what an item does beyond its numbers, as stats the gear score can weigh:
+--   skill:NAME       a skill it grants: how much it adds to what you know (0..1; 0 if you know it as well)
+--   weapon-special   its special attribute ("vorpal: increases base damage on activation by 9%" = 9)
+--   casts / use      a spell it casts, something it does when used
+--   proc             a chance to do something in a fight ("has a chance … to heal …"); a quarter if
+--                    only against one named foe
+--   set-bonus        each bonus of its set, by how close this item gets you to it (1 = it completes it)
+--   attr:NAME        attributes it gives its wearer ("This armor has the additional attributes: reflect-magic")
+local function wearable(it) return it.worn ~= nil or it.type == "weapon" or it.weapon ~= nil end
+function M.itemEffects(it)
+  local e = {}
+  local function add(k, v) if v and v ~= 0 then e[k] = (e[k] or 0) + v end end
+  -- how far this item gets you towards a set bonus that needs `need` pieces
+  local function setShare(need)
+    need = tonumber(need)
+    if not need or not it.set then return 1 end
+    local have = tonumber(it.set.worn) or 0
+    local mine = false
+    for _, n in ipairs(M.eqNames or {}) do if n == it.name then mine = true end end
+    local with = mine and have or have + 1
+    return with >= need and 1 or with / need
+  end
+  local skills = M.cfg.skills or {}
+  for _, g in ipairs(it.grants or {}) do
+    local pct = tonumber((tostring(g[2] or ""):gsub("%%", ""))) or 100
+    local known = tonumber((skills[skillKey(g[1] or "")] or {}).lrnd) or 0
+    local need = tostring(g[3] or ""):match("%(Requires (%d+) items?%)")
+    add("skill:" .. skillKey(g[1] or "?"), math.max(0, pct - known) / 100 * setShare(need))
+  end
+  for _, x in ipairs(it.extra or {}) do
+    local k = x[1]
+    local text = ""
+    for _, sg in ipairs(x[2] or {}) do text = text .. tostring(sg[2]) end
+    if k == "Effect" then
+      add("weapon-special", tonumber(text:match("by (%d+)%%")) or 5)
+    elseif k == "Casts" then add("casts", 1)
+    elseif k == "Use" then add("use", 1)
+    elseif k == "Also" then
+      for a in text:gmatch("[%w%-]+") do add("attr:" .. a:lower(), 1) end
+    end
+  end
+  if it.special and not e["weapon-special"] then add("weapon-special", 5) end
+  if wearable(it) then
+    for _, b in ipairs(it.bonus or {}) do
+      local t = table.concat(b, " "):lower()
+      if t:find("chance", 1, true) or t:find(" will, if ", 1, true) or t:find("frequency", 1, true) then
+        add("proc", t:find("when fighting", 1, true) and 0.25 or 1)
+      end
+    end
+    for _, b in ipairs((it.set or {}).bonus or {}) do add("set-bonus", setShare(b.need)) end
+  end
+  return e
+end
+
+-- what every build gets for these unless it says otherwise
+-- (and a few common stats builds tend to leave out: +2 accuracy or +5% damage shouldn't count 0)
+M.effectWeights = { ["skill:*"] = 4, ["weapon-special"] = 0.3, casts = 1.5, use = 1, proc = 2,
+                    ["set-bonus"] = 2, ["attr:*"] = 2,
+                    accuracy = 1.5, ["damage-prcnt"] = 1, luck = 1, ["healing-self-prcnt"] = 0.5,
+                    ["reflected-spell-prcnt"] = 0.15, ["damage-splash-prcnt"] = 0.3, ["*-res"] = 0.1 }
 
 -- a stat already at its maximum (score's "12/20") gains little from gear: it counts a quarter
 local CAPPED = 0.25
@@ -4896,6 +4973,20 @@ function M.buildLines(width)
     out[#out + 1] = r
   end
   if not next(stats) then out[#out + 1] = { { C.dim, "  (type score so Oven can see which stats are at their maximum)" } } end
+  -- what items do beyond their numbers, and the common stats every build gets unless it sets them
+  local EXPLAIN = { ["skill:*"] = "a skill it grants (per 100% you don't already have)", ["weapon-special"] = "a weapon special, per % of damage it adds",
+    casts = "a spell it casts", use = "something it does when used", proc = "a chance to do something in a fight (1/4 if only vs one foe)",
+    ["set-bonus"] = "each bonus of its set (scaled by how close it gets you)", ["attr:*"] = "an attribute it gives you (reflect-magic…)" }
+  local dk = {}
+  for k in pairs(M.effectWeights) do if w[k] == nil then dk[#dk + 1] = k end end
+  table.sort(dk, function(a, b) return (EXPLAIN[a] and 0 or 1) < (EXPLAIN[b] and 0 or 1) or ((EXPLAIN[a] and 0 or 1) == (EXPLAIN[b] and 0 or 1) and a < b) end)
+  if #dk > 0 then
+    out[#out + 1] = {}
+    out[#out + 1] = { { C.dim, "  beyond the numbers, and common stats (every build, unless you set them):" } }
+    for _, k in ipairs(dk) do
+      out[#out + 1] = { { C.key, "  " .. pad(k, 20) }, { C.num, pad(tostring(M.effectWeights[k]), 9) }, { C.dim, EXPLAIN[k] or "" } }
+    end
+  end
   local bon = M.weaponBonuses(w)
   if #bon > 0 then
     out[#out + 1] = {}

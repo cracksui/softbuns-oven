@@ -598,6 +598,31 @@ def auction_info():
 
 
 @test
+def gear_score_effects():
+    o = Oven()
+    o.lua("""sbo.cfg.char = { class = 'monk' }; sbo.cfg.skills = { parry = { lrnd = 40 } }
+      HOOK = { name = 'a test hook', type = 'weapon', worn = 'wielded', grants = { { 'parry', '100%', 'move to block' } },
+        special = 'poisoned', bonus = { { 'a test hook will, if its wielder\\'s opponent is poisoned, deal 3 damage' } },
+        extra = { { 'Casts', { { 'x', "'sanctuary'" } } }, { 'Also', { { 'x', 'reflect-magic' } } } } }
+      PLAIN = { name = 'a plain hook', type = 'weapon', worn = 'wielded' }""")
+    e = o.ev("sbo.itemEffects(HOOK)")
+    eq(round(e["skill:parry"], 2), 0.6, "parry at 100%, you have 40%: worth the 60% you'd gain")
+    for k in ("weapon-special", "proc", "casts", "attr:reflect-magic"):
+        assert e[k], f"{k} counted"
+    assert o.ev("sbo.gearScore(HOOK)") > o.ev("sbo.gearScore(PLAIN)") + 8, "effects add up"
+    o.lua("sbo.cfg.skills.parry.lrnd = 100")
+    eq(o.ev("sbo.itemEffects(HOOK)['skill:parry']"), None, "a skill you already have maxed adds nothing")
+    # a set bonus: closer to the set = worth more
+    o.lua("SETP = { name = 'a set piece', worn = 'on the body', set = { worn = '1', bonus = { { need = 2, text = '+5 strength' } } } }")
+    eq(o.ev("sbo.itemEffects(SETP)['set-bonus']"), 1, "this piece completes it")
+    o.lua("SETP.set.bonus[1].need = 4")
+    eq(o.ev("sbo.itemEffects(SETP)['set-bonus']"), 0.5, "halfway there")
+    # common stats a build leaves out still count
+    o.lua("ACC = { name = 'a ring', worn = 'on a finger', affects = { { 'accuracy', '2' }, { 'damage-prcnt', '5' } } }")
+    assert o.ev("sbo.gearScore(ACC)") >= 7, o.ev("sbo.gearScore(ACC)")
+
+
+@test
 def death_saves_the_fight():
     o = Oven()
     eq(o.ev("sbo.cfg.recWindow"), 3000, "keeps about an hour of hunting")
