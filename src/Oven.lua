@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.87.1"
+M.version = "0.88.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4413,10 +4413,16 @@ end
 -- A key ending in * covers a family (damage-* = every damage-... stat).
 ---------------------------------------------------------------------------
 M.buildPresets = {
-  -- help monk: a hybrid - spells (cause light, cure light, faerie fire, pressure points) and martial arts,
-  -- with nunchaku and staff; its primary attribute (knowledge) is put on top once that page is read
-  monk     = { strength = 2.5, agility = 2.5, knowledge = 3, wisdom = 1.5, vitality = 1.5, ar = 3, hp = 0.2, ["hp-regen"] = 0.5,
-               ["spell-points"] = 0.15, ["sp-regen"] = 0.8, ["damage-*"] = 0.3,
+  -- help monk: a hybrid - spells (cause light, cure light, faerie fire, pressure points) and martial arts
+  -- (hand to hand, nunchaku, staff); primary attribute KNOWLEDGE. Weights follow the game's accuracy formula
+  -- (help 1747), at 3 per 1% of hit chance: agility gives (agility+1)/2 acc - 1.5 - and as much again for
+  -- making opponents miss (help 1153), so 3; +accuracy on gear counts 2/3, so 2; luck (luck+2)/4, 0.75 plus
+  -- "used with just about everything", so 1.5; personality (personality+5)/10, so 0.3; strength and wisdom
+  -- only add accuracy above 20 (beyond most races' maximum), so strength is for weapon damage, wisdom for
+  -- "self-improvement". Sanity: faster recovery from casting.
+  monk     = { knowledge = 3, agility = 3, strength = 2, accuracy = 2, luck = 1.5, vitality = 1.5, sanity = 1,
+               wisdom = 0.5, personality = 0.3, ar = 3, hp = 0.2, ["hp-regen"] = 0.5,
+               ["spell-points"] = 0.15, ["sp-regen"] = 0.8, ["damage-*"] = 0.3, fistfighting = 2,
                ["weapon-damage"] = 2.5, ["weapon-accuracy"] = 1.5, ["weapon-crit"] = 1.5 },
   melee    = { strength = 3, agility = 2.5, vitality = 1.5, ar = 3, hp = 0.2, ["hp-regen"] = 0.5, ["damage-*"] = 0.3,
                ["weapon-damage"] = 4, ["weapon-accuracy"] = 2, ["weapon-crit"] = 2, wisdom = 0.3, knowledge = 0.3 },
@@ -4719,7 +4725,19 @@ end
 M.effectWeights = { ["skill:*"] = 4, ["weapon-special"] = 0.3, casts = 1.5, use = 1, proc = 2,
                     ["set-bonus"] = 2, ["attr:*"] = 2,
                     accuracy = 1.5, ["damage-prcnt"] = 1, luck = 1, ["healing-self-prcnt"] = 0.5,
-                    ["reflected-spell-prcnt"] = 0.15, ["damage-splash-prcnt"] = 0.3, ["*-res"] = 0.1 }
+                    ["reflected-spell-prcnt"] = 0.15, ["damage-splash-prcnt"] = 0.3, ["*-res"] = 0.1,
+                    -- the rest of help 1920 (affect attributes) that matters in a fight
+                    damage = 2,                      -- flat melee damage
+                    ["attack-speed"] = 0.5,          -- % more attacks a round
+                    ["defense-speed"] = 0.3, ["extra-defense-speed"] = 0.3,
+                    ["crit-chance"] = 1, ["crit-damage"] = 0.2,
+                    resilience = 2,                  -- flat melee damage taken off every hit
+                    ["ar-mitigation"] = 0.5,         -- how much of their AR you ignore
+                    ["melee-vamp-prcnt"] = 0.5, ["skill-vamp-prcnt"] = 0.5,
+                    ["spell-damage"] = 1, ["spell-damage-prcnt"] = 0.5,
+                    ["spells-learned"] = 1, ["proficiencies-learned"] = 1,
+                    ["hp-regen-prcnt"] = 0.1, ["sp-regen-prcnt"] = 0.1, ["stamina-regen-prcnt"] = 0.05,
+                    ["experience-gained-percent"] = 0.3 }
 
 -- a stat already at its maximum (score's "12/20") gains little from gear: it counts a quarter
 local CAPPED = 0.25
