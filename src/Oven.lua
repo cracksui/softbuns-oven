@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.5.4"
+M.version = "1.6.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5363,9 +5363,11 @@ function M.upgradeValue(old, new, w, role)
   local _, names = M.estimatePoints(old, new, w, m)
   m.estNames = names
   if role then return m[role] and m[role].pct or 0, m end
+  -- ranked by what happens in a fight: offense and defense. Spell points and regeneration matter
+  -- mostly between fights - shown, not ranked (spells' damage belongs in offense, once it can be worked out)
   local mix = M.roleMix()
   local v = 0
-  for _, r in ipairs(M.ROLES) do
+  for _, r in ipairs({ "offense", "defense" }) do
     if m[r] then v = v + m[r].pct * (mix[r] or 1) end
   end
   return v, m
@@ -5704,7 +5706,7 @@ function M.upgradeLines(width, all, role)
         local tv = math.floor(bs * 10 + 0.5) / 10
         row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best },
           { tv > 0 and C.plus or C.minus, string.format("  %s%s%% overall", tv > 0 and "+" or "−", tostring(math.abs(tv))) },
-          { C.dim, " (the categories' changes added up" .. ((function() local mx = M.roleMix(); for _, r in ipairs(M.ROLES) do if mx[r] ~= 1 then return ", with your lean" end end return "" end)()) .. ")" } }
+          { C.dim, " (offense and defense added up" .. ((function() local mx = M.roleMix(); for _, r in ipairs({ "offense", "defense" }) do if mx[r] ~= 1 then return ", with your lean" end end return "" end)()) .. ")" } }
       else
         out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name }, { C.dim, "  " .. cs } }
         row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
@@ -5760,7 +5762,7 @@ function M.upgradeLines(width, all, role)
   end
   if shown > 0 then
     out[#out + 1] = { { C.dim, "worked out from your eq's numbers with the game's formulas (help 1747, 2468, 2258, 1085, 2334); ranked by" } }
-    out[#out + 1] = { { C.dim, "the % change in damage per round, effective hp, spell points and regen (sbo eq build role … to lean); not calculated:" } }
+    out[#out + 1] = { { C.dim, "the % change in damage per round and effective hp (sbo eq build role … to lean); spell points and regen are shown, not ranked; not calculated:" } }
     out[#out + 1] = { { C.dim, "things with no formula in the help, listed by name" } }
     out[#out + 1] = { { C.dim, "click one below (or sbo upgrades <number>) for the full comparison" } }
   end
@@ -5971,7 +5973,7 @@ function M.buildLines(width)
   local mix = M.roleMix()
   local lean = {}
   for _, r in ipairs(M.ROLES) do if mix[r] ~= 1 then lean[#lean + 1] = r .. " ×" .. mix[r] end end
-  out[#out + 1] = { { C.dim, "  upgrades rank by the % change in each category" .. (#lean > 0 and (", leaning " .. table.concat(lean, ", ")) or "")
+  out[#out + 1] = { { C.dim, "  upgrades and training rank by the % change in offense and defense" .. (#lean > 0 and (", leaning " .. table.concat(lean, ", ")) or "")
     .. " - sbo eq build role defense 1.5 to lean" } }
   return out
 end
@@ -6010,7 +6012,7 @@ function M.trainSection(out)
         end
       end
       local v = 0
-      if m then for _, r in ipairs(M.ROLES) do if m[r] then v = v + m[r].pct * (mix[r] or 1) end end end
+      if m then for _, r in ipairs({ "offense", "defense" }) do if m[r] then v = v + m[r].pct * (mix[r] or 1) end end end
       local cost = tonumber((c.trainCost or {})[k])
       -- an attribute your class's spell comprehension uses (help 1613): what +1 does to it
       local s0, sCap, sRaw, sk = M.sccFor()
