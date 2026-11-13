@@ -745,8 +745,8 @@ def attack_abilities():
     o.lua("sbo.cfg.skills['cause light'] = { lrnd = 18 }; sbo.cfg.abilities.spark.practice = 1.6")
     f = o.ev("function() local out = {} sbo.abilitySection(out, 100) local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end")
     text = f()
-    assert "→ spark" in text and "about 40 practices" in text, f"spark: 2.2/1.6 beats cause light 2.4/1.8; 50→75 = 40: {text}"
-    assert "? st" in text, "kick's stamina isn't in its help page"
+    assert "practise next: spark 50→75% ≈ 40 practices" in text, f"spark: 2.2/1.6 beats cause light 2.4/1.8; 50→75 = 40: {text}"
+    assert "?st" in text, "kick: stamina not in its help page"
     # any character: its own skills not read yet make the next batch
     o.lua("sbo.cfg.helpBatchesDone = {}; for _, b in ipairs(sbo.HELP_BATCHES) do sbo.cfg.helpBatchesDone[b.name] = true end; sbo.cfg.skills.dodge = { lrnd = 40 }")
     name, pages = o.ev("function() return sbo.helpNextBatch() end")()
@@ -771,7 +771,7 @@ def training_advice():
     o.lua("""sbo.noteCombat({ "57 Damage: (+46 from weapon)", "55 Accuracy: (+16 from weapon)", "31% Critical Hit chance:" })
       sbo.cfg.maxes = { hp = 365, sp = 875 }; sbo.cfg.arLoc = { head = 5, torso = 16 }; sbo.cfg.arRate = 0.75""")
     out = f(o.ev("sbo.buildLines(100)"))
-    assert "damage per round" in out and "effective hit points" in out and "sp per tick" in out, out
+    assert "damage a round" in out and "effective hp" in out and "sp a tick" in out, out
     assert "score" not in out.lower().replace("type score", ""), f"no gear score: {out}"
     # what one more point of each really changes: agility = +0.5% to hit (help 1747); knowledge has no formula
     assert "train next: agility" in out, out
@@ -798,7 +798,8 @@ def training_advice():
     o.ev("sbo.noteTrain")(o.L.table_from([l.replace("13/21", "9/21") for l in TRAIN]))
     o.lua("runTimers()")
     assert "13/21" in page() and "12/21" not in page(), f"redrawn with the new number: {page()}"
-    assert "trained 9" in page(), f"trained 9 (gear brings it to 13): {page()}"
+    assert "13/21" in page(), page()
+    eq(o.ev("sbo.cfg.char.trained.knowledge.cur"), 9, "trained 9 (gear brings it to 13)")
     eq(o.ev("sbo.cfg.char.trainCost.knowledge"), 60, "and what it costs")
 
 

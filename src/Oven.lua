@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.8.1"
+M.version = "1.9.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5990,29 +5990,32 @@ function M.abilitySwapLines(old, new)
   return out
 end
 
--- the build page's section: your attack spells and skills
+-- the build page's section: your attack spells and skills - one table, then what to practise
 function M.abilitySection(out, width)
   local list = M.myAbilities()
   out[#out + 1] = {}
-  out[#out + 1] = { { C.title, "Attack spells and skills" } }
   if #list == 0 then
-    out[#out + 1] = { { C.dim, "  none yet - Oven learns each one from its help page (help pressure points, help kick…)" } }
+    out[#out + 1] = { { C.title, pad("Attacks", 11) }, { C.dim, "none yet - Oven learns each from its help page (sbo debug help next)" } }
     return
   end
-  out[#out + 1] = { { C.dim, "  " .. pad("", 22) .. pad("you", 6) .. pad("cost", 9) .. pad("time", 9) .. pad("damage", 8) .. pad("per use", 9) .. pad("per 100", 9) .. "types" } }
+  out[#out + 1] = { { C.title, pad("Attacks", 11) }, { C.dim, "per use = the help's damage factor × your % (how often it works) · per 100 sp/st" } }
+  out[#out + 1] = { { C.dim, "  " .. pad("", 18) .. pad("you", 5) .. pad("cost", 8) .. pad("time", 8) .. pad("dmg", 5) .. pad("use", 6) .. pad("/100", 6) .. "boosted by" } }
   for _, ab in ipairs(list) do
     local a = ab.a
-    local cost = a.sp and (a.sp .. " sp") or (a.st and (a.st .. " st")) or (a.kind == "skill" and "? st" or "-")
+    local cost = a.sp and (a.sp .. "sp") or (a.st and (a.st .. "st")) or (a.kind == "skill" and "?st" or "-")
     local time = (a.time and (a.time .. "s") or "") .. (a.cooldown and ("/" .. a.cooldown .. "s") or "")
-    out[#out + 1] = { { C.key, "  " .. pad(ab.name, 22) }, { C.num, pad(ab.pct .. "%", 6) }, { C.text, pad(cost, 9) },
-      { C.dim, pad(time ~= "" and time or "-", 9) }, { C.num, pad(string.format("%.1f", a.base), 8) },
-      { C.plus, pad(string.format("%.2f", ab.per), 9) }, { C.text, pad(ab.perCost and string.format("%.2f", ab.perCost) or "-", 9) },
-      { C.dim, (function() local seen, t = {}, {} for ty in (a.types or ""):gmatch("%a+") do if not seen[ty] then seen[ty] = true; t[#t + 1] = ty end end return table.concat(t, ", ") end)() } }
+    -- what boosts it, without the spell-damage pair every spell shares (said once, below)
+    local boosts = {}
+    for _, st in ipairs(M.abilityBoostStats(ab.name, a)) do
+      if st ~= "spell-damage" and st ~= "spell-damage-prcnt" then boosts[#boosts + 1] = st end
+    end
+    out[#out + 1] = { { C.key, "  " .. pad(ab.name, 18) }, { C.num, pad(ab.pct .. "%", 5) }, { C.text, pad(cost, 8) },
+      { C.dim, pad(time ~= "" and time or "-", 8) }, { C.num, pad(string.format("%.1f", a.base), 5) },
+      { C.plus, pad(string.format("%.2f", ab.per), 6) }, { C.text, pad(ab.perCost and string.format("%.2f", ab.perCost) or "-", 6) },
+      { C.dim, table.concat(boosts, ", ") } }
   end
-  -- what to practise next: the most damage per use for the practices, up to 75% (help 2438: skill power
-  -- only works from 75%; help 1145: practising past 75% costs much more)
-  -- only what would end up better than the best you already have (otherwise there's no point)
-  -- (against the same resource: spells against your best spell, skills against your best skill)
+  -- what to practise next: only what would beat your best spell (or skill) now, most damage for the
+  -- practices, to 75% (help 2438: skill power from 75%; help 1145: costlier past it)
   local bestBy = {}
   local function res(ab) return ab.a.sp and "sp" or "st" end
   for _, ab in ipairs(list) do
@@ -6021,29 +6024,17 @@ function M.abilitySection(out, width)
   local cand = {}
   for _, ab in ipairs(list) do
     if ab.pct < 75 and ab.a.practice and ab.a.practice > 0 and ab.a.base * 0.75 > (bestBy[res(ab)] or 0) + 0.005 then
-      local gain = ab.a.base * (75 - ab.pct) / 100
-      local cost = (75 - ab.pct) * ab.a.practice
-      cand[#cand + 1] = { ab = ab, gain = gain, cost = cost, rate = ab.a.base / 100 / ab.a.practice }
+      cand[#cand + 1] = { ab = ab, cost = (75 - ab.pct) * ab.a.practice, rate = ab.a.base / 100 / ab.a.practice }
     end
   end
   table.sort(cand, function(x, y) return x.rate > y.rate end)
-  if #cand > 0 then
-    out[#out + 1] = { { C.dim, "  practise next (would beat your best spell or skill now - most damage for the practices, to 75%):" } }
-    for i, x in ipairs(cand) do
-      if i > 3 then break end
-      out[#out + 1] = { { C.dim, "    " .. (i == 1 and "→ " or "  ") }, { i == 1 and C.slot or C.key, pad(x.ab.name, 20) },
-        { C.dim, string.format("%d%% → 75%%: about %d practices (%.1f a %%), per use %.2f → %.2f",
-          x.ab.pct, math.ceil(x.cost), x.ab.a.practice, x.ab.per, x.ab.a.base * 0.75) } }
-    end
-    out[#out + 1] = { { C.dim, "    (the help's practices per %, at its base rate - it rises with your level)" } }
+  local tips = {}
+  for i, x in ipairs(cand) do
+    if i > 3 then break end
+    tips[#tips + 1] = string.format("%s %d→75%% ≈ %d practices (use %.2f→%.2f)", x.ab.name, x.ab.pct, math.ceil(x.cost), x.ab.per, x.ab.a.base * 0.75)
   end
-  out[#out + 1] = { { C.dim, "  damage = the help page's factor; per use = factor × how well you know it (help 2438: knowing it better" } }
-  out[#out + 1] = { { C.dim, "  means succeeding more often - read as your %); per 100 = per 100 sp or st. No page says what a factor is" } }
-  out[#out + 1] = { { C.dim, "  in hit points, so these compare abilities with each other, not with your melee damage." } }
-  out[#out + 1] = { { C.dim, "  gear that boosts them:" } }
-  for _, ab in ipairs(list) do
-    out[#out + 1] = { { C.dim, "    " .. pad(ab.name, 22) .. table.concat(M.abilityBoostStats(ab.name, ab.a), ", ") } }
-  end
+  if #tips > 0 then out[#out + 1] = { { C.dim, "  practise next: " }, { C.slot, tips[1] }, { C.dim, #tips > 1 and (" · then " .. table.concat(tips, " · ", 2)) or "" } } end
+  out[#out + 1] = { { C.dim, "  spells are also boosted by spell-damage(-prcnt) · factors compare attacks, not hit points (no page converts them)" } }
 end
 end
 
@@ -6060,116 +6051,90 @@ function M.buildLines(width)
   local cb = c.combat
   local out = { header("gear", "", width, "Combat: " .. (c.race or "?") .. " " .. (c.class or "?")
     .. (c.total and (", level " .. c.total) or "")) }
-  local function line(label, segs)
-    local r = { { C.key, "  " .. pad(label, 23) } }
-    addAll(r, segs)
-    out[#out + 1] = r
-  end
-  local function head(t) out[#out + 1] = {}; out[#out + 1] = { { C.title, t } } end
   if not cb or not cb.damage then
     out[#out + 1] = { { C.flag, "type eq once: everything here starts from the numbers it shows (damage, accuracy, AR…)" } }
     return out
   end
   local base = M.combatModel(nil, nil)
-
-  -- offense
-  head("Offense")
-  local parts = {}
-  for k, v in pairs(cb.dmgParts or {}) do parts[#parts + 1] = string.format("%+d %s", v, k) end
-  table.sort(parts)
-  line("damage per hit", { { C.num, tostring(cb.damage) }, { C.dim, #parts > 0 and ("   " .. table.concat(parts, ", ")) or "" } })
-  if cb.enhanced then
-    line("enhanced damage", { { C.num, string.format("+%.1f", cb.enhanced.chance / 100 * cb.enhanced.plus) },
-      { C.dim, string.format("   on average: %d%% of hits do +%d (your eq)", cb.enhanced.chance, cb.enhanced.plus) } })
+  -- a category: its name, its result, how it's made up; a second line for the details
+  local function cat(name, segs, more)
+    out[#out + 1] = {}
+    local r = { { C.title, pad(name, 11) } }
+    addAll(r, segs)
+    out[#out + 1] = r
+    if more and #more > 0 then
+      local r2 = { { C.dim, pad("", 11) } }
+      addAll(r2, more)
+      out[#out + 1] = r2
+    end
   end
-  local hit = math.max(1, math.min(98, cb.accuracy))
-  line("hit chance", { { C.num, hit .. "%" }, { C.dim, cb.accuracy > 98 and ("   (accuracy " .. cb.accuracy .. ", capped at 98)") or "   (your accuracy, help 1747)" } })
-  line("critical hits", { { C.num, (cb.crit or 0) .. "%" }, { C.dim, "   for double damage (help 2468)" } })
+
+  -- offense: the round, then what goes into it
+  local P = base.offense.parts
+  local hit = math.min(98, P.accuracy[1])
+  local dpart = {}
+  local dp = {}
+  for k, v in pairs(cb.dmgParts or {}) do dp[#dp + 1] = { k, v } end
+  table.sort(dp, function(x, y) return x[2] > y[2] end)
+  for _, x in ipairs(dp) do dpart[#dpart + 1] = string.format("%+d %s", x[2], x[1]) end
+  if cb.enhanced then dpart[#dpart + 1] = string.format("+%.1f enhanced damage (%d%% for +%d)", cb.enhanced.chance / 100 * cb.enhanced.plus, cb.enhanced.chance, cb.enhanced.plus) end
+  local ma = tonumber(((M.cfg.skills or {})["martial arts"] or {}).lrnd) or 0
+  local maAcc = (cb.accParts or {})["when martial arts activates"]
   local speed = M.wornAttackSpeed()
-  local n = M.attacksPerRound(speed)
   local ex = {}
   for _, k in ipairs(M.EXTRA_ATTACKS) do
     local l = tonumber(((M.cfg.skills or {})[k] or {}).lrnd)
     if l and l > 0 then ex[#ex + 1] = k .. " " .. l .. "%" end
   end
-  line("attacks per round", { { C.num, string.format("%.2f", n) },
-    { C.dim, "   " .. (#ex > 0 and table.concat(ex, ", ") or "no extra-attack skills") .. (speed > 0 and (", attack speed " .. speed) or "") .. " (help 2258)" } })
-  local ma = tonumber(((M.cfg.skills or {})["martial arts"] or {}).lrnd) or 0
-  local maAcc = (cb.accParts or {})["when martial arts activates"]
-  if ma > 0 and maAcc then
-    line("martial arts", { { C.num, ma .. "%" }, { C.dim, string.format("   when it succeeds: +%d accuracy and a flashy extra hit (help 1784; how often read as your %%)", maAcc) } })
-  end
-  local P = base.offense.parts
-  line("damage per round", { { C.plus, string.format("%.1f", base.offense.now) },
-    { C.dim, string.format("   = %.1f × %.0f%% hit × %.2f (crits) × %.2f attacks", P.damage[1], math.min(98, P.accuracy[1]), 1 + (cb.crit or 0) / 100, P.attacks[1]) } })
+  cat("Offense", { { C.plus, string.format("%.1f", base.offense.now) }, { C.dim, " damage a round = " },
+    { C.num, string.format("%.1f", P.damage[1]) }, { C.dim, " a hit × " }, { C.num, string.format("%.0f%%", hit) }, { C.dim, " to hit × " },
+    { C.num, string.format("%.2f", 1 + (cb.crit or 0) / 100) }, { C.dim, " crits × " }, { C.num, string.format("%.2f", P.attacks[1]) }, { C.dim, " attacks" } },
+    { { C.dim, "a hit: " .. table.concat(dpart, ", ") .. " · accuracy " .. cb.accuracy
+      .. ((ma > 0 and maAcc) and string.format(", +%d when martial arts (%d%%) succeeds, with an extra hit", maAcc, ma) or "")
+      .. " · crit " .. (cb.crit or 0) .. "% (×2)"
+      .. ((#ex > 0 or speed > 0) and (" · " .. table.concat(ex, ", ") .. (speed > 0 and (" attack speed " .. speed) or "")) or "") } })
 
   -- defense
-  head("Defense")
-  local hp = tonumber((M.cfg.maxes or {}).hp) or 0
-  line("hit points", { { C.num, tostring(hp) } })
-  local rate = M.cfg.arRate or 0.75
-  local locs = {}
-  for loc, ar in pairs(M.cfg.arLoc or {}) do locs[#locs + 1] = { loc, ar } end
-  table.sort(locs, function(x, y) return (M.BODY_DAMAGE[x[1]] or 1) > (M.BODY_DAMAGE[y[1]] or 1) end)
-  for _, l in ipairs(locs) do
-    local mod = M.BODY_DAMAGE[l[1]] or 1
-    line("AR " .. l[1], { { C.num, pad(tostring(l[2]), 4) },
-      { C.dim, string.format("takes %.1f%% off a hit there · a hit there does %d%% (help 3499)", l[2] * rate, mod * 100) } })
-  end
   if base.defense then
-    line("of a hit gets through", { { C.num, string.format("%.1f%%", base.defense.through[1] * 100) },
-      { C.dim, "   averaged over where hits land (each place equally likely - no help page says otherwise)" } })
+    local rate = M.cfg.arRate or 0.75
+    local locs = {}
+    for loc, ar in pairs(M.cfg.arLoc or {}) do locs[#locs + 1] = { loc, ar } end
+    table.sort(locs, function(x, y) return (M.BODY_DAMAGE[x[1]] or 1) > (M.BODY_DAMAGE[y[1]] or 1) end)
+    local ar = {}
+    for _, l in ipairs(locs) do ar[#ar + 1] = string.format("%s %d −%.1f%%", l[1], l[2], l[2] * rate) end
     local tot = M.wornTotals()
-    local res, ht = tot.resilience or 0, tonumber(c.hitTaken)
-    if res ~= 0 then
-      line("resilience", { { C.num, tostring(res) }, { C.dim, ht and string.format("   off each hit; you're hit for about %d (your fights)", ht)
-        or "   off each hit (Oven learns how hard you're hit as you fight)" } })
-    end
-    if cb.critResist then line("crit resistance", { { C.num, cb.critResist .. "%" }, { C.dim, "   (from eq)" } }) end
-    line("effective hit points", { { C.plus, string.format("%.0f", base.defense.now) },
-      { C.dim, string.format("   = %d hp ÷ %.1f%% getting through", hp, base.defense.through[1] * 100) } })
+    local hp = tonumber((M.cfg.maxes or {}).hp) or 0
+    cat("Defense", { { C.plus, string.format("%.0f", base.defense.now) }, { C.dim, " effective hp = " }, { C.num, tostring(hp) },
+      { C.dim, " hp ÷ " }, { C.num, string.format("%.1f%%", base.defense.through[1] * 100) }, { C.dim, " of a hit getting through your AR" },
+      { C.dim, cb.critResist and ("   · crit resist " .. cb.critResist .. "%") or "" },
+      { C.dim, (tot.resilience or 0) ~= 0 and ("   · resilience " .. tot.resilience) or "" } },
+      { { C.dim, "AR " .. table.concat(ar, " · ") .. "  (a hit does 120% head, 100% torso, 70% arms/legs, 60% tail)" } })
   end
 
-  -- recovery
-  head("Recovery")
+  -- recovery and casting
   local _, hasted = M.wornTotals()
-  if base.hpRegen then line("hp per tick", { { C.num, string.format("%.1f", base.hpRegen.now) }, { C.dim, "   standing, at half hp (×2 asleep, ⅓ fighting) - help 2334" } }) end
-  if base.spRegen then line("sp per tick", { { C.num, string.format("%.1f", base.spRegen.now) }, { C.dim, "   standing, at half sp; sanity sets the pace" } }) end
-  if hasted then out[#out + 1] = { { C.flag, "  hasted by your gear: regeneration is halved (help haste)" } } end
-
-  -- casting
-  head("Casting")
-  line("spell points", { { C.num, tostring((M.cfg.maxes or {}).sp or "?") } })
-  local scc, cap, raw = M.sccFor()
-  local shown = (c.comp or {}).SCC
-  if scc then
-    line("spell comprehension", { { C.num, tostring(shown or math.floor(scc)) }, { C.dim, string.format("   of at most %d%s - the further above a spell's complexity, the fewer points it takes (help 1613)",
-      cap, raw >= cap and " (at the cap: knowledge won't make spells cheaper)" or "") } })
+  if base.hpRegen and base.spRegen then
+    cat("Recovery", { { C.num, string.format("%.1f", base.hpRegen.now) }, { C.dim, " hp, " }, { C.num, string.format("%.1f", base.spRegen.now) },
+      { C.dim, " sp a tick" }, { C.dim, " (standing, at half; ×2 asleep, ⅓ fighting)" }, { C.flag, hasted and "   halved: your gear hastes you" or "" } })
   end
+  local scc, cap, raw = M.sccFor()
+  cat("Casting", { { C.num, tostring((M.cfg.maxes or {}).sp or "?") }, { C.dim, " spell points" },
+    scc and { C.dim, string.format("   · comprehension %d of %d%s", (c.comp or {}).SCC or math.floor(scc), cap, raw >= cap and " (capped: knowledge won't make spells cheaper)" or "") } or { C.dim, "" } })
 
-  -- your attack spells and skills
+  -- attacks, attributes
   pcall(M.abilitySection, out, width)
-
-  -- attributes: what one more point would change (the same model)
   out[#out + 1] = {}
   M.trainSection(out)
 
+  -- what it's based on
   out[#out + 1] = {}
-  local units = {}
-  for w_ in ("not calculated: " .. NOT_CALCULATED):gmatch("%S+") do units[#units + 1] = { { C.dim, w_ } } end
-  for _, ln in ipairs(flowUnits(units, width - 4)) do
-    local r = { { C.dim, "  " } }
-    for i, u in ipairs(ln) do r[#r + 1] = u[1] and u or u end
-    -- flowUnits joins with two spaces; words read better with one
-    local t = {}
-    for _, sg in ipairs(ln) do t[#t + 1] = sg[2] end
-    out[#out + 1] = { { C.dim, "  " .. table.concat(t):gsub("%s%s+", " ") } }
-  end
+  out[#out + 1] = { { C.dim, "not calculated (no help page gives it): dodge/parry chances, strength's damage, spell cost per comprehension," } }
+  out[#out + 1] = { { C.dim, "  weapon specials and procs, resistances · each place on you equally likely to be hit" } }
   local mix = M.roleMix()
   local lean = {}
-  for _, r in ipairs(M.ROLES) do if mix[r] ~= 1 then lean[#lean + 1] = r .. " ×" .. mix[r] end end
-  out[#out + 1] = { { C.dim, "  upgrades and training rank by the % change in offense and defense" .. (#lean > 0 and (", leaning " .. table.concat(lean, ", ")) or "")
-    .. " - sbo eq build role defense 1.5 to lean" } }
+  for _, r in ipairs({ "offense", "defense" }) do if mix[r] ~= 1 then lean[#lean + 1] = r .. " ×" .. mix[r] end end
+  out[#out + 1] = { { C.dim, "help 1747 2468 2258 1784 3499 2334 1613 2438 · upgrades and training rank by the % change in offense + defense"
+    .. (#lean > 0 and (" (leaning " .. table.concat(lean, ", ") .. ")") or " (sbo eq build role defense 1.5 to lean)") } }
   return out
 end
 
@@ -6229,27 +6194,29 @@ function M.trainSection(out)
     if av ~= bv then return av > bv end
     return a.k < b.k
   end)
-  out[#out + 1] = { { C.title, "Attributes" }, { C.dim, c.practices and ("   you have " .. c.practices .. " practices") or "" } }
   local best = rows[1]
+  local head = { { C.title, pad("Attributes", 11) }, { C.dim, c.practices and (c.practices .. " practices") or "" } }
   if best and best.room > 0 and best.v > 0 then
-    out[#out + 1] = { { C.dim, "  train next: " }, { C.slot, best.k }, { C.dim, string.format(" (%d → %d of %d%s)", best.cur, best.cur + best.steps, best.max,
-      best.cost and (", " .. best.cost * best.steps .. " practices") or "") } }
+    addAll(head, { { C.dim, " · train next: " }, { C.slot, best.k }, { C.dim, string.format(" (%d→%d%s)", best.cur, best.cur + best.steps,
+      best.cost and (", " .. best.cost * best.steps .. "p") or "") } })
   end
+  out[#out + 1] = head
+  out[#out + 1] = { { C.dim, "  " .. pad("", 13) .. pad("now", 7) .. pad("trained", 9) .. pad("cost", 6) .. "one more point" } }
   for _, r in ipairs(rows) do
     local done = r.room == 0
     local row = { { done and C.dim or C.key, "  " .. pad(r.k, 13) }, { done and C.flag or C.text, pad(r.cur .. "/" .. r.max, 7) } }
-    row[#row + 1] = { C.dim, pad(r.base and ("trained " .. r.base) or "", 12) }
-    row[#row + 1] = { C.dim, pad(r.cost and (r.cost .. "p") or "", 5) }
+    row[#row + 1] = { C.dim, pad(r.base and tostring(r.base) or "", 9) }
+    row[#row + 1] = { C.dim, pad(r.cost and (r.cost .. "p") or "", 6) }
     if done then
-      row[#row + 1] = { C.dim, "at its maximum" .. ((r.base and r.cur > r.base) and " (with gear)" or "") }
+      row[#row + 1] = { C.dim, "maximum" .. ((r.base and r.cur > r.base) and " (with gear)" or "") }
     elseif #r.cats > 0 then
-      row[#row + 1] = { C.dim, r.steps > 1 and string.format("+%d (to %d): ", r.steps, r.cur + r.steps) or "+1: " }
+      if r.steps > 1 then row[#row + 1] = { C.dim, string.format("(+%d to %d) ", r.steps, r.cur + r.steps) } end
       for i, cat in ipairs(r.cats) do
         if i > 1 then row[#row + 1] = { C.dim, " · " } end
         addAll(row, cat[2])
       end
     else
-      row[#row + 1] = { C.dim, "+1: " .. (M.TRAIN_EFFECT[r.k] or "nothing Oven can calculate") }
+      row[#row + 1] = { C.dim, M.TRAIN_EFFECT[r.k] or "nothing Oven can calculate" }
     end
     out[#out + 1] = row
   end
