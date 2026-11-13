@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.9.1"
+M.version = "1.9.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6028,13 +6028,20 @@ function M.abilitySection(out, width)
     end
   end
   table.sort(cand, function(x, y) return x.rate > y.rate end)
-  local tips = {}
+  out[#out + 1] = { { C.dim, "  spells also: spell-damage, spell-damage-prcnt · factors compare attacks with each other, not with hit points" } }
+  -- its own heading: which to practise, best first
+  out[#out + 1] = {}
+  out[#out + 1] = { { C.title, "Practise next" }, { C.dim, "   attacks that would beat your best spell or skill, most damage for the practices, to 75%" } }
+  if #cand == 0 then
+    out[#out + 1] = { { C.dim, "  nothing below 75% would beat what you have" } }
+  end
   for i, x in ipairs(cand) do
     if i > 3 then break end
-    tips[#tips + 1] = string.format("%s %d→75%% ≈ %d practices (use %.2f→%.2f)", x.ab.name, x.ab.pct, math.ceil(x.cost), x.ab.per, x.ab.a.base * 0.75)
+    out[#out + 1] = { { i == 1 and C.slot or C.key, "  " .. pad(x.ab.name, 18) }, { C.num, pad(string.format("%d→75%%", x.ab.pct), 9) },
+      { C.text, pad(string.format("%d practices", math.ceil(x.cost)), 15) },
+      { C.dim, string.format("per use %.2f→", x.ab.per) }, { C.plus, string.format("%.2f", x.ab.a.base * 0.75) },
+      { C.dim, string.format("  (%.1f a %%, rising with your level)", x.ab.a.practice) } }
   end
-  if #tips > 0 then out[#out + 1] = { { C.dim, "  practise next: " }, { C.slot, tips[1] }, { C.dim, #tips > 1 and (" · then " .. table.concat(tips, " · ", 2)) or "" } } end
-  out[#out + 1] = { { C.dim, "  spells also: spell-damage, spell-damage-prcnt · factors compare attacks with each other, not with hit points" } }
 end
 end
 

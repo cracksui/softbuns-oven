@@ -745,7 +745,7 @@ def attack_abilities():
     o.lua("sbo.cfg.skills['cause light'] = { lrnd = 18 }; sbo.cfg.abilities.spark.practice = 1.6")
     f = o.ev("function() local out = {} sbo.abilitySection(out, 100) local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end")
     text = f()
-    assert "practise next: spark 50→75% ≈ 40 practices" in text, f"spark: 2.2/1.6 beats cause light 2.4/1.8; 50→75 = 40: {text}"
+    assert "Practise next" in text and "spark" in text.split("Practise next")[1] and "40 practices" in text, f"spark: 2.2/1.6 beats cause light 2.4/1.8; 50→75 = 40: {text}"
     assert "?st" in text, "kick: stamina not in its help page"
     # any character: its own skills not read yet make the next batch
     o.lua("sbo.cfg.helpBatchesDone = {}; for _, b in ipairs(sbo.HELP_BATCHES) do sbo.cfg.helpBatchesDone[b.name] = true end; sbo.cfg.skills.dodge = { lrnd = 40 }")
