@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.97.0"
+M.version = "0.98.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4921,6 +4921,12 @@ local function modelStats(it)
     local k = loc and ("ar-" .. loc) or "ar"
     s[k] = (s[k] or 0) + tonumber(it.ar)
   end
+  -- spells it casts on you: what each applies (help pages), as if you had it
+  for k, v in pairs(M.itemEffects(it)) do
+    local sp = k:match("^spell:(.+)$")
+    local aff = sp and M.spellAffects(sp)
+    if aff then for st, n in pairs(aff) do s[st] = (s[st] or 0) + n * v end end
+  end
   return s
 end
 
@@ -4932,6 +4938,45 @@ local function attrAfter(stat, d)
   local now = st.cur
   local after = math.max(0, math.min(st.max or 999, now + d))
   return now, after
+end
+
+-- what a spell applies, from its help page: "*When you haste, you will apply +10 attack-speed for 140
+-- minutes]". Read from every spell's help page you open; these are the ones read so far.
+M.SPELL_AFFECTS = {
+  haste = { ["attack-speed"] = 10 },                                         -- help 1521 (also halves regen)
+  sanctuary = { ["healed-by-others-prcnt"] = 3, ["damage-to-evil-prcnt"] = 3 }, -- help 1533
+}
+function M.spellAffects(name)
+  name = (name or ""):lower()
+  return (M.cfg.spellAffects or {})[name] or M.SPELL_AFFECTS[name]
+end
+function M.noteSpellHelp(lines)
+  local name
+  for _, l in ipairs(lines or {}) do
+    local t = trim(l)
+    name = name or t:match("^%[%s*%d+%s*%]%s+(.+)$")
+    local sp, v, stat = t:match("^%*When you (.-), you will apply ([+%-]%d+) ([%w%-]+)")
+    if sp then
+      M.cfg.spellAffects = M.cfg.spellAffects or {}
+      local k = sp:lower()
+      M.cfg.spellAffects[k] = M.cfg.spellAffects[k] or {}
+      M.cfg.spellAffects[k][stat] = tonumber(v)
+      M.saveSettings()
+    end
+  end
+end
+
+-- help 1085 (combat): damage by where a blow lands
+M.BODY_DAMAGE = { head = 1.2, torso = 1, arms = 0.65, legs = 0.75, tail = 0.5, wings = 0.5, wing = 0.5 }
+
+-- how hard you're hit: learned from your fights (hp lost ÷ hits taken, round by round)
+function M.noteHitTaken(hits, lost)
+  if not hits or hits <= 0 or not lost or lost <= 0 then return end
+  local per = lost / hits
+  local c = M.cfg.char or {}
+  M.cfg.char = c
+  c.hitTaken = c.hitTaken and (c.hitTaken * 0.9 + per * 0.1) or per
+  c.hitSamples = (c.hitSamples or 0) + 1
 end
 
 -- help 2258: attacks per round from your extra-attack skills and your attack speed
@@ -4954,7 +4999,6 @@ function M.wornAttackSpeed()
     local it = M.items[nm]
     if it then
       sp = sp + (modelStats(it)["attack-speed"] or 0)
-      if (M.itemEffects(it))["spell:haste"] then sp = sp + 10 end
     end
   end
   return sp
@@ -4975,6 +5019,10 @@ function M.combatModel(old, new)
   -- flat damage and damage-prcnt (help 1920: "your melee damage, as a percentage of your base damage")
   local base = (c.dmgParts or {})["weapon"] or dmg
   dmg2 = dmg2 + d("damage") + base * d("damage-prcnt") / 100
+  -- help 1920: damage-to-evil-prcnt "if you are good and your opponent is evil" (and to-good, the other way)
+  local align = tonumber(((M.gmcpGet and M.gmcpGet("char.status")) or {}).align)
+  if align and align >= 350 then dmg2 = dmg2 + base * d("damage-to-evil-prcnt") / 100 end
+  if align and align <= -350 then dmg2 = dmg2 + base * d("damage-to-good-prcnt") / 100 end
   -- a weapon swapped: its damage, accuracy and crit, from help 2468's values
   local ow, nw = old and old.weapon, new and new.weapon
   if nw or ow then
@@ -5019,8 +5067,7 @@ function M.combatModel(old, new)
   -- attacks per round (help 2258): attack speed raises your extra-attack skills, one after another,
   -- up to 100; what's left is a further chance of an attack. Haste gives +10 attack speed (help haste).
   local speed1 = M.wornAttackSpeed()
-  local speed2 = speed1 + d("attack-speed") + 10 * (((M.itemEffects(new or {}))["spell:haste"] and 1 or 0)
-                                                    - ((M.itemEffects(old or {}))["spell:haste"] and 1 or 0))
+  local speed2 = speed1 + d("attack-speed")
   local n1, n2 = M.attacksPerRound(speed1), M.attacksPerRound(speed2)
   local e1, e2 = swing(dmg, acc, crit) * n1, swing(dmg2, acc2, crit2) * n2
   res.offense = { pct = (e2 / e1 - 1) * 100, now = e1, after = e2,
@@ -5031,12 +5078,21 @@ function M.combatModel(old, new)
   local rate = (M.cfg.arRate or 0.75) / 100
   local hp = tonumber((M.cfg.maxes or {}).hp) or 0
   local hp2 = hp + d("hp")
+  -- each location weighed by the damage a blow there does (help 1085: head 120%… tail 50%);
+  -- every location equally likely to be hit (no help page says otherwise)
   local n, m1, m2 = 0, 0, 0
   for loc, ar in pairs(locs) do
-    n = n + 1
+    local mod = M.BODY_DAMAGE[loc] or 1
+    n = n + mod
     local ar2 = ar + d("ar") + d("ar-" .. loc)
-    m1 = m1 + math.max(0, 1 - ar * rate)
-    m2 = m2 + math.max(0, 1 - ar2 * rate)
+    m1 = m1 + mod * math.max(0, 1 - ar * rate)
+    m2 = m2 + mod * math.max(0, 1 - ar2 * rate)
+  end
+  -- resilience (help 1920: "absolute melee damage reduction"): a flat amount off each hit, against how
+  -- hard you're actually hit (learned from your fights)
+  local hit = tonumber((M.cfg.char or {}).hitTaken)
+  if hit and hit > 0 and d("resilience") ~= 0 then
+    m2 = m2 * math.max(0.05, 1 - d("resilience") / hit)
   end
   if n > 0 and hp > 0 then
     m1, m2 = m1 / n, m2 / n
@@ -5054,7 +5110,9 @@ function M.combatModel(old, new)
   -- what has no formula yet: listed, and scored with the weights (marked ~ where shown)
   -- (agility and strength are only partly covered: their dodging and damage are estimated, at HALF)
   local known = { damage = 1, ["damage-prcnt"] = 1, accuracy = 1, luck = 1, personality = 1,
-                  wisdom = 1, ["crit-chance"] = 1, hp = 1, ar = 1, ["spell-points"] = 1, ["attack-speed"] = 1 }
+                  wisdom = 1, ["crit-chance"] = 1, hp = 1, ar = 1, ["spell-points"] = 1, ["attack-speed"] = 1,
+                  ["damage-to-evil-prcnt"] = 1, ["damage-to-good-prcnt"] = 1 }
+  if tonumber((M.cfg.char or {}).hitTaken) then known.resilience = 1 end
   local keys = {}
   for k in pairs(a) do keys[k] = true end
   for k in pairs(b) do keys[k] = true end
@@ -5101,7 +5159,8 @@ function M.estimatePoints(old, new, w, m)
   for k in pairs(eb) do keys[k] = true end
   for k in pairs(keys) do
     local dv = (eb[k] or 0) - (ea[k] or 0)
-    if dv ~= 0 and k ~= "spell:haste" then   -- haste is in the model (attack speed)
+    -- spells whose affects are known are in the model already
+    if dv ~= 0 and not (k:match("^spell:") and M.spellAffects(k:match("^spell:(.+)$"))) then
       pts = pts + dv * M.statWeight(w, k)
       names[#names + 1] = k:gsub("^spell:", ""):gsub("^skill:", "")
     end
@@ -5198,7 +5257,7 @@ M.SPELLS = {
   ["demigod visage"] = { R_OFF, 3 }, ["animate weapon"] = { R_OFF, 2 },
   ["faerie fire"] = { R_OFF, 1.5 }, curse = { R_OFF, 1.5 }, malediction = { R_OFF, 1.5 }, blindness = { R_OFF, 1.5 },
   diminishment = { R_OFF, 2 }, bleakness = { R_OFF, 1.5 }, weaken = { R_OFF, 1.5 },
-  sanctuary = { R_DEF, 6 }, fireshield = { R_DEF, 4 }, ["spell shield"] = { R_DEF, 4 }, glacierskin = { R_DEF, 3 },
+  sanctuary = { R_DEF, 0.5 }, fireshield = { R_DEF, 4 }, ["spell shield"] = { R_DEF, 4 }, glacierskin = { R_DEF, 3 },
   ["stone skin"] = { R_DEF, 3 }, stoneskin = { R_DEF, 3 }, armor = { R_DEF, 2 }, shield = { R_DEF, 2 },
   ["protection from good"] = { R_DEF, 2 }, ["protection from evil"] = { R_DEF, 2 }, ["battle march"] = { R_DEF, 2 },
   blink = { R_DEF, 1.5 }, ["combat blink"] = { R_DEF, 2 }, ["telekinetic shield"] = { R_DEF, 3 },
@@ -6956,6 +7015,13 @@ function M.onCombatRound()
   end
   M.fight = F
   F.rounds = F.rounds + 1
+  -- how hard you're hit (for resilience in the gear model): hp lost since the last round ÷ hits taken
+  local v = M.gmcpGet and M.gmcpGet("char.vitals")
+  local hpNow = type(v) == "table" and tonumber(v.hp) or nil
+  if hpNow and M.lastRoundHP and n("opponent_hits") > 0 and M.lastRoundHP > hpNow then
+    pcall(M.noteHitTaken, n("opponent_hits"), M.lastRoundHP - hpNow)
+  end
+  M.lastRoundHP = hpNow
   F.hit, F.miss, F.parried = F.hit + n("you_hit"), F.miss + n("you_miss"), F.parried + n("opponent_defends")
   F.took, F.missed, F.defended = F.took + n("opponent_hits"), F.missed + n("opponent_misses"), F.defended + n("you_defend")
   M.roundSeq = (M.roundSeq or 0) + 1
@@ -9497,6 +9563,7 @@ function M.finish(reason)
       return
     end
     if cap.kind == "help" then
+      pcall(M.noteSpellHelp, cap.plain)
       if replace then
         moveCursorEnd("main")
         if getCurrentLine("main") ~= "" then echo("main", "\n") end

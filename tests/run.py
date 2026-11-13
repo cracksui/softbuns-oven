@@ -611,7 +611,7 @@ def gear_score_effects():
         assert e[k], f"{k} counted"
     # roles: sanctuary is defense, the poison proc offense, parry defense
     r = o.ev("sbo.roleScores(HOOK)")
-    assert r.defense > 6 and r.offense > 2, dict(r)
+    assert r.defense > 4 and r.offense > 2, dict(r)   # parry; sanctuary is minor (help 1533)
     eq(o.ev("(sbo.spellInfo('haste')).offense"), 1, "haste is offense")
     assert o.ev("select(2, sbo.spellInfo('haste'))") > o.ev("select(2, sbo.spellInfo('levitation'))"), "haste is worth more"
     assert o.ev("sbo.gearScore(HOOK)") > o.ev("sbo.gearScore(PLAIN)") + 8, "effects add up"
@@ -693,6 +693,21 @@ def combat_model():
     o.lua("sbo.cfg.skills['second attack'] = nil")
     m = o.ev("sbo.combatModel(nil, { extra = { { 'Casts', { { 'x', \"'haste'\" } } } } })")
     eq(round(m.offense.pct, 1), 10.0, "haste on gear: +10% damage per round")
+    # sanctuary (help 1533): +3 damage to evil only if you're good; nothing to a neutral offense
+    m = o.ev("sbo.combatModel(nil, { extra = { { 'Casts', { { 'x', \"'sanctuary'\" } } } } })")
+    eq(round(m.offense.pct, 1), 0.0, "neutral: sanctuary adds no damage")
+    # spells learned from their help pages
+    o.ev("sbo.noteSpellHelp")(o.L.table_from(["[9999 ] STONE TEST", "*When you stone test, you will apply +5 ar for 10 minutes]"]))
+    eq(o.ev("sbo.spellAffects('stone test').ar"), 5, "learned from the help page")
+    # defense: a point of head AR protects more than one of tail AR (help 1085: 120% vs 50%)
+    head = o.ev("sbo.combatModel(nil, { affects = { { 'ar-head', '1' } } })").defense.pct
+    tail = o.ev("sbo.combatModel(nil, { affects = { { 'ar-tail', '1' } } })").defense.pct
+    assert head > 2 * tail, (head, tail)
+    # resilience against how hard you're really hit
+    o.lua("sbo.cfg.char.hitTaken = nil; for i = 1, 5 do sbo.noteHitTaken(2, 60) end")
+    eq(round(o.ev("sbo.cfg.char.hitTaken")), 30, "30 hp a hit")
+    r = o.ev("sbo.combatModel(nil, { affects = { { 'resilience', '3' } } })").defense.pct
+    assert 9 < r < 13, f"3 off a 30-damage hit: ~10% less damage, ~11% more effective hp: {r}"
 
 
 @test
