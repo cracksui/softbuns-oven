@@ -211,31 +211,38 @@ def friends_where():
     # not a friend yet: told no, and Pal sees that someone asked
     me.lua('sbo.command("go @pal")')
     ask = me.ev("SENT[#SENT]")
-    assert ask.startswith("tell pal #oven where "), ask
-    nonce = ask.split()[-1]
-    pal.feed(f"Me tells you '#oven where {nonce}'")
+    assert ask.startswith("tell pal Hey, where are you? #"), ask
+    nonce = ask.split("#")[-1]
+    pal.feed(f"Me tells you 'Hey, where are you? #{nonce}'")
     pal.lua("runTimers()")
     eq(pal.ev("GAGGED"), 1, "the asking tell is kept off Pal's screen")
     no = pal.ev("SENT[#SENT]")
-    eq(no, f"tell me #oven no {nonce}", "a non-friend is told no")
+    eq(no, f"tell me Sorry, I'd rather not say. #{nonce}", "a non-friend is told no")
     assert any("asked where you are" in x for x in pal.ev("SAYS").values()), "Pal is told someone asked"
-    me.feed(f"Pal tells you '#oven no {nonce}'"); me.lua("runTimers()")
+    me.feed(f"Pal tells you 'Sorry, I'd rather not say. #{nonce}'"); me.lua("runTimers()")
     assert any("hasn't added you" in x for x in me.ev("SAYS").values()), list(me.ev("SAYS").values())
     eq(me.ev("WALK"), None, "no walk")
     # friends: the room comes back and Oven walks there
     pal.lua('sbo.command("friend add me"); SENT = {}; sbo.friendAnswered = {}')
     me.lua('sbo.command("friend add pal"); SAYS = {}; sbo.command("go pal")')
-    nonce = me.ev("SENT[#SENT]").split()[-1]
-    me.lua("GAGGED = 0"); me.feed(f"You tell Pal '#oven where {nonce}'")
+    nonce = me.ev("SENT[#SENT]").split("#")[-1]
+    me.lua("GAGGED = 0"); me.feed(f"You tell Pal 'Hey, where are you? #{nonce}'")
     eq(me.ev("GAGGED"), 1, "your own tell is hidden too")
-    pal.feed(f"Me tells you '#oven where {nonce}'"); pal.lua("runTimers()")
+    pal.feed(f"Me tells you 'Hey, where are you? #{nonce}'"); pal.lua("runTimers()")
     at = pal.ev("SENT[#SENT]")
-    eq(at, f"tell me #oven at {nonce} 10522", "a friend is told the room")
-    me.feed(f"Pal tells you, '#oven at {nonce} 10522'"); me.lua("runTimers()")
+    eq(at, f"tell me I'm at Garden of Life (room 10522). #{nonce}", "a friend is told the room")
+    me.feed(f"Pal tells you, 'I'm at Garden of Life (room 10522). #{nonce}'"); me.lua("runTimers()")
     eq(me.ev("WALK"), 10522, "walks to Pal")
     # a stale or made-up answer does nothing
-    me.lua("WALK = nil"); me.feed("Pal tells you '#oven at beef 10438'"); me.lua("runTimers()")
+    me.lua("WALK = nil; GAGGED = 0"); me.feed("Pal tells you 'I'm at the Bank (room 10438). #beef'"); me.lua("runTimers()")
     eq(me.ev("WALK"), None, "only answers to what was asked")
+    # an ordinary tell stays on screen
+    me.lua("GAGGED = 0"); me.feed("Pal tells you 'meet me at #3 bank'"); me.feed("Pal tells you 'where are you?'")
+    eq(me.ev("GAGGED"), 0, "people's own tells are never hidden")
+    # an Oven that hasn't updated yet still understood
+    me.lua('sbo.command("friend where pal")'); n2 = me.ev("SENT[#SENT]").split("#")[-1]
+    me.lua("SAYS = {}"); me.feed(f"Pal tells you '#oven at {n2} 10522'"); me.lua("runTimers()")
+    assert any("Garden of Life" in x for x in me.ev("SAYS").values()), list(me.ev("SAYS").values())
     # offline
     me.lua('SAYS = {}; sbo.command("friend where pal")'); me.feed("They aren't here."); me.lua("runTimers()")
     assert any("isn't online" in x for x in me.ev("SAYS").values()), list(me.ev("SAYS").values())
