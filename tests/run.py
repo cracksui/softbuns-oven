@@ -739,6 +739,19 @@ def attack_abilities():
     lines = o.ev("sbo.abilitySwapLines(nil, { affects = { { 'fire-damage', '3' }, { 'damage-kick', '2' } } })")
     t = {x.name: x.text for x in lines.values()}
     eq(t, {"kick": "+2 damage-kick", "spark": "+3 fire-damage"}, "gear that boosts them")
+    # practise next: the most damage per use for the practices, up to 75%
+    o.ev("sbo.noteAbilityHelp")(o.L.table_from(["[1490 ] CAUSE LIGHT", "*Diamancy spell (8% complexity)",
+        "*Costs 1.8 practices per percent learned.", "*Spell Points Required: 54", "*Deals energy/pain (2.4 base) damage."]))
+    o.lua("sbo.cfg.skills['cause light'] = { lrnd = 18 }; sbo.cfg.abilities.spark.practice = 1.6")
+    f = o.ev("function() local out = {} sbo.abilitySection(out, 100) local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end")
+    text = f()
+    assert "→ spark" in text and "about 40 practices" in text, f"spark: 2.2/1.6 beats cause light 2.4/1.8; 50→75 = 40: {text}"
+    assert "? st" in text, "kick's stamina isn't in its help page"
+    # any character: its own skills not read yet make the next batch
+    o.lua("sbo.cfg.helpBatchesDone = {}; for _, b in ipairs(sbo.HELP_BATCHES) do sbo.cfg.helpBatchesDone[b.name] = true end; sbo.cfg.skills.dodge = { lrnd = 40 }")
+    name, pages = o.ev("function() return sbo.helpNextBatch() end")()
+    eq(name, "your skills and spells not read yet", "from the character's own skills")
+    assert "dodge" in list(pages.values()), list(pages.values())
 
 
 @test

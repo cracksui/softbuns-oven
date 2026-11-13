@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.7.0"
+M.version = "1.8.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5893,6 +5893,7 @@ function M.parseAbilityHelp(lines)
     a.st = a.st or tonumber(t:match("^%*Stamina Required:%s*(%d+)"))
     a.time = a.time or tonumber(t:match("(%d+) second cast time") or t:match("(%d+) second usage time"))
     a.cooldown = a.cooldown or tonumber(t:match("^%*Cooldown:%s*(%d+) seconds"))
+    a.practice = a.practice or tonumber(t:match("^%*Costs ([%d%.]+) practices per percent learned"))
     local types, base = t:match("^%*Deals ([%a/]+) %(([%d%.]+) base%) damage")
     if types then a.types, a.base = types, tonumber(base) end
     if not a.types then a.types = t:match("^%*Deals ([%a/]+) damage") or a.types end
@@ -6001,12 +6002,33 @@ function M.abilitySection(out, width)
   out[#out + 1] = { { C.dim, "  " .. pad("", 22) .. pad("you", 6) .. pad("cost", 9) .. pad("time", 9) .. pad("damage", 8) .. pad("per use", 9) .. pad("per 100", 9) .. "types" } }
   for _, ab in ipairs(list) do
     local a = ab.a
-    local cost = a.sp and (a.sp .. " sp") or (a.st and (a.st .. " st")) or "-"
+    local cost = a.sp and (a.sp .. " sp") or (a.st and (a.st .. " st")) or (a.kind == "skill" and "? st" or "-")
     local time = (a.time and (a.time .. "s") or "") .. (a.cooldown and ("/" .. a.cooldown .. "s") or "")
     out[#out + 1] = { { C.key, "  " .. pad(ab.name, 22) }, { C.num, pad(ab.pct .. "%", 6) }, { C.text, pad(cost, 9) },
       { C.dim, pad(time ~= "" and time or "-", 9) }, { C.num, pad(string.format("%.1f", a.base), 8) },
       { C.plus, pad(string.format("%.2f", ab.per), 9) }, { C.text, pad(ab.perCost and string.format("%.2f", ab.perCost) or "-", 9) },
       { C.dim, (function() local seen, t = {}, {} for ty in (a.types or ""):gmatch("%a+") do if not seen[ty] then seen[ty] = true; t[#t + 1] = ty end end return table.concat(t, ", ") end)() } }
+  end
+  -- what to practise next: the most damage per use for the practices, up to 75% (help 2438: skill power
+  -- only works from 75%; help 1145: practising past 75% costs much more)
+  local cand = {}
+  for _, ab in ipairs(list) do
+    if ab.pct < 75 and ab.a.practice and ab.a.practice > 0 then
+      local gain = ab.a.base * (75 - ab.pct) / 100
+      local cost = (75 - ab.pct) * ab.a.practice
+      cand[#cand + 1] = { ab = ab, gain = gain, cost = cost, rate = ab.a.base / 100 / ab.a.practice }
+    end
+  end
+  table.sort(cand, function(x, y) return x.rate > y.rate end)
+  if #cand > 0 then
+    out[#out + 1] = { { C.dim, "  practise next (most damage per use for the practices, up to 75%):" } }
+    for i, x in ipairs(cand) do
+      if i > 3 then break end
+      out[#out + 1] = { { C.dim, "    " .. (i == 1 and "→ " or "  ") }, { i == 1 and C.slot or C.key, pad(x.ab.name, 20) },
+        { C.dim, string.format("%d%% → 75%%: about %d practices (%.1f a %%), per use %.2f → %.2f",
+          x.ab.pct, math.ceil(x.cost), x.ab.a.practice, x.ab.per, x.ab.a.base * 0.75) } }
+    end
+    out[#out + 1] = { { C.dim, "    (the help's practices per %, at its base rate - it rises with your level)" } }
   end
   out[#out + 1] = { { C.dim, "  damage = the help page's factor; per use = factor × how well you know it (help 2438: knowing it better" } }
   out[#out + 1] = { { C.dim, "  means succeeding more often - read as your %); per 100 = per 100 sp or st. No page says what a factor is" } }
@@ -6479,8 +6501,9 @@ local function worthReading(name, summary)
   for _, w in ipairs(WORTH) do if s:find(w, 1, true) then return true end end
   return false
 end
--- the next batch: the first stored one not read yet (only pages picked for them - following every
--- link snowballed into pages about other classes' skills)
+-- the next batch: the first stored one not read yet; then, for any character, the help pages of its own
+-- skills and spells (from skills / practice) that haven't been read (following every link snowballed
+-- into pages about other classes' skills)
 function M.helpNextBatch()
   local idx = savedIndex()
   M.cfg.helpBatchesDone = M.cfg.helpBatchesDone or {}
@@ -6492,6 +6515,17 @@ function M.helpNextBatch()
       M.cfg.helpBatchesDone[b.name] = true
     end
   end
+  local left = {}
+  local names = {}
+  for name in pairs(M.cfg.skills or {}) do names[#names + 1] = name end
+  table.sort(names)
+  for _, name in ipairs(names) do
+    if not idx[name:lower()] and not (M.cfg.abilities or {})[name] then
+      left[#left + 1] = name
+      if #left >= 10 then break end
+    end
+  end
+  if #left > 0 then return "your skills and spells not read yet", left end
 end
 
 function M.helpFetchStart(arg)
@@ -6632,6 +6666,11 @@ function M.helpSave(topic, plain)
   f:close()
   savedIndex()[topic:lower()] = true
   if num then savedIndex()[num] = true end
+  -- and by its title ("[1487 ] SPARK" = spark), so asking for it by name later knows it's been read
+  for _, l in ipairs(plain) do
+    local title = trim(l):match("^%[%s*%d+%s*%]%s+(.+)$")
+    if title then savedIndex()[title:lower()] = true; break end
+  end
   M.saveSettings()
 end
 end
