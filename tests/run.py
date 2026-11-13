@@ -657,6 +657,38 @@ def upgrade_gains_and_losses():
 
 
 @test
+def combat_model():
+    o = Oven()
+    # the starting point: eq's own numbers (as on 2026-11-12)
+    o.ev("sbo.noteCombat")(o.L.table_from([
+        "57 Damage: (+46 from weapon) (+9 from skill & strength) (+1 from weapon skillpower)",
+        "55 Accuracy: (+7 from level) (+25 from weapon skill) (+16 from weapon) (+5 from agility)",
+        "31% Critical Hit chance:  (+31 from staff)", "You have a 46% chance to resist a critical hit."]))
+    o.lua("""sbo.cfg.char.class = 'monk'; sbo.cfg.char.stats = { agility = { cur = 9, max = 17 }, strength = { cur = 10, max = 20 } }
+      sbo.cfg.maxes = { hp = 365, sp = 875 }; sbo.cfg.arLoc = { head = 5, torso = 16, arms = 14, legs = 18, tail = 5 }; sbo.cfg.arRate = 0.75
+      sbo.cfg.skills = { staff = { lrnd = 85 }, mace = { lrnd = 0 } }""")
+    m = o.ev("sbo.combatModel(nil, { affects = { { 'damage-prcnt', '5' } } })")
+    # 5% of the weapon's 46 = +2.3 damage on 57: +4.0% per swing
+    eq(round(m.offense.pct, 1), 4.0, "damage-prcnt from the weapon's base damage")
+    m = o.ev("sbo.combatModel({ affects = { { 'accuracy', '2' } } }, nil)")
+    eq(round(m.offense.parts.accuracy[2], 2), round(55 - 4 / 3, 2), "gear accuracy counts 2/3 (help 1747)")
+    m = o.ev("sbo.combatModel(nil, { affects = { { 'agility', '2' } } })")
+    eq(m.offense.parts.accuracy[2], 56, "+2 agility = +1 accuracy ((agility+1)/2)")
+    m = o.ev("sbo.combatModel(nil, { affects = { { 'agility', '20' } } })")
+    eq(m.offense.parts.accuracy[2], 59, "but only up to the maximum: 9 -> 17")
+    # defense: +1 AR everywhere vs on the legs only
+    all_ = o.ev("sbo.combatModel(nil, { affects = { { 'ar', '1' } } })").defense.pct
+    legs = o.ev("sbo.combatModel(nil, { affects = { { 'ar-legs', '1' } } })").defense.pct
+    assert all_ > 4 * legs and legs > 0, (all_, legs)
+    # a weapon of another kind: your skill with it, not your staff's
+    o.lua("""STAFF = { name = 'a staff', worn = 'wielded', weapon = { summary = 'Your staff will deal High bash damage', dmgLevel = 'High', accuracy = 'Min', critChance = 'Max' }, keywords = 'staff' }
+      MACE = { name = 'a mace', worn = 'wielded', weapon = { summary = 'Your mace will deal High bash damage', dmgLevel = 'High', accuracy = 'Max', critChance = 'Low' }, keywords = 'mace' }""")
+    m = o.ev("sbo.combatModel(STAFF, MACE)")
+    eq(round(m.offense.parts.accuracy[2]), 55 + 29 - 25, "+29 weapon accuracy, -25 from losing staff skill")
+    assert m.offense.pct < 0, "worse: a skill you don't have, and far less crit"
+
+
+@test
 def training_advice():
     o = Oven()
     o.lua("""sbo.cfg.char = { class = 'monk', race = 'sahuagin', stats = {

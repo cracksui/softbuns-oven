@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.95.0"
+M.version = "0.96.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4851,6 +4851,268 @@ function M.statCapped(stat)
   return st and st.cur and st.max and st.cur >= st.max
 end
 
+do -- (its own scope: the main chunk is near Lua's 200-local limit)
+---------------------------------------------------------------------------
+-- Combat model: what a piece of gear really changes, in the game's own units.
+--   offense  expected melee damage per swing = damage × hit chance × (1 + crit chance)
+--            (help 1747: accuracy is the hit chance, 1-98%; help 2468: a crit deals double)
+--   defense  effective hit points = hit points ÷ the share of damage that gets through your AR
+--            (eq: each AR point takes 0.75% off damage at its location; locations equally likely)
+--   casting  spell points, and their regeneration
+-- The starting point is your own numbers as eq reports them ("57 Damage", "55 Accuracy",
+-- "31% Critical Hit chance", AR by location) and your hit points. A swap is worked out from there:
+-- what the old item gave is taken off, what the new one gives is put on, through the same formulas.
+-- What no help page gives a formula for is an estimate, and is shown as one.
+---------------------------------------------------------------------------
+
+-- eq's "Equipped weapon damage" block and crit resistance: kept as the model's starting point
+function M.noteCombat(raw)
+  local c = {}
+  for _, l in ipairs(raw) do
+    local t = trim(l)
+    local v, label, rest = t:match("^(%-?%d+)%%? ([%a ]-):%s*(.*)$")
+    if v then
+      local parts = {}
+      for num, why in rest:gmatch("%(([+%-]+%d+) (.-)%)") do
+        parts[(why:gsub("^from ", ""))] = tonumber((num:gsub("^%+%-", "-"):gsub("^%-%+", "-"):gsub("^%+", "")))
+      end
+      local key = label:lower()
+      if key == "damage" then c.damage, c.dmgParts = tonumber(v), parts
+      elseif key == "accuracy" then c.accuracy, c.accParts = tonumber(v), parts
+      elseif key == "range" then c.range = tonumber(v)
+      elseif key:match("^critical hit chance") then c.crit = tonumber(v) end
+    end
+    local cr = t:match("^You have a (%d+)%% chance to resist a critical hit")
+    if cr then c.critResist = tonumber(cr) end
+  end
+  if c.damage or c.accuracy then
+    M.cfg.char = M.cfg.char or {}
+    M.cfg.char.combat = c
+    M.cfg.char.combat.at = os.time()
+  end
+end
+
+-- help 2468's weapon kinds (each its own skill)
+M.WEAPON_KINDS = { "two-handed sword", "two-handed axe", "throwing star", "throwing knife", "throwing axe", "throwing spear",
+  "magical wand", "hand cannon", "slug thrower", "hand to hand", "exotic", "sword", "dagger", "spear", "mace", "axe", "flail",
+  "whip", "polearm", "bow", "dart", "hook", "lance", "pike", "halberd", "nunchaku", "staff", "scythe", "yo-yo",
+  "boomerang", "bola", "maul", "crossbow", "sling", "chakram" }
+-- help 2468: what Min…Max mean for a weapon
+local WEAPON_VALUE = {
+  damage = { 76, 85, 94, 103, 112 }, accuracy = { 16, 24, 31, 38, 45 }, crit = { 2, 7, 14, 22, 31 },
+}
+local function weaponValue(kind, word)
+  local r = RANK[tostring(word or ""):lower()]
+  return r and WEAPON_VALUE[kind][r] or nil
+end
+
+-- an item's numbers, for the model: { stat = value }, AR split into all-locations and per-location
+local function modelStats(it)
+  local s = {}
+  if not it then return s end
+  for _, list in ipairs({ it.affects or {}, it.relicAffects or {} }) do
+    for _, a in ipairs(list) do
+      local v = tonumber((tostring(a[2] or ""):gsub(",", "")))
+      if a[1] and v then s[a[1]] = (s[a[1]] or 0) + v end
+    end
+  end
+  if tonumber(it.ar) and tonumber(it.ar) ~= 0 then
+    local loc = M.arLocationFor(it.worn)
+    local k = loc and ("ar-" .. loc) or "ar"
+    s[k] = (s[k] or 0) + tonumber(it.ar)
+  end
+  return s
+end
+
+-- attribute after a change: what score shows now, minus what the old item gave, plus the new one,
+-- never past the maximum (gear beyond it does nothing)
+local function attrAfter(stat, d)
+  local st = ((M.cfg.char or {}).stats or {})[stat]
+  if not st or not st.cur then return nil, nil end
+  local now = st.cur
+  local after = math.max(0, math.min(st.max or 999, now + d))
+  return now, after
+end
+
+-- the model: what swapping `old` (may be nil) for `new` does. Returns
+-- { offense = {pct, now, after, notes}, defense = {...}, casting = {...}, estimates = {…} } or nil, why
+function M.combatModel(old, new)
+  local c = (M.cfg.char or {}).combat
+  if not c or not c.damage or not c.accuracy then return nil, "type eq once: Oven starts from the numbers it shows" end
+  local a, b = modelStats(old), modelStats(new)
+  local function d(k) return (b[k] or 0) - (a[k] or 0) end
+  local res = { estimates = {} }
+
+  -- offense ---------------------------------------------------------------
+  local dmg, acc, crit = c.damage, c.accuracy, c.crit or 0
+  local dmg2, acc2, crit2 = dmg, acc, crit
+  -- flat damage and damage-prcnt (help 1920: "your melee damage, as a percentage of your base damage")
+  local base = (c.dmgParts or {})["weapon"] or dmg
+  dmg2 = dmg2 + d("damage") + base * d("damage-prcnt") / 100
+  -- a weapon swapped: its damage, accuracy and crit, from help 2468's values
+  local ow, nw = old and old.weapon, new and new.weapon
+  if nw or ow then
+    local od, nd = ow and weaponValue("damage", ow.dmgLevel), nw and weaponValue("damage", nw.dmgLevel)
+    if od and nd and (c.dmgParts or {})["weapon"] then dmg2 = dmg2 + c.dmgParts["weapon"] * (nd / od - 1) end
+    local oa, na = ow and weaponValue("accuracy", ow.accuracy), nw and weaponValue("accuracy", nw.accuracy)
+    if oa and na then acc2 = acc2 + (na - oa) end
+    -- your skill with the weapon (help 1747: +1/3 of the learned skill, up to 25, +3 at mastery):
+    -- a different kind of weapon means a different skill
+    local function skillAcc(it)
+      if not it then return nil end
+      for _, kind in ipairs(M.WEAPON_KINDS) do
+        if M.weaponIs(it, kind) then
+          local sk = (M.cfg.skills or {})[kind]
+          local l = sk and tonumber(sk.lrnd) or 0
+          return math.min(25, l / 3) + (l >= 100 and 3 or 0), kind
+        end
+      end
+    end
+    local os_, ok_ = skillAcc(old)
+    local ns_, nk_ = skillAcc(new)
+    if os_ and ns_ and ok_ ~= nk_ then acc2 = acc2 + (ns_ - os_)
+    elseif ow and nw and not (os_ and ns_) then res.estimates[#res.estimates + 1] = { "weapon skill (unknown kind)", 0 } end
+    local oc, nc = ow and weaponValue("crit", ow.critChance), nw and weaponValue("crit", nw.critChance)
+    if oc and nc then crit2 = crit2 + (nc - oc) end
+  end
+  -- accuracy (help 1747): 2/3 of gear accuracy; (agility+1)/2; ((luck+2)/4); (personality+5)/10;
+  -- strength and wisdom above 20
+  acc2 = acc2 + d("accuracy") * 2 / 3
+  local function attrPart(stat, per, above)
+    local dd = d(stat)
+    if dd == 0 then return 0 end
+    local now, after = attrAfter(stat, dd)
+    if not now then return 0 end
+    if above then return math.max(0, after - above) - math.max(0, now - above) end
+    return (after - now) * per
+  end
+  acc2 = acc2 + attrPart("agility", 0.5) + attrPart("luck", 0.25) + attrPart("personality", 0.1)
+       + attrPart("strength", 0, 20) + attrPart("wisdom", 0, 20)
+  crit2 = crit2 + d("crit-chance")
+  local function swing(D, A, C) return D * math.max(1, math.min(98, A)) / 100 * (1 + C / 100) end
+  local e1, e2 = swing(dmg, acc, crit), swing(dmg2, acc2, crit2)
+  res.offense = { pct = (e2 / e1 - 1) * 100, now = e1, after = e2,
+                  parts = { damage = { dmg, dmg2 }, accuracy = { acc, acc2 }, crit = { crit, crit2 } } }
+
+  -- defense ---------------------------------------------------------------
+  local locs = M.cfg.arLoc or {}
+  local rate = (M.cfg.arRate or 0.75) / 100
+  local hp = tonumber((M.cfg.maxes or {}).hp) or 0
+  local hp2 = hp + d("hp")
+  local n, m1, m2 = 0, 0, 0
+  for loc, ar in pairs(locs) do
+    n = n + 1
+    local ar2 = ar + d("ar") + d("ar-" .. loc)
+    m1 = m1 + math.max(0, 1 - ar * rate)
+    m2 = m2 + math.max(0, 1 - ar2 * rate)
+  end
+  if n > 0 and hp > 0 then
+    m1, m2 = m1 / n, m2 / n
+    local eh1, eh2 = hp / m1, hp2 / m2
+    res.defense = { pct = (eh2 / eh1 - 1) * 100, now = eh1, after = eh2, through = { m1, m2 }, hp = { hp, hp2 } }
+  end
+
+  -- casting ---------------------------------------------------------------
+  local sp = tonumber((M.cfg.maxes or {}).sp) or 0
+  if sp > 0 then
+    local sp2 = sp + d("spell-points")
+    res.casting = { pct = (sp2 / sp - 1) * 100, now = sp, after = sp2, regen = d("sp-regen") }
+  end
+
+  -- what has no formula yet: listed, and scored with the weights (marked ~ where shown)
+  -- (agility and strength are only partly covered: their dodging and damage are estimated, at HALF)
+  local known = { damage = 1, ["damage-prcnt"] = 1, accuracy = 1, luck = 1, personality = 1,
+                  wisdom = 1, ["crit-chance"] = 1, hp = 1, ar = 1, ["spell-points"] = 1 }
+  local keys = {}
+  for k in pairs(a) do keys[k] = true end
+  for k in pairs(b) do keys[k] = true end
+  for k in pairs(keys) do
+    if not known[k] and not k:match("^ar%-") and d(k) ~= 0 then res.estimates[#res.estimates + 1] = { k, d(k) } end
+  end
+  table.sort(res.estimates, function(x, y) return x[1] < y[1] end)
+  return res
+end
+
+-- "offense +6.1% · defense +3.2% · casting −1.1%" (real numbers), then "~" for what's estimated
+function M.modelSegs(old, new)
+  local m = M.combatModel(old, new)
+  if not m then return nil end
+  local segs = {}
+  local function add(label, x)
+    if not x then return end
+    local p = math.floor(x.pct * 10 + 0.5) / 10
+    if p == 0 then return end
+    if #segs > 0 then segs[#segs + 1] = { C.dim, " · " } end
+    segs[#segs + 1] = { C.dim, label .. " " }
+    segs[#segs + 1] = { p > 0 and C.plus or C.minus, (p > 0 and "+" or "−") .. tostring(math.abs(p)) .. "%" }
+  end
+  add("offense", m.offense)
+  add("defense", m.defense)
+  add("casting", m.casting)
+  return segs, m
+end
+
+-- what the model can't work out yet, valued with the build's weights (an estimate, shown with ~):
+-- stats with no formula, the parts of stats the model only half covers (agility's dodging,
+-- strength's damage), and what items do (spells, skills, procs, sets)
+local HALF = { agility = 0.5, strength = 0.8 }
+function M.estimatePoints(old, new, w, m)
+  local pts, names = 0, {}
+  for _, e in ipairs((m or {}).estimates or {}) do
+    local k, dv = e[1], e[2]
+    local wt = M.statWeight(w, k) * (HALF[k] or 1)
+    if wt ~= 0 then pts = pts + dv * wt; names[#names + 1] = k end
+  end
+  local ea, eb = old and M.itemEffects(old) or {}, M.itemEffects(new)
+  local keys = {}
+  for k in pairs(ea) do keys[k] = true end
+  for k in pairs(eb) do keys[k] = true end
+  for k in pairs(keys) do
+    local dv = (eb[k] or 0) - (ea[k] or 0)
+    if dv ~= 0 then
+      pts = pts + dv * M.statWeight(w, k)
+      names[#names + 1] = k:gsub("^spell:", ""):gsub("^skill:", "")
+    end
+  end
+  return pts, names
+end
+
+-- weights are in gear-score points; the model is in %. Where both exist - AR - they're matched:
+-- what +1 AR everywhere really does to your effective hit points, per point of AR's weight.
+-- Estimates are put on that scale, so a guess can't outweigh what's calculated.
+function M.weightToPct(w)
+  local probe = { affects = { { "ar", "1" } } }
+  local m = M.combatModel(nil, probe)
+  local wt = M.statWeight(w, "ar")
+  if m and m.defense and wt and wt > 0 then return m.defense.pct / wt end
+  return 0.27
+end
+
+-- an upgrade's worth: the real changes in % (each role times your build's lean), plus the estimate.
+-- role: only that role's real change
+function M.upgradeValue(old, new, w, role)
+  local m = M.combatModel(old, new)
+  if not m then return nil end
+  local mix = M.roleMix()
+  if role then
+    local x = m[role]
+    if x then return x.pct, m end
+    -- utility: only estimates
+    local e = M.estimatePoints(old, new, w, m)
+    return e * M.weightToPct(w), m
+  end
+  local v = 0
+  for _, r in ipairs({ "offense", "defense", "casting" }) do
+    if m[r] then v = v + m[r].pct * (mix[r] or 1) end
+  end
+  local est, names = M.estimatePoints(old, new, w, m)
+  est = est * M.weightToPct(w)
+  m.est, m.estNames = est, names
+  return v + est * (mix.utility or 1), m
+end
+
+end
+
 -- each stat's part of an item's gear score: { stat, value, weight, capped, boost, points }
 ---------------------------------------------------------------------------
 -- Roles: what each stat and effect does for you - offense, defense, casting (spells and healing) or
@@ -5043,8 +5305,6 @@ function M.scoreLine(it)
   local sc = M.gearScore(it, w)
   if not sc then return nil end
   local segs = { { C.key, "Gear score " }, { C.num, tostring(sc) }, { C.dim, "  (" .. bname .. " build" } }
-  local rs = M.roleDiffSegs(nil, it, w)
-  if #rs > 0 then segs[#segs + 1] = { C.dim, ": " }; addAll(segs, rs) end
   segs[#segs + 1] = { C.dim, ")" }
   local worn = M.wornLike(it, w)
   local wearing = false
@@ -5058,6 +5318,12 @@ function M.scoreLine(it)
     segs[#segs + 1] = { C.dim, "  ·  you wear " .. worn.name .. ": " .. ws .. " → " }
     segs[#segs + 1] = { d > 0 and C.plus or (d < 0 and C.minus or C.dim),
                         (d > 0 and "+" or "") .. d .. pct .. (d > 0 and " upgrade" or (d < 0 and " worse" or " same")) }
+  end
+  -- the real change, if you swapped: in the game's units
+  local ms = worn and not wearing and M.modelSegs(worn, it)
+  if ms and #ms > 0 then
+    segs[#segs + 1] = { C.dim, "  ·  swapping: " }
+    addAll(segs, ms)
   end
   return segs
 end
@@ -5153,12 +5419,20 @@ function M.upgradeLines(width, all, role)
    slotsSeen[cur.worn] = (slotsSeen[cur.worn] or 0) + 1
    if weakest[cur.worn] and (weakest[cur.worn].it == cur or (perWorn[cur.worn] or 0) > 1) then
     local cs = score(cur)
-    local best, bs
+    local best, bs, bm
+    -- the real model when Oven has your eq's numbers: what the swap does to your damage, survival
+    -- and spell points (in %), plus the estimate for what has no formula; else the weighted score
+    local useModel = M.combatModel(cur, cur) ~= nil
     for _, r in ipairs(byWorn[cur.worn] or {}) do
       local tooHigh = lvl and tonumber(r.level) and tonumber(r.level) > lvl
       if not isWorn[r.name] and not used[r.name] and not tooHigh and (all or carried[r.name]) then
-        local s = score(M.items[r.name])
-        if s and s > cs and (not bs or s > bs) then best, bs = r.name, s end
+        if useModel then
+          local v, m = M.upgradeValue(cur, M.items[r.name], w, role)
+          if v and v > 0.05 and (not bs or v > bs) then best, bs, bm = r.name, v, m end
+        else
+          local s = score(M.items[r.name])
+          if s and s > cs and (not bs or s > bs) then best, bs = r.name, s end
+        end
       end
     end
     if best then
@@ -5166,13 +5440,28 @@ function M.upgradeLines(width, all, role)
       shown = shown + 1
       local bestIt = M.items[best]
       M.lastUpgrades[shown] = { cur = cur.name, best = best }
-      out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name }, { C.dim, "  " .. cs } }
-      local row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
+      local row
+      if bm then
+        out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name } }
+        row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, string.format("  +%s%%", math.floor(bs * 10 + 0.5) / 10) } }
+      else
+        out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name }, { C.dim, "  " .. cs } }
+        row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
+      end
       local where = carried and carried[best]
       if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where } end
       out[#out + 1] = row
-      local rsegs = M.roleDiffSegs(cur, bestIt, w)
-      if #rsegs > 0 then
+      -- the real changes, then the estimate for the rest
+      local rsegs = bm and (M.modelSegs(cur, bestIt)) or M.roleDiffSegs(cur, bestIt, w)
+      if bm and bm.est and math.abs(bm.est) >= 0.05 then
+        if #rsegs > 0 then rsegs[#rsegs + 1] = { C.dim, " · " } end
+        local e = math.floor(bm.est * 10 + 0.5) / 10
+        rsegs[#rsegs + 1] = { C.dim, "~est " }
+        rsegs[#rsegs + 1] = { e > 0 and C.plus or C.minus, (e > 0 and "+" or "−") .. tostring(math.abs(e)) .. "%" }
+        local nm = bm.estNames or {}
+        if #nm > 0 then rsegs[#rsegs + 1] = { C.dim, " (" .. table.concat(nm, ", ", 1, math.min(4, #nm)) .. (#nm > 4 and ", …" or "") .. ")" } end
+      end
+      if rsegs and #rsegs > 0 then
         local r = { { C.dim, pad("", 26) } }
         addAll(r, rsegs)
         out[#out + 1] = r
@@ -5207,6 +5496,11 @@ function M.upgradeLines(width, all, role)
       .. ") and have looked at · sbo upgrades all for everything you've seen · sbo eq learn carried" } }
   end
   if shown > 0 then
+    if M.combatModel(nil, nil) then
+      out[#out + 1] = { { C.dim, "offense = expected damage per swing (damage × hit chance × crit), defense = effective hit points (hp ÷ damage" } }
+      out[#out + 1] = { { C.dim, "through your AR), casting = spell points - from your eq's numbers and the game's formulas. ~est = what has no" } }
+      out[#out + 1] = { { C.dim, "formula yet (spells on gear, resistances, dodging…), valued with your build's weights" } }
+    end
     out[#out + 1] = { { C.dim, "click one below (or sbo upgrades <number>) for the full comparison" } }
   end
   return out, links
@@ -5557,18 +5851,21 @@ function M.compareLines(a, b, width)
   if okS and okB and sa and sb then
     local d = math.floor((sb - sa) * 10 + 0.5) / 10
     table.insert(rows, 1, { "Gear score", tostring(sa), tostring(sb), d == 0 and "=" or ((d > 0 and "+" or "") .. d), d })
-    -- and its parts, role by role
-    local okR, ra, rb = pcall(function() return M.roleScores(a), M.roleScores(b) end)
-    if okR then
-      local at = 2
-      for _, r in ipairs(M.ROLES) do
-        local x, y = math.floor(ra[r] * 10 + 0.5) / 10, math.floor(rb[r] * 10 + 0.5) / 10
-        if x ~= 0 or y ~= 0 then
-          local dd = math.floor((y - x) * 10 + 0.5) / 10
-          table.insert(rows, at, { "  " .. r, tostring(x), tostring(y), dd == 0 and "=" or ((dd > 0 and "+" or "") .. dd), dd })
-          at = at + 1
-        end
+    rows[1][1] = "Weighted score"
+    -- the real numbers: swapping A for B, from your eq and the game's formulas
+    local okM, m = pcall(M.combatModel, a, b)
+    if okM and m then
+      local at = 1
+      local function row(label, x, fmt)
+        if not x then return end
+        local p = math.floor(x.pct * 10 + 0.5) / 10
+        table.insert(rows, at, { label, string.format(fmt, x.now), string.format(fmt, x.after),
+          p == 0 and "=" or string.format("%+.1f%%", p), p })
+        at = at + 1
       end
+      row("Dmg per swing", m.offense, "%.1f")
+      row("Effective HP", m.defense, "%.0f")
+      row("Spell points", m.casting, "%.0f")
     end
   end
   for _, r in ipairs(rows) do
@@ -9221,7 +9518,7 @@ function M.finish(reason)
         end
       end
     end
-    if cap.kind == "eq" then M.updateEqNames(cap.plain) end
+    if cap.kind == "eq" then M.updateEqNames(cap.plain); pcall(M.noteCombat, cap.plain) end
     if cap.kind == "contents" then pcall(M.updateCarried, cap) end
     if cap.kind == "score" then M.updateMaxes(cap.plain); M.drawBar(); M.dataChanged() end
     if cap.kind == "skills" then
