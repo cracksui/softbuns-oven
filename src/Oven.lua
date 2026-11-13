@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.2.1"
+M.version = "1.2.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6985,6 +6985,7 @@ function M.drawBar()
       out[#out + 1] = { C.dim, "   help " }
       out[#out + 1] = { C.num, done .. "/" .. HF.total .. " " }
       addAll(out, M.gauge(done, HF.total, 6))
+      out[#out + 1] = { C.dim, "   " }
     end
     if p.rest ~= "" then out[#out + 1] = { C.text, "   " .. p.rest } end
     return out
