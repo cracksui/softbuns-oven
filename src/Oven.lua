@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.83.1"
+M.version = "0.83.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7906,7 +7906,7 @@ end
 
 ---------------------------------------------------------------------------
 -- Friends: one Oven asks another where its player is, by tell ("sbo go roarke").
--- A tell "Hey, where are you? #3f2a" is answered with the room - only to the friends
+-- A tell "Where you at, bro?? #3f2a" is answered with the room - only to the friends
 -- you've added (anyone else gets a polite no, and you're told they asked).
 -- Both sides keep these tells off the screen.
 ---------------------------------------------------------------------------
@@ -7958,7 +7958,7 @@ function M.friendAsk(n, thenDo)
     end
   end)
   M.say("asking " .. cap1(k) .. "'s Oven where they are…")
-  M.sendOwn("tell " .. k .. " " .. M.WIRE.ask .. " #" .. id, false)
+  M.sendOwn("tell " .. k .. " " .. M.wirePick(M.WIRE.ask) .. " #" .. id, false)
 end
 
 -- what a friend's Oven said: walk, or show
@@ -7981,18 +7981,28 @@ function M.friendWhere(n, walk)
 end
 
 M.friendAnswered = M.friendAnswered or {}
--- the tells, worded as a person would - a player without Oven just sees a friendly question.
--- The "#3f2a" at the end matches an answer to its question.
---   ask:      "Hey, where are you? #3f2a"
---   answer:   "I'm at Garden of Life (room 10522). #3f2a"
---             "Not sure where I am right now. #3f2a"      (Oven doesn't know the room)
---             "Sorry, I'd rather not say. #3f2a"          (you're not their friend)
+-- the tells, worded as a person would - a player without Oven just sees a mate asking.
+-- Each is picked at random from its list; the "#3f2a" at the end matches an answer to its question.
+--   ask:      "Where you at, bro?? #3f2a"
+--   answer:   "chillin at Garden of Life bro (room 10522) #3f2a"
+--             "no clue where i am lol #3f2a"              (Oven doesn't know the room)
+--             "nah bro, can't say rn #3f2a"               (you're not their friend)
 M.WIRE = {
-  ask = "Hey, where are you?",
-  at = "I'm at %s (room %d).",
-  lost = "Not sure where I am right now.",
-  no = "Sorry, I'd rather not say.",
+  ask = { "Where you at, bro??", "yo where u at??", "where you at bro?", "yo bro, where u at?" },
+  at = { "chillin at %s bro (room %d)", "at %s rn (room %d)", "over at %s lol (room %d)", "%s, come thru (room %d)" },
+  lost = { "no clue where i am lol", "idk bro, lost af", "honestly no idea where i am rn" },
+  no = { "nah bro, can't say rn", "eh, keeping that one to myself", "nah, not rn bro" },
+  -- older wordings (0.83.1), still understood
+  oldAsk = { "Hey, where are you?" }, oldLost = { "Not sure where I am right now." }, oldNo = { "Sorry, I'd rather not say." },
 }
+local function wirePick(list) return list[math.random(1, #list)] end
+M.wirePick = wirePick
+local function wireIn(body, ...)
+  for _, list in ipairs({ ... }) do
+    for _, x in ipairs(list) do if body == x then return true end end
+  end
+  return false
+end
 -- a tell's text -> verb ("where" / "at" / "no"), its id, the room
 function M.wireParse(msg)
   -- 0.83.0 wording, from an Oven that hasn't updated: "#oven where 3f2a", "#oven at 3f2a 10522"
@@ -8000,11 +8010,12 @@ function M.wireParse(msg)
   if v then return v, oid, tonumber(rest) end
   local body, id = msg:match("^(.-)%s+#(%x%x%x%x)$")
   if not body then return end
-  if body == M.WIRE.ask then return "where", id end
-  local room = body:match("^I'm at .- %(room (%d+)%)%.$")
+  local W = M.WIRE
+  if wireIn(body, W.ask, W.oldAsk) then return "where", id end
+  local room = body:match("%(room (%d+)%)%.?$")
   if room then return "at", id, tonumber(room) end
-  if body == M.WIRE.lost then return "at", id, nil end
-  if body == M.WIRE.no then return "no", id end
+  if wireIn(body, W.lost, W.oldLost) then return "at", id, nil end
+  if wireIn(body, W.no, W.oldNo) then return "no", id end
 end
 
 local function tellOwn(k, text) M.sendOwn("tell " .. k .. " " .. text, false) end
@@ -8027,7 +8038,7 @@ function M.wireLine(l)
         M.friendAnswered[k] = os.time()
         tempTimer(0, function()
           M.say(who .. "'s Oven asked where you are - not told (sbo friend add " .. k .. " to let it)")
-          if M.inGame(M.lastStatusPrompt or M.lastPromptText) then tellOwn(k, M.WIRE.no .. " #" .. id) end
+          if M.inGame(M.lastStatusPrompt or M.lastPromptText) then tellOwn(k, wirePick(M.WIRE.no) .. " #" .. id) end
         end)
       end
       return true
@@ -8041,9 +8052,9 @@ function M.wireLine(l)
       if here then
         local name = (roomExists(here) and getRoomName(here)) or (G("room.info") or {}).name or "somewhere"
         name = trim(tostring(name):gsub("['#()]", ""))
-        text = string.format(M.WIRE.at, name ~= "" and name or "somewhere", here)
+        text = string.format(wirePick(M.WIRE.at), name ~= "" and name or "somewhere", here)
       else
-        text = M.WIRE.lost
+        text = wirePick(M.WIRE.lost)
       end
       tellOwn(k, text .. " #" .. id)
       M.say("told " .. who .. "'s Oven where you are")
