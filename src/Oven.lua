@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.81.1"
+M.version = "0.82.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -189,6 +189,12 @@ local SCHEMA = {
   -- every setting change: when, what, and how (typed, or clicked / by Oven itself)
   "CREATE TABLE IF NOT EXISTS setting_log (id INTEGER PRIMARY KEY, t INTEGER, name TEXT, value TEXT, how TEXT)",
   "CREATE TABLE IF NOT EXISTS signposts (room INTEGER PRIMARY KEY, sign TEXT, dests TEXT, exact INTEGER, last INTEGER)",
+  -- mobs seen in rooms (untagged; tagged ones are room_npcs). ok = 0: might be a player, not shown until
+  -- the game confirms it's a mob (you targeted it: char.lasttargeted)
+  "CREATE TABLE IF NOT EXISTS room_mobs (room INTEGER, key TEXT, text TEXT, seen INTEGER, last INTEGER, ok INTEGER, vnum INTEGER, race TEXT, PRIMARY KEY (room, key))",
+  "CREATE INDEX IF NOT EXISTS room_mobs_key ON room_mobs (key)",
+  -- players' names (clan-tagged in a room, on a channel, in who): never saved as mobs
+  "CREATE TABLE IF NOT EXISTS players (name TEXT PRIMARY KEY, last INTEGER)",
 }
 
 local SCHEMA_ADD = {
@@ -2292,6 +2298,9 @@ M.quests = M.quests or {}
 -- "Locate and deliver sprutter spritz [Cooking Adventurers] to a bag lady [Towne of Rune]."
 local PHASE_TAGS = { group = true }
 function M.phaseFromText(ptext)
+  -- a counter first: "[10/10] *Collect ten fallen leaves…"
+  local have, need, after = ptext:match("^%[%s*(%d+)%s*/%s*(%d+)%s*%]%s*(.*)$")
+  if have then ptext = after end
   local isDone = ptext:sub(1, 1) == "*"
   local text = trim(ptext:gsub("^%*", ""):gsub("%.$", ""))
   local area, tags = nil, nil
@@ -2307,6 +2316,7 @@ function M.phaseFromText(ptext)
       break
     end
   end
+  if have then text = text .. " (" .. have .. "/" .. need .. ")" end
   return { text = text, area = area, tags = tags, done = isDone }
 end
 
@@ -5750,6 +5760,7 @@ function M.onGmcpTarget()
   local t = G("char.lasttargeted")
   if type(t) ~= "table" then return end
   M.live.target = { name = t.short_descr, race = t.race, vnum = tonumber(t.vnum), pct = tonumber(t.hp_percent), at = now() }
+  if t.short_descr and tonumber(t.vnum) then pcall(M.mobConfirm, t.short_descr, tonumber(t.vnum), t.race) end
 end
 
 -- the mob behind "X has been slain!", when it's the one you were fighting
@@ -6324,6 +6335,8 @@ M.shapes = {
       end
       return false
     end
+    -- the quest's own lines, whatever words they use ("Collect ten fallen leaves from the Oak")
+    if t:match("^Phase %d+:") or t:match(" consists of:$") or t:match("^This quest ") then return true end
     return not M.looksLikeActivity(t)
   end,
   affects = function(t)
@@ -6472,6 +6485,12 @@ local function blockText(b)
     end
     if #runs > 0 then out[#out + 1] = "@fg " .. table.concat(runs, " ") .. "\n" end
   end
+  -- occupants' own colours, behind their tags: "@bfg 7=0,255,0"
+  if b.bfg then
+    local runs = {}
+    for i = 1, #b.lines do if b.bfg[i] then runs[#runs + 1] = i .. "=" .. b.bfg[i] end end
+    if #runs > 0 then out[#out + 1] = "@bfg " .. table.concat(runs, " ") .. "\n" end
+  end
   for _, x in ipairs(b.lines) do out[#out + 1] = x .. "\n" end
   out[#out + 1] = "\n"
   return table.concat(out)
@@ -6555,12 +6574,32 @@ function M.lineFg(l)
   if r then return r .. "," .. g .. "," .. bl end
 end
 
+-- a room occupant's own colour, after any "*", [tags] and (auras) in front of it
+function M.lineBodyFg(l)
+  local i = 1
+  local rest = l
+  while true do
+    local a = rest:match("^%s*%*+%s*") or rest:match("^%s*%b[]%s*") or rest:match("^%s*%(%a[%a ]-%)%s*")
+    if not a or a == "" then break end
+    i = i + #a; rest = rest:sub(#a + 1)
+  end
+  if i == 1 or not rest:match("^%a") or not selectSection or not getFgColor then return end
+  selectSection(i - 1, 1)
+  local r, g, bl = getFgColor()
+  deselect()
+  if r then return r .. "," .. g .. "," .. bl end
+end
+
 function M.recordLine(l, prompt)
   local cur = M.recCur
   cur.lines[#cur.lines + 1] = l
   cur.fg = cur.fg or {}
   local okF, fg = pcall(M.lineFg, l)
   cur.fg[#cur.lines] = okF and fg or false
+  if l:match("^%s*[%*%[%(]") then
+    local okB, bf = pcall(M.lineBodyFg, l)
+    if okB and bf then cur.bfg = cur.bfg or {}; cur.bfg[#cur.lines] = bf end
+  end
   -- the full colours of anything that may be chat, so the Chat tab shows it as the game did
   if M.chatFind(l) then
     cur.decho = cur.decho or {}
@@ -6577,10 +6616,13 @@ function M.recordLine(l, prompt)
     local rest = {}
     local restFg = {}
     local restD = {}
-    for i = cur.savedLines + 1, #cur.lines do rest[#rest + 1] = cur.lines[i]; restFg[#rest] = (cur.fg or {})[i]; restD[#rest] = (cur.decho or {})[i] end
-    cur.lines, cur.cmds, cur.fg, cur.decho = rest, {}, restFg, restD
+    local restB = {}
+    for i = cur.savedLines + 1, #cur.lines do
+      rest[#rest + 1] = cur.lines[i]; restFg[#rest] = (cur.fg or {})[i]; restD[#rest] = (cur.decho or {})[i]; restB[#rest] = (cur.bfg or {})[i]
+    end
+    cur.lines, cur.cmds, cur.fg, cur.decho, cur.bfg = rest, {}, restFg, restD, restB
   end
-  local b = { seq = W.seq, t = os.time(), cmds = cur.cmds, lines = cur.lines, fg = cur.fg or {}, decho = cur.decho,
+  local b = { seq = W.seq, t = os.time(), cmds = cur.cmds, lines = cur.lines, fg = cur.fg or {}, decho = cur.decho, bfg = cur.bfg,
               room = M.currentRoom and M.currentRoom(), gmcp = gmcpChanges() }
   M.recCur = { lines = {}, cmds = {} }
   b.prompt = prompt
@@ -6644,7 +6686,7 @@ function M.findRoomView(b)
   local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info or {}
   local id = tonumber(info.num)
   if not id or title == "" or title:lower() ~= trim(tostring(info.name or "")):lower() then return end
-  local seg = { room = id, title = title, items = {}, here = {} }
+  local seg = { room = id, title = title, items = {}, here = {}, hereFg = {} }
   local last = #L
   if b.prompt then last = last - 1 end
   -- description: from the first line indented two spaces to the line ending in two spaces
@@ -6670,7 +6712,10 @@ function M.findRoomView(b)
   for k = i, last do
     local x = L[k]
     if x:match("^     %S") then seg.items[#seg.items + 1] = trim(x)
-    elseif x:match("%S") then seg.here[#seg.here + 1] = x end
+    elseif x:match("%S") then
+      seg.here[#seg.here + 1] = x
+      seg.hereFg[#seg.here] = (b.bfg or {})[k] or fg[k] or false
+    end
   end
   return seg
 end
@@ -7186,6 +7231,128 @@ M.addBlockReader("room_npcs", "room", function(b, seg)
   end
 end)
 
+-- mobs: the untagged creatures in a room. The game shows them in green; players are told apart by
+-- their tags ([Clan 1], [Duelist]…), and a name-first line that reads like a player's ("Pip the Tester
+-- is here.") waits until you target it (GMCP then says it's a mob).
+local MOB_FG = "0,255,0"
+local MOB_PLAYER_TAGS = { duelist = true, guide = true, building = true, hunting = true, outlaw = true, afk = true }
+local ARTICLE = { a = true, an = true, the = true, some = true, one = true, two = true, three = true, several = true }
+function M.mobLine(x, fg)
+  local rest = x
+  local tags = 0
+  while true do
+    local a = rest:match("^%s*%*+%s*") or rest:match("^%s*%(%a[%a ]-%)%s*")
+    local t = not a and rest:match("^%s*%[([^%]]+)%]%s*")
+    if t then
+      local low = trim(t):lower()
+      if MOB_PLAYER_TAGS[low] or low:match("^clan") then
+        local who = rest
+        repeat local n0 = #who; who = who:gsub("^%s*%b[]%s*", ""):gsub("^%s*%*+%s*", ""):gsub("^%s*%(%a[%a ]-%)%s*", "") until #who == n0
+        return nil, "player", who
+      end
+      tags = tags + 1
+      a = rest:match("^%s*%b[]%s*")
+    end
+    if not a or a == "" then break end
+    rest = rest:sub(#a + 1)
+  end
+  if tags > 0 then return end                              -- [Shop], [Boss]…: room_npcs has them
+  local text = trim(rest:gsub("%s+", " "))
+  if text == "" or ulen(text) > 160 or not text:match("^%u") then return end
+  if fg and fg ~= MOB_FG then return end                   -- not a creature's colour: a message, an item…
+  for _, v in ipairs({ " tells ", " says", " asks", " exclaims", " yells", " shouts", " whispers", " replies", "%a: " }) do
+    if text:find(v) then return end
+  end
+  -- fighting, sleeping, mounted: not how it's usually shown - the usual line is saved some other time
+  if text:find(", fighting ") or text:match("%[%d+%%%]$") or text:find(" mounted on ")
+     or text:match(" is %a+ing here") and not text:match(" is standing here") then return end
+  local first = text:match("^(%a+)")
+  if not first then return end
+  local fl = first:lower()
+  if fl == "you" or fl == "your" or fl == "it" or fl == "there" or fl == "someone" then return end
+  if ARTICLE[fl] then return text, 1 end
+  if M.isPlayer(first) then return end
+  -- name first: "Sathan is here, guarding the gate." reads like a mob; "Pip the Tester is here." could be anyone
+  local plain = text:match("^%u[%w%-']* .- is %a* ?here%.?$") or text:match("^%u[%w%-']* is %a* ?here%.?$")
+  return text, plain and 0 or 1
+end
+
+M.playerCache = M.playerCache or {}
+function M.isPlayer(name)
+  name = (name or ""):lower()
+  if name == "" then return false end
+  if M.playerCache[name] ~= nil then return M.playerCache[name] end
+  local r = M.dbRow("SELECT name FROM players WHERE name = %s", name)
+  M.playerCache[name] = r ~= nil
+  return r ~= nil
+end
+-- a player's name: kept, and anything saved under it as a mob forgotten
+function M.notePlayer(name)
+  name = (name or ""):match("^(%u[%a]+)$")
+  if not name or ARTICLE[name:lower()] then return end
+  local low = name:lower()
+  if M.playerCache[low] then return end
+  M.playerCache[low] = true
+  M.dbx("INSERT OR REPLACE INTO players (name, last) VALUES (%s, %s)", low, os.time())
+  M.dbx("DELETE FROM room_mobs WHERE key = %s OR substr(key, 1, %s) = %s", low, #low + 1, low .. " ")
+end
+
+M.addBlockReader("room_mobs", "room", function(b, seg)
+  local seen = {}
+  for i, x in ipairs(seg.here) do
+    local text, ok, who = M.mobLine(x, seg.hereFg and seg.hereFg[i] or nil)
+    if ok == "player" then
+      M.notePlayer((who or ""):match("^(%u%a+)"))
+    elseif text and not seen[text:lower()] then
+      local key = text:lower()
+      seen[key] = true
+      local have = M.dbRow("SELECT ok FROM room_mobs WHERE room = %s AND key = %s", seg.room, key)
+      if have then
+        M.dbx("UPDATE room_mobs SET seen = seen + 1, last = %s WHERE room = %s AND key = %s", os.time(), seg.room, key)
+      else
+        local c = M.dbRow("SELECT COUNT(*) AS c FROM room_mobs WHERE room = %s", seg.room)
+        if tonumber(c and c.c or 0) < 30 then
+          M.dbx("INSERT INTO room_mobs (room, key, text, seen, last, ok) VALUES (%s, %s, %s, 1, %s, %s)",
+            seg.room, key, text, os.time(), ok)
+          if ok == 1 then pcall(M.mapLearned) end
+        end
+      end
+    end
+  end
+end)
+
+-- you targeted it: GMCP gives its name, race and mob number. The room's line that starts with
+-- that name is a mob for certain.
+function M.mobConfirm(name, vnum, race)
+  local room = M.currentRoom and M.currentRoom()
+  if not room or not name or name == "" then return end
+  local low = name:lower()
+  local bare = low:gsub("^an? ", ""):gsub("^the ", "")
+  for _, r in ipairs(M.dbRows("SELECT key, ok FROM room_mobs WHERE room = %s", room)) do
+    local k = r.key
+    local kb = k:gsub("^an? ", ""):gsub("^the ", "")
+    if k:sub(1, #low) == low or kb:sub(1, #bare) == bare then
+      M.dbx("UPDATE room_mobs SET ok = 1, vnum = %s, race = %s WHERE room = %s AND key = %s", vnum, race, room, k)
+      if tonumber(r.ok) ~= 1 then pcall(M.mapLearned) end
+    end
+  end
+end
+
+-- the mobs Oven knows whose description or name has q in it: { key, text, rooms = {…}, seen, last, kills }
+function M.mobsFind(q)
+  q = trim(q or ""):lower()
+  local by, order = {}, {}
+  for _, r in ipairs(M.dbRows("SELECT room, key, text, seen, last, race FROM room_mobs WHERE ok = 1 AND instr(key, %s) > 0 ORDER BY last DESC", q)) do
+    local m = by[r.key]
+    if not m then m = { key = r.key, text = r.text, rooms = {}, seen = 0, last = 0, race = r.race }; by[r.key] = m; order[#order + 1] = m end
+    m.rooms[#m.rooms + 1] = tonumber(r.room)
+    m.seen = m.seen + (tonumber(r.seen) or 0)
+    m.last = math.max(m.last, tonumber(r.last) or 0)
+    m.race = m.race or r.race
+  end
+  return order
+end
+
 -- a shop on your first visit: its keeper's [Shop] tag is only known once the room's text has been read,
 -- after GMCP's arrival check (which catches the shops Oven already knew). Ask now, while you're still there.
 M.addBlockReader("shop_first_visit", "room", function(b, seg)
@@ -7375,6 +7542,7 @@ M.addBlockReader("chat", "*", function(b, kinds)
 end)
 
 function M.chatAdd(ch, plain, decho, t, who, msg)
+  if who and ch ~= "Say" and ch ~= "Tells" then pcall(M.notePlayer, who) end
   local C = M.chat
   M.cfg.chatChannels = M.cfg.chatChannels or {}
   local listed = false
@@ -7864,6 +8032,9 @@ function M.onLineWork()
   end
   if M.fights and next(M.fights) then pcall(M.noteFightEnd, line) end
   if M.fightsEnding then pcall(M.noteFightLoot, line) end
+  -- the who list: " [60 :60  Race   Class] Name title"
+  local whoName = line:match("^%s*%[%s*%d+%s*:%s*%d+[^%]]*%]%s+(%u%a+)")
+  if whoName then pcall(M.notePlayer, whoName) end
   local doneQuest = line:match("^%s*All parts of your quest '(.+)' are complete%.?%s*$")
   -- "You inform Lord Agrippa you have completed your quest 'Jail Time'." - turned in
   local turnedIn = not doneQuest and line:match("^%s*You inform .- you have completed your quest '(.+)'%.?%s*$")
@@ -8893,6 +9064,67 @@ function M.showMapPanel(on)
 end
 
 -- map search: rooms whose name contains the text (rooms in your current area first)
+-- sbo map mobs [name]: the mobs Oven has seen, each with its rooms (nearest first), how often, kills
+function M.mobsShow(q)
+  q = trim(q or "")
+  local here = M.mapRoom and roomExists(M.mapRoom) and M.mapRoom
+  local hereArea = here and getRoomArea(here)
+  local list = M.mobsFind(q)
+  if q == "" then
+    -- this area's
+    local kept = {}
+    for _, m in ipairs(list) do
+      for _, id in ipairs(m.rooms) do
+        if roomExists(id) and getRoomArea(id) == hereArea then kept[#kept + 1] = m; break end
+      end
+    end
+    list = kept
+  end
+  local width = M.cfg.window and M.viewCols() or 80
+  local areaName = hereArea and getRoomAreaName(hereArea) or "?"
+  local title = q == "" and ("Mobs seen in " .. areaName) or ("Mobs: " .. q)
+  local out = { header("map", "", width, string.format("%s  (%d)", title, #list)) }
+  local links = {}
+  if #list == 0 then
+    out[#out + 1] = { { C.dim, q == "" and "none seen here yet - Oven saves the mobs in each room you walk into"
+      or "none seen with that in their description - sbo map mobs with nothing lists this area's" } }
+  end
+  local function steps(id)
+    if id == here then return 0 end
+    if here and roomExists(id) and getPath(here, id) then return #speedWalkDir end
+  end
+  for i, m in ipairs(list) do
+    if i > 40 then out[#out + 1] = { { C.dim, string.format("… and %d more - try a longer name", #list - 40) } }; break end
+    -- its rooms, nearest first
+    local best, bestN
+    for _, id in ipairs(m.rooms) do
+      local n = steps(id)
+      if n and (not bestN or n < bestN) then best, bestN = id, n end
+    end
+    best = best or m.rooms[1]
+    local kills = M.dbRow("SELECT SUM(n) AS c FROM kills WHERE key = %s OR instr(%s, key) > 0", m.key, m.key)
+    kills = tonumber(kills and kills.c) or 0
+    out[#out + 1] = { { C.item, m.text } }
+    local info = { { C.dim, "    " }, { C.num, tostring(#m.rooms) }, { C.dim, #m.rooms == 1 and " room" or " rooms" },
+      { C.dim, "  ·  seen " }, { C.num, tostring(m.seen) }, { C.dim, "×, last " .. M.shortDur(os.time() - m.last) .. " ago" } }
+    if m.race then info[#info + 1] = { C.dim, "  ·  " .. m.race } end
+    if kills > 0 then info[#info + 1] = { C.dim, "  ·  killed " }; info[#info + 1] = { C.minus, tostring(kills) .. "×" } end
+    if bestN then info[#info + 1] = { C.dim, string.format("  ·  nearest %d step%s", bestN, bestN == 1 and "" or "s") }
+    elseif best and roomExists(best) then
+      local a = getRoomArea(best)
+      if a ~= hereArea then info[#info + 1] = { C.dim, "  ·  " .. (getRoomAreaName(a) or "") } end
+    end
+    out[#out + 1] = info
+    if best then
+      local id, t = best, m.text
+      links[#links + 1] = { "show " .. t, function() M.mapShow(id) end }
+      links[#links + 1] = { "walk to " .. t, function() M.mapWalkTo(id) end }
+      links[#links + 1] = { "light up every room with " .. t, function() M.mapHighlightAll(m.key) end }
+    end
+  end
+  M.viewOut(out, links)
+end
+
 function M.mapFind(q)
   q = trim(q or "")
   if q == "" then return say("usage: sbo map find <part of a room name>") end
@@ -9370,6 +9602,13 @@ function M.runTargets(q)
       if tagHit then add(id, label, 1)
       elseif (n.text or ""):lower():find(q, 1, true) then add(id, label, 2) end
     end
+  end
+  -- mobs seen there, and where you've killed it
+  for _, r in ipairs(M.dbRows("SELECT room, text, seen FROM room_mobs WHERE ok = 1 AND instr(key, %s) > 0", q)) do
+    add(r.room, r.text .. "  (seen " .. tostring(r.seen) .. "×)", 2.2)
+  end
+  for _, r in ipairs(M.dbRows("SELECT room, name, SUM(n) AS c FROM kills WHERE instr(key, %s) > 0 AND room IS NOT NULL GROUP BY room, key", q)) do
+    add(r.room, "killed " .. r.name .. " here " .. tostring(r.c) .. "×", 2.3)
   end
   -- a shop that sells it ("sbo go cheese")
   for _, r in ipairs(M.dbRows([[SELECT i.room, i.item, s.name FROM shop_items i LEFT JOIN shops s ON s.room = i.room
@@ -10274,6 +10513,8 @@ M.CMDS = {
       run = function(r) return M.placesFind(r) end },
     { name = "shops", args = "[{item}]", desc = "shops listed (by you, or when you stop in one), or who sells an item",
       run = function(r) return legacy("shops " .. r) end },
+    { name = "mobs", args = "[{name}]", desc = "mobs you've seen, where and how often (none: the ones in this area)",
+      run = function(r) return M.mobsShow(r) end },
     { name = "signposts", desc = "signpost runs and where each ends", run = function() return M.runList() end },
     { name = "mark", args = "[{name}]", desc = "bookmark this room; no name: list them",
       run = function(r) return legacy("mark " .. r) end },

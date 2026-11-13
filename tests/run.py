@@ -182,6 +182,52 @@ def rooms_real_walk():
 
 
 @test
+def quest_phase_counter():
+    o = Oven()
+    f = o.ev("function(t) local p = sbo.phaseFromText(t) return p.text .. '|' .. tostring(p.done) .. '|' .. tostring(p.area) end")
+    eq(f("[10/10] *Collect ten fallen leaves from the Oak from the forest floors."),
+       "Collect ten fallen leaves from the Oak from the forest floors (10/10)|true|nil", "counter first, then the done star")
+    eq(f("[3/10] Collect ten fallen leaves [Rune Forest]"), "Collect ten fallen leaves (3/10)|false|Rune Forest", "with an area")
+    # "fallen leaves from" isn't someone leaving: the line stays in the quest's reply
+    o.lua("sbo.cap = { kind = 'quest', questStarted = true, plain = {} }")
+    eq(o.ev("sbo.belongs(sbo.cap, 'Phase 4: [10/10] *Collect ten fallen leaves from the Oak from the forest floors.')"), True, "belongs")
+
+
+@test
+def mobs_seen():
+    o = Oven()
+    o.replay(fixture("rooms.txt"))
+    rows = o.rows("SELECT room, ok, text FROM room_mobs")
+    texts = [r["text"] for r in rows]
+    assert "A salesman is here, peddling his wares." in texts, texts
+    assert not any("Pip" in t or "Wren" in t or "Ashby" in t or t.startswith("You ") for t in texts), texts
+    eq(sorted(r["name"] for r in o.rows("SELECT name FROM players")), ["ashby", "pip", "wren"], "players from their clan tags")
+    f = o.ev("function(x, fg) local t, ok = sbo.mobLine(x, fg) return tostring(t) .. '|' .. tostring(ok) end")
+    eq(f("A stray dog is here, wandering about forlornly.", "0,255,0"), "A stray dog is here, wandering about forlornly.|1", "green, an article")
+    eq(f("A risen paladin enters into combat with Roarke.", "255,255,0"), "nil|nil", "not a creature's colour")
+    eq(f("Sathan is here, guarding the eastern gate of Rune.", "0,255,0"), "Sathan is here, guarding the eastern gate of Rune.|1", "a named mob")
+    eq(f("Moss the Brave is here.", "0,255,0"), "Moss the Brave is here.|0", "reads like a player: waits")
+    eq(f("A barghest is here, fighting Moss. [92%]", "0,255,0"), "nil|nil", "mid-fight")
+    eq(f("[Shop] A grocer stands here.", "0,255,0"), "nil|nil", "tagged: room_npcs")
+    # the unconfirmed one: confirmed once you target it
+    o.lua("""sbo.currentRoom = function() return 10522 end
+      sbo.dbx("INSERT INTO room_mobs (room, key, text, seen, last, ok) VALUES (10522, 'moss the brave is here.', 'Moss the Brave is here.', 1, 1, 0)")""")
+    eq(o.ev("#sbo.mobsFind('moss')"), 0, "not shown yet")
+    o.set_gmcp("char.lasttargeted", '{ hp_percent = 100, race = "human", vnum = 4712, short_descr = "Moss the Brave" }')
+    o.lua('sbo.onGmcpTarget()')
+    eq(o.ev("sbo.mobsFind('moss')[1].race"), "human", "confirmed by GMCP")
+    # found from the map: sbo go / map find / the search box
+    o.lua("roomExists = function() return true end")
+    targets = o.ev("(sbo.runTargets('salesman'))")
+    assert any("salesman" in t.why for t in targets.values()), "runTargets finds it"
+    # a name that turns out to be a player's is forgotten
+    o.lua('sbo.notePlayer("Moss")')
+    eq(o.ev("#sbo.mobsFind('moss')"), 0, "a player after all")
+    o.lua('getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end; OUTV = nil; sbo.viewOut = function(l) OUTV = l end; sbo.command("map mobs salesman")')
+    eq(o.ev("OUTV[2][1][2]"), "A salesman is here, peddling his wares.", "sbo map mobs lists it")
+
+
+@test
 def rooms_negatives():
     o = Oven()
     o.replay(fixture("negatives.txt"))
