@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.6.0"
+M.version = "1.7.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5741,6 +5741,13 @@ function M.upgradeLines(width, all, role)
           end
         end
       end
+      -- gear that boosts your attack spells and skills (no page gives their damage in hit points: shown, not ranked)
+      local okA, abl = pcall(M.abilitySwapLines, cur, bestIt)
+      if okA and abl and #abl > 0 then
+        local t = {}
+        for _, x in ipairs(abl) do t[#t + 1] = x.name .. " " .. x.text end
+        out[#out + 1] = { { C.dim, pad("", 26) }, { C.key, pad("Abilities", 10) }, { C.text, table.concat(t, " · ") } }
+      end
       if bm and bm.estNames and #bm.estNames > 0 then
         out[#out + 1] = { { C.dim, pad("", 26) .. pad("", 10) .. "not calculated: " .. table.concat(bm.estNames, ", ") } }
       end
@@ -5855,6 +5862,162 @@ function M.upgradeWhy(cur, best, w)
   return out
 end
 
+---------------------------------------------------------------------------
+-- Attack abilities: every spell and skill whose help page says what it deals ("*Deals harm/surprise
+-- (1.1 base) damage."), with its cost and timing - learned from each help page Oven sees (and from
+-- oven_help.txt). The build page lists the ones you have; upgrades show gear that boosts them.
+---------------------------------------------------------------------------
+do
+-- a damage type → the affect that adds to it (help 1920)
+local TYPE_STAT = { flames = "fire-damage", fire = "fire-damage", lightning = "lightning-damage", energy = "energy-damage",
+  pain = "pain-dam", harm = "harm-damage", surprise = "surprise-damage", drowning = "drowning-damage", water = "water-damage",
+  bash = "bash-damage", pierce = "pierce-damage", slash = "slash-damage", cold = "cold-damage", acid = "acid-damage",
+  sound = "sound-damage", poison = "poison-damage", negative = "negative-damage", mental = "mental-damage",
+  disease = "disease-damage", earth = "earth-damage", air = "air-damage", necromancy = "necromantic-damage",
+  emotional = "emotional-damage", holy = "holy-damage", corruption = "corruption-damage", fear = "fear-damage" }
+M.ABILITY_TYPE_STAT = TYPE_STAT
+-- skill-specific bonuses (help 1920: damage-kick, damage-bash, damage-feed…)
+local SKILL_STAT = { kick = "damage-kick", bash = "damage-bash", feeding = "damage-feed", feed = "damage-feed",
+  throw = "damage-throw", throwing = "damage-throw", backstab = "damage-backstab", sweep = "damage-sweep",
+  charge = "damage-charge", grapple = "damage-grapple" }
+
+-- one help page → its numbers, if it deals damage
+function M.parseAbilityHelp(lines)
+  local a = {}
+  for _, l in ipairs(lines or {}) do
+    local t = trim(l)
+    a.name = a.name or (t:match("^%[%s*%d+%s*%]%s+(.+)$"))
+    local kind = t:match("^%*%a+%s+(spell)%s*%(") or t:match("^%*%a+ (physical%-spell)") or t:match("^%*%a+ (proficiency)%s*%(")
+    if kind then a.kind = kind:find("spell") and "spell" or "skill" end
+    a.sp = a.sp or tonumber(t:match("^%*Spell Points Required:%s*(%d+)"))
+    a.st = a.st or tonumber(t:match("^%*Stamina Required:%s*(%d+)"))
+    a.time = a.time or tonumber(t:match("(%d+) second cast time") or t:match("(%d+) second usage time"))
+    a.cooldown = a.cooldown or tonumber(t:match("^%*Cooldown:%s*(%d+) seconds"))
+    local types, base = t:match("^%*Deals ([%a/]+) %(([%d%.]+) base%) damage")
+    if types then a.types, a.base = types, tonumber(base) end
+    if not a.types then a.types = t:match("^%*Deals ([%a/]+) damage") or a.types end
+    local sp = t:match("^%*Skill Power: (.+)$")
+    if sp then a.skillpower = sp end
+    local tags = t:match("^%*Tags:%s*(.+)$")
+    if tags then a.tags = tags end
+  end
+  if not a.name or not a.types then return nil end
+  -- "PRESSURE POINTS" / "SITTING, RESTING…": the skill's name as you'd type it
+  a.name = a.name:lower():gsub("^dodging attacks$", "dodge")
+  return a
+end
+
+-- kept: what Oven has read
+function M.noteAbilityHelp(lines)
+  local a = M.parseAbilityHelp(lines)
+  if not a then return end
+  M.cfg.abilities = M.cfg.abilities or {}
+  M.cfg.abilities[a.name] = a
+  M.saveSettings()
+end
+
+-- the help pages fetched before Oven read abilities from them
+function M.abilitiesFromHelpFile()
+  local f = io.open(M.helpFile or (getMudletHomeDir() .. "/oven_help.txt"), "r")
+  if not f then return end
+  local page = {}
+  for l in f:lines() do
+    if l:match("^===== help ") then page = {}
+    elseif l:match("^===== end") then pcall(M.noteAbilityHelp, page)
+    else page[#page + 1] = l end
+  end
+  f:close()
+end
+
+-- your attack abilities: the ones Oven knows about that you've learned
+function M.myAbilities()
+  if not M.cfg.abilitiesRead then
+    M.cfg.abilitiesRead = true
+    pcall(M.abilitiesFromHelpFile)
+  end
+  local out = {}
+  local skills = M.cfg.skills or {}
+  for name, a in pairs(M.cfg.abilities or {}) do
+    local sk = skills[name] or (name == "feeding" and skills.feed) or nil
+    local pct = sk and tonumber(sk.lrnd)
+    if pct and pct > 0 and a.base then
+      local cost = a.sp or a.st
+      out[#out + 1] = { name = name, a = a, pct = pct, per = a.base * pct / 100,
+        perCost = cost and cost > 0 and a.base * pct / 100 / cost * 100 or nil }
+    end
+  end
+  table.sort(out, function(x, y) return x.per > y.per end)
+  return out
+end
+
+-- the stats that make an ability hit harder: spell-damage (spells), its damage types, its own bonus
+function M.abilityBoostStats(name, a)
+  local st = {}
+  if a.kind == "spell" then st[#st + 1] = "spell-damage"; st[#st + 1] = "spell-damage-prcnt" end
+  local seen = {}
+  for ty in (a.types or ""):gmatch("%a+") do
+    local s = TYPE_STAT[ty]
+    if s and not seen[s] then seen[s] = true; st[#st + 1] = s end
+  end
+  if SKILL_STAT[name] then st[#st + 1] = SKILL_STAT[name] end
+  return st
+end
+
+-- a swap's effect on your attack abilities: { "spark: +3 fire-damage", … }
+function M.abilitySwapLines(old, new)
+  local function stats(it)
+    local s = {}
+    if not it then return s end
+    for _, list in ipairs({ it.affects or {}, it.relicAffects or {} }) do
+      for _, af in ipairs(list) do
+        local v = tonumber((tostring(af[2] or ""):gsub(",", "")))
+        if af[1] and v then s[af[1]] = (s[af[1]] or 0) + v end
+      end
+    end
+    return s
+  end
+  local a, b = stats(old), stats(new)
+  local out = {}
+  for _, ab in ipairs(M.myAbilities()) do
+    local bits = {}
+    for _, st in ipairs(M.abilityBoostStats(ab.name, ab.a)) do
+      local d = (b[st] or 0) - (a[st] or 0)
+      if d ~= 0 then bits[#bits + 1] = string.format("%+d %s", d, st) end
+    end
+    if #bits > 0 then out[#out + 1] = { name = ab.name, text = table.concat(bits, ", "), up = not table.concat(bits):find("^%-") } end
+  end
+  return out
+end
+
+-- the build page's section: your attack spells and skills
+function M.abilitySection(out, width)
+  local list = M.myAbilities()
+  out[#out + 1] = {}
+  out[#out + 1] = { { C.title, "Attack spells and skills" } }
+  if #list == 0 then
+    out[#out + 1] = { { C.dim, "  none yet - Oven learns each one from its help page (help pressure points, help kick…)" } }
+    return
+  end
+  out[#out + 1] = { { C.dim, "  " .. pad("", 22) .. pad("you", 6) .. pad("cost", 9) .. pad("time", 9) .. pad("damage", 8) .. pad("per use", 9) .. pad("per 100", 9) .. "types" } }
+  for _, ab in ipairs(list) do
+    local a = ab.a
+    local cost = a.sp and (a.sp .. " sp") or (a.st and (a.st .. " st")) or "-"
+    local time = (a.time and (a.time .. "s") or "") .. (a.cooldown and ("/" .. a.cooldown .. "s") or "")
+    out[#out + 1] = { { C.key, "  " .. pad(ab.name, 22) }, { C.num, pad(ab.pct .. "%", 6) }, { C.text, pad(cost, 9) },
+      { C.dim, pad(time ~= "" and time or "-", 9) }, { C.num, pad(string.format("%.1f", a.base), 8) },
+      { C.plus, pad(string.format("%.2f", ab.per), 9) }, { C.text, pad(ab.perCost and string.format("%.2f", ab.perCost) or "-", 9) },
+      { C.dim, (function() local seen, t = {}, {} for ty in (a.types or ""):gmatch("%a+") do if not seen[ty] then seen[ty] = true; t[#t + 1] = ty end end return table.concat(t, ", ") end)() } }
+  end
+  out[#out + 1] = { { C.dim, "  damage = the help page's factor; per use = factor × how well you know it (help 2438: knowing it better" } }
+  out[#out + 1] = { { C.dim, "  means succeeding more often - read as your %); per 100 = per 100 sp or st. No page says what a factor is" } }
+  out[#out + 1] = { { C.dim, "  in hit points, so these compare abilities with each other, not with your melee damage." } }
+  out[#out + 1] = { { C.dim, "  gear that boosts them:" } }
+  for _, ab in ipairs(list) do
+    out[#out + 1] = { { C.dim, "    " .. pad(ab.name, 22) .. table.concat(M.abilityBoostStats(ab.name, ab.a), ", ") } }
+  end
+end
+end
+
 do -- (own scope)
 -- sbo eq build: your character in combat, worked out from your gear and attributes with the game's
 -- formulas - by category: offense, defense, recovery, casting - then your attributes and what training
@@ -5954,6 +6117,9 @@ function M.buildLines(width)
     line("spell comprehension", { { C.num, tostring(shown or math.floor(scc)) }, { C.dim, string.format("   of at most %d%s - the further above a spell's complexity, the fewer points it takes (help 1613)",
       cap, raw >= cap and " (at the cap: knowledge won't make spells cheaper)" or "") } })
   end
+
+  -- your attack spells and skills
+  pcall(M.abilitySection, out, width)
 
   -- attributes: what one more point would change (the same model)
   out[#out + 1] = {}
@@ -6299,6 +6465,9 @@ M.HELP_BATCHES = {
   -- what a spell point is worth in a fight: the cost and damage of your attack spells
   { name = "your attack spells (what spell points buy)",
     pages = { "2619", "1490", "1487", "2481", "2037", "spell damage" } },
+  -- the rest of a monk's attacks (help skills analyze monk), so the attack table is complete
+  { name = "the rest of your attacks",
+    pages = { "2086", "finality of the ender", "1566", "throwing", "1486", "1517", "2220" } },
 }
 local WORTH = { "combat", "attack", "defen", "damage", "dodge", "parry", "block", "evasion", "armor", "resist",
   "accuracy", "crit", "skill power", "complexity", "spell", "magic", "cast", "regen", "heal", "strength",
@@ -6423,7 +6592,7 @@ function M.helpFetchNext()
     elseif plain and #plain > 0 then
       M.helpSave(topic, plain)
       H.saved = H.saved + 1
-      pcall(M.noteSpellHelp, plain)
+      pcall(M.noteSpellHelp, plain); pcall(M.noteAbilityHelp, plain)
       -- links worth reading later make the next batches
       M.cfg.helpLinked = M.cfg.helpLinked or {}
       local known = {}
@@ -9942,6 +10111,7 @@ function M.finish(reason)
     end
     if cap.kind == "help" then
       pcall(M.noteSpellHelp, cap.plain)
+      pcall(M.noteAbilityHelp, cap.plain)
       if replace then
         moveCursorEnd("main")
         if getCurrentLine("main") ~= "" then echo("main", "\n") end

@@ -725,6 +725,23 @@ def combat_model():
 
 
 @test
+def attack_abilities():
+    o = Oven()
+    o.ev("sbo.noteAbilityHelp")(o.L.table_from(["[1487 ] SPARK", "*Pyromancy spell (5% complexity)",
+        "*Character (Offensive) target, 2 second cast time", "*Spell Points Required: 49",
+        "*Deals flames/lightning (2.2 base) damage."]))
+    o.ev("sbo.noteAbilityHelp")(o.L.table_from(["[1348 ] KICK", "*Combat proficiency (10% complexity)",
+        "*Character (Offensive) target, 2 second usage time", "*Deals bash/bash (1.3 base) damage."]))
+    o.lua("sbo.cfg.abilitiesRead = true; sbo.cfg.skills = { spark = { lrnd = 50 }, kick = { lrnd = 100 } }")
+    mine = o.ev("sbo.myAbilities()")
+    eq([x.name for x in mine.values()], ["kick", "spark"], "best per use first: 1.3 at 100% vs 2.2 at 50%")
+    eq(round(o.ev("sbo.myAbilities()[2].perCost"), 2), 2.24, "spark: 1.1 per use, per 100 sp")
+    lines = o.ev("sbo.abilitySwapLines(nil, { affects = { { 'fire-damage', '3' }, { 'damage-kick', '2' } } })")
+    t = {x.name: x.text for x in lines.values()}
+    eq(t, {"kick": "+2 damage-kick", "spark": "+3 fire-damage"}, "gear that boosts them")
+
+
+@test
 def training_advice():
     o = Oven()
     o.lua("""sbo.cfg.char = { class = 'monk', race = 'sahuagin', stats = {
