@@ -728,12 +728,21 @@ def training_advice():
     eq(o.ev("select(2, sbo.activeBuild()).stamina"), 0.125, "stamina: its own small weight, a quarter more")
     eq(o.ev("select(2, sbo.activeBuild())['disease-res']"), 0.6, "a resistance weakness as before")
     f = o.ev("function(rows) local s={} for _,r in ipairs(rows) do for _,g in ipairs(r) do s[#s+1]=tostring(g[2]) end s[#s+1]='\\n' end return table.concat(s) end")
-    out = f(o.ev("sbo.trainLines(100)"))
-    assert "train next: knowledge" in out, out
+    out = f(o.ev("sbo.buildLines(100)"))
+    assert "type eq once" in out, "nothing to work from yet"
+    o.lua("""sbo.noteCombat({ "57 Damage: (+46 from weapon)", "55 Accuracy: (+16 from weapon)", "31% Critical Hit chance:" })
+      sbo.cfg.maxes = { hp = 365, sp = 875 }; sbo.cfg.arLoc = { head = 5, torso = 16 }; sbo.cfg.arRate = 0.75""")
+    out = f(o.ev("sbo.buildLines(100)"))
+    assert "damage per round" in out and "effective hit points" in out and "sp per tick" in out, out
+    assert "score" not in out.lower().replace("type score", ""), f"no gear score: {out}"
+    # what one more point of each really changes: agility = +0.5% to hit (help 1747); knowledge has no formula
+    assert "train next: agility" in out, out
     agi = next(l for l in out.split("\n") if l.strip().startswith("agility"))
-    assert "+0.5% to hit" in agi and "8 " in agi, agi
+    assert "hit 55→55.5%" in agi, agi
+    kn = next(l for l in out.split("\n") if l.strip().startswith("knowledge"))
+    assert "no formula" in kn, kn
     vit = next(l for l in out.split("\n") if l.strip().startswith("vitality"))
-    assert "max" in vit, "at max: nothing left to train"
+    assert "maximum" in vit, "at max: nothing left to train"
     # the page follows the game: train knowledge, and the page on show is drawn again
     o.lua("sbo.cfg.window = true; sbo.command('eq train')")
     page = lambda: o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html")
@@ -747,7 +756,7 @@ def training_advice():
     o.ev("sbo.noteTrain")(o.L.table_from([l.replace("13/21", "9/21") for l in TRAIN]))
     o.lua("runTimers()")
     assert "13/21" in page() and "12/21" not in page(), f"redrawn with the new number: {page()}"
-    assert "9 +4" in page(), f"trained 9, gear +4: {page()}"
+    assert "trained 9" in page(), f"trained 9 (gear brings it to 13): {page()}"
     eq(o.ev("sbo.cfg.char.trainCost.knowledge"), 60, "and what it costs")
 
 
@@ -1024,7 +1033,9 @@ def pickup_looks_quietly():
     eq(len(o.ev("SENT")), 0, "never before you're in the game")
     # an upgrade says so
     o.lua('''SAYS = {}
-      local function it(n, str) return { name = n, worn = "on body", level = 1, affects = { { "strength", tostring(str) } }, ar = 1, raw = {} } end
+      sbo.noteCombat({ "57 Damage: (+46 from weapon)", "55 Accuracy: (+16 from weapon)", "31% Critical Hit chance:" })
+      sbo.cfg.maxes = { hp = 365, sp = 875 }; sbo.cfg.arLoc = { torso = 10 }
+      local function it(n, str) return { name = n, worn = "on body", level = 1, affects = { { "accuracy", tostring(str) } }, ar = 1, raw = {} } end
       sbo.remember(it("a worn vest", 1)); sbo.remember(it("a fine vest", 9)); sbo.remember(it("a poor vest", 0))
       sbo.eqNames = { "a worn vest" }
       sbo.pickupVerdict(sbo.items["a fine vest"]); sbo.pickupVerdict(sbo.items["a poor vest"])''')
@@ -1972,7 +1983,10 @@ def help_ends_at_see_also():
 def upgrades_from_what_you_carry():
     o = Oven()
     o.lua('''
-      local function it(n, ar, str) return { name = n, worn = "on body", level = 1, affects = { { "strength", tostring(str) } }, ar = ar, raw = {} } end
+      -- (accuracy: something the model calculates - help 1747)
+      sbo.noteCombat({ "57 Damage: (+46 from weapon)", "55 Accuracy: (+16 from weapon)", "31% Critical Hit chance:" })
+      sbo.cfg.maxes = { hp = 365, sp = 875 }; sbo.cfg.arLoc = { torso = 10 }
+      local function it(n, ar, str) return { name = n, worn = "on body", level = 1, affects = { { "accuracy", tostring(str) } }, ar = ar, raw = {} } end
       sbo.remember(it("a worn vest", 1, 1))
       sbo.remember(it("a shop breastplate", 1, 9))     -- looked at in a shop
       sbo.remember(it("a bagged hauberk", 1, 5))       -- in your backpack
@@ -1999,31 +2013,33 @@ def upgrades_from_what_you_carry():
     assert "a bagged hauberk" in o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html"), "...and in the Inspector"
     o.lua('sbo.command("mirror inspector off"); MAIN = {}; sbo.command("upgrades")')
     assert "a bagged hauberk" not in "".join(o.ev("MAIN").values()), "mirror inspector off: only in the Inspector"
-    assert "+4 strength" in mine, f"why: the stats that make the difference: {mine}"
+    assert "+4 accuracy" in mine and "hit 55→57.7%" in mine, f"why: the stats, and what they change: {mine}"
     eq(o.ev("#sbo.viewHist[#sbo.viewHist].links") >= 1, True, "a link per upgrade")
     o.lua('sbo.command("upgrades compare 1")')
     page = o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html")
-    assert "Score breakdown" in page and "a bagged hauberk" in page, "sbo upgrades compare 1: the full comparison"
+    assert "wearing B instead of A" in page and "a bagged hauberk" in page, "sbo upgrades compare 1: the full comparison"
     o.lua('sbo.viewHist[#sbo.viewHist - 1].links[1][2]()')   # the link on the list does the same
-    assert "Score breakdown" in o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html")
+    assert "wearing B instead of A" in o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html")
 
 
 @test
 def compare_score_breakdown():
+    # no gear score: what the swap changes, by category, in the game's numbers
     o = Oven()
     o.lua('''
+      sbo.noteCombat({ "57 Damage: (+46 from weapon)", "55 Accuracy: (+16 from weapon)", "31% Critical Hit chance:" })
+      sbo.cfg.maxes = { hp = 365, sp = 875 }; sbo.cfg.arLoc = { torso = 10, legs = 10 }; sbo.cfg.arRate = 0.75
       local function it(n, aff) return { name = n, worn = "on body", level = 1, affects = aff, raw = {} } end
-      A = it("a vest", { { "strength", "1" }, { "hp", "20" } })
-      B = it("a hauberk", { { "strength", "4" } })
+      A = it("a vest", { { "accuracy", "1" }, { "hp", "20" } })
+      B = it("a hauberk", { { "accuracy", "4" } })
       local t = {} for _, r in ipairs(sbo.compareLines(A, B, 90)) do local x = {} for _, seg in ipairs(r) do x[#x+1] = seg[2] end t[#t+1] = table.concat(x) end
-      TEXT = table.concat(t, "\\n")
-      PA, PB = sbo.scoreParts(A), sbo.scoreParts(B)''')
+      TEXT = table.concat(t, "\\n")''')
     text = o.ev("TEXT")
-    assert "Score breakdown" in text, text
-    total = lambda p: round(sum(x.points for x in p.values()), 1)
-    eq((total(o.ev("PA")), total(o.ev("PB"))), (o.ev("sbo.gearScore(A)"), o.ev("sbo.gearScore(B)")), "the parts add up to the score")
-    row = [l for l in text.split("\n") if l.startswith("strength") and "×" in l]
-    assert row and "+1×" in row[0] and "+4×" in row[0], row
+    assert "wearing B instead of A" in text and "Score" not in text and "score" not in text, text
+    off = next(l for l in text.split("\n") if l.strip().startswith("Offense"))
+    assert "hit 55→57%" in off and "per round" in off, off
+    de = next(l for l in text.split("\n") if l.strip().startswith("Defense"))
+    assert "hp 365→345" in de, de
 
 
 @test

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.99.0"
+M.version = "1.0.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5152,13 +5152,18 @@ function M.combatModel(old, new)
   local hr2, sr2 = M.regenTick(tot2, vit2, san2, h2)
   if hr1 > 0 then res.hpRegen = { pct = (hr2 / hr1 - 1) * 100, now = hr1, after = hr2 } end
   if sr1 > 0 then res.spRegen = { pct = (sr2 / sr1 - 1) * 100, now = sr1, after = sr2 } end
+  -- recovery: hp and spell points back per tick, the two changes side by side (averaged for ranking)
+  if res.hpRegen or res.spRegen then
+    local hp_, sp_ = res.hpRegen and res.hpRegen.pct, res.spRegen and res.spRegen.pct
+    res.recovery = { pct = (hp_ and sp_) and (hp_ + sp_) / 2 or (hp_ or sp_), hp = hp_, sp = sp_ }
+  end
 
   -- casting: spell points, and how fast they come back ---------------------------------
   local sp = tonumber((M.cfg.maxes or {}).sp) or 0
   if sp > 0 then
     local sp2 = sp + d("spell-points")
     local pool = (sp2 / sp - 1) * 100
-    res.casting = { pct = res.spRegen and (pool + res.spRegen.pct) / 2 or pool, now = sp, after = sp2, pool = pool }
+    res.casting = { pct = pool, now = sp, after = sp2, pool = pool }
   end
 
   -- what has no formula yet: listed, and scored with the weights (marked ~ where shown)
@@ -5179,6 +5184,68 @@ function M.combatModel(old, new)
   return res
 end
 
+-- a swap, by category: the real numbers that change, old → new.
+--   Offense   hit 55→56% · crit 31→33% · per round 39.6→43.5 (+9.8%)
+--   Defense   hp 365→378 · effective hp 452→468 (+3.5%)
+-- Returns a list of { category, segs }
+local function f1(x) local r = math.floor(x * 10 + 0.5) / 10; return (r == math.floor(r)) and tostring(math.floor(r)) or tostring(r) end
+function M.swapCategories(m)
+  if not m then return {} end
+  local out = {}
+  local function arrow(segs, label, a, b, fmt, suffix)
+    if not a or not b then return end
+    local x, y = (fmt or f1)(a), (fmt or f1)(b)
+    if x == y then return end
+    if #segs > 0 then segs[#segs + 1] = { C.dim, " · " } end
+    segs[#segs + 1] = { C.dim, label .. " " }
+    segs[#segs + 1] = { C.text, x .. "→" }
+    segs[#segs + 1] = { b > a and C.plus or C.minus, y .. (suffix or "") }
+  end
+  local function pct(segs, p)
+    if not p then return end
+    local r = math.floor(p * 10 + 0.5) / 10
+    if r == 0 then return end
+    segs[#segs + 1] = { r > 0 and C.plus or C.minus, string.format(" (%s%s%%)", r > 0 and "+" or "−", f1(math.abs(r))) }
+  end
+  local function pctFmt(v) return f1(v) end
+  if m.offense then
+    local o, P = {}, m.offense.parts or {}
+    if P.damage then arrow(o, "damage", P.damage[1], P.damage[2]) end
+    if P.accuracy then arrow(o, "hit", math.max(1, math.min(98, P.accuracy[1])), math.max(1, math.min(98, P.accuracy[2])), pctFmt, "%") end
+    if P.crit then arrow(o, "crit", P.crit[1], P.crit[2], pctFmt, "%") end
+    if P.attacks then arrow(o, "attacks", P.attacks[1], P.attacks[2], function(v) return string.format("%.2f", v) end) end
+    if #o > 0 then
+      arrow(o, "per round", m.offense.now, m.offense.after)
+      pct(o, m.offense.pct)
+      out[#out + 1] = { "Offense", o }
+    end
+  end
+  if m.defense then
+    local d = {}
+    if m.defense.through then
+      arrow(d, "of a hit gets through", m.defense.through[1] * 100, m.defense.through[2] * 100, pctFmt, "%")
+      -- less getting through is better: colour it that way round
+      if d[#d] and m.defense.through[2] < m.defense.through[1] then d[#d][1] = C.plus elseif d[#d] then d[#d][1] = C.minus end
+    end
+    if m.defense.hp then arrow(d, "hp", m.defense.hp[1], m.defense.hp[2]) end
+    if #d > 0 then
+      arrow(d, "effective hp", m.defense.now, m.defense.after)
+      pct(d, m.defense.pct)
+      out[#out + 1] = { "Defense", d }
+    end
+  end
+  local r = {}
+  if m.hpRegen then arrow(r, "hp/tick", m.hpRegen.now, m.hpRegen.after) end
+  if m.spRegen then arrow(r, "sp/tick", m.spRegen.now, m.spRegen.after) end
+  if #r > 0 then out[#out + 1] = { "Recovery", r } end
+  if m.casting then
+    local c = {}
+    arrow(c, "spell points", m.casting.now, m.casting.after)
+    if #c > 0 then out[#out + 1] = { "Casting", c } end
+  end
+  return out
+end
+
 -- "offense +6.1% · defense +3.2% · casting −1.1%" (real numbers), then "~" for what's estimated
 function M.modelSegs(old, new)
   local m = M.combatModel(old, new)
@@ -5194,8 +5261,9 @@ function M.modelSegs(old, new)
   end
   add("offense", m.offense)
   add("defense", m.defense)
-  add("casting", m.casting)
+  add("spell points", m.casting)
   add("hp regen", m.hpRegen)
+  add("sp regen", m.spRegen)
   return segs, m
 end
 
@@ -5236,29 +5304,22 @@ function M.weightToPct(w)
   return 0.27
 end
 
--- an upgrade's worth: the real changes in % (each role times your build's lean), plus the estimate.
--- role: only that role's real change
+-- an upgrade's worth: the calculated changes only - each role's % (offense: damage per round, defense:
+-- effective hp, casting: spell points, recovery: hp/sp regen), times your lean for it (1 unless you
+-- set one). What has no formula is listed beside it, and doesn't move the ranking.
+-- role: only that role's change
 function M.upgradeValue(old, new, w, role)
   local m = M.combatModel(old, new)
   if not m then return nil end
+  local _, names = M.estimatePoints(old, new, w, m)
+  m.estNames = names
+  if role then return m[role] and m[role].pct or 0, m end
   local mix = M.roleMix()
-  if role then
-    local x = m[role]
-    if x then return x.pct, m end
-    -- utility: only estimates
-    local e = M.estimatePoints(old, new, w, m)
-    return e * M.weightToPct(w), m
-  end
   local v = 0
-  for _, r in ipairs({ "offense", "defense", "casting" }) do
+  for _, r in ipairs(M.ROLES) do
     if m[r] then v = v + m[r].pct * (mix[r] or 1) end
   end
-  -- hp regen: it runs at a third while you fight (help 2334), so a third of it counts toward defense
-  if m.hpRegen then v = v + m.hpRegen.pct / 3 * (mix.defense or 1) end
-  local est, names = M.estimatePoints(old, new, w, m)
-  est = est * M.weightToPct(w)
-  m.est, m.estNames = est, names
-  return v + est * (mix.utility or 1), m
+  return v, m
 end
 
 end
@@ -5270,7 +5331,7 @@ end
 -- Sources: help 1153 (attributes), 1747 (the accuracy formula), 1920 (affect attributes), 2258
 -- (attack/defense speed), and the help summaries of the spells and skills.
 ---------------------------------------------------------------------------
-M.ROLES = { "offense", "defense", "casting", "utility" }
+M.ROLES = { "offense", "defense", "casting", "recovery" }
 local R_OFF, R_DEF, R_CAST, R_UTIL = { offense = 1 }, { defense = 1 }, { casting = 1 }, { utility = 1 }
 M.STAT_ROLE = {
   -- attributes: split by what help 1153 / 1747 say they do
@@ -5438,45 +5499,39 @@ end
 -- wrists, necks) the weaker one, since that's the one a new item would replace
 function M.wornLike(it, w)
   if not it or not it.worn then return nil end
-  local worst, ws
+  local best, bv
   for _, n in ipairs(M.eqNames or {}) do
     local e = M.items[n]
     if e and e.worn == it.worn and e.name ~= it.name then
-      local s = M.gearScore(e, w) or 0
-      if not ws or s < ws then worst, ws = e, s end
+      local v = M.upgradeValue(e, it, w) or 0
+      if not bv or v > bv then best, bv = e, v end
     end
   end
-  return worst
+  return best
 end
 
--- "Gear score 23.5 (monk) · you wear a dwarven girdle: 18.0 → +5.5 (+31%)"
-function M.scoreLine(it)
-  local bname, w = M.activeBuild()
-  local sc = M.gearScore(it, w)
-  if not sc then return nil end
-  local segs = { { C.key, "Gear score " }, { C.num, tostring(sc) }, { C.dim, "  (" .. bname .. " build" } }
-  segs[#segs + 1] = { C.dim, ")" }
+-- under an item you look at: what wearing it instead of what you wear would change, by category
+-- (returns a list of lines)
+function M.swapLines(it)
+  local _, w = M.activeBuild()
+  for _, n in ipairs(M.eqNames or {}) do if n == it.name then return { { { C.dim, "you're wearing it" } } } end end
   local worn = M.wornLike(it, w)
-  local wearing = false
-  for _, n in ipairs(M.eqNames or {}) do if n == it.name then wearing = true end end
-  if wearing then
-    segs[#segs + 1] = { C.dim, "  ·  you're wearing it" }
-  elseif worn then
-    local ws = M.gearScore(worn, w)
-    local d = math.floor((sc - ws) * 10 + 0.5) / 10
-    local pct = ws ~= 0 and string.format(" (%+d%%)", math.floor((sc - ws) / math.abs(ws) * 100 + 0.5)) or ""
-    segs[#segs + 1] = { C.dim, "  ·  you wear " .. worn.name .. ": " .. ws .. " → " }
-    segs[#segs + 1] = { d > 0 and C.plus or (d < 0 and C.minus or C.dim),
-                        (d > 0 and "+" or "") .. d .. pct .. (d > 0 and " upgrade" or (d < 0 and " worse" or " same")) }
+  if not worn then return nil end
+  local m = M.combatModel(worn, it)
+  if not m then return { { { C.dim, "type eq once and Oven works out what wearing it would change" } } } end
+  local out = { { { C.dim, "instead of " }, { C.item, worn.name }, { C.dim, ":" } } }
+  local cats = M.swapCategories(m)
+  for _, cat in ipairs(cats) do
+    local r = { { C.key, "  " .. pad(cat[1], 10) } }
+    addAll(r, cat[2])
+    out[#out + 1] = r
   end
-  -- the real change, if you swapped: in the game's units
-  local ms = worn and not wearing and M.modelSegs(worn, it)
-  if ms and #ms > 0 then
-    segs[#segs + 1] = { C.dim, "  ·  swapping: " }
-    addAll(segs, ms)
-  end
-  return segs
+  if #cats == 0 then out[#out + 1] = { { C.dim, "  nothing that can be calculated changes" } } end
+  local _, names = M.estimatePoints(worn, it, w, m)
+  if #names > 0 then out[#out + 1] = { { C.dim, "  not calculated: " .. table.concat(names, ", ") } } end
+  return out
 end
+M.scoreLine = function(it) local l = M.swapLines(it); return l and l[1] end
 
 -- sbo upgrades: for each place you wear something, the best item Oven knows for it
 -- What you carry: the last inventory list, and the last look inside each container. Kept between
@@ -5547,6 +5602,10 @@ function M.upgradeLines(width, all, role)
     if not weakest[it.worn] or s < weakest[it.worn].s then weakest[it.worn] = { it = it, s = s } end
   end
   if #wearing == 0 then out[#out + 1] = { { C.dim, "type eq and look at your gear first (sbo eq learn does it in one go)" } }; return out end
+  if not M.combatModel(nil, nil) then
+    out[#out + 1] = { { C.dim, "type eq once: Oven works out what each swap changes from the numbers it shows (damage, accuracy, AR…)" } }
+    return out
+  end
   local shown = 0
   local links = {}
   M.lastUpgrades = {}
@@ -5572,7 +5631,7 @@ function M.upgradeLines(width, all, role)
     local best, bs, bm
     -- the real model when Oven has your eq's numbers: what the swap does to your damage, survival
     -- and spell points (in %), plus the estimate for what has no formula; else the weighted score
-    local useModel = M.combatModel(cur, cur) ~= nil
+    local useModel = true
     for _, r in ipairs(byWorn[cur.worn] or {}) do
       local tooHigh = lvl and tonumber(r.level) and tonumber(r.level) > lvl
       if not isWorn[r.name] and not used[r.name] and not tooHigh and (all or carried[r.name]) then
@@ -5593,7 +5652,7 @@ function M.upgradeLines(width, all, role)
       local row
       if bm then
         out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name } }
-        row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, string.format("  +%s%%", math.floor(bs * 10 + 0.5) / 10) } }
+        row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best } }
       else
         out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name }, { C.dim, "  " .. cs } }
         row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
@@ -5601,20 +5660,19 @@ function M.upgradeLines(width, all, role)
       local where = carried and carried[best]
       if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where } end
       out[#out + 1] = row
-      -- the real changes, then the estimate for the rest
-      local rsegs = bm and (M.modelSegs(cur, bestIt)) or M.roleDiffSegs(cur, bestIt, w)
-      if bm and bm.est and math.abs(bm.est) >= 0.05 then
-        if #rsegs > 0 then rsegs[#rsegs + 1] = { C.dim, " · " } end
-        local e = math.floor(bm.est * 10 + 0.5) / 10
-        rsegs[#rsegs + 1] = { C.dim, "~est " }
-        rsegs[#rsegs + 1] = { e > 0 and C.plus or C.minus, (e > 0 and "+" or "−") .. tostring(math.abs(e)) .. "%" }
-        local nm = bm.estNames or {}
-        if #nm > 0 then rsegs[#rsegs + 1] = { C.dim, " (" .. table.concat(nm, ", ", 1, math.min(4, #nm)) .. (#nm > 4 and ", …" or "") .. ")" } end
-      end
-      if rsegs and #rsegs > 0 then
-        local r = { { C.dim, pad("", 26) } }
-        addAll(r, rsegs)
-        out[#out + 1] = r
+      -- what changes, by category, in the game's numbers
+      for _, cat in ipairs(M.swapCategories(bm)) do
+        local units = {}
+        local cur_ = {}
+        for _, sg in ipairs(cat[2]) do
+          if sg[2] == " · " then units[#units + 1] = cur_; cur_ = {} else cur_[#cur_ + 1] = sg end
+        end
+        if #cur_ > 0 then units[#units + 1] = cur_ end
+        for i, ln in ipairs(flowUnits(units, math.max(20, width - 37))) do
+          local r = { { C.dim, pad("", 26) }, { C.key, pad(i == 1 and cat[1] or "", 10) } }
+          addAll(r, ln)
+          out[#out + 1] = r
+        end
       end
       -- what you'd gain and lose: stats (by how much they matter to your build), then what the items do
       local gain, lose = M.upgradeDiff(cur, bestIt, w)
@@ -5628,6 +5686,9 @@ function M.upgradeLines(width, all, role)
             out[#out + 1] = r
           end
         end
+      end
+      if bm and bm.estNames and #bm.estNames > 0 then
+        out[#out + 1] = { { C.dim, pad("", 26) .. pad("", 10) .. "not calculated: " .. table.concat(bm.estNames, ", ") } }
       end
       local n, a, z = shown, cur.name, best
       links[#links + 1] = { string.format("%d. compare %s → %s", n, a, z), function() M.compareNames(a, z) end }
@@ -5646,11 +5707,9 @@ function M.upgradeLines(width, all, role)
       .. ") and have looked at · sbo upgrades all for everything you've seen · sbo eq learn carried" } }
   end
   if shown > 0 then
-    if M.combatModel(nil, nil) then
-      out[#out + 1] = { { C.dim, "offense = expected damage per round (damage × hit chance × crit × attacks), defense = effective hit points (hp ÷ damage" } }
-      out[#out + 1] = { { C.dim, "through your AR), casting = spell points - from your eq's numbers and the game's formulas. ~est = what has no" } }
-      out[#out + 1] = { { C.dim, "formula yet (spells on gear, resistances, dodging…), valued with your build's weights" } }
-    end
+    out[#out + 1] = { { C.dim, "worked out from your eq's numbers with the game's formulas (help 1747, 2468, 2258, 1085, 2334); ranked by" } }
+    out[#out + 1] = { { C.dim, "the % change in damage per round, effective hp, spell points and regen (sbo eq build role … to lean); not calculated:" } }
+    out[#out + 1] = { { C.dim, "things with no formula in the help, listed by name" } }
     out[#out + 1] = { { C.dim, "click one below (or sbo upgrades <number>) for the full comparison" } }
   end
   return out, links
@@ -5742,195 +5801,189 @@ function M.upgradeWhy(cur, best, w)
   return out
 end
 
+do -- (own scope)
+-- sbo eq build: your character in combat, worked out from your gear and attributes with the game's
+-- formulas - by category: offense, defense, recovery, casting - then your attributes and what training
+-- each would change. Nothing here is weighted: what has no formula in the help is listed as such.
+local NOT_CALCULATED = "dodging and parrying (agility, the defense skills), what strength adds to damage, knowledge's "
+  .. "cheaper spells, how often weapon specials and procs fire, resistances (they depend on what you fight), "
+  .. "granted skills, and spells whose help Oven hasn't read"
+
 function M.buildLines(width)
-  local bname, w = M.activeBuild()
   local c = M.cfg.char or {}
-  local out = { header("gear", "", width, "Build: " .. bname) }
-  out[#out + 1] = { { C.dim, "character: " .. (c.race or "?") .. " " .. (c.class or "?") .. (c.total and (", total level " .. c.total) or "")
-    .. (M.cfg.build and "" or "  ·  build picked from your class") } }
-  local _, known = M.classBuild(c.class)
-  if not M.cfg.build and not c.class then
-    out[#out + 1] = { { C.flag, "type score once so Oven knows your class - until then this is the balanced build" } }
-  elseif not M.cfg.build and not known then
-    out[#out + 1] = { { C.flag, "Oven doesn't know the class '" .. c.class .. "' - using balanced. Pick one: sbo eq build melee / caster / healer / thief / tank (or help classes, and Oven learns it)" } }
+  local cb = c.combat
+  local out = { header("gear", "", width, "Combat: " .. (c.race or "?") .. " " .. (c.class or "?")
+    .. (c.total and (", level " .. c.total) or "")) }
+  local function line(label, segs)
+    local r = { { C.key, "  " .. pad(label, 23) } }
+    addAll(r, segs)
+    out[#out + 1] = r
   end
-  out[#out + 1] = {}
-  local keys = {}
-  for k in pairs(w) do if not k:match("^weapon:") then keys[#keys + 1] = k end end
-  table.sort(keys, function(a, b) if w[a] ~= w[b] then return w[a] > w[b] end return a < b end)
-  local stats = c.stats or {}
-  local race = (M.cfg.raceStats or {})[(c.race or ""):lower()]
-  local primary = M.classPrimary()
-  if primary then
-    out[#out + 1] = { { C.dim, "primary attribute for " .. c.class .. " (its help page): " }, { C.slot, primary },
-      { C.dim, (M.cfg.builds or {})[bname] and "  (your own weights are kept as you set them)" or "  - weighted highest" } }
-  elseif c.class then
-    out[#out + 1] = { { C.dim, "help " .. c.class:lower() .. " once and Oven puts your class's primary attribute on top" } }
+  local function head(t) out[#out + 1] = {}; out[#out + 1] = { { C.title, t } } end
+  if not cb or not cb.damage then
+    out[#out + 1] = { { C.flag, "type eq once: everything here starts from the numbers it shows (damage, accuracy, AR…)" } }
+    return out
   end
-  -- roles: what the build leans towards
-  local mix = M.roleMix()
-  local rsegs = { { C.title, "Roles  " } }
-  for i, r in ipairs(M.ROLES) do
-    if i > 1 then rsegs[#rsegs + 1] = { C.dim, " · " } end
-    rsegs[#rsegs + 1] = { C.key, r .. " " }
-    rsegs[#rsegs + 1] = { mix[r] == 1 and C.num or C.flag, "×" .. tostring(mix[r]) }
+  local base = M.combatModel(nil, nil)
+
+  -- offense
+  head("Offense")
+  local parts = {}
+  for k, v in pairs(cb.dmgParts or {}) do parts[#parts + 1] = string.format("%+d %s", v, k) end
+  table.sort(parts)
+  line("damage per hit", { { C.num, tostring(cb.damage) }, { C.dim, #parts > 0 and ("   " .. table.concat(parts, ", ")) or "" } })
+  local hit = math.max(1, math.min(98, cb.accuracy))
+  line("hit chance", { { C.num, hit .. "%" }, { C.dim, cb.accuracy > 98 and ("   (accuracy " .. cb.accuracy .. ", capped at 98)") or "   (your accuracy, help 1747)" } })
+  line("critical hits", { { C.num, (cb.crit or 0) .. "%" }, { C.dim, "   for double damage (help 2468)" } })
+  local speed = M.wornAttackSpeed()
+  local n = M.attacksPerRound(speed)
+  local ex = {}
+  for _, k in ipairs(M.EXTRA_ATTACKS) do
+    local l = tonumber(((M.cfg.skills or {})[k] or {}).lrnd)
+    if l and l > 0 then ex[#ex + 1] = k .. " " .. l .. "%" end
   end
-  rsegs[#rsegs + 1] = { C.dim, "   (sbo eq build role defense 1.5 - gear scores split by role in upgrades, compare and looks)" }
-  out[#out + 1] = {}
-  out[#out + 1] = rsegs
-  -- attributes: weights, where you stand, training (one table)
+  line("attacks per round", { { C.num, string.format("%.2f", n) },
+    { C.dim, "   " .. (#ex > 0 and table.concat(ex, ", ") or "no extra-attack skills") .. (speed > 0 and (", attack speed " .. speed) or "") .. " (help 2258)" } })
+  line("damage per round", { { C.plus, string.format("%.1f", base.offense.now) },
+    { C.dim, string.format("   = %d × %d%% × %.2f (crits) × %.2f attacks", cb.damage, hit, 1 + (cb.crit or 0) / 100, n) } })
+
+  -- defense
+  head("Defense")
+  local hp = tonumber((M.cfg.maxes or {}).hp) or 0
+  line("hit points", { { C.num, tostring(hp) } })
+  local rate = M.cfg.arRate or 0.75
+  local locs = {}
+  for loc, ar in pairs(M.cfg.arLoc or {}) do locs[#locs + 1] = { loc, ar } end
+  table.sort(locs, function(x, y) return (M.BODY_DAMAGE[x[1]] or 1) > (M.BODY_DAMAGE[y[1]] or 1) end)
+  for _, l in ipairs(locs) do
+    local mod = M.BODY_DAMAGE[l[1]] or 1
+    line("AR " .. l[1], { { C.num, pad(tostring(l[2]), 4) },
+      { C.dim, string.format("takes %.1f%% off a hit there · a hit there does %d%% (help 1085)", l[2] * rate, mod * 100) } })
+  end
+  if base.defense then
+    line("of a hit gets through", { { C.num, string.format("%.1f%%", base.defense.through[1] * 100) },
+      { C.dim, "   averaged over where hits land (each place equally likely - no help page says otherwise)" } })
+    local tot = M.wornTotals()
+    local res, ht = tot.resilience or 0, tonumber(c.hitTaken)
+    if res ~= 0 then
+      line("resilience", { { C.num, tostring(res) }, { C.dim, ht and string.format("   off each hit; you're hit for about %d (your fights)", ht)
+        or "   off each hit (Oven learns how hard you're hit as you fight)" } })
+    end
+    if cb.critResist then line("crit resistance", { { C.num, cb.critResist .. "%" }, { C.dim, "   (from eq)" } }) end
+    line("effective hit points", { { C.plus, string.format("%.0f", base.defense.now) },
+      { C.dim, string.format("   = %d hp ÷ %.1f%% getting through", hp, base.defense.through[1] * 100) } })
+  end
+
+  -- recovery
+  head("Recovery")
+  local _, hasted = M.wornTotals()
+  if base.hpRegen then line("hp per tick", { { C.num, string.format("%.1f", base.hpRegen.now) }, { C.dim, "   standing, at half hp (×2 asleep, ⅓ fighting) - help 2334" } }) end
+  if base.spRegen then line("sp per tick", { { C.num, string.format("%.1f", base.spRegen.now) }, { C.dim, "   standing, at half sp; sanity sets the pace" } }) end
+  if hasted then out[#out + 1] = { { C.flag, "  hasted by your gear: regeneration is halved (help haste)" } } end
+
+  -- casting
+  head("Casting")
+  line("spell points", { { C.num, tostring((M.cfg.maxes or {}).sp or "?") } })
+
+  -- attributes: what one more point would change (the same model)
   out[#out + 1] = {}
   M.trainSection(out)
-  -- every other stat the build weighs
+
   out[#out + 1] = {}
-  out[#out + 1] = { { C.title, "Other stats" }, { C.dim, "  (gear-score points per point on an item)" } }
-  for _, k in ipairs(keys) do
-    if not stats[k] then
-      out[#out + 1] = { { C.key, "  " .. pad(k, 21) .. " " }, { w[k] > 0 and C.num or C.dim, pad(tostring(w[k]), 9) } }
-    end
+  local units = {}
+  for w_ in ("not calculated: " .. NOT_CALCULATED):gmatch("%S+") do units[#units + 1] = { { C.dim, w_ } } end
+  for _, ln in ipairs(flowUnits(units, width - 4)) do
+    local r = { { C.dim, "  " } }
+    for i, u in ipairs(ln) do r[#r + 1] = u[1] and u or u end
+    -- flowUnits joins with two spaces; words read better with one
+    local t = {}
+    for _, sg in ipairs(ln) do t[#t + 1] = sg[2] end
+    out[#out + 1] = { { C.dim, "  " .. table.concat(t):gsub("%s%s+", " ") } }
   end
-  -- what items do beyond their numbers, and the common stats every build gets unless it sets them
-  local EXPLAIN = { ["skill:*"] = "a skill it grants (per 100% you don't already have)", ["weapon-special"] = "a weapon special, per % of damage it adds",
-    casts = "(old) a spell it casts - now each spell by its own worth", use = "something it does when used",
-    ["proc:*"] = "a chance to do something in a fight (1/4 if only vs one foe)", proc = "(old) a chance in a fight",
-    ["set-bonus"] = "each bonus of its set (scaled by how close it gets you)", ["attr:*"] = "an attribute it gives you (reflect-magic…)" }
-  local dk = {}
-  for k in pairs(M.effectWeights) do if w[k] == nil then dk[#dk + 1] = k end end
-  table.sort(dk, function(a, b) return (EXPLAIN[a] and 0 or 1) < (EXPLAIN[b] and 0 or 1) or ((EXPLAIN[a] and 0 or 1) == (EXPLAIN[b] and 0 or 1) and a < b) end)
-  if #dk > 0 then
-    out[#out + 1] = {}
-    out[#out + 1] = { { C.dim, "  beyond the numbers, and common stats (every build, unless you set them):" } }
-    for _, k in ipairs(dk) do
-      out[#out + 1] = { { C.key, "  " .. pad(k, 21) .. " " }, { C.num, pad(tostring(M.effectWeights[k]), 9) }, { C.dim, EXPLAIN[k] or "" } }
-    end
-  end
-  local bon = M.weaponBonuses(w)
-  if #bon > 0 then
-    out[#out + 1] = {}
-    for _, b in ipairs(bon) do
-      out[#out + 1] = { { C.key, "  weapon bonus  " }, { C.plus, string.format("+%s%% ", b.pct) }, { C.text, b.kind .. " weapons" },
-        { C.dim, b.own and "  (your setting)" or (b.assumed and "  (your race's page names no number - assumed; sbo eq build set weapon:" .. b.kind .. " N)" or "  (your race's page)") } }
-    end
-  end
-  local innate = M.innateMods()
-  if next(innate) then
-    out[#out + 1] = {}
-    local keys = {}
-    for k in pairs(innate) do keys[#keys + 1] = k end
-    table.sort(keys)
-    for _, k in ipairs(keys) do
-      local v = innate[k]
-      out[#out + 1] = { { C.key, "  racial        " }, { v < 0 and C.minus or C.plus, string.format("%+d ", v) }, { C.text, k },
-        { C.dim, v < 0 and string.format("  (a weakness: %s on gear counts %.1f)", k, weightOf(w, k)) or "" } }
-    end
-  end
-  if race then
-    local fav = {}
-    for k, v in pairs(race) do if v > 17 then fav[#fav + 1] = k .. " " .. v end end
-    table.sort(fav)
-    if #fav > 0 then out[#out + 1] = {}; out[#out + 1] = { { C.dim, "your race's strengths (average max is 17): " .. table.concat(fav, ", ") } } end
-  end
-  out[#out + 1] = {}
-  local names = {}
-  for n in pairs(M.buildPresets) do names[n] = true end
-  for n in pairs(M.cfg.builds or {}) do names[n] = true end
-  local list = {}
-  for n in pairs(names) do list[#list + 1] = n end
-  table.sort(list)
-  out[#out + 1] = { { C.dim, "builds: " .. table.concat(list, ", ") } }
-  out[#out + 1] = { { C.dim, "sbo eq build NAME switches (or makes a new one) · sbo eq build set STAT WEIGHT · sbo eq build reset" } }
+  local mix = M.roleMix()
+  local lean = {}
+  for _, r in ipairs(M.ROLES) do if mix[r] ~= 1 then lean[#lean + 1] = r .. " ×" .. mix[r] end end
+  out[#out + 1] = { { C.dim, "  upgrades rank by the % change in each category" .. (#lean > 0 and (", leaning " .. table.concat(lean, ", ")) or "")
+    .. " - sbo eq build role defense 1.5 to lean" } }
   return out
 end
 
--- training: which attribute to raise next. Each one with what a point does (the game's help: attributes,
--- 1153, and the accuracy formula, 1747), its gear-score weight, and how far it can still go.
+-- training: which attribute to raise next - what one more point really changes (the model above),
+-- for what it costs (the game's train table)
 M.TRAIN_EFFECT = {
-  agility     = { hit = 0.5, text = "+0.5% to hit ((agility+1)/2), and opponents miss you more" },
-  luck        = { hit = 0.25, text = "+0.25% to hit ((luck+2)/4), and \"used… with just about everything\"" },
-  personality = { hit = 0.1, text = "+0.1% to hit ((personality+5)/10); leading and negotiating" },
-  strength    = { above = 20, text = "more weapon damage, carry more, heavier gear (+1% to hit only above 20)" },
-  wisdom      = { above = 20, text = "self-improvement, resisting deceit (+1% to hit only above 20)" },
-  knowledge   = { text = "less effort casting spells and learning skills" },
-  vitality    = { text = "take more hits; hit point and stamina regeneration" },
-  sanity      = { text = "recover from casting faster" },
-  courage     = { text = "resist magical fear" },
+  knowledge = "cheaper spells, faster learning (no formula in the help)",
+  courage = "resisting magical fear (no formula in the help)",
+  strength = "weapon damage (no formula in the help); +1% to hit above 20",
+  wisdom = "self-improvement; +1% to hit above 20",
 }
--- the attributes part of the build page: where each stands, what training it can still do, and which next
 function M.trainSection(out)
-  local bname, w = M.activeBuild()
   local c = M.cfg.char or {}
   local stats = c.stats or {}
-  local primary = M.classPrimary()
+  local trained = c.trained or {}
   if not next(stats) then
     out[#out + 1] = { { C.dim, "type score once so Oven knows where each attribute stands" } }
     return out
   end
+  local mix = M.roleMix()
   local rows = {}
-  local trained = c.trained or {}
   for k, st in pairs(stats) do
     local cur, mx = tonumber(st.cur), tonumber(st.max)
-    local base = trained[k] and tonumber(trained[k].cur)
     if cur and mx then
-      local e = M.TRAIN_EFFECT[k] or { text = "" }
-      local wt = w[k] or 0
-      -- the primary attribute also adds to how many skills improve by themselves as you level
-      local val = wt + (k == primary and 0.5 or 0)
-      local hit = e.hit or (e.above and cur >= e.above and 1) or 0
+      local room = math.max(0, mx - cur)
+      local m = room > 0 and M.combatModel(nil, { affects = { { k, "1" } } }) or nil
+      local cats = m and M.swapCategories(m) or {}
+      -- some only change in steps (sanity's regen tiers): the first step within reach
+      local steps = 1
+      if room > 1 and m and #cats == 0 then
+        for n = 2, room do
+          local m2 = M.combatModel(nil, { affects = { { k, tostring(n) } } })
+          local c2 = m2 and M.swapCategories(m2) or {}
+          if #c2 > 0 then m, cats, steps = m2, c2, n; break end
+        end
+      end
+      local v = 0
+      if m then for _, r in ipairs(M.ROLES) do if m[r] then v = v + m[r].pct * (mix[r] or 1) end end end
       local cost = tonumber((c.trainCost or {})[k])
-      -- training raises your total only until it reaches the maximum: gear may already fill the rest
-      rows[#rows + 1] = { k = k, cur = cur, max = mx, room = math.max(0, mx - cur), wt = wt, val = val, hit = hit, e = e,
-                          base = base, gear = base and (cur - base) or nil,
-                          cost = cost, per = cost and cost > 0 and val / cost * 100 or nil }
+      rows[#rows + 1] = { k = k, cur = cur, max = mx, room = room, cats = cats, v = v, cost = cost,
+                          per = cost and cost > 0 and v / (cost * steps) or nil, base = trained[k] and tonumber(trained[k].cur), steps = steps }
     end
   end
-  -- best value for the practices, once the costs are known (from the game's train table)
   table.sort(rows, function(a, b)
     if (a.room > 0) ~= (b.room > 0) then return a.room > 0 end
-    local av, bv = a.per or a.val, b.per or b.val
+    local av, bv = a.per or a.v, b.per or b.v
     if av ~= bv then return av > bv end
     return a.k < b.k
   end)
+  out[#out + 1] = { { C.title, "Attributes" }, { C.dim, c.practices and ("   you have " .. c.practices .. " practices") or "" } }
   local best = rows[1]
-  if best and best.room > 0 then
-    out[#out + 1] = { { C.title, "Attributes" } }
-    out[#out + 1] = { { C.dim, "train next: " }, { C.slot, best.k }, { C.dim, string.format("  (%d → %d of %d)", best.cur, best.cur + 1, best.max) } }
-    local segs = { { C.dim, "  +1 is worth " }, { C.num, string.format("%.1f", best.val) }, { C.dim, " gear-score points in your " .. bname .. " build" } }
-    if best.cost then segs[#segs + 1] = { C.dim, string.format(", for %d practices", best.cost) } end
-    if best.hit > 0 then
-      segs[#segs + 1] = { C.dim, string.format(" · +%s%% to hit; all %d left: +%s%%", tostring(best.hit), best.room, tostring(best.hit * best.room)) }
-    end
-    out[#out + 1] = segs
-    out[#out + 1] = { { C.dim, "  " .. best.e.text .. (best.k == primary and " · primary: more skills improve as you level" or "") } }
-  else
-    out[#out + 1] = { { C.title, "Attributes" } }
-    out[#out + 1] = { { C.plus, "every attribute is at its maximum" } }
+  if best and best.room > 0 and best.v > 0 then
+    out[#out + 1] = { { C.dim, "  train next: " }, { C.slot, best.k }, { C.dim, string.format(" (%d → %d of %d%s)", best.cur, best.cur + best.steps, best.max,
+      best.cost and (", " .. best.cost * best.steps .. " practices") or "") } }
   end
-  local haveCost = (c.trainCost or {}).strength ~= nil or next(c.trainCost or {}) ~= nil
-  if c.practices then out[#out + 1] = { { C.dim, "  you have " }, { C.num, tostring(c.practices) }, { C.dim, " practices" } } end
-  local haveBase = next(trained) ~= nil
-  out[#out + 1] = { { C.dim, "  " .. pad("attribute", 13) .. pad("now", 8) .. (haveBase and pad("trained", 9) or "") .. pad("left", 6) .. pad("per point", 11)
-    .. (haveCost and pad("cost", 6) or "") .. "what a point does" } }
   for _, r in ipairs(rows) do
     local done = r.room == 0
-    local row = { { done and C.dim or C.key, "  " .. pad(r.k, 13) }, { done and C.flag or C.text, pad(r.cur .. "/" .. r.max, 8) } }
-    if haveBase then
-      row[#row + 1] = { C.dim, pad(r.base and (r.base .. (r.gear and r.gear > 0 and (" +" .. r.gear) or "")) or "?", 9) }
+    local row = { { done and C.dim or C.key, "  " .. pad(r.k, 13) }, { done and C.flag or C.text, pad(r.cur .. "/" .. r.max, 7) } }
+    row[#row + 1] = { C.dim, pad(r.base and ("trained " .. r.base) or "", 12) }
+    row[#row + 1] = { C.dim, pad(r.cost and (r.cost .. "p") or "", 5) }
+    if done then
+      row[#row + 1] = { C.dim, "at its maximum" .. ((r.base and r.cur > r.base) and " (with gear)" or "") }
+    elseif #r.cats > 0 then
+      row[#row + 1] = { C.dim, r.steps > 1 and string.format("+%d (to %d): ", r.steps, r.cur + r.steps) or "+1: " }
+      for i, cat in ipairs(r.cats) do
+        if i > 1 then row[#row + 1] = { C.dim, " · " } end
+        addAll(row, cat[2])
+      end
+    else
+      row[#row + 1] = { C.dim, "+1: " .. (M.TRAIN_EFFECT[r.k] or "nothing Oven can calculate") }
     end
-    addAll(row, { { done and C.dim or C.num, pad(done and "max" or tostring(r.room), 6) },
-      { r.val > 0 and C.num or C.dim, pad(string.format("%.1f", r.val), 11) } })
-    if haveCost then row[#row + 1] = { C.text, pad(r.cost and tostring(r.cost) or "?", 6) } end
-    row[#row + 1] = { C.dim, r.e.text .. (r.k == primary and " · primary" or "") }
     out[#out + 1] = row
   end
-  out[#out + 1] = {}
-  out[#out + 1] = { { C.dim, "  now = with gear (score) · trained = what you trained, +what gear adds · left = what training can still add" } }
-  out[#out + 1] = { { C.dim, "  (past the maximum: nothing, while you wear that gear) · per point = gear-score weight, +0.5 for your primary" } }
-  out[#out + 1] = { { C.dim, "  ranked by value per practice · at the maximum, more on gear counts 1/4 · to hit caps at 98% (90% gnomes)" } }
-  if not haveCost then out[#out + 1] = { { C.flag, "  type train once at a trainer: Oven adds what each costs, and what you've trained" } } end
+  if not next(c.trainCost or {}) then out[#out + 1] = { { C.flag, "  type train once at a trainer: Oven adds what each costs and what you've trained" } } end
   return out
 end
--- (sbo eq train shows the build page, where this lives)
 function M.trainLines(width) return M.buildLines(width) end
+end
+
 
 function M.buildCommand(b)
   b = trim(b or "")
@@ -5996,12 +6049,7 @@ function M.compareLines(a, b, width)
   out[#out + 1] = { { C.dim, " B  " }, { C.item, b.name } }
   out[#out + 1] = { { C.dim, pad("", 16) .. pad("A", cw + 2) .. pad("B", cw + 2) .. "B vs A" } }
   local rows = M.compareRows(a, b)
-  local okS, sa = pcall(M.gearScore, a)
-  local okB, sb = pcall(M.gearScore, b)
-  if okS and okB and sa and sb then
-    local d = math.floor((sb - sa) * 10 + 0.5) / 10
-    table.insert(rows, 1, { "Gear score", tostring(sa), tostring(sb), d == 0 and "=" or ((d > 0 and "+" or "") .. d), d })
-    rows[1][1] = "Weighted score"
+  do
     -- the real numbers: swapping A for B, from your eq and the game's formulas
     local okM, m = pcall(M.combatModel, a, b)
     if okM and m then
@@ -6013,9 +6061,7 @@ function M.compareLines(a, b, width)
           p == 0 and "=" or string.format("%+.1f%%", p), p })
         at = at + 1
       end
-      row("Dmg per round", m.offense, "%.1f")
-      row("Effective HP", m.defense, "%.0f")
-      row("Spell points", m.casting, "%.0f")
+      -- (shown below, by category)
     end
   end
   for _, r in ipairs(rows) do
@@ -6025,7 +6071,20 @@ function M.compareLines(a, b, width)
     out[#out + 1] = { { C.key, pad(cut(r[1], 15), 16) }, { acol, pad(cut(r[2]), cw + 2) },
                       { bcol, pad(cut(r[3]), cw + 2) }, { dcol, r[4] } }
   end
-  pcall(M.scoreBreakdown, out, a, b, cw, cut)
+  -- what swapping A for B changes, by category (the game's formulas, from your eq)
+  local okM, m = pcall(M.combatModel, a, b)
+  if okM and m then
+    local cats = M.swapCategories(m)
+    if #cats > 0 then
+      out[#out + 1] = {}
+      out[#out + 1] = { { C.dim, "wearing B instead of A:" } }
+      for _, cat in ipairs(cats) do
+        local r = { { C.key, "  " .. pad(cat[1], 10) } }
+        addAll(r, cat[2])
+        out[#out + 1] = r
+      end
+    end
+  end
   return out
 end
 
@@ -6126,8 +6185,8 @@ function M.afterItem(raw, entry)
   M.remember(it)
   it = M.items[it.name]
   if entry and it.worn then
-    local okS, segs = pcall(M.scoreLine, it)
-    if okS and segs then entry.lines[#entry.lines + 1] = {}; entry.lines[#entry.lines + 1] = segs end
+    local okS, lines = pcall(M.swapLines, it)
+    if okS and lines then entry.lines[#entry.lines + 1] = {}; addAll(entry.lines, lines) end
   end
   if entry then itemLinks(entry, it) end
   local done = {}
@@ -11489,16 +11548,22 @@ function M.pickupFlush(promptLine)
   end, true)
 end
 
--- one line, only for an upgrade: "picked up a sturdy staff: gear score 23.5, +5.5 over a bo staff (sbo compare)"
+-- one line, only for an upgrade: "picked up a sturdy staff: hit 55→58% · per round 41→44 over your bo staff (sbo compare)"
 function M.pickupVerdict(it)
   local _, w = M.activeBuild()
   local worn = M.wornLike(it, w)
   if not worn then return end
-  local sc, ws = M.gearScore(it, w), M.gearScore(worn, w)
-  if not sc or not ws or sc <= ws then return end
-  local d = math.floor((sc - ws) * 10 + 0.5) / 10
+  local v, m = M.upgradeValue(worn, it, w)
+  if not v or v <= 0.05 then return end
+  local bits = {}
+  for _, cat in ipairs(M.swapCategories(m)) do
+    local t = {}
+    for _, sg in ipairs(cat[2]) do t[#t + 1] = sg[2] end
+    bits[#bits + 1] = cat[1]:lower() .. ": " .. table.concat(t)
+  end
   M.pickupLast = { it.name, worn.name }
-  say(string.format("picked up %s: gear score %s, +%s over your %s (sbo compare %s vs %s)", it.name, sc, d, worn.name, it.name, worn.name))
+  say(string.format("picked up %s - better than your %s: %s (sbo compare %s vs %s)", it.name, worn.name,
+    table.concat(bits, "; "), it.name, worn.name))
 end
 
 
