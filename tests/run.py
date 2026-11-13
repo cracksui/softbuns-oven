@@ -623,6 +623,26 @@ def gear_score_effects():
 
 
 @test
+def training_advice():
+    o = Oven()
+    o.lua("""sbo.cfg.char = { class = 'monk', race = 'sahuagin', stats = {
+        knowledge = { cur = 12, max = 21 }, agility = { cur = 9, max = 17 }, vitality = { cur = 19, max = 19 },
+        luck = { cur = 8, max = 17 } },
+        innate = { { stat = 'stamina', mod = -211 }, { stat = 'disease-res', mod = -25 } } }
+      sbo.cfg.classPrimary = { monk = 'knowledge' }""")
+    # a racial weakness measured in points mustn't swamp everything (it made stamina count 4.3)
+    eq(o.ev("select(2, sbo.activeBuild()).stamina"), 0.125, "stamina: its own small weight, a quarter more")
+    eq(o.ev("select(2, sbo.activeBuild())['disease-res']"), 0.6, "a resistance weakness as before")
+    f = o.ev("function(rows) local s={} for _,r in ipairs(rows) do for _,g in ipairs(r) do s[#s+1]=tostring(g[2]) end s[#s+1]='\\n' end return table.concat(s) end")
+    out = f(o.ev("sbo.trainLines(100)"))
+    assert "train next: knowledge" in out, out
+    agi = next(l for l in out.split("\n") if l.strip().startswith("agility"))
+    assert "+0.5% to hit" in agi and "8 " in agi, agi
+    vit = next(l for l in out.split("\n") if l.strip().startswith("vitality"))
+    assert "max" in vit, "at max: nothing left to train"
+
+
+@test
 def death_saves_the_fight():
     o = Oven()
     eq(o.ev("sbo.cfg.recWindow"), 3000, "keeps about an hour of hunting")

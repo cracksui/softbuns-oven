@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.88.0"
+M.version = "0.89.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4606,11 +4606,17 @@ function M.activeBuild()
       w = copy
     end
   end
-  -- your race's weaknesses (GMCP: "maladapted: disease-res -25"): cover for them is worth more,
-  -- 0.1 a point plus 0.02 for each point of weakness, unless your own build sets the stat
+  -- your race's weaknesses (GMCP: "maladapted: disease-res -25"): cover for them is worth more, unless
+  -- your own build sets the stat. A stat that already has a weight counts a quarter more; a resistance
+  -- or percentage (no weight of its own) 0.1 a point plus 0.02 for each point of weakness, up to 25.
+  -- (Not per point of weakness for everything: -211 stamina made stamina count 4.3 a point.)
   local weak = {}
   for stat, mod in pairs(M.innateMods()) do
-    if mod < 0 and not (custom and custom[stat]) then weak[stat] = 0.1 + 0.02 * -mod end
+    if mod < 0 and not (custom and custom[stat]) then
+      local base = w[stat] or M.effectWeights[stat]
+      if base and base > 0 then weak[stat] = base * 1.25
+      elseif stat:match("%-res$") or stat:match("prcnt$") then weak[stat] = 0.1 + 0.02 * math.min(-mod, 25) end
+    end
   end
   if next(weak) then
     local copy = {}
@@ -4737,7 +4743,8 @@ M.effectWeights = { ["skill:*"] = 4, ["weapon-special"] = 0.3, casts = 1.5, use 
                     ["spell-damage"] = 1, ["spell-damage-prcnt"] = 0.5,
                     ["spells-learned"] = 1, ["proficiencies-learned"] = 1,
                     ["hp-regen-prcnt"] = 0.1, ["sp-regen-prcnt"] = 0.1, ["stamina-regen-prcnt"] = 0.05,
-                    ["experience-gained-percent"] = 0.3 }
+                    ["experience-gained-percent"] = 0.3,
+                    stamina = 0.1 }                  -- stamina points: what skills and moving cost
 
 -- a stat already at its maximum (score's "12/20") gains little from gear: it counts a quarter
 local CAPPED = 0.25
@@ -5040,6 +5047,75 @@ function M.buildLines(width)
   table.sort(list)
   out[#out + 1] = { { C.dim, "builds: " .. table.concat(list, ", ") } }
   out[#out + 1] = { { C.dim, "sbo eq build NAME switches (or makes a new one) · sbo eq build set STAT WEIGHT · sbo eq build reset" } }
+  return out
+end
+
+-- training: which attribute to raise next. Each one with what a point does (the game's help: attributes,
+-- 1153, and the accuracy formula, 1747), its gear-score weight, and how far it can still go.
+M.TRAIN_EFFECT = {
+  agility     = { hit = 0.5, text = "+0.5% to hit ((agility+1)/2), and opponents miss you more" },
+  luck        = { hit = 0.25, text = "+0.25% to hit ((luck+2)/4), and \"used… with just about everything\"" },
+  personality = { hit = 0.1, text = "+0.1% to hit ((personality+5)/10); leading and negotiating" },
+  strength    = { above = 20, text = "more weapon damage, carry more, heavier gear (+1% to hit only above 20)" },
+  wisdom      = { above = 20, text = "self-improvement, resisting deceit (+1% to hit only above 20)" },
+  knowledge   = { text = "less effort casting spells and learning skills" },
+  vitality    = { text = "take more hits; hit point and stamina regeneration" },
+  sanity      = { text = "recover from casting faster" },
+  courage     = { text = "resist magical fear" },
+}
+function M.trainLines(width)
+  local bname, w = M.activeBuild()
+  local c = M.cfg.char or {}
+  local stats = c.stats or {}
+  local primary = M.classPrimary()
+  local out = { header("gear", "", width, "Training: what to raise next") }
+  if not next(stats) then
+    out[#out + 1] = { { C.dim, "type score once so Oven knows where each attribute stands" } }
+    return out
+  end
+  local rows = {}
+  for k, st in pairs(stats) do
+    local cur, mx = tonumber(st.cur), tonumber(st.max)
+    if cur and mx then
+      local e = M.TRAIN_EFFECT[k] or { text = "" }
+      local wt = w[k] or 0
+      -- the primary attribute also adds to how many skills improve by themselves as you level
+      local val = wt + (k == primary and 0.5 or 0)
+      local hit = e.hit or (e.above and cur >= e.above and 1) or 0
+      rows[#rows + 1] = { k = k, cur = cur, max = mx, room = math.max(0, mx - cur), wt = wt, val = val, hit = hit, e = e }
+    end
+  end
+  table.sort(rows, function(a, b)
+    if (a.room > 0) ~= (b.room > 0) then return a.room > 0 end
+    if a.val ~= b.val then return a.val > b.val end
+    return a.k < b.k
+  end)
+  local best = rows[1]
+  if best and best.room > 0 then
+    out[#out + 1] = { { C.dim, "train next: " }, { C.slot, best.k }, { C.dim, string.format("  (%d → %d of %d)", best.cur, best.cur + 1, best.max) } }
+    local segs = { { C.dim, "  +1 is worth " }, { C.num, string.format("%.1f", best.val) }, { C.dim, " gear-score points in your " .. bname .. " build" } }
+    if best.hit > 0 then
+      segs[#segs + 1] = { C.dim, string.format(" · +%s%% to hit; all %d left: +%s%%", tostring(best.hit), best.room, tostring(best.hit * best.room)) }
+    end
+    out[#out + 1] = segs
+    out[#out + 1] = { { C.dim, "  " .. best.e.text .. (best.k == primary and " · your primary attribute: more skills improve as you level" or "") } }
+  else
+    out[#out + 1] = { { C.plus, "every attribute is at its maximum" } }
+  end
+  out[#out + 1] = {}
+  out[#out + 1] = { { C.dim, "  " .. pad("attribute", 13) .. pad("now", 8) .. pad("left", 6) .. pad("per point", 11) .. "what a point does" } }
+  for _, r in ipairs(rows) do
+    local done = r.room == 0
+    local row = { { done and C.dim or C.key, "  " .. pad(r.k, 13) }, { done and C.flag or C.text, pad(r.cur .. "/" .. r.max, 8) },
+      { done and C.dim or C.num, pad(done and "max" or tostring(r.room), 6) },
+      { r.val > 0 and C.num or C.dim, pad(string.format("%.1f", r.val), 11) },
+      { C.dim, r.e.text .. (r.k == primary and " · primary" or "") } }
+    out[#out + 1] = row
+  end
+  out[#out + 1] = {}
+  out[#out + 1] = { { C.dim, "per point = the attribute's weight in your build (sbo eq build); the primary attribute gets +0.5." } }
+  out[#out + 1] = { { C.dim, "once an attribute is at its maximum, more of it on gear counts a quarter - so training it makes that gear worth less." } }
+  out[#out + 1] = { { C.dim, "to hit is capped at 98% (90% for gnomes): past that, agility and luck only help in their other ways." } }
   return out
 end
 
@@ -10910,6 +10986,8 @@ M.CMDS = {
         return M.learn("")
       end },
     { name = "items", desc = "the items Oven remembers", run = L("items") },
+    { name = "train", desc = "which attribute to train next, and what each point does", run = function()
+        M.viewOut(M.trainLines(M.cfg.window and M.viewCols() or columns("main"))) end },
     { name = "build", args = "[{name}|set|reset|auto]", desc = "gear-score weights (set: a stat and its weight)",
       run = function(r) return legacy("build " .. r) end },
   } },
