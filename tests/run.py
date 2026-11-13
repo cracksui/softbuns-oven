@@ -1286,6 +1286,8 @@ def scan_marks():
     eq(o.ev("BG"), "110,20,20", "on a dark red")
     o.lua('sbo.command("scan unmark centipede")')
     eq(list(o.ev("sbo.cfg.scanMarks").values()), ["Wavering Shadow"], "unmarked")
+    o.lua('SAYS = {}; sbo.command("scan list")')
+    assert "Wavering Shadow" in o.ev("SAYS[1]"), "sbo scan list"
     eq(o.ev("(sbo.scanParse('A priestess is not far off to the south.'))"), "A priestess", "a scan line")
     eq(o.ev("(sbo.scanParse('You say the priest is fine.'))"), None, "not a scan line")
     o.lua('SAYS = {}; sbo.command("st")')

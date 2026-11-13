@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.81.0"
+M.version = "0.81.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10315,6 +10315,7 @@ M.CMDS = {
     run = function() return M.scanMarksShow() end, subs = {
     { name = "mark", args = "{name}", desc = "light up anyone whose name has this in it", run = function(r) return M.scanMark(r, true) end },
     { name = "unmark", args = "{name}", desc = "stop lighting them up", run = function(r) return M.scanMark(r, false) end },
+    { name = "list", desc = "who you've marked (same as sbo scan)", run = function() return M.scanMarksShow() end },
     { name = "clear", desc = "unmark everyone", run = function() M.cfg.scanMarks = {}; M.saveSettings(); say("scan marks cleared") end },
     { name = "track", args = "[{name}]", desc = "walk towards it, scanning as you go, until you're there (sbo stop stops)",
       run = function(r) return M.scanTrackStart(r) end },
