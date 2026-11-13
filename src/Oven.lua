@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.80.0"
+M.version = "0.80.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -966,6 +966,58 @@ local function flowUnits(units, avail)
   return lines
 end
 
+-- the eq total's groups: which stats go together, in the order they're shown
+local EQ_TOTAL_GROUPS = {
+  { name = "attributes", "strength", "knowledge", "wisdom", "agility", "vitality", "personality", "courage", "luck",
+    "intelligence", "dexterity", "constitution", "charisma" },
+  { name = "pools", "hp", "spell-points", "stamina", "sanity", "hp-regen", "hp-regen-max", "sp-regen", "sp-regen-max",
+    "stamina-regen", match = { "regen", "^mana", "^move" } },
+  { name = "armor", "AR", "ar-head", "ar-torso", "ar-arms", "ar-legs", match = { "^ar%-", "^armor" } },
+  { name = "offense", "accuracy", "hit-roll", "damage-roll", "SCC",
+    match = { "damage", "^hit", "^dam", "accuracy", "^scc", "critical" } },
+  { name = "defense", "resilience", "saving-spell", "saving-paralysis", "reflected-spell-prcnt",
+    match = { "^saving", "%-res$", "^resist", "reflect", "resilience", "^immun", "absorb" } },
+  { name = "other" },
+}
+
+function M.eqTotalNum(c)
+  if c.k == "AR" then return tostring(c.v) end
+  return (c.v >= 0 and "+" or "") .. tostring(c.v)
+end
+
+-- cells { k, v } → groups (only the non-empty ones), each in the table's order then a-z
+function M.eqTotalGroups(cells)
+  local out, at = {}, {}
+  for gi, g in ipairs(EQ_TOTAL_GROUPS) do out[gi] = { name = g.name } end
+  for _, c in ipairs(cells) do
+    local key, gi, rank = c.k:lower(), nil, 1000
+    for i, g in ipairs(EQ_TOTAL_GROUPS) do
+      for r, n in ipairs(g) do if n:lower() == key then gi, rank = i, r break end end
+      if gi then break end
+    end
+    if not gi then
+      for i, g in ipairs(EQ_TOTAL_GROUPS) do
+        for _, m in ipairs(g.match or {}) do if key:find(m) then gi = i break end end
+        if gi then break end
+      end
+    end
+    gi = gi or #EQ_TOTAL_GROUPS
+    local list = out[gi]
+    list[#list + 1] = { k = c.k, v = c.v, rank = rank }
+  end
+  local res = {}
+  for _, g in ipairs(out) do
+    if #g > 0 then
+      table.sort(g, function(x, y)
+        if x.rank ~= y.rank then return x.rank < y.rank end
+        return x.k:lower() < y.k:lower()
+      end)
+      res[#res + 1] = g
+    end
+  end
+  return res
+end
+
 local function renderSlots(out, slots, width, withStats)
   local slotW = 0
   for _, r in ipairs(slots) do slotW = math.max(slotW, ulen(slotLabel(r[1]))) end
@@ -1048,22 +1100,44 @@ local function renderSlots(out, slots, width, withStats)
       end
     end
     if known > 0 then
-      local units = {}
-      if ar ~= 0 then units[#units + 1] = { { C.key, "AR " }, { C.num, tostring(ar) } } end
+      -- sorted into groups, one group per line, values lined up in columns
+      local cells = {}
+      if ar ~= 0 then cells[#cells + 1] = { k = "AR", v = ar } end
       for _, k in ipairs(order) do
-        local v = sums[k]
-        if v ~= 0 then
-          units[#units + 1] = { { v >= 0 and C.plus or C.minus, (v >= 0 and "+" or "") .. v }, { C.item, " " .. k } }
-        end
+        if sums[k] ~= 0 then cells[#cells + 1] = { k = k, v = sums[k] } end
       end
-      if #units == 0 then units[1] = { { C.dim, "—" } } end
       out[#out + 1] = { { C.dim, string.rep(" ", slotW) .. " ├" .. string.rep("─", math.max(4, width - slotW - 2)) } }
-      local pre = { { C.slot, pad("total", slotW) }, { C.dim, " │ " } }
-      local lines = flowUnits(units, math.max(10, width - indent))
-      for i, ln in ipairs(lines) do
-        local l = i == 1 and { unpack(pre) } or { { C.text, string.rep(" ", slotW) }, { C.dim, " │ " } }
-        addAll(l, ln)
-        out[#out + 1] = l
+      local blank = function() return { { C.text, string.rep(" ", slotW) }, { C.dim, " │ " } } end
+      if #cells == 0 then
+        out[#out + 1] = { { C.slot, pad("total", slotW) }, { C.dim, " │ " }, { C.dim, "—" } }
+      else
+        local groups = M.eqTotalGroups(cells)
+        local gW, vW, kW = 0, 0, 0
+        for _, g in ipairs(groups) do
+          gW = math.max(gW, ulen(g.name))
+          for _, c in ipairs(g) do
+            vW = math.max(vW, ulen(M.eqTotalNum(c)))
+            kW = math.max(kW, ulen(c.k))
+          end
+        end
+        local cellW = vW + 1 + kW
+        local per = math.max(1, math.floor((width - indent - gW - 2 + 3) / (cellW + 3)))
+        local first = true
+        for _, g in ipairs(groups) do
+          for i = 1, #g, per do
+            local l = first and { { C.slot, pad("total", slotW) }, { C.dim, " │ " } } or blank()
+            first = false
+            l[#l + 1] = { C.dim, pad(i == 1 and g.name or "", gW) .. "  " }
+            for j = i, math.min(#g, i + per - 1) do
+              local c = g[j]
+              local num = M.eqTotalNum(c)
+              l[#l + 1] = { C.text, string.rep(" ", vW - ulen(num)) }
+              l[#l + 1] = { c.k == "AR" and C.num or (c.v >= 0 and C.plus or C.minus), num }
+              l[#l + 1] = { c.k == "AR" and C.key or C.item, " " .. (j < math.min(#g, i + per - 1) and pad(c.k, kW) .. "   " or c.k) }
+            end
+            out[#out + 1] = l
+          end
+        end
       end
       if known < worn then
         out[#out + 1] = { { C.text, string.rep(" ", slotW) }, { C.dim, " │ " },

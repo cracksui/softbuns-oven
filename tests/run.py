@@ -1337,10 +1337,15 @@ def eq_stat_totals():
         "<worn about body>    a cloak", "<held>               a torch" }, 90)
       local s = {} for _, r in ipairs(rows) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end
       return table.concat(s)""")
-    tot = [l for l in out.split("\n") if l.strip().startswith("total")]
+    lines = out.split("\n")
+    tot = [i for i, l in enumerate(lines) if l.strip().startswith("total")]
     assert tot, out
-    t = tot[0]
-    assert "AR 7" in t and "+3 strength" in t and "+1 hit-roll" in t and "-1 dexterity" in t, t
+    block = lines[tot[0]:]
+    row = lambda word: next(l for l in block if word in l)
+    # one line per group, attributes first, in the game's attribute order
+    assert "attributes" in block[0] and "+3 strength" in block[0] and "-1 dexterity" in block[0], out
+    assert block[0].index("strength") < block[0].index("dexterity"), out
+    assert "armor" in row("7 AR") and "offense" in row("+1 hit-roll"), out
     assert "from 2 of 3 items" in out, out
 
 
