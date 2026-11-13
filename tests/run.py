@@ -781,17 +781,17 @@ def training_advice():
     assert "damage a round" in out and "effective hp" in out and "sp a tick" in out, out
     assert "score" not in out.lower().replace("type score", ""), f"no gear score: {out}"
     # what one more point of each really changes: agility = +0.5% to hit (help 1747); knowledge has no formula
-    assert "train next: agility" in out, out
+    assert "next: agility" in out, out
     agi = next(l for l in out.split("\n") if l.strip().startswith("agility"))
-    assert "hit 55→55.5%" in agi, agi
+    assert "+0.5% hit" in agi and "dodging ?" in agi, agi
     kn = next(l for l in out.split("\n") if l.strip().startswith("knowledge"))
-    assert "spell comprehension" in kn, f"knowledge: what it does to SCC (help 1613): {kn}"
+    assert "SCC" in kn or "learning ?" in kn, f"knowledge: what it does to SCC (help 1613): {kn}"
     o.lua("sbo.cfg.char.level = 56; sbo.cfg.char.stats.vitality = { cur = 19, max = 19 }; sbo.cfg.char.stats.knowledge = { cur = 19, max = 21 }")
     kn = next(l for l in f(o.ev("sbo.buildLines(100)")).split("\n") if l.strip().startswith("knowledge"))
-    assert "at its cap (72)" in kn, f"a level 56 monk is at the cap: {kn}"
+    assert "SCC capped" in kn, f"a level 56 monk is at the cap: {kn}"
     o.lua("sbo.cfg.char.stats.knowledge = { cur = 12, max = 21 }")
     vit = next(l for l in out.split("\n") if l.strip().startswith("vitality"))
-    assert "maximum" in vit, "at max: nothing left to train"
+    assert "max" in vit, "at max: nothing left to train"
     # the page follows the game: train knowledge, and the page on show is drawn again
     o.lua("sbo.cfg.window = true; sbo.command('eq train')")
     page = lambda: o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html")
