@@ -772,7 +772,7 @@ def help_fetch():
     eq(list(o.ev("SENT").values()), ["help 3480"], "the first page, quietly")
     o.feed("[3480 ] ADVENTURER'S GUIDE XB", "Dodging is 1% per 2 agility.", "SEE ALSO:",
            " [1347] dodge - move out of the way of an attack", "<270hp 550sp 401st>")
-    TICK = "local due = {} for id, t in pairs(timers) do if t[1] <= 1 then due[#due + 1] = id end end for _, id in ipairs(due) do local t = timers[id]; if t then timers[id] = nil; t[2]() end end"
+    TICK = "local due = {} for id, t in pairs(timers) do if t[1] <= 6 then due[#due + 1] = id end end for _, id in ipairs(due) do local t = timers[id]; if t then timers[id] = nil; t[2]() end end"
     o.lua(TICK); o.lua(TICK)
     text = open(o.ev("sbo.helpFile")).read()
     assert "===== help 3480 [3480]" in text and "Dodging is 1% per 2 agility." in text, text

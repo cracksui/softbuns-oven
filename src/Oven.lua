@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.1.1"
+M.version = "1.1.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6207,7 +6207,8 @@ function M.helpFetchStart(arg)
     M.helpFetch = nil
     return M.say(H and string.format("help fetching stopped - %d pages saved", H.saved) or "not fetching help")
   end
-  local H = { queue = {}, seen = {}, saved = 0, crawl = false, limit = 40 }
+  -- gently: at most 15 pages a command, one every 6 seconds - like someone reading them
+  local H = { queue = {}, seen = {}, saved = 0, crawl = false, limit = 15 }
   local rest = arg:match("^crawl%s+(.+)$")
   if rest then H.crawl = true; arg = rest end
   -- every page, by number (skipping what's saved: stop any time, run it again to go on)
@@ -6274,7 +6275,7 @@ function M.helpFetchNext()
         end
       end
     end
-    later(1)
+    later(6)
   end)
 end
 
