@@ -623,6 +623,20 @@ def gear_score_effects():
 
 
 @test
+def upgrade_gains_and_losses():
+    o = Oven()
+    o.lua("""sbo.cfg.char = { class = 'monk' }
+      OLD = { name = 'a garb', worn = 'on the body', ar = '4', affects = { { 'accuracy', '2' } },
+        extra = { { 'Casts', { { 'x', "'sanctuary'" }, { 'y', '  level ' }, { 'z', '20' } } } } }
+      NEW = { name = 'a plate', worn = 'on the body', ar = '9', affects = { { 'hp', '13' } },
+        grants = { { 'parry', '100%', 'block' } } }""")
+    gain, lose = o.ev("function() return sbo.upgradeDiff(OLD, NEW, select(2, sbo.activeBuild())) end")()
+    g = [x.text for x in gain.values()]; l = [x.text for x in lose.values()]
+    assert "+5 ar" in g and "+13 hp" in g and "parry 100%" in g, g
+    assert "−2 accuracy" in l and "casts sanctuary" in l, l
+
+
+@test
 def training_advice():
     o = Oven()
     o.lua("""sbo.cfg.char = { class = 'monk', race = 'sahuagin', stats = {

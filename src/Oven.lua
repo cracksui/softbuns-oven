@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.92.0"
+M.version = "0.93.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4704,6 +4704,9 @@ end
 -- your build's own weight for the stat, then the defaults' exact one, then a family of yours,
 -- then a default family, then your build's catch-all "*"
 local function weightOf(w, stat)
+  return M.statWeight(w, stat)
+end
+function M.statWeight(w, stat)
   local D = M.effectWeights
   local v = w[stat]
   if v == nil then v = D[stat] end
@@ -4955,18 +4958,35 @@ function M.upgradeLines(width, all)
   local shown = 0
   local links = {}
   M.lastUpgrades = {}
+  -- two places for one kind (two rings, two wrists): each gets its own suggestion, and an item
+  -- is only suggested once (you'd need two of it for both)
+  local used, perWorn = {}, {}
+  for _, it in ipairs(wearing) do perWorn[it.worn] = (perWorn[it.worn] or 0) + 1 end
+  -- the weaker of two goes first, so it gets the better upgrade (in the order you wear things)
+  local firstAt, sc = {}, {}
+  for i, it in ipairs(wearing) do firstAt[it.worn] = firstAt[it.worn] or i; sc[it] = M.gearScore(it, w) or 0 end
+  local order = {}
+  for i, it in ipairs(wearing) do order[i] = it end
+  table.sort(order, function(x, y)
+    if x.worn ~= y.worn then return firstAt[x.worn] < firstAt[y.worn] end
+    return sc[x] < sc[y]
+  end)
+  wearing = order
+  local slotsSeen = {}
   for _, cur in ipairs(wearing) do
-   if weakest[cur.worn] and weakest[cur.worn].it == cur then
+   slotsSeen[cur.worn] = (slotsSeen[cur.worn] or 0) + 1
+   if weakest[cur.worn] and (weakest[cur.worn].it == cur or (perWorn[cur.worn] or 0) > 1) then
     local cs = M.gearScore(cur, w)
     local best, bs
     for _, r in ipairs(byWorn[cur.worn] or {}) do
       local tooHigh = lvl and tonumber(r.level) and tonumber(r.level) > lvl
-      if not isWorn[r.name] and not tooHigh and (all or carried[r.name]) then
+      if not isWorn[r.name] and not used[r.name] and not tooHigh and (all or carried[r.name]) then
         local s = M.gearScore(M.items[r.name], w)
         if s and s > cs and (not bs or s > bs) then best, bs = r.name, s end
       end
     end
     if best then
+      used[best] = true
       shown = shown + 1
       local bestIt = M.items[best]
       M.lastUpgrades[shown] = { cur = cur.name, best = best }
@@ -4975,15 +4995,18 @@ function M.upgradeLines(width, all)
       local where = carried and carried[best]
       if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where } end
       out[#out + 1] = row
-      -- why: the stats that make the difference, from the score breakdown
-      local why = M.upgradeWhy(cur, bestIt, w)
-      if #why > 0 then
-        local r = { { C.dim, pad("", 26) } }
-        for k, x in ipairs(why) do
-          if k > 1 then r[#r + 1] = { C.dim, " · " } end
-          r[#r + 1] = { x.d > 0 and C.plus or C.minus, x.text }
+      -- what you'd gain and lose: stats (by how much they matter to your build), then what the items do
+      local gain, lose = M.upgradeDiff(cur, bestIt, w)
+      for _, side in ipairs({ { "gains ", gain, C.plus }, { "loses ", lose, C.minus } }) do
+        if #side[2] > 0 then
+          local units = {}
+          for _, x in ipairs(side[2]) do units[#units + 1] = { { x.effect and C.slot or side[3], x.text } } end
+          for i, ln in ipairs(flowUnits(units, math.max(20, width - 33))) do
+            local r = { { C.dim, pad("", 26) .. (i == 1 and side[1] or "      ") } }
+            addAll(r, ln)
+            out[#out + 1] = r
+          end
         end
-        out[#out + 1] = r
       end
       local n, a, z = shown, cur.name, best
       links[#links + 1] = { string.format("%d. compare %s → %s", n, a, z), function() M.compareNames(a, z) end }
@@ -5005,6 +5028,72 @@ function M.upgradeLines(width, all)
     out[#out + 1] = { { C.dim, "click one below (or sbo upgrades <number>) for the full comparison" } }
   end
   return out, links
+end
+
+-- what an item does, by name: { key = label } - skills it grants, spells it casts, what using it does,
+-- its weapon special, chances in a fight, its set, attributes it gives you
+function M.itemFeatures(it)
+  local f = {}
+  for _, g in ipairs(it.grants or {}) do f["skill:" .. tostring(g[1])] = tostring(g[1]) .. " " .. tostring(g[2]) end
+  for _, x in ipairs(it.extra or {}) do
+    local text = ""
+    for _, sg in ipairs(x[2] or {}) do text = text .. tostring(sg[2]) end
+    text = trim(text)
+    if x[1] == "Casts" then local sp = text:match("^'?(.-)'?%s%s") or text; f["casts:" .. sp] = "casts " .. sp
+    elseif x[1] == "Use" then f["use:" .. text] = "use: " .. text
+    elseif x[1] == "Also" then for a in text:gmatch("[%w%-]+") do f["attr:" .. a] = a end
+    elseif x[1] == "Effect" then f["special:" .. (text:match("^(%S+)") or text)] = text:match("^(%S+)") or text end
+  end
+  if it.special and not next(f, nil) or (it.special and not f["special:" .. it.special]) then f["special:" .. it.special] = it.special end
+  for _, b in ipairs(it.bonus or {}) do
+    local t = table.concat(b, " ")
+    if t:lower():find("chance", 1, true) or t:lower():find(" will, if ", 1, true) or t:lower():find("frequency", 1, true) then
+      -- "… has a chance, when …, to heal …": the gist
+      local gist = t:match("to (%a[^,%.]-)[,%.]") or t:match("will, if (.-),") or t
+      if ulen(gist) > 40 then gist = gist:sub(1, 38) .. "…" end
+      f["proc:" .. gist] = "chance to " .. gist
+    end
+  end
+  if it.set and it.set.name then f["set:" .. it.set.name] = "set: " .. it.set.name end
+  return f
+end
+
+-- switching from cur to best: what you gain and what you lose. Stats as the real difference ("+2 strength"),
+-- most important to your build first; then what each item does that the other doesn't
+function M.upgradeDiff(cur, best, w)
+  local function nums(it)
+    local s = {}
+    for k, v in pairs(M.itemStats(it)) do
+      if not k:find(":", 1, true) then s[k] = v end
+    end
+    for _, k in ipairs({ "casts", "use", "proc", "set-bonus", "weapon-special" }) do s[k] = nil end
+    return s
+  end
+  local a, b = nums(cur), nums(best)
+  local gain, lose = {}, {}
+  local keys = {}
+  for k in pairs(a) do keys[k] = true end
+  for k in pairs(b) do keys[k] = true end
+  local diffs = {}
+  for k in pairs(keys) do
+    local d = (b[k] or 0) - (a[k] or 0)
+    if math.abs(d) >= 0.05 then
+      local wt = M.statWeight and M.statWeight(w, k) or 0
+      diffs[#diffs + 1] = { k = k, d = d, imp = math.abs(d * wt) }
+    end
+  end
+  table.sort(diffs, function(x, y) if x.imp ~= y.imp then return x.imp > y.imp end return x.k < y.k end)
+  local function fmt(v) local r = math.floor(v * 10 + 0.5) / 10; if r == math.floor(r) then r = math.floor(r) end return tostring(r) end
+  for _, x in ipairs(diffs) do
+    local label = x.k:match("^weapon%-") and (x.k .. " rating") or x.k
+    local t = (x.d > 0 and "+" or "−") .. fmt(math.abs(x.d)) .. " " .. label
+    if x.d > 0 then gain[#gain + 1] = { text = t } else lose[#lose + 1] = { text = t } end
+  end
+  local fa, fb = M.itemFeatures(cur), M.itemFeatures(best)
+  local function sorted(t) local l = {} for k, v in pairs(t) do l[#l + 1] = { k = k, v = v } end table.sort(l, function(x, y) return x.k < y.k end) return l end
+  for _, e in ipairs(sorted(fb)) do if fa[e.k] ~= e.v then gain[#gain + 1] = { text = e.v, effect = true } end end
+  for _, e in ipairs(sorted(fa)) do if fb[e.k] ~= e.v then lose[#lose + 1] = { text = e.v, effect = true } end end
+  return gain, lose
 end
 
 -- the few stats that make the difference between what you wear and an upgrade: "+6 ar"
