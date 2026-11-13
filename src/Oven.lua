@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.87.0"
+M.version = "0.87.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4984,7 +4984,7 @@ function M.buildLines(width)
     out[#out + 1] = {}
     out[#out + 1] = { { C.dim, "  beyond the numbers, and common stats (every build, unless you set them):" } }
     for _, k in ipairs(dk) do
-      out[#out + 1] = { { C.key, "  " .. pad(k, 20) }, { C.num, pad(tostring(M.effectWeights[k]), 9) }, { C.dim, EXPLAIN[k] or "" } }
+      out[#out + 1] = { { C.key, "  " .. pad(k, 21) .. " " }, { C.num, pad(tostring(M.effectWeights[k]), 9) }, { C.dim, EXPLAIN[k] or "" } }
     end
   end
   local bon = M.weaponBonuses(w)
