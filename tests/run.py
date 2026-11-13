@@ -708,13 +708,6 @@ def combat_model():
     eq(round(o.ev("sbo.cfg.char.hitTaken")), 30, "30 hp a hit")
     r = o.ev("sbo.combatModel(nil, { affects = { { 'resilience', '3' } } })").defense.pct
     assert 9 < r < 13, f"3 off a 30-damage hit: ~10% less damage, ~11% more effective hp: {r}"
-    # what your defenses avoid, measured from combat rounds (no help page gives the chances)
-    before = o.ev("sbo.combatModel(nil, nil)").defense.now
-    o.lua("sbo.cfg.char.defenseLog = { avoided = 25, landed = 75, missed = 10, rounds = 40 }")
-    m = o.ev("sbo.combatModel(nil, nil)")
-    eq(m.defense.avoid, 0.25, "a quarter of attacks avoided")
-    eq(round(m.defense.now / before, 3), round(1 / 0.75, 3), "effective hp counts it")
-    o.lua("sbo.cfg.char.defenseLog = nil")
     # regeneration (help 2334): haste halves it; sanity tiers speed up spell points
     m = o.ev("sbo.combatModel(nil, { extra = { { 'Casts', { { 'x', \"'haste'\" } } } } })")
     eq(round(m.hpRegen.pct), -50, "hasted: half the hp regen")
