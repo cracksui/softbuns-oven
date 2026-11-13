@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.78.0"
+M.version = "0.79.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5992,7 +5992,10 @@ function M.onSend(_, cmd)
   local own = M.ownCmds and M.ownCmds[cmd]
   M.typedSend = not (own and own > 0)
   if own and own > 0 then M.ownCmds[cmd] = (own > 1) and (own - 1) or nil
-  else M.lastUserCmdAt = now() end
+  else
+    M.lastUserCmdAt = now()
+    if M.scanTrack and not tostring(cmd):lower():match("^%s*scan%s*$") then pcall(M.scanTrackStop, "tracking stopped (you took over)") end
+  end
   -- everything below sees what an alias stands for ("qr" -> "quest request"), recordings too
   cmd = M.expandAlias(cmd)
   pcall(M.recordCommand, cmd)
@@ -7525,6 +7528,65 @@ function M.scanMark(r, on)
   M.saveSettings()
   M.say("'" .. r .. "' marked: it stands out when you scan")
 end
+-- sbo scan track {name}: scan, walk the distance towards the nearest one, scan again - until it's
+-- in your room (no longer in the scan), out of sight, or you do something yourself.
+-- No name: the first of your marks that the scan shows.
+local SCAN_RANGE = { ["right here"] = 1, ["close by"] = 2, ["not far off"] = 3, ["a brief walk away"] = 4 }
+local SCAN_DIRS = { north = "n", south = "s", east = "e", west = "w", northeast = "ne", northwest = "nw",
+  southeast = "se", southwest = "sw", up = "u", down = "d", above = "u", below = "d" }
+function M.scanTrackStart(r)
+  r = trim(r or "")
+  if r == "" and not (M.cfg.scanMarks and M.cfg.scanMarks[1]) then
+    return M.say("sbo scan track {name} - or mark targets first (sbo scan mark {name}) and it follows the nearest")
+  end
+  if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return M.say("not in the game yet") end
+  M.scanTrack = { name = r ~= "" and r or nil, steps = 0 }
+  M.say("tracking " .. (r ~= "" and r or "your marks") .. " - scanning (sbo stop stops)")
+  M.sendOwn("scan", false)
+end
+function M.scanTrackStop(why)
+  if not M.scanTrack then return end
+  M.scanTrack = nil
+  if why then M.say(why) end
+end
+local function trackWants(T, who)
+  if T.name then return who:lower():find(T.name:lower(), 1, true) ~= nil end
+  return M.scanMarked(who) ~= nil
+end
+-- a scan's reply while tracking: the nearest match, and off towards it
+M.addBlockReader("scan_track", "*", function(b)
+  local T = M.scanTrack
+  if not T then return end
+  local scanned = false
+  for _, c in ipairs(b.cmds or {}) do if c:lower():match("^%s*scan%s*$") then scanned = true end end
+  if not scanned then return end
+  local best
+  for _, l in ipairs(b.lines) do
+    local who, dist, dir = M.scanParse(l)
+    local d = dir and SCAN_DIRS[dir:lower()]
+    if who and d and trackWants(T, who) then
+      local n = SCAN_RANGE[dist:lower()] or 3
+      if not best or n < best.n then best = { who = who, n = n, d = d, dir = dir } end
+    end
+  end
+  local what = T.name or "your marks"
+  if not best then
+    return M.scanTrackStop(T.steps > 0 and (what .. " isn't in the scan any more - it should be here with you (or it moved off)")
+      or ("no " .. what .. " in sight"))
+  end
+  if M.fighting() then return M.scanTrackStop("tracking stopped: you're fighting") end
+  -- the same distance and way as last time, and you didn't move: something's in the way
+  if T.last and T.last.n == best.n and T.last.d == best.d and T.room == M.mapRoom and T.steps > 0 then
+    return M.scanTrackStop("tracking stopped: can't get any closer to " .. best.who .. " (" .. best.dir .. ")")
+  end
+  if T.steps + best.n > 40 then return M.scanTrackStop("tracking stopped after 40 rooms") end
+  T.last, T.room = best, M.mapRoom
+  T.steps = T.steps + best.n
+  M.say(string.format("%s: %s - %d %s", best.who, best.dir, best.n, best.n == 1 and "room" or "rooms"))
+  for _ = 1, best.n do M.sendOwn(best.d, false) end
+  M.sendOwn("scan", false)
+end)
+
 function M.scanMarksShow()
   local list = M.cfg.scanMarks or {}
   if not list[1] then return M.say("nothing marked - sbo scan mark {name} lights it up in your scans") end
@@ -10001,6 +10063,8 @@ M.CMDS = {
     { name = "mark", args = "{name}", desc = "light up anyone whose name has this in it", run = function(r) return M.scanMark(r, true) end },
     { name = "unmark", args = "{name}", desc = "stop lighting them up", run = function(r) return M.scanMark(r, false) end },
     { name = "clear", desc = "unmark everyone", run = function() M.cfg.scanMarks = {}; M.saveSettings(); say("scan marks cleared") end },
+    { name = "track", args = "[{name}]", desc = "walk towards it, scanning as you go, until you're there (sbo stop stops)",
+      run = function(r) return M.scanTrackStart(r) end },
   } },
   { name = "help", args = "[{group}|all]", desc = "the Help tab: this menu, a group's commands, or all of them",
     run = function(r) return M.help(r) end },
@@ -10397,6 +10461,7 @@ end
 -- sbo stop: whatever Oven is doing for you
 function M.stopAll()
   local what = {}
+  if M.scanTrack then M.scanTrack = nil; what[#what + 1] = "tracking" end
   if M.walk or (M.running and M.running.target) then
     M.walk = nil
     if M.running then M.running.target = nil end

@@ -1292,6 +1292,41 @@ def scan_marks():
     assert "nothing to stop" in o.ev("SAYS[1]"), "sbo st is still stop"
 
 
+@test
+def scan_track():
+    o = Oven()
+    o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end
+      gmcp.char = { status = { state = "playing" } }; sbo.lastStatusPrompt = "<281hp 696sp 457st> "; sbo.mapRoom = 1""")
+    P = "<281hp 696sp 457st> "
+    o.lua('sbo.command("scan track centipede")')
+    eq(list(o.ev("SENT").values()), ["scan"], "scans first")
+    o.lua("SENT = {}")
+    o.block(["An undead corpse is right here to the west.", "A burrowing centipede is a brief walk away to the east.",
+             "A burrowing centipede is close by to the north.", P], ["scan"])
+    eq(list(o.ev("SENT").values()), ["n", "n", "scan"], "the nearest: two rooms north, then scan again")
+    o.lua("SENT = {}; sbo.mapRoom = 3")
+    o.block(["A burrowing centipede is right here to the north.", P], ["scan"])
+    eq(list(o.ev("SENT").values()), ["n", "scan"], "one more")
+    o.lua("SENT = {}; sbo.mapRoom = 4")
+    o.block(["You don't see anything to the north.", P], ["scan"])
+    eq(len(o.ev("SENT")), 0, "there: nothing more sent")
+    eq(o.ev("sbo.scanTrack"), None, "done")
+    assert "should be here with you" in o.ev("SAYS[#SAYS]")
+    # a door in the way: no closer after a move
+    o.lua('SENT = {}; sbo.command("scan track shadow")')
+    o.block(["A wavering shadow is close by to the east.", P], ["scan"])
+    o.block(["A wavering shadow is close by to the east.", P], ["scan"])
+    eq(o.ev("sbo.scanTrack"), None, "stopped")
+    assert "can't get any closer" in o.ev("SAYS[#SAYS]")
+    # marks, and you taking over
+    o.lua('sbo.cfg.scanMarks = { "corpse" }; SENT = {}; sbo.command("scan track")')
+    o.block(["An undead corpse is not far off to the south.", P], ["scan"])
+    eq(list(o.ev("SENT").values()), ["scan", "s", "s", "s", "scan"], "follows a mark")
+    o.lua('sbo.onSend(nil, "kill corpse")')
+    eq(o.ev("sbo.scanTrack"), None, "you typed something: it stops")
+
+
 WHERE_LIST = """Where is what? Features that Towne of Rune might contain that you may be interested in:
 healer              post-office         lockers             bank                
 food                blacksmith          questmaster         music-venue         
