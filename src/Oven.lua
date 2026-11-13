@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.91.0"
+M.version = "0.92.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5052,18 +5052,17 @@ function M.buildLines(width)
   elseif c.class then
     out[#out + 1] = { { C.dim, "help " .. c.class:lower() .. " once and Oven puts your class's primary attribute on top" } }
   end
-  if next(stats) then out[#out + 1] = { { C.dim, "  " .. pad("stat", 20) .. pad("weight", 9) .. "you now" .. (race and "   race max" or "") } } end
+  -- attributes: weights, where you stand, training (one table)
+  out[#out + 1] = {}
+  M.trainSection(out)
+  -- every other stat the build weighs
+  out[#out + 1] = {}
+  out[#out + 1] = { { C.title, "Other stats" }, { C.dim, "  (gear-score points per point on an item)" } }
   for _, k in ipairs(keys) do
-    local r = { { C.key, "  " .. pad(k, 20) }, { w[k] > 0 and C.num or C.dim, pad(tostring(w[k]), 9) } }
-    local st = stats[k]
-    if st then
-      r[#r + 1] = { M.statCapped(k) and C.flag or C.text, pad(tostring(st.cur or "?") .. "/" .. tostring(st.max or "?"), 7) }
-      if race and race[k] then r[#r + 1] = { C.dim, "   " .. race[k] } end
-      if M.statCapped(k) then r[#r + 1] = { C.flag, "   at max: gear counts 1/4" } end
+    if not stats[k] then
+      out[#out + 1] = { { C.key, "  " .. pad(k, 21) .. " " }, { w[k] > 0 and C.num or C.dim, pad(tostring(w[k]), 9) } }
     end
-    out[#out + 1] = r
   end
-  if not next(stats) then out[#out + 1] = { { C.dim, "  (type score so Oven can see which stats are at their maximum)" } } end
   -- what items do beyond their numbers, and the common stats every build gets unless it sets them
   local EXPLAIN = { ["skill:*"] = "a skill it grants (per 100% you don't already have)", ["weapon-special"] = "a weapon special, per % of damage it adds",
     casts = "a spell it casts", use = "something it does when used", proc = "a chance to do something in a fight (1/4 if only vs one foe)",
@@ -5129,12 +5128,12 @@ M.TRAIN_EFFECT = {
   sanity      = { text = "recover from casting faster" },
   courage     = { text = "resist magical fear" },
 }
-function M.trainLines(width)
+-- the attributes part of the build page: where each stands, what training it can still do, and which next
+function M.trainSection(out)
   local bname, w = M.activeBuild()
   local c = M.cfg.char or {}
   local stats = c.stats or {}
   local primary = M.classPrimary()
-  local out = { header("gear", "", width, "Training: what to raise next") }
   if not next(stats) then
     out[#out + 1] = { { C.dim, "type score once so Oven knows where each attribute stands" } }
     return out
@@ -5166,6 +5165,7 @@ function M.trainLines(width)
   end)
   local best = rows[1]
   if best and best.room > 0 then
+    out[#out + 1] = { { C.title, "Attributes" } }
     out[#out + 1] = { { C.dim, "train next: " }, { C.slot, best.k }, { C.dim, string.format("  (%d → %d of %d)", best.cur, best.cur + 1, best.max) } }
     local segs = { { C.dim, "  +1 is worth " }, { C.num, string.format("%.1f", best.val) }, { C.dim, " gear-score points in your " .. bname .. " build" } }
     if best.cost then segs[#segs + 1] = { C.dim, string.format(", for %d practices", best.cost) } end
@@ -5173,11 +5173,11 @@ function M.trainLines(width)
       segs[#segs + 1] = { C.dim, string.format(" · +%s%% to hit; all %d left: +%s%%", tostring(best.hit), best.room, tostring(best.hit * best.room)) }
     end
     out[#out + 1] = segs
-    out[#out + 1] = { { C.dim, "  " .. best.e.text .. (best.k == primary and " · your primary attribute: more skills improve as you level" or "") } }
+    out[#out + 1] = { { C.dim, "  " .. best.e.text .. (best.k == primary and " · primary: more skills improve as you level" or "") } }
   else
+    out[#out + 1] = { { C.title, "Attributes" } }
     out[#out + 1] = { { C.plus, "every attribute is at its maximum" } }
   end
-  out[#out + 1] = {}
   local haveCost = (c.trainCost or {}).strength ~= nil or next(c.trainCost or {}) ~= nil
   if c.practices then out[#out + 1] = { { C.dim, "  you have " }, { C.num, tostring(c.practices) }, { C.dim, " practices" } } end
   local haveBase = next(trained) ~= nil
@@ -5196,17 +5196,14 @@ function M.trainLines(width)
     out[#out + 1] = row
   end
   out[#out + 1] = {}
-  out[#out + 1] = { { C.dim, "per point = the attribute's weight in your build (sbo eq build); the primary attribute gets +0.5." } }
-  if haveBase then
-    out[#out + 1] = { { C.dim, "now = with your gear (score), trained = what you've trained +what gear adds. left = what training can still add to now:" } }
-    out[#out + 1] = { { C.dim, "  past the maximum it adds nothing while you wear that gear (it only frees the gear for something else)." } }
-  end
-  out[#out + 1] = { { C.dim, haveCost and "ranked by value per practice (per point ÷ cost); it follows the game as you train."
-    or "type train once (at a trainer) and Oven adds what each costs, and ranks by value per practice." } }
-  out[#out + 1] = { { C.dim, "once an attribute is at its maximum, more of it on gear counts a quarter - so training it makes that gear worth less." } }
-  out[#out + 1] = { { C.dim, "to hit is capped at 98% (90% for gnomes): past that, agility and luck only help in their other ways." } }
+  out[#out + 1] = { { C.dim, "  now = with gear (score) · trained = what you trained, +what gear adds · left = what training can still add" } }
+  out[#out + 1] = { { C.dim, "  (past the maximum: nothing, while you wear that gear) · per point = gear-score weight, +0.5 for your primary" } }
+  out[#out + 1] = { { C.dim, "  ranked by value per practice · at the maximum, more on gear counts 1/4 · to hit caps at 98% (90% gnomes)" } }
+  if not haveCost then out[#out + 1] = { { C.flag, "  type train once at a trainer: Oven adds what each costs, and what you've trained" } } end
   return out
 end
+-- (sbo eq train shows the build page, where this lives)
+function M.trainLines(width) return M.buildLines(width) end
 
 function M.buildCommand(b)
   b = trim(b or "")
@@ -11099,8 +11096,8 @@ M.CMDS = {
         return M.learn("")
       end },
     { name = "items", desc = "the items Oven remembers", run = L("items") },
-    { name = "train", desc = "which attribute to train next, and what each point does", run = function()
-        M.viewLive(M.trainLines) end },
+    { name = "train", desc = "the build page: which attribute to train next (same as sbo eq build)", run = function()
+        M.viewLive(M.buildLines) end },
     { name = "build", args = "[{name}|set|reset|auto]", desc = "gear-score weights (set: a stat and its weight)",
       run = function(r) return legacy("build " .. r) end },
   } },
