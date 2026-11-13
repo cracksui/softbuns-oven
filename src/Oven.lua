@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.2.2"
+M.version = "1.2.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6978,15 +6978,7 @@ function M.drawBar()
     -- aboard a ship: right after your pools, where your mount's stamina goes when you ride
     if p.ship then addAll(out, M.shipSegs(p.ship, gwidth)) end
     addAll(out, tail)
-    -- help pages being read (sbo debug help): how far along - at the far right, out of the way
-    local HF = M.helpFetch
-    if HF and (HF.total or 0) > 0 then
-      local done = math.min(HF.total, HF.done or 0)
-      out[#out + 1] = { C.dim, "   help " }
-      out[#out + 1] = { C.num, done .. "/" .. HF.total .. " " }
-      addAll(out, M.gauge(done, HF.total, 6))
-      out[#out + 1] = { C.dim, "   " }
-    end
+
     if p.rest ~= "" then out[#out + 1] = { C.text, "   " .. p.rest } end
     return out
   end
@@ -6997,7 +6989,7 @@ function M.drawBar()
   if M.cfg.barSession then
     local sess = M.sessionSegs()
     local sep = { C.dim, "   │ " }
-    local tagW = ulen(" [v" .. M.version .. " ✓]  ")
+    local tagW = ulen(" [v" .. M.version .. " ✓]  ") + (M.helpFetch and 2 or 0)
     local need = segLen(main) + ulen(sep[2]) + segLen(sess) + tagW - cols
     if need > 0 and #p.vals > 0 then
       local smaller = gw - math.ceil(need / #p.vals)
@@ -13055,7 +13047,7 @@ function M.barClick(ev)
   local font = (pcall(getFont) and getFont()) or "monospace"
   local ok, cw = pcall(calcFontSize, M.barFontSize(), font)
   cw = (ok and tonumber(cw)) or 8
-  local tagW = (ulen(" [v" .. M.version .. " ✓]") + 2) * cw + 6
+  local tagW = (ulen(" [v" .. M.version .. " ✓]") + 2 + (M.helpFetch and 2 or 0)) * cw + 6
   local w = M.bar:get_width()
   if ev.x < w - tagW then return end
   local st = (M.updState or {}).state
@@ -13064,9 +13056,20 @@ function M.barClick(ev)
 end
 
 -- "v0.11.9 ✓" at the end of the bar: ✓ current, ↑ update available, ⟳ checking, ⇣ updating, ✗ error
+-- help pages being read (sbo debug help): one character that fills up, just left of the version
+M.FILL = { "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" }
+function M.helpProgressMark()
+  local FILL = M.FILL
+  local HF = M.helpFetch
+  if not HF or (HF.total or 0) <= 0 then return nil end
+  local f = math.min(1, (HF.done or 0) / HF.total)
+  return FILL[math.max(1, math.ceil(f * #FILL))]
+end
 function M.versionTag()
   local st = M.updState or {}
   local segs = { { C.dim, "[v" .. M.version } }
+  local mark = M.helpProgressMark()
+  if mark then table.insert(segs, 1, { C.slot, mark .. " " }) end
   if st.state == "ok" then segs[#segs + 1] = { C.plus, " ✓" }
   elseif st.state == "avail" and st.ver and M.newer(st.ver, M.version) then segs[#segs + 1] = { C.flag, " ↑" }
   elseif st.state == "check" then segs[#segs + 1] = { C.dim, " ⟳" }

@@ -782,7 +782,7 @@ def help_fetch():
       sbo.bar = setmetatable({ rawEcho = function(self, h) BAR = h end }, { __index = function() return function() end end })
       sbo.lastPromptText = "<270hp 550sp 401st>"; sbo.drawBar()""")
     bar = __import__("re").sub("<[^>]+>", "", o.ev("BAR") or "")
-    assert "help 1/2" in bar and bar.index("help 1/2") > bar.index("ST"), f"at the right, after the vitals: {bar}"
+    assert "▄ [v" in bar, f"one character, just left of the version: {bar}"
     o.feed("[1347 ] DODGING ATTACKS", "dodge - move out of the way", "<270hp 550sp 401st>")
     o.lua(TICK); o.lua(TICK); o.lua(TICK)
     assert "DODGING ATTACKS" in open(o.ev("sbo.helpFile")).read()
