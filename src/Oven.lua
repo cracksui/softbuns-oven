@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "0.83.2"
+M.version = "0.84.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5186,6 +5186,19 @@ function M.parsePrompt(t)
     p.group = { name = trim(gname), pct = tonumber(gpct) }
     t = t:gsub("%(%[%d+%%%].-%)", "", 1)
   end
+  -- aboard a ship: "(120hull --dir ANCHOR --wind 452, 1210)" - hull, heading, what the ship's doing,
+  -- wind, and where on the overland map
+  local sh = t:match("%((%d+hull[^%)]*)%)")
+  if sh then
+    local S = { hull = tonumber(sh:match("^(%d+)hull")) }
+    S.dir = sh:match("(%S+)dir%f[%A]")
+    S.wind = sh:match("(%S+)wind%f[%A]")
+    S.state = sh:match("%f[%a](%u%u+)%f[%A]")
+    local x, y = sh:match("(%-?%d+),%s*(%-?%d+)%s*$")
+    S.x, S.y = tonumber(x), tonumber(y)
+    p.ship = S
+    t = t:gsub("%(%d+hull[^%)]*%)", "", 1)
+  end
   for tag in t:gmatch("%[([^%]]+)%]") do p.tags[#p.tags + 1] = tag end
   local inner = t:match("<(.-)>")
   if inner then
@@ -5535,6 +5548,24 @@ function M.barPrompt()
   return p
 end
 
+-- the ship part of the bar: "SHIP ███ 120/120 · anchored · heading — · wind — · 452,1210"
+local SHIP_STATES = { ANCHOR = "anchored", DOCK = "docked", DOCKED = "docked" }
+function M.shipSegs(S, gw)
+  local out = { { C.dim, "   " }, { C.key, "SHIP " } }
+  local mx = M.shipHullMax
+  if not mx or (S.hull or 0) > mx then mx = S.hull; M.shipHullMax = mx end
+  if gw > 0 and S.hull then addAll(out, M.gauge(S.hull, mx, gw)); out[#out + 1] = { C.dim, " " } end
+  local pct = (S.hull and mx and mx > 0) and S.hull * 100 / mx or 100
+  out[#out + 1] = { pct >= 70 and C.plus or (pct >= 35 and C.title or C.minus), tostring(S.hull or "?") }
+  out[#out + 1] = { C.dim, "/" .. tostring(mx or "?") .. " hull" }
+  local function none(v) return (not v or v:match("^%-+$")) and "—" or v:lower() end
+  if S.state then out[#out + 1] = { C.dim, " · " }; out[#out + 1] = { C.flag, SHIP_STATES[S.state] or S.state:lower() } end
+  if S.dir then out[#out + 1] = { C.dim, " · heading " }; out[#out + 1] = { C.text, none(S.dir) } end
+  if S.wind then out[#out + 1] = { C.dim, " · wind " }; out[#out + 1] = { C.text, none(S.wind) } end
+  if S.x then out[#out + 1] = { C.dim, string.format(" · %d,%d", S.x, S.y) } end
+  return out
+end
+
 function M.drawBar()
   if not M.bar or not M.bar.rawEcho or not M.lastPromptText then return end
   local p = M.barPrompt()
@@ -5592,7 +5623,7 @@ function M.drawBar()
   end
   p.vals = pools
   -- gauges are a fixed width (sbo bar width), shrunk only if the bar is too narrow
-  local fixed = segLen(segs) + segLen(tail) + ulen(p.rest) + 2
+  local fixed = segLen(segs) + segLen(tail) + ulen(p.rest) + 2 + (p.ship and (segLen(M.shipSegs(p.ship, 0)) + 3) or 0)
   for _, v in ipairs(p.vals) do
     local mx = M.cfg.maxes[v[1]]
     fixed = fixed + #v[1] + 2 + #(tostring(v[2]) .. "/" .. tostring(mx or v[2])) + 3
@@ -5614,6 +5645,7 @@ function M.drawBar()
       out[#out + 1] = { C.dim, "/" .. mx .. "   " }
     end
     addAll(out, tail)
+    if p.ship then addAll(out, M.shipSegs(p.ship, gwidth)) end
     if p.rest ~= "" then out[#out + 1] = { C.text, "   " .. p.rest } end
     return out
   end
@@ -7379,7 +7411,9 @@ end)
 -- char.status "playing", or, since the game sends char.status rarely (some logins not at all), your room
 -- over GMCP. The login screen has neither a status prompt nor a room, so nothing is sent at a password prompt.
 function M.inGame(promptLine)
-  if promptLine == nil or #M.parsePrompt(promptLine).vals == 0 then return false end
+  if promptLine == nil then return false end
+  local pp = M.parsePrompt(promptLine)
+  if #pp.vals == 0 and not pp.ship then return false end
   local st = M.gmcpGet and M.gmcpGet("char.status")
   if type(st) == "table" and st.state ~= nil then return st.state == "playing" end
   local room = M.gmcpGet and M.gmcpGet("room.info")
@@ -8214,6 +8248,9 @@ function M.onLineWork()
   end
   if M.fights and next(M.fights) then pcall(M.noteFightEnd, line) end
   if M.fightsEnding then pcall(M.noteFightLoot, line) end
+  -- "ship info": "Hull Strength:        120/120" - the gauge's full
+  local hullMax = line:match("^Hull Strength:%s+%d+/(%d+)")
+  if hullMax then M.shipHullMax = tonumber(hullMax); pcall(M.drawBar) end
   -- the who list: " [60 :60  Race   Class] Name title"
   local whoName = line:match("^%s*%[%s*%d+%s*:%s*%d+[^%]]*%]%s+(%u%a+)")
   if whoName then pcall(M.notePlayer, whoName) end

@@ -563,6 +563,27 @@ def bar_group_health():
 
 
 @test
+def ship_prompt():
+    import re as _re
+    o = Oven()
+    p = o.ev('sbo.parsePrompt("[Mail](120hull --dir ANCHOR --wind 452, 1210) ")')
+    S = p.ship
+    eq((S.hull, S.dir, S.state, S.wind, S.x, S.y), (120, "--", "ANCHOR", "--", 452, 1210), "the ship's prompt")
+    eq(list(p.tags.values()), ["Mail"], "tags"); eq(p.rest, "", "nothing left over")
+    o.set_gmcp("char.status", '{ state = "playing" }')
+    eq(o.ev('sbo.inGame("[Mail](120hull --dir ANCHOR --wind 452, 1210) ")'), True, "aboard a ship is in the game")
+    o.lua('''sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300, sp = 700, st = 460 }
+      sbo.bar = { rawEcho = function(self, h) BAR = h end }
+      gmcp.char.vitals = { hp = 280, sp = 650, st = 400 }
+      sbo.lastPromptText = "[Mail](96hull --dir ANCHOR --wind 452, 1210) "''')
+    o.feed("Hull Strength:        120/120")
+    o.lua("sbo.drawBar()")
+    plain = _re.sub("<[^>]+>", "", o.ev("BAR") or "")
+    assert "SHIP" in plain and "96/120 hull" in plain and "anchored" in plain and "452,1210" in plain, plain
+    assert "(96hull" not in plain, f"not the raw text: {plain}"
+
+
+@test
 def quest_timers():
     import re as _re, time as _time
     o = Oven()
