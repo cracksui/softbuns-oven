@@ -762,6 +762,28 @@ def attack_abilities():
 
 
 @test
+def melee_by_weapon():
+    o = Oven()
+    o.lua("sbo.cfg.skills = { ['martial arts'] = { lrnd = 76 }, staff = { lrnd = 85 } }")
+    staff = ["Your staff will deal High bash damage with Min accuracy, at Low range, with a Max chance to crit for 2x damage.",
+      "57 Damage: (+46 from weapon) (+2 from +damage) (+9 from skill & strength) (+1 from weapon skillpower) (38% chance for +3 from enhanced damage) ",
+      "51 Accuracy: (+4 from level) (+25 from weapon skill) (+16 from weapon) (+5 from agility) (+1 from personality) (+19 when martial arts activates) ",
+      "31% Critical Hit chance:  (+31 from staff)"]
+    fists = ["With hand to hand, you will deal Low water damage with Max accuracy, at Min range, with a High chance to crit for 2x damage.",
+      "42 Damage: (+38 from weapon) (+1 from +damage) (+4 from skill & strength) (38% chance for +3 from enhanced damage) ",
+      "80 Accuracy: (+4 from level) (+25 from weapon skill) (+45 from fists) (+5 from agility) (+1 from personality) (+19 when martial arts activates) ",
+      "22% Critical Hit chance:  (+22 from hand to hand)"]
+    o.ev("sbo.noteCombat")(o.ev("function(...) return {...} end")(*fists))
+    o.ev("sbo.noteCombat")(o.ev("function(...) return {...} end")(*staff))
+    # the dummy measured 38.7 a round with the staff: martial arts (18s cooldown) isn't every round
+    now = o.ev("sbo.combatModel(nil, nil).offense.now")
+    assert 37 < now < 40, now
+    text = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("sbo.buildLines(100)").values())
+    assert "now: staff" in text and "with fists" in text and "water" in text, text
+    assert "42.1" in text and text.index("now: staff") < text.index("with fists"), text
+
+
+@test
 def practice_dummy():
     o = Oven()
     o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end

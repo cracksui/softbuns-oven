@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.12.2"
+M.version = "1.13.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4887,9 +4887,19 @@ function M.noteCombat(raw)
     end
     local cr = t:match("^You have a (%d+)%% chance to resist a critical hit")
     if cr then c.critResist = tonumber(cr) end
+    -- "Your staff will deal High bash damage…" / "With hand to hand, you will deal Low water damage…"
+    local wname, wtype = t:match("^Your (.-) will deal %a+ (%a+) damage")
+    if not wname then wname, wtype = t:match("^With (.-), you will deal %a+ (%a+) damage") end
+    if wname then c.weapon, c.dmgType = (wname == "hand to hand" and "fists" or wname), wtype end
   end
   if c.damage or c.accuracy then
     M.cfg.char = M.cfg.char or {}
+    -- each weapon's reading kept, so the build page can show the others too
+    if c.weapon and c.damage and c.accuracy then
+      M.cfg.char.byWeapon = M.cfg.char.byWeapon or {}
+      M.cfg.char.byWeapon[c.weapon] = { damage = c.damage, accuracy = c.accuracy, crit = c.crit or 0,
+        type = c.dmgType, enhanced = c.enhanced, at = os.time() }
+    end
     M.cfg.char.combat = c
     M.cfg.char.combat.at = os.time()
   end
@@ -5147,8 +5157,9 @@ function M.combatModel(old, new)
   local speed1 = M.wornAttackSpeed()
   local speed2 = speed1 + d("attack-speed")
   local n1, n2 = M.attacksPerRound(speed1), M.attacksPerRound(speed2)
-  if maNow then acc, n1 = acc + pMA * maAcc, n1 + pMA end
-  if maAfter then acc2, n2 = acc2 + pMA * (maAcc > 0 and maAcc or 25), n2 + pMA end
+  -- martial arts' bonuses aren't every round: it has an 18 second cooldown (help 1784), and the
+  -- dummy agrees - 57 damage × 51% × crits = 38 a round, exactly what the game reported. Not counted.
+  pMA = 0
   local e1, e2 = swing(dmg, acc, crit) * n1, swing(dmg2, acc2, crit2) * n2
   res.offense = { pct = (e2 / e1 - 1) * 100, now = e1, after = e2,
                   parts = { damage = { dmg, dmg2 }, accuracy = { acc, acc2 }, crit = { crit, crit2 }, attacks = { n1, n2 } } }
@@ -6312,7 +6323,7 @@ function M.buildLines(width)
   local ma = tonumber(((M.cfg.skills or {})["martial arts"] or {}).lrnd) or 0
   local maAcc = (cb.accParts or {})["when martial arts activates"]
   row("hit chance", string.format("%.0f%%", math.min(98, P.accuracy[1])),
-    "accuracy " .. cb.accuracy .. ((ma > 0 and maAcc) and string.format(", +%d with martial arts (%d%%)", maAcc, ma) or ""))
+    (ma > 0 and maAcc) and string.format("+%d now and then with martial arts (18s cooldown) - not counted", maAcc) or nil)
   row("crit", (cb.crit or 0) .. "%", "double damage")
   local ex = {}
   for _, k in ipairs(M.EXTRA_ATTACKS) do
@@ -6321,8 +6332,22 @@ function M.buildLines(width)
   end
   local speed = M.wornAttackSpeed()
   if speed > 0 then ex[#ex + 1] = "attack speed " .. speed end
-  if ma > 0 and maAcc then ex[#ex + 1] = string.format("martial arts' extra hit %d%%", ma) end
   row("attacks a round", string.format("%.2f", P.attacks[1]), table.concat(ex, " · "))
+  -- the other weapons you've typed eq with: what they'd do a round (same formula, their eq numbers)
+  local bw = c.byWeapon or {}
+  local names = {}
+  for k in pairs(bw) do names[#names + 1] = k end
+  table.sort(names, function(x, y) if (x == cb.weapon) ~= (y == cb.weapon) then return x == cb.weapon end return x < y end)
+  if #names > 1 or (#names == 1 and names[1] ~= cb.weapon) then
+    for _, k in ipairs(names) do
+      local w = bw[k]
+      local enh = w.enhanced and w.enhanced.chance / 100 * w.enhanced.plus or 0
+      local per = (w.damage + enh) * math.max(1, math.min(98, w.accuracy)) / 100 * (1 + (w.crit or 0) / 100) * P.attacks[1]
+      row((k == cb.weapon and "now: " or "with ") .. k, string.format("%.1f", per),
+        string.format("%s · %d dmg × %d%% × crit %d%%", w.type or "?", w.damage, math.min(98, w.accuracy), w.crit or 0),
+        k == cb.weapon and C.plus or C.num)
+    end
+  end
 
   -- defense
   if base.defense then
