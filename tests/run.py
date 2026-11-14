@@ -781,6 +781,11 @@ def practice_dummy():
     o.lua("gmcp.char.vitals.st = 487; send('kick dummy'); gmcp.char.vitals.st = 460; ROUND(1)")
     o.feed("You deliver a roundhouse kick to a practice dummy, connecting solidly.", "A practice dummy says 'I have [9643/10000hp 10000/10000sp 9993/10000st and -250 align]'")
     eq(o.ev("sbo.dummyStats('kick').avg"), 357 - 44, "kick: 357 minus a 44 swing")
+    # a kick that misses: counted as a try that didn't land
+    o.lua("send('kick dummy'); ROUND(0)")
+    o.feed("You attempt to kick a practice dummy, but miss.", "A practice dummy says 'I have [10000/10000hp 10000/10000sp 9993/10000st and -250 align]'")
+    k = o.ev("sbo.dummyStats('kick')")
+    eq((k.n, k.tries, k.misses, round(k.per, 1)), (1, 2, 1, (357 - 44) / 2), "kick: 1 of 2 landed")
     # spark: two fizzles, then it works
     for _ in range(2):
         o.lua("send('cast spark dummy')"); o.feed("You have completed your casting.", "You lose your concentration.")
@@ -795,8 +800,8 @@ def practice_dummy():
         kick = { name = 'kick', kind = 'skill', base = 1.3, types = 'bash/bash' }, bash = { name = 'bash', kind = 'skill', base = 2.2, types = 'bash/bash' } }""")
     f = o.ev("function() local out = {} sbo.abilitySection(out, 100) local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end")
     text = f()
-    assert "359 (1)" in text and "~109st" in text and "2✗" in text, text
-    assert "most per stamina: kick" in text, f"kick: 313 for ~27 st beats bash 359 for 109: {text}"
+    assert "359/use" in text and "~109st" in text and "landed 1 of 3 · 2 fizzled" in text, text
+    assert "most per stamina: kick" in text, f"kick: 156 a use for ~27 st beats bash 359 for 109: {text}"
 
 
 @test

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.11.0"
+M.version = "1.11.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5909,6 +5909,8 @@ end
 function M.dummyNoteLine(l)
   local P = M.dummyPending
   local t = trim(l)
+  -- "You attempt to kick a practice dummy, but miss." - a try that didn't land
+  if P and t:match("^You attempt to %a+ .-, but miss%.?$") then P.missed = true; return end
   if P and P.kind == "spell" then
     if t == "You have completed your casting." then P.done = true; return end
     if t == "You lose your concentration." and fighting_dummy() then
@@ -5927,13 +5929,25 @@ function M.dummyNoteLine(l)
   if P and P.done and os.time() - P.at <= 15 then
     local r = rec(P.name)
     r.tries = r.tries + 1
+    if P.missed then
+      r.misses = (r.misses or 0) + 1
+      local now = vit(P.res)
+      if P.start and now and P.start > now then r.costN, r.costSum, r.res = r.costN + 1, r.costSum + (P.start - now), P.res end
+      M.dummyPending = nil
+      M.saveSettings(); M.dataChanged()
+      return
+    end
     -- a round where your swing hit too: take the swing off (your average plain swing, once there is one)
     local melee = log().melee
     local swing = melee and melee.n > 0 and melee.sum / melee.n or nil
+    local function landed(x)
+      r.n, r.sum = r.n + 1, r.sum + x
+      r.min = math.min(r.min or x, x); r.max = math.max(r.max or x, x)
+    end
     if not meleeHit then
-      r.n, r.sum = r.n + 1, r.sum + dmg
+      landed(dmg)
     elseif swing then
-      r.n, r.sum = r.n + 1, r.sum + math.max(0, dmg - swing)
+      landed(math.max(0, dmg - swing))
       r.adjusted = (r.adjusted or 0) + 1
     else
       r.mixed = (r.mixed or {})
@@ -5953,7 +5967,12 @@ function M.dummyNoteLine(l)
     for _, r in pairs(log()) do
       if type(r) == "table" and r.mixed then
         local swing = m.sum / m.n
-        for _, x in ipairs(r.mixed) do r.n, r.sum = r.n + 1, r.sum + math.max(0, x - swing); r.adjusted = (r.adjusted or 0) + 1 end
+        for _, x in ipairs(r.mixed) do
+          local v = math.max(0, x - swing)
+          r.n, r.sum = r.n + 1, r.sum + v
+          r.min = math.min(r.min or v, v); r.max = math.max(r.max or v, v)
+          r.adjusted = (r.adjusted or 0) + 1
+        end
         r.mixed = nil
       end
     end
@@ -5968,7 +5987,11 @@ end
 function M.dummyStats(name)
   local r = (M.cfg.dummy or {})[name]
   if not r or r.tries == 0 then return nil end
-  return { avg = r.n > 0 and r.sum / r.n or nil, n = r.n, tries = r.tries, fails = r.fails,
+  local misses = r.misses or 0
+  local avg = r.n > 0 and r.sum / r.n or nil
+  -- expected per use: what lands, how often it lands (fizzles and misses count as nothing)
+  local per = avg and avg * r.n / r.tries or nil
+  return { avg = avg, n = r.n, tries = r.tries, fails = r.fails, misses = misses, min = r.min, max = r.max, per = per,
            cost = r.costN > 0 and r.costSum / r.costN or nil, res = r.res, adjusted = r.adjusted }
 end
 end
@@ -6112,7 +6135,7 @@ function M.abilitySection(out, width)
     out[#out + 1] = { { C.title, "Attacks" }, { C.dim, "   none yet - learned from their help pages (sbo debug help next)" } }
     return
   end
-  out[#out + 1] = { { C.title, "Attacks" }, { C.dim, "   dummy = real damage on the practice dummy (hits) · power = help factor × your %" } }
+  out[#out + 1] = { { C.title, "Attacks" }, { C.dim, "   dummy = expected damage a use on the practice dummy · power = help factor × your %" } }
   out[#out + 1] = { { C.dim, "  " .. pad("", 17) .. pad("you", 5) .. pad("cost", 7) .. pad("time", 7) .. pad("dummy", 14) .. pad("power", 7) .. "per 100" } }
   for _, ab in ipairs(list) do
     local a = ab.a
@@ -6123,16 +6146,15 @@ function M.abilitySection(out, width)
     cost = cost or (a.kind == "skill" and "?st" or "-")
     local time = (a.time and (a.time .. "s") or "") .. (a.cooldown and ("/" .. a.cooldown) or "")
     local dtxt = "-"
-    if ds and ds.avg then
-      dtxt = string.format("%d (%d)", ds.avg + 0.5, ds.n) .. (ds.fails > 0 and string.format(" %d✗", ds.fails) or "")
-    elseif ds and ds.fails > 0 then dtxt = string.format("%d✗", ds.fails) end
+    if ds and ds.per then dtxt = string.format("%d/use", ds.per + 0.5)
+    elseif ds then dtxt = "0/use" end
     out[#out + 1] = { { C.key, "  " .. pad(ab.name, 17) }, { C.num, pad(ab.pct .. "%", 5) }, { C.text, pad(cost, 7) },
       { C.dim, pad(time ~= "" and time or "-", 7) }, { ds and ds.avg and C.plus or C.dim, pad(dtxt, 14) },
       { C.num, pad(string.format("%.2f", ab.per), 7) }, { C.text, ab.perCost and string.format("%.2f", ab.perCost) or "-" } }
   end
   -- in words: the best for each purpose
   -- in words: by the dummy's real numbers where there are some, else by the help's factors
-  local function real(ab) local d = M.dummyStats(ab.name); return d and d.avg end
+  local function real(ab) local d = M.dummyStats(ab.name); return d and d.per end
   local anyReal = false
   for _, ab in ipairs(list) do if real(ab) then anyReal = true end end
   local function score(ab) if anyReal then return real(ab) or -1 end return ab.per end
@@ -6157,6 +6179,16 @@ function M.abilitySection(out, width)
       { C.dim, bestSp and "  · most per sp: " or "" }, { C.slot, bestSp and bestSp.name or "" },
       { C.dim, bestSt and "  · most per stamina: " or "" }, { C.slot, bestSt and bestSt.name or "" },
       { C.dim, anyReal and "  (dummy)" or "  (help factors)" } }
+  end
+  -- the dummy's detail for each attack tested: how often it lands, its range, the average when it lands
+  for _, ab in ipairs(list) do
+    local d = M.dummyStats(ab.name)
+    if d then
+      local bits = { string.format("landed %d of %d", d.n, d.tries) }
+      if d.fails > 0 then bits[#bits + 1] = d.fails .. " fizzled" end
+      if d.avg then bits[#bits + 1] = string.format("%d–%d, avg %d when it lands", d.min or d.avg, d.max or d.avg, d.avg + 0.5) end
+      out[#out + 1] = { { C.dim, "  " .. pad(ab.name, 17) .. table.concat(bits, " · ") } }
+    end
   end
   local mel = (M.cfg.dummy or {}).melee
   if mel and mel.n > 0 then out[#out + 1] = { { C.dim, string.format("  your melee hit on the dummy: %d (%d hits)", mel.sum / mel.n + 0.5, mel.n) } } end
