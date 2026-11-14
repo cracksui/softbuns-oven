@@ -784,6 +784,27 @@ def melee_by_weapon():
 
 
 @test
+def eq_reads_eq_first():
+    o = Oven()
+    o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end
+      VIEWS = 0; sbo.viewLive = function() VIEWS = VIEWS + 1 end
+      local q = sbo.quietly; sbo.quietly = function(c, k, fn) QFN = fn; return q(c, k, fn) end
+      gmcp.char = { status = { state = "playing" } }; sbo.lastStatusPrompt = "<281hp 696sp 457st>" """)
+    o.lua("sbo.command('eq')")
+    eq(o.ev("SENT[#SENT]"), "eq", "eq sent first")
+    eq(o.ev("VIEWS"), 0, "the page waits for the reply")
+    o.ev("QFN")(o.ev("function(...) return {...} end")(
+      "With hand to hand, you will deal Low water damage with Max accuracy, at Min range, with a High chance to crit for 2x damage.",
+      "42 Damage: (+38 from weapon) (+1 from +damage) (+4 from skill & strength) ",
+      "80 Accuracy: (+4 from level) (+25 from weapon skill) (+45 from fists) ",
+      "22% Critical Hit chance:  (+22 from hand to hand)"))
+    eq((o.ev("VIEWS"), o.ev("sbo.cfg.char.combat.accuracy"), o.ev("sbo.cfg.char.combat.weapon")), (1, 80, "fists"), "read, then shown")
+    # at a login prompt: nothing sent, the page as it was
+    o.lua("SENT = {}; sbo.quietNext = nil; sbo.cap = nil; gmcp.char.status.state = 'login'; sbo.lastStatusPrompt = nil; sbo.lastPromptText = nil; sbo.command('eq')")
+    eq((o.ev("#SENT"), o.ev("VIEWS")), (0, 2), "not in the game: no eq sent")
+
+
+@test
 def practice_dummy():
     o = Oven()
     o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end

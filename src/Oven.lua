@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.13.1"
+M.version = "1.13.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -12621,7 +12621,16 @@ M.CMDS = {
     { name = "where", args = "{name}", desc = "ask their Oven where they are, and show it on the map", run = function(r) return M.friendWhere(r, false) end },
   } },
   { name = "eq", desc = "your character in combat (the build page); compare, upgrades, learn (shown in the Inspector)",
-    run = function() return M.viewLive(M.buildLines) end, subs = {
+    run = function()
+      -- read eq first, quietly, so the page starts from what you're wearing now
+      if M.inGame(M.lastStatusPrompt or M.lastPromptText) and not M.cap and not M.quietNext then
+        return M.quietly("eq", "eq", function(plain)
+          if plain then pcall(M.updateEqNames, plain); pcall(M.noteCombat, plain) end
+          M.viewLive(M.buildLines)
+        end)
+      end
+      return M.viewLive(M.buildLines)
+    end, subs = {
     { name = "help", desc = "these commands", run = function()
         for _, x in ipairs(M.CMDS) do if x.name == "eq" then return M.groupHelp(x) end end end },
     { name = "compare", args = "[{a} vs {b}]", desc = "the last two items looked at, or two by name",
