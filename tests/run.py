@@ -784,6 +784,19 @@ def melee_by_weapon():
 
 
 @test
+def eq_weapon_lines_belong():
+    o = Oven()
+    shape = o.ev("sbo.shapes.eq")
+    for l in ["Your staff will deal High bash damage with Min accuracy, at Low range, with a Max chance to crit for 2x damage.",
+              "Your weapon special attribute battering increases base damage on activation by 23% (10 per attack).",
+              "Your hand armor special attribute battering-fists increases base damage on activation by 17% (6 per attack).",
+              "With hand to hand, you will deal Low water damage with Max accuracy, at Min range, with a High chance to crit for 2x damage."]:
+        assert shape(l, l), l
+    # someone else's line still doesn't
+    assert not shape("Your friend waves.", "Your friend waves.")
+
+
+@test
 def eq_reads_eq_first():
     o = Oven()
     o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end

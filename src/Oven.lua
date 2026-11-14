@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.13.2"
+M.version = "1.13.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8240,6 +8240,7 @@ M.shapes = {
     return t:match("^You are using") or t:match("^<[%a][%a ']*>") or t:match("^%(%a[%a ]-%s*%)%s+%-?%d")
       or t:match("^Current Armor Resistance") or t:match("^Your value if CPKed") or t:match("^You have a %d+%% chance")
       or t:match("^Equipped weapon damage") or t:match("^With .-, you will deal") or t:match("^%-?%d+%%? [%a ]-:")
+      or t:match("^Your [%a%- ]- will deal %a+ ") or t:match("^Your [%a%- ]- special attribute ")
       or t:match("^You are not using") or t:match("^Nothing")
   end,
   contents = function(t, l)
