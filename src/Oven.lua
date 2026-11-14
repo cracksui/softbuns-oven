@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.12.0"
+M.version = "1.12.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5878,7 +5878,9 @@ local function vit(k)
   return type(v) == "table" and tonumber(v[k]) or nil
 end
 local function log()
-  M.cfg.dummy = M.cfg.dummy or {}
+  -- numbers from before 1.12.0 counted a round's damage against one landing: started afresh
+  if M.cfg.dummy and M.cfg.dummy.v ~= 2 then M.cfg.dummy = nil end
+  M.cfg.dummy = M.cfg.dummy or { v = 2 }
   return M.cfg.dummy
 end
 local function rec(name)
@@ -6007,6 +6009,7 @@ end
 -- what the dummy says about one attack: average damage when it lands (clean rounds first),
 -- how often it lands, its range, cost
 function M.dummyStats(name)
+  if M.cfg.dummy and M.cfg.dummy.v ~= 2 then M.cfg.dummy = nil end
   local r = (M.cfg.dummy or {})[name]
   if not r or (r.tries or 0) == 0 then return nil end
   -- mixed rounds from before a plain swing was seen: sorted out now, if one has been
