@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.13.0"
+M.version = "1.13.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2214,7 +2214,7 @@ function M.parseTrain(raw)
 end
 
 -- the train table is where your attributes stand right now (and what training each costs): kept, so
--- the gear score and sbo eq train follow it
+-- the gear score and the build page (sbo eq) follow it
 function M.noteTrain(raw)
   local tr = M.parseTrain(raw)
   if not tr then return false end
@@ -6392,6 +6392,7 @@ function M.buildLines(width)
 
   out[#out + 1] = {}
   out[#out + 1] = { { C.dim, "not calculated: dodge/parry chances, strength's damage, spell cost per comprehension, weapon specials, resistances" } }
+  out[#out + 1] = { { C.dim, "sbo eq help for more options" } }
   return out
 end
 
@@ -12619,7 +12620,10 @@ M.CMDS = {
     { name = "list", desc = "your friends", run = function() return M.friendList() end },
     { name = "where", args = "{name}", desc = "ask their Oven where they are, and show it on the map", run = function(r) return M.friendWhere(r, false) end },
   } },
-  { name = "eq", desc = "equipment and items: compare, upgrades, learn, builds (shown in the Inspector)", subs = {
+  { name = "eq", desc = "your character in combat (the build page); compare, upgrades, learn (shown in the Inspector)",
+    run = function() return M.viewLive(M.buildLines) end, subs = {
+    { name = "help", desc = "these commands", run = function()
+        for _, x in ipairs(M.CMDS) do if x.name == "eq" then return M.groupHelp(x) end end end },
     { name = "compare", args = "[{a} vs {b}]", desc = "the last two items looked at, or two by name",
       run = function(r)
         local rest = r:match("^against%s*(.-)$")
@@ -12641,8 +12645,6 @@ M.CMDS = {
         return M.learn("")
       end },
     { name = "items", desc = "the items Oven remembers", run = L("items") },
-    { name = "train", desc = "the build page: which attribute to train next (same as sbo eq build)", run = function()
-        M.viewLive(M.buildLines) end },
     { name = "build", args = "[{name}|set|reset|auto]", desc = "gear-score weights (set: a stat and its weight)",
       run = function(r) return legacy("build " .. r) end },
   } },

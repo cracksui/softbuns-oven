@@ -882,7 +882,7 @@ def training_advice():
     vit = next(l for l in out.split("\n") if l.strip().startswith("vitality"))
     assert "max" in vit, "at max: nothing left to train"
     # the page follows the game: train knowledge, and the page on show is drawn again
-    o.lua("sbo.cfg.window = true; sbo.command('eq train')")
+    o.lua("sbo.cfg.window = true; sbo.command('eq')")
     page = lambda: o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html")
     assert "12/21" in page(), page()
     TRAIN = ["You have 394 practice sessions.", "You may train the following vital statistics:",
