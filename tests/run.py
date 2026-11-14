@@ -762,6 +762,44 @@ def attack_abilities():
 
 
 @test
+def practice_dummy():
+    o = Oven()
+    o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end
+      gmcp.char = { vitals = { hp = 371, sp = 871, st = 490 }, lasttargeted = { short_descr = "a practice dummy", hp_percent = 100 } }
+      function ROUND(hit) gmcp.char.combat_mxp = { opponent_name = "a practice dummy", opponent_hp_percent = 100, you_hit = hit, you_miss = 1 - hit,
+        opponent_hits = 0, opponent_misses = 0, you_defend = 0, opponent_defends = 0, your_hp_percent = 100, your_weapon_range = 4, distance_to_opponent = 2 }
+        handlers["gmcp.char.combat_mxp"]() end""")
+    # a plain swing that hits: your melee
+    o.lua("ROUND(1)"); o.feed("A practice dummy says 'I have [9956/10000hp 10000/10000sp 9993/10000st and -250 align]'")
+    eq(o.ev("sbo.cfg.dummy.melee.sum"), 44, "a swing: 44")
+    # bash, your swing missing that round: all bash; 109 stamina
+    o.lua("send('bash dummy'); gmcp.char.vitals.st = 381; ROUND(0)")
+    o.feed("You bash a practice dummy over the head with a scorpion shield.", "A practice dummy says 'I have [9641/10000hp 10000/10000sp 9993/10000st and -250 align]'")
+    b = o.ev("sbo.dummyStats('bash')")
+    eq((b.avg, b.cost, b.res), (359, 109, "st"), "bash: damage and stamina")
+    # kick with the swing hitting too: the swing is taken off
+    o.lua("gmcp.char.vitals.st = 487; send('kick dummy'); gmcp.char.vitals.st = 460; ROUND(1)")
+    o.feed("You deliver a roundhouse kick to a practice dummy, connecting solidly.", "A practice dummy says 'I have [9643/10000hp 10000/10000sp 9993/10000st and -250 align]'")
+    eq(o.ev("sbo.dummyStats('kick').avg"), 357 - 44, "kick: 357 minus a 44 swing")
+    # spark: two fizzles, then it works
+    for _ in range(2):
+        o.lua("send('cast spark dummy')"); o.feed("You have completed your casting.", "You lose your concentration.")
+    o.lua("gmcp.char.vitals.sp = 761; send('cast spark dummy'); gmcp.char.vitals.sp = 712; ROUND(0)")
+    o.feed("You have completed your casting.", "A brilliant spark arcs from your fingertips to a practice dummy.",
+           "A practice dummy says 'I have [9706/10000hp 10000/10000sp 9993/10000st and -250 align]'")
+    sp = o.ev("sbo.dummyStats('spark')")
+    eq((sp.avg, sp.tries, sp.fails, sp.cost), (294, 3, 2, 49), "spark: 294, 2 of 3 fizzled, 49 sp")
+    # in the attack table
+    o.lua("""sbo.cfg.abilitiesRead = 2; sbo.cfg.skills = { spark = { lrnd = 27 }, kick = { lrnd = 78 }, bash = { lrnd = 75 } }
+      sbo.cfg.abilities = { spark = { name = 'spark', kind = 'spell', sp = 49, base = 2.2, types = 'flames/lightning' },
+        kick = { name = 'kick', kind = 'skill', base = 1.3, types = 'bash/bash' }, bash = { name = 'bash', kind = 'skill', base = 2.2, types = 'bash/bash' } }""")
+    f = o.ev("function() local out = {} sbo.abilitySection(out, 100) local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end")
+    text = f()
+    assert "359 (1)" in text and "~109st" in text and "2✗" in text, text
+    assert "most per stamina: kick" in text, f"kick: 313 for ~27 st beats bash 359 for 109: {text}"
+
+
+@test
 def training_advice():
     o = Oven()
     o.lua("""sbo.cfg.char = { class = 'monk', race = 'sahuagin', stats = {

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.10.0"
+M.version = "1.11.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5863,6 +5863,117 @@ function M.upgradeWhy(cur, best, w)
 end
 
 ---------------------------------------------------------------------------
+-- The practice dummy: real damage numbers for your attacks. It says its health every round and
+-- is whole again by the next, so 10000 minus what it says is exactly that round's damage. Oven
+-- notes which attack you used (kick, bash, feed, or a spell once "You have completed your casting"),
+-- what it cost (sp or st, from GMCP), whether a spell fizzled ("You lose your concentration"), and
+-- whether your melee swing also hit that round (GMCP's combat round: it's then taken off, using
+-- the rounds where you only swung).
+---------------------------------------------------------------------------
+do
+local SKILL_CMDS = { kick = "kick", bash = "bash", feed = "feeding", feeding = "feeding" }
+
+local function vit(k)
+  local v = M.gmcpGet and M.gmcpGet("char.vitals")
+  return type(v) == "table" and tonumber(v[k]) or nil
+end
+local function log()
+  M.cfg.dummy = M.cfg.dummy or {}
+  return M.cfg.dummy
+end
+local function rec(name)
+  local d = log()
+  d[name] = d[name] or { n = 0, sum = 0, tries = 0, fails = 0, costN = 0, costSum = 0 }
+  return d[name]
+end
+
+-- what you sent: an attack Oven can follow
+function M.dummyNoteSend(cmd)
+  local c = trim(cmd or ""):lower()
+  local verb = c:match("^(%a+)")
+  if SKILL_CMDS[verb] then
+    M.dummyPending = { name = SKILL_CMDS[verb], kind = "skill", res = "st", start = vit("st"), at = os.time(), done = true }
+    return
+  end
+  local spell = c:match("^c%a*%s+'([^']+)'") or c:match("^c%a*%s+(%a+)")
+  if spell and (c:match("^cast%s") or c:match("^c%s")) then
+    M.dummyPending = { name = spell:lower(), kind = "spell", res = "sp", start = vit("sp"), at = os.time(), done = false }
+  end
+end
+
+local function fighting_dummy()
+  local t = M.gmcpGet and M.gmcpGet("char.lasttargeted")
+  return type(t) == "table" and (t.short_descr or ""):lower():find("practice dummy", 1, true) ~= nil
+end
+
+function M.dummyNoteLine(l)
+  local P = M.dummyPending
+  local t = trim(l)
+  if P and P.kind == "spell" then
+    if t == "You have completed your casting." then P.done = true; return end
+    if t == "You lose your concentration." and fighting_dummy() then
+      local r = rec(P.name)
+      r.tries, r.fails = r.tries + 1, r.fails + 1
+      M.dummyPending = nil
+      M.saveSettings(); M.dataChanged()
+      return
+    end
+  end
+  local cur, mx = t:match("^A practice dummy says 'I have %[(%d+)/(%d+)hp")
+  if not cur then return end
+  local dmg = tonumber(mx) - tonumber(cur)
+  local mxp = M.lastMxp
+  local meleeHit = mxp and os.time() - (mxp.at or 0) <= 2 and (tonumber(mxp.you_hit) or 0) > 0
+  if P and P.done and os.time() - P.at <= 15 then
+    local r = rec(P.name)
+    r.tries = r.tries + 1
+    -- a round where your swing hit too: take the swing off (your average plain swing, once there is one)
+    local melee = log().melee
+    local swing = melee and melee.n > 0 and melee.sum / melee.n or nil
+    if not meleeHit then
+      r.n, r.sum = r.n + 1, r.sum + dmg
+    elseif swing then
+      r.n, r.sum = r.n + 1, r.sum + math.max(0, dmg - swing)
+      r.adjusted = (r.adjusted or 0) + 1
+    else
+      r.mixed = (r.mixed or {})
+      r.mixed[#r.mixed + 1] = dmg
+    end
+    local now = vit(P.res)
+    if P.start and now and P.start > now then
+      r.costN, r.costSum, r.res = r.costN + 1, r.costSum + (P.start - now), P.res
+    end
+    M.dummyPending = nil
+  elseif meleeHit and dmg > 0 then
+    -- a round of plain swinging: your melee hit
+    local m = log().melee or { n = 0, sum = 0 }
+    m.n, m.sum = m.n + 1, m.sum + dmg
+    log().melee = m
+    -- earlier mixed rounds can be sorted out now
+    for _, r in pairs(log()) do
+      if type(r) == "table" and r.mixed then
+        local swing = m.sum / m.n
+        for _, x in ipairs(r.mixed) do r.n, r.sum = r.n + 1, r.sum + math.max(0, x - swing); r.adjusted = (r.adjusted or 0) + 1 end
+        r.mixed = nil
+      end
+    end
+  else
+    return
+  end
+  M.saveSettings()
+  M.dataChanged()
+end
+
+-- what the dummy says about one attack: average damage, how many hits, fizzles, cost
+function M.dummyStats(name)
+  local r = (M.cfg.dummy or {})[name]
+  if not r or r.tries == 0 then return nil end
+  return { avg = r.n > 0 and r.sum / r.n or nil, n = r.n, tries = r.tries, fails = r.fails,
+           cost = r.costN > 0 and r.costSum / r.costN or nil, res = r.res, adjusted = r.adjusted }
+end
+end
+
+---------------------------------------------------------------------------
 -- Attack abilities: every spell and skill whose help page says what it deals ("*Deals harm/surprise
 -- (1.1 base) damage."), with its cost and timing - learned from each help page Oven sees (and from
 -- oven_help.txt). The build page lists the ones you have; upgrades show gear that boosts them.
@@ -6001,23 +6112,54 @@ function M.abilitySection(out, width)
     out[#out + 1] = { { C.title, "Attacks" }, { C.dim, "   none yet - learned from their help pages (sbo debug help next)" } }
     return
   end
-  out[#out + 1] = { { C.title, "Attacks" }, { C.dim, "   power = damage factor × your % - compares attacks, not hit points" } }
-  out[#out + 1] = { { C.dim, "  " .. pad("", 17) .. pad("you", 5) .. pad("cost", 7) .. pad("time", 7) .. pad("power", 7) .. "per 100" } }
+  out[#out + 1] = { { C.title, "Attacks" }, { C.dim, "   dummy = real damage on the practice dummy (hits) · power = help factor × your %" } }
+  out[#out + 1] = { { C.dim, "  " .. pad("", 17) .. pad("you", 5) .. pad("cost", 7) .. pad("time", 7) .. pad("dummy", 14) .. pad("power", 7) .. "per 100" } }
   for _, ab in ipairs(list) do
     local a = ab.a
-    local cost = a.sp and (a.sp .. "sp") or (a.st and (a.st .. "st")) or (a.kind == "skill" and "?st" or "-")
+    local ds = M.dummyStats(ab.name)
+    local cost = a.sp and (a.sp .. "sp") or (a.st and (a.st .. "st"))
+    -- no cost in the help: what the dummy tests measured
+    if not cost and ds and ds.cost then cost = string.format("~%d%s", ds.cost + 0.5, ds.res or "") end
+    cost = cost or (a.kind == "skill" and "?st" or "-")
     local time = (a.time and (a.time .. "s") or "") .. (a.cooldown and ("/" .. a.cooldown) or "")
+    local dtxt = "-"
+    if ds and ds.avg then
+      dtxt = string.format("%d (%d)", ds.avg + 0.5, ds.n) .. (ds.fails > 0 and string.format(" %d✗", ds.fails) or "")
+    elseif ds and ds.fails > 0 then dtxt = string.format("%d✗", ds.fails) end
     out[#out + 1] = { { C.key, "  " .. pad(ab.name, 17) }, { C.num, pad(ab.pct .. "%", 5) }, { C.text, pad(cost, 7) },
-      { C.dim, pad(time ~= "" and time or "-", 7) }, { C.plus, pad(string.format("%.2f", ab.per), 7) },
-      { C.text, ab.perCost and string.format("%.2f", ab.perCost) or "-" } }
+      { C.dim, pad(time ~= "" and time or "-", 7) }, { ds and ds.avg and C.plus or C.dim, pad(dtxt, 14) },
+      { C.num, pad(string.format("%.2f", ab.per), 7) }, { C.text, ab.perCost and string.format("%.2f", ab.perCost) or "-" } }
   end
   -- in words: the best for each purpose
-  local bestUse, bestSp
-  for _, ab in ipairs(list) do
-    if not ab.a.cooldown and (not bestUse or ab.per > bestUse.per) then bestUse = ab end
-    if ab.a.sp and ab.perCost and (not bestSp or ab.perCost > bestSp.perCost) then bestSp = ab end
+  -- in words: by the dummy's real numbers where there are some, else by the help's factors
+  local function real(ab) local d = M.dummyStats(ab.name); return d and d.avg end
+  local anyReal = false
+  for _, ab in ipairs(list) do if real(ab) then anyReal = true end end
+  local function score(ab) if anyReal then return real(ab) or -1 end return ab.per end
+  local function perCost(ab)
+    local d = M.dummyStats(ab.name)
+    local dmg = anyReal and real(ab) or ab.per
+    local cost = ab.a.sp or ab.a.st or (d and d.cost)
+    if not dmg or not cost or cost <= 0 then return nil end
+    -- fizzles cost too (a failed spell still spends some)
+    local ok = d and d.tries > 0 and (d.tries - d.fails) / d.tries or 1
+    return dmg * ok / cost
   end
-  if bestUse then out[#out + 1] = { { C.dim, "  hardest hit: " }, { C.slot, bestUse.name }, { C.dim, bestSp and "  · most per spell point: " or "" }, { C.slot, bestSp and bestSp.name or "" } } end
+  local bestUse, bestSp, bestSt
+  for _, ab in ipairs(list) do
+    if not ab.a.cooldown and score(ab) > 0 and (not bestUse or score(ab) > score(bestUse)) then bestUse = ab end
+    local pc = perCost(ab)
+    if pc and ab.a.sp and (not bestSp or pc > perCost(bestSp)) then bestSp = ab end
+    if pc and not ab.a.sp and (not bestSt or pc > perCost(bestSt)) then bestSt = ab end
+  end
+  if bestUse then
+    out[#out + 1] = { { C.dim, "  hardest hit: " }, { C.slot, bestUse.name },
+      { C.dim, bestSp and "  · most per sp: " or "" }, { C.slot, bestSp and bestSp.name or "" },
+      { C.dim, bestSt and "  · most per stamina: " or "" }, { C.slot, bestSt and bestSt.name or "" },
+      { C.dim, anyReal and "  (dummy)" or "  (help factors)" } }
+  end
+  local mel = (M.cfg.dummy or {}).melee
+  if mel and mel.n > 0 then out[#out + 1] = { { C.dim, string.format("  your melee hit on the dummy: %d (%d hits)", mel.sum / mel.n + 0.5, mel.n) } } end
   -- what boosts them: one short line each
   for _, ab in ipairs(list) do
     local boosts = {}
@@ -7630,6 +7772,7 @@ function M.onCombatRound()
   end
   M.fight = F
   F.rounds = F.rounds + 1
+  M.lastMxp = { you_hit = n("you_hit"), you_miss = n("you_miss"), at = os.time() }
   -- how hard you're hit (for resilience in the gear model): hp lost since the last round ÷ hits taken
   local v = M.gmcpGet and M.gmcpGet("char.vitals")
   local hpNow = type(v) == "table" and tonumber(v.hp) or nil
@@ -7949,6 +8092,7 @@ function M.onSend(_, cmd)
   -- everything below sees what an alias stands for ("qr" -> "quest request"), recordings too
   cmd = M.expandAlias(cmd)
   pcall(M.recordCommand, cmd)
+  pcall(M.dummyNoteSend, cmd)
   pcall(M.noteLootCommand, cmd)
   pcall(M.noteEnterCommand, cmd)
   pcall(M.noteRunCommand, cmd)
@@ -9816,6 +9960,7 @@ end
 
 function M.onLineWork()
   local cap = M.cap
+  pcall(M.dummyNoteLine, line)
   -- Oven talking to Oven (tells ending "#3f2a"): handled, and kept off the screen
   if line:find("#", 1, true) and line:find(" tell", 1, true) then
     local okW, mine = pcall(M.wireLine, line)
