@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.12.1"
+M.version = "1.12.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5879,8 +5879,15 @@ local function vit(k)
 end
 local function log()
   -- numbers from before 1.12.0 counted a round's damage against one landing: started afresh
-  if M.cfg.dummy and M.cfg.dummy.v ~= 2 then M.cfg.dummy = nil end
-  M.cfg.dummy = M.cfg.dummy or { v = 2 }
+  local d = M.cfg.dummy
+  if d and d.v == 2 then
+    -- 1.12.0/1.12.1 counted a debuff cast (faerie fire) and an unrecognised miss as landings
+    for k, r in pairs(d) do
+      if type(r) == "table" and k ~= "melee" and not (M.cfg.abilities or {})[k] then d[k] = nil end
+    end
+    d.bash, d.feeding, d.v = nil, nil, 3
+  elseif d and d.v ~= 3 then M.cfg.dummy = nil end
+  M.cfg.dummy = M.cfg.dummy or { v = 3 }
   return M.cfg.dummy
 end
 local function rec(name)
@@ -5943,15 +5950,16 @@ function M.dummyNoteLine(l)
       return
     end
     cost(cq)
-    table.insert(M.dummyRound, { name = cq.name })
-    M.dummyLastSpell = cq.name
+    -- only spells that deal damage (a debuff like faerie fire lands, but takes nothing off)
+    local ab = (M.cfg.abilities or {})[cq.name]
+    if ab and ab.base then table.insert(M.dummyRound, { name = cq.name }) end
     -- (the same line may be something else to read: fall through)
   end
   -- "You cast spark one additional time." - another landing
   local again = t:match("^You cast (.-) one additional time")
   if again then table.insert(M.dummyRound, { name = again:lower() }); return end
   -- a skill: missed, or landed
-  if t:match("^You attempt to %a+ .-, but miss%.?$") then
+  if t:match("^You attempt to .- but ") then
     local q = take("skill")
     if q and fightingDummy() then local r = rec(q.name); r.tries = r.tries + 1; r.misses = (r.misses or 0) + 1; cost(q) end
     return
@@ -6009,7 +6017,7 @@ end
 -- what the dummy says about one attack: average damage when it lands (clean rounds first),
 -- how often it lands, its range, cost
 function M.dummyStats(name)
-  if M.cfg.dummy and M.cfg.dummy.v ~= 2 then M.cfg.dummy = nil end
+  if M.cfg.dummy and M.cfg.dummy.v ~= 3 then log() end
   local r = (M.cfg.dummy or {})[name]
   if not r or (r.tries or 0) == 0 then return nil end
   -- mixed rounds from before a plain swing was seen: sorted out now, if one has been

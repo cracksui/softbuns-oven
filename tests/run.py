@@ -769,6 +769,9 @@ def practice_dummy():
       function ROUND(hit) gmcp.char.combat_mxp = { opponent_name = "a practice dummy", opponent_hp_percent = 100, you_hit = hit, you_miss = 1 - hit,
         opponent_hits = 0, opponent_misses = 0, you_defend = 0, opponent_defends = 0, your_hp_percent = 100, your_weapon_range = 4, distance_to_opponent = 2 }
         handlers["gmcp.char.combat_mxp"]() end""")
+    o.lua("""sbo.cfg.abilitiesRead = 2
+      sbo.cfg.abilities = { spark = { name = 'spark', kind = 'spell', sp = 49, base = 2.2, types = 'flames/lightning' },
+        kick = { name = 'kick', kind = 'skill', base = 1.3, types = 'bash/bash' }, bash = { name = 'bash', kind = 'skill', base = 2.2, types = 'bash/bash' } }""")
     # a plain swing that hits: your melee
     o.lua("ROUND(1)"); o.feed("A practice dummy says 'I have [9956/10000hp 10000/10000sp 9993/10000st and -250 align]'")
     eq(o.ev("sbo.cfg.dummy.melee.sum"), 44, "a swing: 44")
@@ -806,6 +809,15 @@ def practice_dummy():
     o.feed("You cast spark one additional time.", "You have completed your casting.", "A brilliant spark arcs from your fingertips to a practice dummy.",
            "A practice dummy says 'I have [9532/10000hp 10000/10000sp 9993/10000st and -250 align]'")
     eq(o.ev("sbo.dummyStats('spark').avg"), 234, "468 between two sparks")
+    # faerie fire (a debuff) finishing in the same round as a bash: the bash keeps the round
+    o.lua("sbo.cfg.dummy.bash = nil; send(\"cast 'faerie fire' dummy\"); gmcp.char.vitals.st = 490; send('bash dummy'); gmcp.char.vitals.st = 381; ROUND(0)")
+    o.feed("You have completed your casting.", "A practice dummy is outlined by a faint pink glow.",
+           "You bash a practice dummy over the head with a scorpion shield.", "A practice dummy says 'I have [9641/10000hp 10000/10000sp 9993/10000st and -250 align]'")
+    eq(o.ev("sbo.dummyStats('bash').avg"), 359, "faerie fire doesn't take a share")
+    o.lua("send('feed dummy'); ROUND(0)")
+    o.feed("You attempt to bite into a practice dummy but can't manage to catch it.", "A practice dummy says 'I have [10000/10000hp 10000/10000sp 9993/10000st and -250 align]'")
+    f_ = o.ev("sbo.dummyStats('feeding')")
+    eq((f_.n, f_.misses), (0, 1), "a feed that didn't catch it: a miss")
     # in the attack table
     o.lua("""sbo.cfg.abilitiesRead = 2; sbo.cfg.skills = { spark = { lrnd = 27 }, kick = { lrnd = 78 }, bash = { lrnd = 75 } }
       sbo.cfg.abilities = { spark = { name = 'spark', kind = 'spell', sp = 49, base = 2.2, types = 'flames/lightning' },
