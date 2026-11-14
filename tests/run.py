@@ -797,21 +797,38 @@ def eq_weapon_lines_belong():
 
 
 @test
+def eq_wielded_weapon_block():
+    o = Oven()
+    lines = ["You are using:", "<wielded>           a sturdy white banded staff (new)", "", "Equipped weapon damage:",
+      "Your staff will deal High bash damage with Min accuracy, at Low range, with a Max chance to crit for 2x damage.",
+      "57 Damage: (+46 from weapon) (+2 from +damage) (+9 from skill & strength) (+1 from weapon skillpower) (38% chance for +3 from enhanced damage) ",
+      "31% Critical Hit chance:  (+31 from staff)",
+      "Your weapon special attribute battering increases base damage on activation by 16% (7 per attack)."]
+    f = o.ev("function(...) local l = sbo.format('eq', '', {...}, 110) local s = {} for _, r in ipairs(l) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end")
+    text = f(*lines)
+    assert "Weapon: staff" in text and "Special" in text and "battering increases" in text, text
+    assert "enhanced damage (38% of hits)" in text, text
+    assert "Your staff will deal" not in text, "the sentence is laid out, not repeated"
+
+
+@test
 def eq_reads_eq_first():
     o = Oven()
     o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end
-      VIEWS = 0; sbo.viewLive = function() VIEWS = VIEWS + 1 end
+      VIEWS = 0; sbo.viewLive = function(make) VIEWS = VIEWS + 1; MAKE = make end
       local q = sbo.quietly; sbo.quietly = function(c, k, fn) QFN = fn; return q(c, k, fn) end
       gmcp.char = { status = { state = "playing" } }; sbo.lastStatusPrompt = "<281hp 696sp 457st>" """)
     o.lua("sbo.command('eq')")
     eq(o.ev("SENT[#SENT]"), "eq", "eq sent first")
     eq(o.ev("VIEWS"), 0, "the page waits for the reply")
-    o.ev("QFN")(o.ev("function(...) return {...} end")(
+    o.ev("QFN")(o.ev("function(...) return {...} end")("You are using:", "<worn on hands>     fists of the Forest (new)", "",
       "With hand to hand, you will deal Low water damage with Max accuracy, at Min range, with a High chance to crit for 2x damage.",
       "42 Damage: (+38 from weapon) (+1 from +damage) (+4 from skill & strength) ",
       "80 Accuracy: (+4 from level) (+25 from weapon skill) (+45 from fists) ",
       "22% Critical Hit chance:  (+22 from hand to hand)"))
     eq((o.ev("VIEWS"), o.ev("sbo.cfg.char.combat.accuracy"), o.ev("sbo.cfg.char.combat.weapon")), (1, 80, "fists"), "read, then shown")
+    page = o.ev("function() local l = MAKE(110) local s = {} for _, r in ipairs(l) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end")()
+    assert "Weapon: hand to hand" in page and "Offense" in page and page.index("Weapon: hand to hand") < page.index("Offense"), page
     # at a login prompt: nothing sent, the page as it was
     o.lua("SENT = {}; sbo.quietNext = nil; sbo.cap = nil; gmcp.char.status.state = 'login'; sbo.lastStatusPrompt = nil; sbo.lastPromptText = nil; sbo.command('eq')")
     eq((o.ev("#SENT"), o.ev("VIEWS")), (0, 2), "not in the game: no eq sent")

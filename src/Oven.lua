@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.13.3"
+M.version = "1.14.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -875,6 +875,9 @@ local function parseWeaponStat(t)
     local n = num:gsub("^%+%-", "-"):gsub("^%-%+", "-")
     parts[#parts + 1] = { n, (why:gsub("^from ", "")) }
   end
+  -- "(38% chance for +3 from enhanced damage)"
+  local ch, plus, why = src:match("%((%d+)%% chance for %+(%d+) from (.-)%)")
+  if ch then parts[#parts + 1] = { "+" .. plus, why .. " (" .. ch .. "% of hits)" } end
   return { label, val, parts }
 end
 
@@ -898,6 +901,11 @@ local function renderWeapon(out, w, width)
       end
       kvLine(out, st[1], lw, segs, width)
     end
+  end
+  for _, sp in ipairs(w.specials or {}) do
+    local lw = 0
+    for _, st in ipairs(w.stats) do lw = math.max(lw, ulen(st[1])) end
+    kvLine(out, "Special", math.max(lw, 7), { { C.slot, sp[1] }, { C.text, " " .. sp[2] } }, width)
   end
 end
 
@@ -1208,10 +1216,17 @@ function M.formatters.eq(raw, width)
       slots[#slots + 1] = { slot, item, runs = M.runsFor(idx, (stripConds(item))) }; slotW = math.max(slotW, ulen(slot))
     elseif arLoc then
       ar[#ar + 1] = { arLoc, arVal, arRest:match("([%d%.]+)%%") }
-    elseif t:match("^With .-, you will deal") then
+    elseif t:match("^With .-, you will deal") or t:match("^Your [%a%- ]- will deal %a+ ") then
+      -- unarmed ("With hand to hand, you will deal…") or wielded ("Your staff will deal…")
       weapon = parseWeaponSummary(t)
-      weapon.name = t:match("^With (.-), you will deal")
+      weapon.name = t:match("^With (.-), you will deal") or t:match("^Your (.-) will deal")
       weapons[#weapons + 1] = weapon
+    elseif t:match("^Your [%a%- ]- special attribute ") then
+      -- "Your weapon special attribute battering increases base damage on activation by 16% (7 per attack)."
+      local name, what = t:match("special attribute (%S+) (.-)%.?$")
+      local w = weapon or weapons[#weapons]
+      if w and name then w.specials = w.specials or {}; table.insert(w.specials, { name, what })
+      else other[#other + 1] = t end
     elseif weapon and parseWeaponStat(t) then
       weapon.stats[#weapon.stats + 1] = parseWeaponStat(t)
     else
@@ -12626,8 +12641,18 @@ M.CMDS = {
       -- read eq first, quietly, so the page starts from what you're wearing now
       if M.inGame(M.lastStatusPrompt or M.lastPromptText) and not M.cap and not M.quietNext then
         return M.quietly("eq", "eq", function(plain)
-          if plain then pcall(M.updateEqNames, plain); pcall(M.noteCombat, plain) end
-          M.viewLive(M.buildLines)
+          if not plain then return M.viewLive(M.buildLines) end
+          pcall(M.updateEqNames, plain); pcall(M.noteCombat, plain)
+          -- the enhanced eq: everything eq shows (Oven's layout of it), then the build page
+          M.viewLive(function(w)
+            M.pendingLinks = nil
+            local ok, l = pcall(M.format, "eq", "", plain, w)
+            local links = M.pendingLinks or {}
+            M.pendingLinks = nil
+            local out = ok and type(l) == "table" and l or {}
+            for _, r in ipairs(M.buildLines(w)) do out[#out + 1] = r end
+            return out, links
+          end)
         end)
       end
       return M.viewLive(M.buildLines)
