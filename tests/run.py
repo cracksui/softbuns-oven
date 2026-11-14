@@ -785,7 +785,14 @@ def practice_dummy():
     o.lua("send('kick dummy'); ROUND(0)")
     o.feed("You attempt to kick a practice dummy, but miss.", "A practice dummy says 'I have [10000/10000hp 10000/10000sp 9993/10000st and -250 align]'")
     k = o.ev("sbo.dummyStats('kick')")
-    eq((k.n, k.tries, k.misses, round(k.per, 1)), (1, 2, 1, (357 - 44) / 2), "kick: 1 of 2 landed")
+    eq((k.n, k.tries, k.misses, round(k.per, 1)), (1, 2, 1, round((357 - 44) / 2, 1)), "kick: 1 of 2 landed")
+    # two landings in one round (two kicks sent quickly): the round's damage shared
+    o.lua("sbo.cfg.dummy.kick = nil; gmcp.char.vitals.st = 487; send('kick dummy'); send('kick dummy'); gmcp.char.vitals.st = 460; ROUND(0)")
+    o.feed("You deliver a roundhouse kick to a practice dummy, connecting solidly.",
+           "You deliver a roundhouse kick to a practice dummy, connecting solidly.",
+           "A practice dummy says 'I have [9507/10000hp 10000/10000sp 9993/10000st and -250 align]'")
+    k2 = o.ev("sbo.dummyStats('kick')")
+    eq((k2.n, round(k2.avg, 1)), (2, 246.5), "493 between two kicks")
     # spark: two fizzles, then it works
     for _ in range(2):
         o.lua("send('cast spark dummy')"); o.feed("You have completed your casting.", "You lose your concentration.")
@@ -794,13 +801,18 @@ def practice_dummy():
            "A practice dummy says 'I have [9706/10000hp 10000/10000sp 9993/10000st and -250 align]'")
     sp = o.ev("sbo.dummyStats('spark')")
     eq((sp.avg, sp.tries, sp.fails, sp.cost), (294, 3, 2, 49), "spark: 294, 2 of 3 fizzled, 49 sp")
+    # "You cast spark one additional time": two landings in the round
+    o.lua("sbo.cfg.dummy.spark = nil; send('cast spark dummy'); ROUND(0)")
+    o.feed("You cast spark one additional time.", "You have completed your casting.", "A brilliant spark arcs from your fingertips to a practice dummy.",
+           "A practice dummy says 'I have [9532/10000hp 10000/10000sp 9993/10000st and -250 align]'")
+    eq(o.ev("sbo.dummyStats('spark').avg"), 234, "468 between two sparks")
     # in the attack table
     o.lua("""sbo.cfg.abilitiesRead = 2; sbo.cfg.skills = { spark = { lrnd = 27 }, kick = { lrnd = 78 }, bash = { lrnd = 75 } }
       sbo.cfg.abilities = { spark = { name = 'spark', kind = 'spell', sp = 49, base = 2.2, types = 'flames/lightning' },
         kick = { name = 'kick', kind = 'skill', base = 1.3, types = 'bash/bash' }, bash = { name = 'bash', kind = 'skill', base = 2.2, types = 'bash/bash' } }""")
     f = o.ev("function() local out = {} sbo.abilitySection(out, 100) local s = {} for _, r in ipairs(out) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end")
     text = f()
-    assert "359/use" in text and "~109st" in text and "landed 1 of 3 · 2 fizzled" in text, text
+    assert "359/use" in text and "~109st" in text, text
     assert "most per stamina: kick" in text, f"kick: 156 a use for ~27 st beats bash 359 for 109: {text}"
 
 

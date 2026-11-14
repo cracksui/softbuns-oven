@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.11.1"
+M.version = "1.12.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5864,11 +5864,11 @@ end
 
 ---------------------------------------------------------------------------
 -- The practice dummy: real damage numbers for your attacks. It says its health every round and
--- is whole again by the next, so 10000 minus what it says is exactly that round's damage. Oven
--- notes which attack you used (kick, bash, feed, or a spell once "You have completed your casting"),
--- what it cost (sp or st, from GMCP), whether a spell fizzled ("You lose your concentration"), and
--- whether your melee swing also hit that round (GMCP's combat round: it's then taken off, using
--- the rounds where you only swung).
+-- is whole again by the next, so 10000 minus what it says is exactly that round's damage.
+-- A round can hold several landings (two kicks sent quickly, two casts, "You cast spark one
+-- additional time"), so Oven counts what landed in the round and shares the damage between them.
+-- Your melee swing: rounds where it missed are clean; where it hit, your average plain swing is
+-- taken off (clean rounds are preferred once there are a couple).
 ---------------------------------------------------------------------------
 do
 local SKILL_CMDS = { kick = "kick", bash = "bash", feed = "feeding", feeding = "feeding" }
@@ -5886,113 +5886,148 @@ local function rec(name)
   d[name] = d[name] or { n = 0, sum = 0, tries = 0, fails = 0, costN = 0, costSum = 0 }
   return d[name]
 end
+local function fightingDummy()
+  local t = M.gmcpGet and M.gmcpGet("char.lasttargeted")
+  return type(t) == "table" and (t.short_descr or ""):lower():find("practice dummy", 1, true) ~= nil
+end
+
+M.dummyQueue = M.dummyQueue or {}   -- sent, not resolved yet
+M.dummyRound = M.dummyRound or {}   -- landed since the dummy last said its health
 
 -- what you sent: an attack Oven can follow
 function M.dummyNoteSend(cmd)
   local c = trim(cmd or ""):lower()
   local verb = c:match("^(%a+)")
   if SKILL_CMDS[verb] then
-    M.dummyPending = { name = SKILL_CMDS[verb], kind = "skill", res = "st", start = vit("st"), at = os.time(), done = true }
+    table.insert(M.dummyQueue, { name = SKILL_CMDS[verb], kind = "skill", res = "st", start = vit("st"), at = os.time() })
     return
   end
   local spell = c:match("^c%a*%s+'([^']+)'") or c:match("^c%a*%s+(%a+)")
   if spell and (c:match("^cast%s") or c:match("^c%s")) then
-    M.dummyPending = { name = spell:lower(), kind = "spell", res = "sp", start = vit("sp"), at = os.time(), done = false }
+    table.insert(M.dummyQueue, { name = spell:lower(), kind = "spell", res = "sp", start = vit("sp"), at = os.time() })
   end
 end
 
-local function fighting_dummy()
-  local t = M.gmcpGet and M.gmcpGet("char.lasttargeted")
-  return type(t) == "table" and (t.short_descr or ""):lower():find("practice dummy", 1, true) ~= nil
+local function take(kind)
+  for i, q in ipairs(M.dummyQueue) do
+    if q.kind == kind and os.time() - q.at <= 20 then return table.remove(M.dummyQueue, i) end
+  end
+end
+local function cost(q)
+  local now = vit(q.res)
+  if q.start and now and q.start > now then
+    local r = rec(q.name)
+    r.costN, r.costSum, r.res = r.costN + 1, r.costSum + (q.start - now), q.res
+  end
 end
 
 function M.dummyNoteLine(l)
-  local P = M.dummyPending
   local t = trim(l)
-  -- "You attempt to kick a practice dummy, but miss." - a try that didn't land
-  if P and t:match("^You attempt to %a+ .-, but miss%.?$") then P.missed = true; return end
-  if P and P.kind == "spell" then
-    if t == "You have completed your casting." then P.done = true; return end
-    if t == "You lose your concentration." and fighting_dummy() then
-      local r = rec(P.name)
-      r.tries, r.fails = r.tries + 1, r.fails + 1
-      M.dummyPending = nil
-      M.saveSettings(); M.dataChanged()
+  if t == "" then return end
+  -- a spell finishing: the next line says whether it worked
+  if t == "You have completed your casting." then
+    M.dummyCasting = take("spell")
+    return
+  end
+  local cq = M.dummyCasting
+  if cq then
+    M.dummyCasting = nil
+    if t == "You lose your concentration." then
+      if fightingDummy() then
+        local r = rec(cq.name)
+        r.tries, r.fails = r.tries + 1, r.fails + 1
+        cost(cq); M.saveSettings(); M.dataChanged()
+      end
       return
     end
+    cost(cq)
+    table.insert(M.dummyRound, { name = cq.name })
+    M.dummyLastSpell = cq.name
+    -- (the same line may be something else to read: fall through)
   end
+  -- "You cast spark one additional time." - another landing
+  local again = t:match("^You cast (.-) one additional time")
+  if again then table.insert(M.dummyRound, { name = again:lower() }); return end
+  -- a skill: missed, or landed
+  if t:match("^You attempt to %a+ .-, but miss%.?$") then
+    local q = take("skill")
+    if q and fightingDummy() then local r = rec(q.name); r.tries = r.tries + 1; r.misses = (r.misses or 0) + 1; cost(q) end
+    return
+  end
+  if t:match("^You ") and t:find("practice dummy", 1, true) and not t:find("enter into combat", 1, true)
+     and not t:find("knowingly", 1, true) and not t:find("arcs from", 1, true) then
+    local q = take("skill")
+    if q then cost(q); table.insert(M.dummyRound, { name = q.name }) end
+    return
+  end
+  -- the dummy's health: this round's damage, shared between what landed
   local cur, mx = t:match("^A practice dummy says 'I have %[(%d+)/(%d+)hp")
   if not cur then return end
   local dmg = tonumber(mx) - tonumber(cur)
   local mxp = M.lastMxp
   local meleeHit = mxp and os.time() - (mxp.at or 0) <= 2 and (tonumber(mxp.you_hit) or 0) > 0
-  if P and P.done and os.time() - P.at <= 15 then
-    local r = rec(P.name)
-    r.tries = r.tries + 1
-    if P.missed then
-      r.misses = (r.misses or 0) + 1
-      local now = vit(P.res)
-      if P.start and now and P.start > now then r.costN, r.costSum, r.res = r.costN + 1, r.costSum + (P.start - now), P.res end
-      M.dummyPending = nil
+  local landed = M.dummyRound
+  M.dummyRound = {}
+  local d = log()
+  if #landed == 0 then
+    if meleeHit and dmg > 0 then
+      d.melee = d.melee or { n = 0, sum = 0 }
+      d.melee.n, d.melee.sum = d.melee.n + 1, d.melee.sum + dmg
+      M.saveSettings(); M.dataChanged()
+    end
+    return
+  end
+  local swing = 0
+  if meleeHit then
+    local m = d.melee
+    if not (m and m.n > 0) then
+      -- no plain swing seen yet: keep it, to sort out later
+      for _, x in ipairs(landed) do
+        local r = rec(x.name); r.tries = r.tries + 1
+        r.mixed = r.mixed or {}; r.mixed[#r.mixed + 1] = { dmg = dmg, k = #landed }
+      end
       M.saveSettings(); M.dataChanged()
       return
     end
-    -- a round where your swing hit too: take the swing off (your average plain swing, once there is one)
-    local melee = log().melee
-    local swing = melee and melee.n > 0 and melee.sum / melee.n or nil
-    local function landed(x)
-      r.n, r.sum = r.n + 1, r.sum + x
-      r.min = math.min(r.min or x, x); r.max = math.max(r.max or x, x)
-    end
-    if not meleeHit then
-      landed(dmg)
-    elseif swing then
-      landed(math.max(0, dmg - swing))
-      r.adjusted = (r.adjusted or 0) + 1
-    else
-      r.mixed = (r.mixed or {})
-      r.mixed[#r.mixed + 1] = dmg
-    end
-    local now = vit(P.res)
-    if P.start and now and P.start > now then
-      r.costN, r.costSum, r.res = r.costN + 1, r.costSum + (P.start - now), P.res
-    end
-    M.dummyPending = nil
-  elseif meleeHit and dmg > 0 then
-    -- a round of plain swinging: your melee hit
-    local m = log().melee or { n = 0, sum = 0 }
-    m.n, m.sum = m.n + 1, m.sum + dmg
-    log().melee = m
-    -- earlier mixed rounds can be sorted out now
-    for _, r in pairs(log()) do
-      if type(r) == "table" and r.mixed then
-        local swing = m.sum / m.n
-        for _, x in ipairs(r.mixed) do
-          local v = math.max(0, x - swing)
-          r.n, r.sum = r.n + 1, r.sum + v
-          r.min = math.min(r.min or v, v); r.max = math.max(r.max or v, v)
-          r.adjusted = (r.adjusted or 0) + 1
-        end
-        r.mixed = nil
-      end
-    end
-  else
-    return
+    swing = m.sum / m.n
   end
-  M.saveSettings()
-  M.dataChanged()
+  local each = math.max(0, dmg - swing) / #landed
+  for _, x in ipairs(landed) do
+    local r = rec(x.name)
+    r.tries = r.tries + 1
+    local key = meleeHit and "adj" or "clean"
+    r[key .. "N"] = (r[key .. "N"] or 0) + 1
+    r[key .. "Sum"] = (r[key .. "Sum"] or 0) + each
+    r.n, r.sum = r.n + 1, r.sum + each
+    r.min = math.min(r.min or each, each); r.max = math.max(r.max or each, each)
+  end
+  M.saveSettings(); M.dataChanged()
 end
 
--- what the dummy says about one attack: average damage, how many hits, fizzles, cost
+-- what the dummy says about one attack: average damage when it lands (clean rounds first),
+-- how often it lands, its range, cost
 function M.dummyStats(name)
   local r = (M.cfg.dummy or {})[name]
-  if not r or r.tries == 0 then return nil end
-  local misses = r.misses or 0
-  local avg = r.n > 0 and r.sum / r.n or nil
-  -- expected per use: what lands, how often it lands (fizzles and misses count as nothing)
-  local per = avg and avg * r.n / r.tries or nil
-  return { avg = avg, n = r.n, tries = r.tries, fails = r.fails, misses = misses, min = r.min, max = r.max, per = per,
-           cost = r.costN > 0 and r.costSum / r.costN or nil, res = r.res, adjusted = r.adjusted }
+  if not r or (r.tries or 0) == 0 then return nil end
+  -- mixed rounds from before a plain swing was seen: sorted out now, if one has been
+  local m = (M.cfg.dummy or {}).melee
+  if r.mixed and m and m.n > 0 then
+    local swing = m.sum / m.n
+    for _, x in ipairs(r.mixed) do
+      local each = math.max(0, x.dmg - swing) / x.k
+      r.n, r.sum = r.n + 1, r.sum + each
+      r.adjN, r.adjSum = (r.adjN or 0) + 1, (r.adjSum or 0) + each
+      r.min = math.min(r.min or each, each); r.max = math.max(r.max or each, each)
+    end
+    r.mixed = nil
+  end
+  local avg
+  if (r.cleanN or 0) >= 2 then avg = r.cleanSum / r.cleanN
+  elseif r.n > 0 then avg = r.sum / r.n end
+  local landedN = r.n + (r.mixed and #r.mixed or 0)
+  local per = avg and avg * landedN / r.tries or nil
+  return { avg = avg, n = landedN, tries = r.tries, fails = r.fails or 0, misses = r.misses or 0, min = r.min, max = r.max,
+           per = per, clean = r.cleanN or 0, cost = r.costN > 0 and r.costSum / r.costN or nil, res = r.res }
 end
 end
 
