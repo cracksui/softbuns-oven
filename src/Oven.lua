@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.16.0"
+M.version = "1.17.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2900,6 +2900,7 @@ end
 
 local function questCardHtml(id, Q)
   local html, widest = {}, 0
+  local acts = {}   -- line → the step a click there goes to
   local function add(h, w) html[#html + 1] = h; widest = math.max(widest, w) end
   local name = Q.name or ("#" .. id)
   local finished = questFinished(Q)
@@ -2932,16 +2933,18 @@ local function questCardHtml(id, Q)
     local first = true
     for _, ph in ipairs(Q.phases) do
       if ph.done then
-        -- done: stays in its place, greyed out
+        -- done: stays in its place, greyed out - still a link (back to where it was)
         local label = M.phaseLabel(ph)
         for _, l in ipairs(hudWrap(label, HUD_WRAP, ulen(tostring(ph.n)) + 2)) do
           add("   " .. span(C.dim, l), ulen(l) + 3)
+          acts[#html] = { id = id, n = ph.n }
         end
       else
         local label = M.phaseLabel(ph)
         for i, l in ipairs(hudWrap(label, HUD_WRAP, ulen(tostring(ph.n)) + 2)) do
           local mark = (i == 1) and (first and span(M.REC or C.title, " ▶ ") or "   ") or "   "
           add(mark .. span(first and C.item or C.text, l), ulen(l) + 3)
+          acts[#html] = { id = id, n = ph.n }
         end
         if first then
           -- where the next step is, when Oven can place it
@@ -2951,8 +2954,9 @@ local function questCardHtml(id, Q)
             -- where you've killed it, a room by that name on the map) - a good guess, not certain
             local exact = why == M.QUEST_ROOM_EXACT
             local nm = getRoomName(room) or ("#" .. room)
-            local go = "  · sbo quest go " .. id
-            add("   " .. span(C.dim, "→ ") .. span(exact and C.plus or C.flag, nm) .. span(C.dim, go), ulen(nm) + ulen(go) + 5)
+            add("   " .. span(C.dim, "→ ") .. span(exact and C.plus or C.flag, nm) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>",
+              ulen(nm) + 10)
+            acts[#html] = { id = id, n = ph.n }
           end
         end
         first = false
@@ -3042,7 +3046,7 @@ local function questCardHtml(id, Q)
       end
     end
   end
-  return html, widest
+  return html, widest, acts
 end
 
 local function hudCallbacks(label, id)
@@ -3070,7 +3074,7 @@ function M.drawQuestTracker()
   if not M.questHud then
     M.questHud = Geyser.Label:new({ name = "ovenQuestHud", x = 0, y = 0, width = 300, height = 60 })
     hudCallbacks(M.questHud, nil)
-    pcall(function() M.questHud:setToolTip("drag to move · click a quest to open or fold its hint · click a finished quest to clear it · sbo quest refresh re-checks") end)
+    pcall(function() M.questHud:setToolTip("drag to move · click a step (or go ▸) to walk there, finished steps too · click elsewhere on a quest to open or fold its hint · click a finished quest to clear it") end)
   end
   local alpha = math.floor(255 * math.max(0, math.min(100, tonumber(M.cfg.questHudOpacity) or 100)) / 100 + 0.5)
   M.questHud:setStyleSheet(string.format([[
@@ -3089,12 +3093,18 @@ function M.drawQuestTracker()
       M.questCards[i] = card
     end
     hudCallbacks(card, id)
-    local html, w = questCardHtml(id, M.quests[id] or {})
+    local html, w, acts = questCardHtml(id, M.quests[id] or {})
     -- a quest note ("step 1 done") at the top of the HUD for a few seconds
     if i == 1 and M.hudNote then
       table.insert(html, 1, span(C.title, "» " .. M.hudNote))
       w = math.max(w, ulen(M.hudNote) + 2)
+      local moved = {}
+      for k, a in pairs(acts or {}) do moved[k + 1] = a end
+      acts = moved
     end
+    -- which line a click lands on: 4px of padding, then lines of lineH
+    M.questCardActs = M.questCardActs or {}
+    M.questCardActs[tostring(id)] = { acts = acts or {}, lineH = lineH, top = 4 }
     widest = math.max(widest, w)
     card:setStyleSheet(string.format([[
       background-color: transparent; padding: 4px 8px; qproperty-alignment: 'AlignTop | AlignLeft';
@@ -3165,7 +3175,7 @@ function M.hudRelease(ev)
   pcall(function() M.questHud:setCursor("OpenHand") end)
   if not d then return end
   if d.moved < 4 then
-    M.questHudClick(d.id)       -- a click, not a drag
+    M.questHudClick(d.id, d.at) -- a click, not a drag
   else
     M.saveSettings()            -- remember where it was dropped
   end
@@ -3173,8 +3183,15 @@ end
 
 -- a click on a quest card: a finished quest is cleared; any other opens or folds its hint (when there's a
 -- hint to fold), else refreshes it; a click on the frame (between cards) refreshes them all
-function M.questHudClick(id)
+function M.questHudClick(id, at)
   if not id then return M.questRefresh("all") end
+  -- on a step (or its "go ▸"): go there - finished steps too, to backtrack
+  local ca = at and (M.questCardActs or {})[tostring(id)]
+  if ca then
+    local line = math.floor((at - ca.top) / ca.lineH) + 1
+    local a = ca.acts[line]
+    if a then return M.questGoStep(a.id, a.n) end
+  end
   local Q = M.quests[id] or {}
   if questFinished(Q) then
     M.questPin(id, false)
@@ -3406,6 +3423,22 @@ function M.questGo(id)
       qid, ph.n, ph.text, #names > 0 and ("'" .. table.concat(names, "' / '") .. "'") or "it"))
   end
   M.say(string.format("#%s step %d → %s · %s #%d", qid, ph.n, why or "?", getRoomName(room) or "?", room))
+  M.mapWalkTo(room)
+end
+
+-- one step of a quest, done or not: walk to where it is
+function M.questGoStep(id, n)
+  local Q = M.quests[tostring(id)]
+  local ph
+  for _, p in ipairs(Q and Q.phases or {}) do if p.n == n then ph = p end end
+  if not ph then return M.say("quest " .. id .. " has no step " .. tostring(n)) end
+  local room, why = M.questTarget(ph, tostring(id))
+  if not room then
+    local names = M.questStepNames(ph.text)
+    return M.say(string.format("#%s step %d: \"%s\" - couldn't place %s yet (see the NPC or room once and try again)",
+      id, ph.n, ph.text, #names > 0 and ("'" .. table.concat(names, "' / '") .. "'") or "it"))
+  end
+  M.say(string.format("#%s step %d%s → %s · %s #%d", id, ph.n, ph.done and " (done)" or "", why or "?", getRoomName(room) or "?", room))
   M.mapWalkTo(room)
 end
 

@@ -784,6 +784,30 @@ def melee_by_weapon():
 
 
 @test
+def quest_steps_are_links():
+    o = Oven()
+    o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      sbo.quests['77'] = { name = 'Lemon Run', total = 2, done = 1, phases = {
+        { n = 1, text = 'Speak with the abbot', done = true }, { n = 2, text = 'Bring a lemon to the abbot' } } }
+      ROOMS = { [1] = 100, [2] = 200 }
+      sbo.questTarget = function(ph) return ROOMS[ph.n], 'abbot' end
+      roomExists = function() return true end; getRoomName = function(id) return 'room ' .. id end
+      WALKS = {}; sbo.mapWalkTo = function(id) WALKS[#WALKS+1] = id end""")
+    html_acts = o.ev("function() local h, w, a = sbo.questCardHtml('77', sbo.quests['77']) local out = {} for k, v in pairs(a) do out[#out+1] = k .. '=' .. v.n end table.sort(out) return table.concat(out, ',') , #h end")
+    acts, nlines = html_acts()
+    # line 1 the title; 2 step 1 (done); 3 step 2; 4 its "→ room 200  go ▸"
+    eq(acts, "2=1,3=2,4=2", "every step line, and the go line, is a link")
+    o.lua("sbo.questCardActs = { ['77'] = { acts = select(3, sbo.questCardHtml('77', sbo.quests['77'])), lineH = 18, top = 4 } }")
+    o.lua("sbo.questHudClick('77', 4 + 18 * 1 + 5)")   # on step 1 (finished)
+    o.lua("sbo.questHudClick('77', 4 + 18 * 3 + 5)")   # on go ▸
+    eq(list(o.ev("WALKS").values()), [100, 200], "a finished step still goes back to its place; go ▸ to the next")
+    assert "(done)" in o.ev("SAYS[1]"), o.ev("SAYS[1]")
+    # the title line: not a step - the card's usual click (hint / refresh), no walk
+    o.lua("sbo.questRefresh = function() end; sbo.questHudClick('77', 4 + 5)")
+    eq(len(o.ev("WALKS")), 2, "the title isn't a link")
+
+
+@test
 def go_stays_in_town():
     o = Oven()
     o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
