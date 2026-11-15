@@ -863,6 +863,24 @@ def quest_shop_in_town_first():
     room, why = o.ev("function() return sbo.questTarget({ n = 1, text = \"Locate and deliver a T-bone steak to Taron, Lord Vendredi's assistant\" }, nil) end")()
     eq(room, 28017, "the butcher's in town: same name as one that sells it")
     assert "likely sells" in why, why
+    # a delivery: the HUD shows where to get it and where to take it
+    o.lua("""sbo.quests['2452'] = { name = 'I Am On Your Side!', master = 'Lord Vendredi', masterRoom = 28450, total = 1, done = 0,
+        phases = { { n = 1, text = "Locate and deliver a T-bone steak to Taron, Lord Vendredi's assistant" } } }
+      AREA[28450] = 5; getRoomName = function(id) return 'room ' .. id end
+      SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      WALKS = {}; sbo.goTo = function(id) WALKS[#WALKS+1] = id end""")
+    import re as _re
+    h, w, a = o.ev("function() return sbo.questCardHtml('2452', sbo.quests['2452']) end")()
+    plain = [_re.sub("<[^>]+>", "", x).replace("&nbsp;", " ") for x in h.values()]
+    get = [k for k, v in a.items() if v.get][0]; dl = [k for k, v in a.items() if v.deliver][0]
+    assert "room 28017" in plain[get - 1] and "get it" in plain[get - 1], plain
+    assert "Taron" in plain[dl - 1] and "deliver" in plain[dl - 1], plain
+    o.lua("sbo.questGoStep('2452', 1, 'deliver')")
+    eq(list(o.ev("WALKS").values()), [28450], "Taron: with Lord Vendredi, where the quest was taken")
+    # the step itself: the shop, until the steak's in your inventory - then Taron
+    o.lua("WALKS = {}; sbo.questGoStep('2452', 1)")
+    o.lua("sbo.cfg.carried = { at = os.time(), inv = { 'a T-bone steak' }, bags = {} }; sbo.questGoStep('2452', 1)")
+    eq(list(o.ev("WALKS").values()), [28017, 28450], "shop first, Taron once you carry it")
     # no shop of that kind in town: the nearest that's listed
     o.lua("AREA[1] = 9")
     room, why = o.ev("function() return sbo.shopSelling('a T-bone steak') end")()

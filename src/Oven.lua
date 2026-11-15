@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.22.0"
+M.version = "1.23.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2963,6 +2963,24 @@ local function questCardHtml(id, Q)
         end
         if first then
           -- where the next step is, when Oven can place it
+          -- a delivery: where to get it and where to take it, each its own link
+          local okD, dRoom, dWhy, getRoom = pcall(M.questDeliverTarget, ph, id)
+          if okD and ph.text:match("deliver .- to ") then
+            if getRoom then
+              local nm = getRoomName(getRoom) or ("#" .. getRoom)
+              add("   " .. span(C.dim, "→ ") .. span(C.flag, nm) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>"
+                .. span(C.dim, "&nbsp;&nbsp;get it"), ulen(nm) + 18)
+              acts[#html] = { id = id, n = ph.n, get = true }
+            end
+            local who = ph.text:match("deliver .- to ([^,]+)") or "?"
+            if dRoom then
+              add("   " .. span(C.dim, "→ ") .. span(C.flag, who) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>"
+                .. span(C.dim, "&nbsp;&nbsp;deliver"), ulen(who) + 18)
+              acts[#html] = { id = id, n = ph.n, deliver = true }
+            else
+              add("   " .. span(C.dim, "→ " .. who .. " · not seen yet"), ulen(who) + 16)
+            end
+          else
           local ok, room, why = pcall(M.questTarget, ph, id)
           if ok and room then
             -- green: the room the game named for this step; orange: one Oven found (an NPC seen,
@@ -2972,6 +2990,7 @@ local function questCardHtml(id, Q)
             add("   " .. span(C.dim, "→ ") .. span(exact and C.plus or C.flag, nm) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>",
               ulen(nm) + 10)
             acts[#html] = { id = id, n = ph.n }
+          end
           end
         end
         first = false
@@ -3244,6 +3263,7 @@ function M.questHudClick(id, at)
       return M.drawQuestTracker()
     end
     if a and a.master then return M.questGoMaster(a.id) end
+    if a and (a.get or a.deliver) then return M.questGoStep(a.id, a.n, a.get and "get" or "deliver") end
     -- (a.hint: the card's own click below - it opens or folds the hint)
     if a and a.turnIn then
       if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return M.say("not in the game - nothing sent") end
@@ -3482,6 +3502,11 @@ function M.questTarget(ph, qid)
   if not ph or not ph.text then return end
   -- an item to get that a shop you know sells (exactly that item): that shop, before anything else
   local item = stepItem(ph.text)
+  -- a delivery you have the item for: the recipient, not the shop
+  if item and ph.text:match("deliver .- to ") then
+    local okD, dRoom, dWhy, _, _, carrying = pcall(M.questDeliverTarget, ph, qid)
+    if okD and carrying and dRoom then return dRoom, dWhy end
+  end
   if item then
     local stepArea
     if ph.area then
@@ -3572,6 +3597,38 @@ function M.questGo(id)
   M.goTo(room)
 end
 
+-- "Locate and deliver a T-bone steak to Taron, Lord Vendredi's assistant": where the recipient is
+-- (an NPC seen by that name, else - "<questmaster>'s assistant" - where you took the quest), and where to
+-- get the item (a shop). Returns recipient room, why, shop room, why, carrying (in your last inventory)
+function M.questDeliverTarget(ph, qid)
+  local t = ph and ph.text or ""
+  local item, who = t:match("deliver (.-) to ([^,]+)")
+  if not item then return nil end
+  item = trim(item:gsub("%s*%[.-%]%s*", " "))
+  local room, why
+  local q = trim(who):lower()
+  for _, r in ipairs(M.dbRows("SELECT room, text FROM room_npcs WHERE instr(lower(text), %s) > 0 ORDER BY last DESC", q)) do
+    local id = tonumber(r.room)
+    if id and roomExists(id) then room, why = id, r.text; break end
+  end
+  if not room then
+    local owner = t:match("deliver .- to [^,]+, (.-)'s ")
+    local Q = M.quests[tostring(qid)] or {}
+    local function bareName(n) return (n or ""):lower():gsub("^the ", "") end
+    if owner and Q.master and bareName(owner) == bareName(Q.master) and Q.masterRoom and roomExists(Q.masterRoom) then
+      room, why = Q.masterRoom, "with " .. Q.master .. " (where you took the quest)"
+    end
+  end
+  local okS, shop, shopWhy = pcall(M.shopSelling, item)
+  local carrying = false
+  local have = M.carriedItems and M.carriedItems() or nil
+  local want = item:lower():gsub("^an? ", ""):gsub("^the ", "")
+  for n in pairs(have or {}) do
+    if n:lower():gsub("^an? ", ""):gsub("^the ", "") == want then carrying = true end
+  end
+  return room, why, okS and shop or nil, shopWhy, carrying
+end
+
 -- back to whoever gave the quest (or the one to return to): where you took it, else by name
 function M.questGoMaster(id)
   local Q = M.quests[tostring(id)] or {}
@@ -3587,12 +3644,23 @@ function M.questGoMaster(id)
 end
 
 -- one step of a quest, done or not: walk to where it is
-function M.questGoStep(id, n)
+function M.questGoStep(id, n, which)
   local Q = M.quests[tostring(id)]
   local ph
   for _, p in ipairs(Q and Q.phases or {}) do if p.n == n then ph = p end end
   if not ph then return M.say("quest " .. id .. " has no step " .. tostring(n)) end
-  local room, why = M.questTarget(ph, tostring(id))
+  local room, why
+  local okD, dRoom, dWhy, getRoom, getWhy, carrying = pcall(M.questDeliverTarget, ph, tostring(id))
+  if okD and ph.text:match("deliver .- to ") then
+    if which == "get" or (not which and not carrying and getRoom) then room, why = getRoom, getWhy
+    else room, why = dRoom, dWhy end
+    if not room then
+      return M.say(string.format("#%s step %d: %s hasn't been seen yet - find them once and Oven remembers",
+        id, ph.n, ph.text:match("deliver .- to ([^,]+)") or "they"))
+    end
+  else
+    room, why = M.questTarget(ph, tostring(id))
+  end
   if not room then
     local names = M.questStepNames(ph.text)
     return M.say(string.format("#%s step %d: \"%s\" - couldn't place %s yet (see the NPC or room once and try again)",
