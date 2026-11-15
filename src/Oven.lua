@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.31.0"
+M.version = "1.31.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7360,8 +7360,14 @@ function M.layoutBar()
   -- the top line takes space above any top border something else already uses, and gives it back after
   if atTop then
     if not M.topTaken then
+      -- what the top border was before Oven took a row: kept outside Oven (a global), so an update
+      -- mid-session doesn't mistake the row the old version took for someone else's and go a row lower
       local okT, t = pcall(getBorderTop)
-      M.baseTop = (okT and tonumber(t)) or 0
+      t = (okT and tonumber(t)) or 0
+      if _G.ovenTopBase ~= nil then M.baseTop = _G.ovenTopBase
+      elseif t == h or t == M.barHeight() then M.baseTop = 0   -- an older Oven's row, from before this was kept
+      else M.baseTop = t end
+      _G.ovenTopBase = M.baseTop
       M.topTaken = true
     end
     setBorderTop(M.baseTop + h)
@@ -7369,6 +7375,7 @@ function M.layoutBar()
   elseif M.topTaken then
     setBorderTop(M.baseTop or 0)
     M.topTaken = nil
+    _G.ovenTopBase = nil
   end
   if sessionOn then
     M.sbar:show()
