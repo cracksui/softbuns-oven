@@ -1485,9 +1485,10 @@ def quest_timers():
     o.lua("""sbo.bar = { rawEcho = function(self, h) BAR = h end }
              sbo.lastPromptText = "[Mail]<270hp 501sp 401st>"; sbo.drawBar()""")
     plain = _re.sub("<[^>]+>", "", o.ev("BAR") or "")
-    assert "quest 40m" in plain or "quest 39m" in plain, plain
-    assert "8h" not in plain, f"just the soonest: {plain}"
-    assert plain.find("quest") < plain.find("HP"), f"at the left: {plain}"
+    top = o.ev("(function() local t = {} for _, x in ipairs(sbo.topBarSegs or {}) do t[#t+1] = x[2] end return table.concat(t) end)()")
+    assert "quest 40m" in top or "quest 39m" in top, top
+    assert "8h" not in top, f"just the soonest: {top}"
+    assert "quest" not in plain, f"on the top bar, not the prompt bar: {plain}"
     # the panel: each pinned quest's time
     o.lua("sbo.cfg.questPins = { ['52'] = true, ['3519'] = true }")
     card = o.lua("local h = sbo.questCardHtml('3519', sbo.quests['3519']); return table.concat(h, '\\n')")
@@ -1495,8 +1496,8 @@ def quest_timers():
     # turned in: no more timer
     o.lua("sbo.quests['52'].active = false")
     o.lua("sbo.drawBar()")
-    plain = _re.sub("<[^>]+>", "", o.ev("BAR") or "")
-    assert "quest 8h" in plain, f"the next soonest: {plain}"
+    top = o.ev("(function() local t = {} for _, x in ipairs(sbo.topBarSegs or {}) do t[#t+1] = x[2] end return table.concat(t) end)()")
+    assert "quest 8h" in top, f"the next soonest: {top}"
 
 
 @test
@@ -3253,10 +3254,30 @@ def bar_from_gmcp():
       sbo.drawBar()''')
     plain = __import__("re").sub("<[^>]+>", "", o.ev("BAR") or "")
     assert "120" in plain and "291" not in plain, f"HP from GMCP, not the prompt: {plain}"
-    assert "Mail" in plain, "the prompt's tags stay"
+    assert "Mail" in o.ev("(function() local t = {} for _, x in ipairs(sbo.topBarSegs or {}) do t[#t+1] = x[2] end return table.concat(t) end)()") and "Mail" not in plain, "the prompt's Mail flag: up on the top bar"
     o.lua('gmcp.char.vitals.hp = 80; handlers["gmcp.char.vitals"]()')
     plain = __import__("re").sub("<[^>]+>", "", o.ev("BAR") or "")
     assert " 80" in plain, f"redrawn when vitals change, no prompt needed: {plain}"
+
+
+@test
+def top_bar():
+    o = Oven()
+    o.lua("""sbo.cfg.bar = true; sbo.cfg.barSession = true; sbo.cfg.maxes = { hp = 300, sp = 700, st = 460 }
+      sbo.lastPromptText = "[SAFE][Mail]<291hp 696sp 457st>"
+      sbo.cfg.char = { level = 57, tnl = 12000 }
+      sbo.showBar(true)""")
+    top = o.ev("(function() local t = {} for _, x in ipairs(sbo.topBarSegs or {}) do t[#t+1] = x[2] end return table.concat(t) end)()")
+    bottom = o.ev("WIDGETS.ovenPromptBarLabel.html") or ""
+    import re as _re
+    bottom = _re.sub("<[^>]+>", "", bottom)
+    assert "Mail" in top and "L57" in top and "xp/hr" in top, top
+    assert "SAFE" in bottom and "HP" in bottom and "Mail" not in bottom and "L57" not in bottom, bottom
+    assert o.ev("WIDGETS.ovenSessionBarLabel.shown") and o.ev("getBorderTop()") > 0, "the top line takes room at the top"
+    # off: all on the prompt bar again
+    o.lua("sbo.command('config bar.top off')")
+    bottom = _re.sub("<[^>]+>", "", o.ev("WIDGETS.ovenPromptBarLabel.html") or "")
+    assert "Mail" in bottom and "L57" in bottom, bottom
 
 
 @test

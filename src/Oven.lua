@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.30.1"
+M.version = "1.31.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -52,6 +52,7 @@ M.defaults = {
   barMode      = "gauges",   -- gauges | raw
   barWidth     = 10,         -- length of each gauge in the prompt bar
   barBg        = { 12, 12, 16 },  -- prompt bar background (r, g, b): a faint tint
+  barTop       = true,       -- a line at the top of the screen for the less urgent things (flags, quest timer, level, session)
   barSession   = false,      -- session stats: on the bar when they fit, else their own line
   barSessionPos = "top",     -- where that line goes: top of the screen, or bottom (under the bar)
   barSessionStyle = "full",  -- full: time · k/d · xp/hr   short: just xp/hr
@@ -7340,8 +7341,9 @@ function M.layoutBar()
     local okL, l = pcall(getBorderLeft); if okL and l then left = l end
   end
   local h = M.barHeight()
-  local sessionOn = M.cfg.barSession and M.sbar and not M.barCollapsed
-  local atTop = sessionOn and M.cfg.barSessionPos ~= "bottom"
+  local topOn = M.cfg.barTop ~= false and M.sbar ~= nil
+  local sessionOn = topOn or (M.cfg.barSession and M.sbar and not M.barCollapsed)
+  local atTop = sessionOn and (topOn or M.cfg.barSessionPos ~= "bottom")
   local below = sessionOn and not atTop
   local barY = H - (below and (h * 2) or h)
   -- while you fight (combat mode mxp): your targets' line sits right above the prompt bar
@@ -7380,6 +7382,7 @@ end
 
 -- the optional session line under the prompt bar
 function M.showSessionBar(on)
+  if M.cfg.barTop ~= false then on = true end   -- the top line holds more than the session now
   if on and M.cfg.bar then
     if not M.sbar then
       M.sbar = Geyser.Label:new({ name = "ovenSessionBarLabel", x = 0, y = 0, width = 200, height = 20 })
@@ -7412,7 +7415,7 @@ function M.showBar(on)
     M.layoutBar()
     M.applyBarBg()
     M.drawBar()
-    if M.cfg.barSession then M.showSessionBar(true) end
+    if M.cfg.barSession or M.cfg.barTop ~= false then M.showSessionBar(true) end
   else
     if M.bar then M.bar:hide() end
     if M.sbar then M.sbar:hide() end
@@ -7836,16 +7839,21 @@ function M.drawBar()
     segs[#segs + 1] = { col, g.pct .. "%" }
     segs[#segs + 1] = { C.dim, #p.tags > 0 and " · " or "   " }
   end
+  local top = M.cfg.barTop ~= false
+  local topSegs = {}
   for _, tag in ipairs(p.tags) do
-    segs[#segs + 1] = { tag == "SAFE" and C.plus or C.key, tag }
-    segs[#segs + 1] = { C.dim, " · " }
+    -- SAFE stays here; Mail, Locker and the like go up top
+    local where = (top and tag ~= "SAFE") and topSegs or segs
+    where[#where + 1] = { tag == "SAFE" and C.plus or C.key, tag }
+    where[#where + 1] = { C.dim, " · " }
   end
   -- the quest with the least time left
   local okS, sQ, _, sLeft = pcall(M.questSoonest)
   if okS and sQ then
-    segs[#segs + 1] = { C.dim, "quest " }
-    segs[#segs + 1] = { M.timeLeftColor(sLeft), M.shortDur(sLeft) }
-    segs[#segs + 1] = { C.dim, " · " }
+    local where = top and topSegs or segs
+    where[#where + 1] = { C.dim, "quest " }
+    where[#where + 1] = { M.timeLeftColor(sLeft), M.shortDur(sLeft) }
+    where[#where + 1] = { C.dim, " · " }
   end
   if #segs > 0 then segs[#segs] = { C.dim, "   " } end
   -- level and exp to level: prompt > MSDP > last `score`
@@ -7874,6 +7882,17 @@ function M.drawBar()
     if rate and rate > 0 then tail[#tail + 1] = { C.dim, " ≈" .. M.shortDur(tnl * 3600 / rate) } end
   end
   p.vals = pools
+  -- the top line: flags, the quest timer, level and exp, the session
+  if top then
+    if #topSegs > 0 then topSegs[#topSegs] = { C.dim, "   │ " } end
+    addAll(topSegs, tail)
+    if M.cfg.barSession then
+      if #tail > 0 then topSegs[#topSegs + 1] = { C.dim, "   │ " } end
+      addAll(topSegs, M.sessionSegs())
+    end
+    M.topBarSegs = topSegs
+    tail = {}
+  end
   -- gauges are a fixed width (sbo bar width), shrunk only if the bar is too narrow
   local fixed = segLen(segs) + segLen(tail) + ulen(p.rest) + 2 + (p.ship and (segLen(M.shipSegs(p.ship, 0)) + 3) or 0)
   for _, v in ipairs(p.vals) do
@@ -7907,7 +7926,7 @@ function M.drawBar()
   -- the session details join this line when they fit (shorter gauges are tried first);
   -- otherwise they get their own line underneath
   local collapsed = false
-  if M.cfg.barSession then
+  if M.cfg.barSession and not top then
     local sess = M.sessionSegs()
     local sep = { C.dim, "   │ " }
     local tagW = ulen(" [v" .. M.version .. " ✓]  ") + (M.helpFetch and 2 or 0)
@@ -7932,7 +7951,9 @@ function M.drawBar()
     M.layoutBar()
   end
   barEcho(M.segsToDecho({ main })[1], nil, M.segsToDecho({ tag })[1])
-  if M.cfg.barSession and not collapsed then pcall(M.drawSessionBar) end
+  if top then
+    if M.sbar then barEcho(M.segsToDecho({ M.topBarSegs or {} })[1], M.sbar) end
+  elseif M.cfg.barSession and not collapsed then pcall(M.drawSessionBar) end
 end
 
 -- live level / exp from MSDP, if the game reports them
@@ -13851,6 +13872,9 @@ function M.legacyCommand(args)
     local sub, val = b:match("^(%S*)%s*(.-)$")
     if sub == "on" or sub == "off" then M.cfg.bar = (sub == "on"); M.showBar(M.cfg.bar); say("prompt bar " .. sub)
     elseif sub == "raw" or sub == "gauges" then M.cfg.barMode = sub; M.drawBar(); say("prompt bar mode " .. sub)
+    elseif sub == "top" and (val == "on" or val == "off") then
+      M.cfg.barTop = (val == "on"); M.showSessionBar(M.cfg.barTop or M.cfg.barSession); M.layoutBar(); M.drawBar()
+      say("top bar " .. val .. (val == "on" and ": flags, quest timer, level and exp, session up there" or ": everything back on the prompt bar"))
     elseif sub == "session" and (val == "on" or val == "off") then
       M.cfg.barSession = (val == "on"); M.showSessionBar(M.cfg.barSession); M.drawBar()
       say("session details " .. val .. (M.cfg.bar and "" or " (they show when the bar is on: sbo config bar on)"))
@@ -14600,6 +14624,7 @@ M.SETTINGS = {
   { "signposts.look", "Map panel", BOOL, function() return onoff(M.cfg.signLook) end, function(v) legacy("signposts look " .. v) end },
   { "bar", "Prompt bar", BOOL, function() return onoff(M.cfg.bar) end, function(v) legacy("bar " .. v) end },
   { "bar.mode", "Prompt bar", { "gauges", "raw" }, function() return M.cfg.barMode or "gauges" end, function(v) legacy("bar " .. v) end },
+  { "bar.top", "Prompt bar", BOOL, function() return onoff(M.cfg.barTop ~= false) end, function(v) legacy("bar top " .. v) end },
   { "bar.session", "Prompt bar", BOOL, function() return onoff(M.cfg.barSession) end, function(v) legacy("bar session " .. v) end },
   { "bar.session.style", "Prompt bar", { "full", "short" }, function() return M.cfg.barSessionStyle or "full" end, function(v) legacy("bar session " .. v) end },
   { "bar.session.place", "Prompt bar", { "top", "bottom" }, function() return M.cfg.barSessionPos or "top" end, function(v) legacy("bar session " .. v) end },
