@@ -784,6 +784,47 @@ def melee_by_weapon():
 
 
 @test
+def go_stays_in_town():
+    o = Oven()
+    o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      SENT = {}; send = function(c) SENT[#SENT+1] = c end
+      DENIED = 0; denyCurrentSend = function() DENIED = DENIED + 1 end
+      sbo.cfg.map = true; sbo.mapRoom = 1
+      -- rooms 1-3 are in town (area 1), 9 is outside (area 2); 5 is in town but only reached through 9
+      AREA = { [1] = 1, [2] = 1, [3] = 1, [5] = 1, [9] = 2 }
+      PATHS = { [2] = { 1, 2 }, [3] = { 2, 3 }, [9] = { 2, 9 }, [5] = { 2, 9, 5 } }
+      roomExists = function(id) return AREA[tonumber(id)] ~= nil end
+      getRoomArea = function(id) return AREA[tonumber(id)] end
+      getRoomAreaName = function(a) return a == 1 and "Towne of Rune" or "the wilds" end
+      getRoomName = function(id) return "room " .. id end
+      getPath = function(a, b) local p = PATHS[tonumber(b)]; if not p then return false end
+        speedWalkPath = {}; speedWalkDir = {}
+        for i, r in ipairs(p) do speedWalkPath[i] = tostring(r); speedWalkDir[i] = "n" end
+        return true end
+      WALKS = {}; sbo.mapWalkTo = function(id, onFoot) WALKS[#WALKS+1] = { id, onFoot or false } end
+      gmcp.room = { info = { wilds = "false" } }""")
+    walks = lambda: [tuple(w.values()) for w in o.ev("WALKS").values()]
+    # a weaker match in town beats a better one outside it
+    o.lua("""sbo.runTargets = function() return { { id = 9, why = "[Trainer] outside", rank = 1 }, { id = 3, why = "a trainer in town", rank = 2 } }, true end
+      sbo.mapRun('trainer')""")
+    eq(walks(), [(3, True)], "the one in town, walked (no signpost run)")
+    # only outside: asked first
+    o.lua("WALKS = {}; sbo.goTo(9)")
+    assert walks() == [] and "y to go, n to stay" in o.ev("SAYS[#SAYS]"), o.ev("SAYS[#SAYS]")
+    o.lua("sbo.onSend(nil, 'y'); runTimers()")
+    eq((walks(), o.ev("DENIED")), ([(9, False)], 1), "y: goes, and isn't sent to the game")
+    # n: stays
+    o.lua("WALKS = {}; sbo.goTo(5); sbo.onSend(nil, 'n'); runTimers()")
+    eq((walks(), o.ev("DENIED")), ([], 2), "n: stays (5 is in town, but the way there leaves it)")
+    # anything else: the question's dropped, the command goes to the game
+    o.lua("sbo.goTo(9); sbo.onSend(nil, 'look'); sbo.onSend(nil, 'y'); runTimers()")
+    eq((walks(), o.ev("DENIED")), ([], 2), "another command: no walk, nothing held back")
+    # already in the wilds: no question
+    o.lua("gmcp.room.info.wilds = 'true'; sbo.goTo(9)")
+    eq(walks(), [(9, False)], "in the wilds: just goes")
+
+
+@test
 def eqdb_list_and_lookup():
     o = Oven()
     eq(tuple(o.ev("function() return sbo.classify('check eqlookup 2acf8c203696532d8bdaa1064553483ec0a68fa5') end")()),

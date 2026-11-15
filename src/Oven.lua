@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.15.0"
+M.version = "1.16.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8255,6 +8255,10 @@ function M.onSend(_, cmd)
   if own and own > 0 then M.ownCmds[cmd] = (own > 1) and (own - 1) or nil
   else
     M.lastUserCmdAt = now()
+    if M.goAsk then
+      local okA, mine = pcall(M.goAnswer, cmd)
+      if okA and mine then pcall(denyCurrentSend); return end
+    end
     -- reading help pages in the background: you come first - it stops, and the page it was on
     -- isn't swallowing your command's output
     if M.helpFetch then
@@ -11850,7 +11854,7 @@ function M.mapRun(arg)
   local q = all or arg
   if q == "" then return say("usage: sbo go <trainer|shop|quest|… or part of a name or room # >  (sbo map find <what> lists them)") end
   if q == "stop" then return M.command("map stop") end
-  if tonumber(q) then return M.mapWalkTo(tonumber(q)) end
+  if tonumber(q) then return M.goTo(tonumber(q)) end
   local sign = not all and M.runNames()[q:lower()] and q:lower()
   if sign then
     local e = M.runData().ends[sign]
@@ -11888,9 +11892,16 @@ function M.mapRun(arg)
   table.sort(reach, function(a, b) if a.rank ~= b.rank then return a.rank < b.rank end return a.steps < b.steps end)
   -- best kind of match first, then the nearest of that kind
   -- (not the room you're standing in: running to "trainer" at a trainer goes to the next one)
+  -- a match in the area you're in comes first (a name-only room match aside): leaving town only when
+  -- there's nothing here
+  local hereArea = getRoomArea(here)
   local best
+  local function better(t) return not best or t.rank < best.rank or (t.rank == best.rank and t.steps < best.steps) end
   for _, t in ipairs(reach) do
-    if t.steps > 0 and (not best or t.rank < best.rank or (t.rank == best.rank and t.steps < best.steps)) then best = t end
+    if t.steps > 0 and t.rank < 4 and getRoomArea(t.id) == hereArea and better(t) then best = t end
+  end
+  if not best then
+    for _, t in ipairs(reach) do if t.steps > 0 and better(t) then best = t end end
   end
   if all then
     table.sort(reach, function(a, b) return a.steps < b.steps end)
@@ -11913,7 +11924,42 @@ function M.mapRun(arg)
   say(string.format("running to %s · %s #%d · %d step%s%s", best.why, getRoomName(best.id) or "?", best.id,
     best.steps, best.steps == 1 and "" or "s",
     others > 0 and string.format("  (%d other%s: sbo map find %s)", others, others == 1 and "" or "s", q) or ""))
-  M.mapWalkTo(best.id)
+  M.goTo(best.id)
+end
+
+-- sbo go's walk: inside your area it's walked (no signpost run); a route out of town is asked about first
+-- ("y" goes, "n" stays - answered to Oven, not the game). Already in the wilds: no question.
+function M.goTo(id)
+  local here = M.mapRoom or M.currentRoom()
+  if not here or not roomExists(id) or not getPath(here, id) then return M.mapWalkTo(id) end
+  local hereArea = getRoomArea(here)
+  local leaves = getRoomArea(id) ~= hereArea
+  if not leaves then
+    for _, r in ipairs(speedWalkPath or {}) do
+      if getRoomArea(tonumber(r)) ~= hereArea then leaves = true; break end
+    end
+  end
+  local steps = #(speedWalkDir or {})
+  if not leaves then return M.mapWalkTo(id, true) end
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  local inWilds = type(info) == "table" and tostring(info.wilds) == "true"
+  if inWilds then return M.mapWalkTo(id) end
+  local function areaName(a) return a and getRoomAreaName(a) or "?" end
+  M.goAsk = { id = id, at = os.time() }
+  say(string.format("that leaves %s - %s is in %s (%d steps on foot) · y to go, n to stay",
+    areaName(hereArea), getRoomName(id) or ("#" .. id), areaName(getRoomArea(id)), steps))
+end
+
+-- your answer to that question: true if it was one (and it isn't sent to the game)
+function M.goAnswer(cmd)
+  local A = M.goAsk
+  if not A then return false end
+  M.goAsk = nil
+  if os.time() - A.at > 60 then return false end
+  local c = trim(cmd or ""):lower()
+  if c == "y" or c == "yes" then tempTimer(0, function() M.mapWalkTo(A.id) end); return true end
+  if c == "n" or c == "no" then tempTimer(0, function() say("staying put") end); return true end
+  return false   -- anything else: the question's dropped, and the command goes as usual
 end
 
 function M.mapStart()
