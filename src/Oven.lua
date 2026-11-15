@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.18.0"
+M.version = "1.21.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2922,10 +2922,15 @@ local function questCardHtml(id, Q)
     timeHtml, timeW = span(M.timeLeftColor(left), txt), ulen(txt)
   end
   local together = timeHtml and titleW + 3 + timeW <= HUD_WRAP + 3
-  add((finished and span(C.plus, "✓ ") or "") .. span(C.dim, "#" .. id .. " ")
+  local folded = (M.cfg.questFolded or {})[tostring(id)]
+  titleW = titleW + 2
+  add(span(C.slot, folded and "▸ " or "▾ ") .. (finished and span(C.plus, "✓ ") or "") .. "<b>" .. span(C.num, "#" .. id) .. "</b> "
     .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar
     .. (together and ("&nbsp;&nbsp;&nbsp;" .. timeHtml) or ""), titleW + (together and (3 + timeW) or 0))
+  acts[#html] = { id = id, fold = true }
   if timeHtml and not together then add("   " .. timeHtml, timeW + 3) end
+  -- folded: the title (with its progress and time) is all
+  if folded then return html, widest, acts end
   if finished then
     -- who to turn it in to: "Return to Lord Agrippa in time to receive your reward!" (else the quest master)
     local who = Q.turnIn or Q.master
@@ -2935,6 +2940,10 @@ local function questCardHtml(id, Q)
       add("   " .. span(C.dim, "↩ ") .. span(C.item, who) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>", ulen(who) + 10)
       acts[#html] = { id = id, master = true }
     end
+    -- hand it in: sends "quest complete <number>"
+    local cmd = "quest complete " .. id
+    add("   <b><u>" .. span(C.plus, "✓ turn in") .. "</u></b>&nbsp;&nbsp;" .. span(C.dim, cmd), 14 + ulen(cmd))
+    acts[#html] = { id = id, turnIn = true }
   elseif Q.phases then
     local first = true
     for _, ph in ipairs(Q.phases) do
@@ -2970,11 +2979,32 @@ local function questCardHtml(id, Q)
     end
     local who = Q.turnIn or Q.master
     if who then
-      add("   " .. span(C.dim, "↩ " .. who .. "&nbsp;&nbsp;") .. "<u>" .. span(C.dim, "go ▸") .. "</u>", ulen(who) + 10)
+      add("   " .. span(C.dim, "↩ " .. who) .. "&nbsp;&nbsp;<u>" .. span(C.dim, "go ▸") .. "</u>", ulen(who) + 10)
       acts[#html] = { id = id, master = true }
     end
   else
     add(span(C.dim, " (click to load its steps)"), 27)
+  end
+  -- what it's worth: the rewards that aren't nothing, and any items - always shown (finished ones too)
+  do
+    local worth = {}
+    for _, r in ipairs(Q.rewards or {}) do
+      if tostring(r[1]):gsub(",", "") ~= "0" then worth[#worth + 1] = { C.num, r[1] .. " " .. r[2] } end
+    end
+    for _, it in ipairs(Q.rewardItems or {}) do worth[#worth + 1] = { C.item, it } end
+    if #worth == 0 and Q.rewardNote then worth[1] = { C.text, Q.rewardNote } end
+    if #worth > 0 then
+      local segs = { { C.key, (Q.upTo and "Up to " or "Reward ") } }
+      for k, w in ipairs(worth) do
+        if k > 1 then segs[#segs + 1] = { C.dim, " · " } end
+        segs[#segs + 1] = w
+      end
+      for _, ln in ipairs(segWrap(segs, HUD_WRAP, 6)) do
+        local h = {}
+        for _, sg in ipairs(ln[1]) do h[#h + 1] = span(sg[1] or C.dim, sg[2]) end
+        add("   " .. table.concat(h), ln[2] + 3)
+      end
+    end
   end
   -- the quest's blurb (often holds hints), dimmed
   if M.cfg.questHudBlurb and Q.desc and #Q.desc > 0 and not finished then
@@ -3023,25 +3053,6 @@ local function questCardHtml(id, Q)
     end
     flush()
     while #lines > 0 and lines[#lines][2] == 0 do table.remove(lines) end
-    -- what it's worth: the rewards that aren't nothing, and any items
-    local worth = {}
-    for _, r in ipairs(Q.rewards or {}) do
-      if tostring(r[1]):gsub(",", "") ~= "0" then worth[#worth + 1] = { C.num, r[1] .. " " .. r[2] } end
-    end
-    for _, it in ipairs(Q.rewardItems or {}) do worth[#worth + 1] = { C.item, it } end
-    if #worth > 0 then
-      local segs = { { C.key, "Rewards " } }
-      for k, w in ipairs(worth) do
-        if k > 1 then segs[#segs + 1] = { C.dim, " · " } end
-        segs[#segs + 1] = w
-      end
-      put("", 0)
-      for _, ln in ipairs(segWrap(segs, HUD_WRAP, 8)) do
-        local h = {}
-        for _, sg in ipairs(ln[1]) do h[#h + 1] = span(sg[1] or C.dim, sg[2]) end
-        put(span(C.dim, " ") .. table.concat(h), ln[2] + 1)
-      end
-    end
     -- …then folded: the first few lines, unless you've opened it (click the quest)
     local SHOW = 3
     local open = (M.cfg.questHintOpen or {})[tostring(id)]
@@ -3062,6 +3073,7 @@ end
 
 local function hudCallbacks(label, id)
   label:setClickCallback(function(ev) M.hudPress(ev, id) end)
+  pcall(function() label:setWheelCallback(function(ev) M.questWheel(ev) end) end)
   label:setMoveCallback(function(ev) M.hudMove(ev) end)
   label:setReleaseCallback(function(ev) M.hudRelease(ev) end)
   pcall(function() label:setCursor("OpenHand") end)
@@ -3079,13 +3091,14 @@ function M.drawQuestTracker()
   if #ids == 0 then
     if M.questHud then M.questHud:hide() end
     for _, c in ipairs(M.questCards) do c:hide() end
+    for _, b in ipairs({ M.ScrollUp, M.ScrollDown }) do pcall(function() b:hide() end) end
     return
   end
   table.sort(ids, function(a, b2) return tonumber(a) < tonumber(b2) end)
   if not M.questHud then
     M.questHud = Geyser.Label:new({ name = "ovenQuestHud", x = 0, y = 0, width = 300, height = 60 })
     hudCallbacks(M.questHud, nil)
-    pcall(function() M.questHud:setToolTip("drag to move · click a step (or go ▸) to walk there, finished steps too · click elsewhere on a quest to open or fold its hint · click a finished quest to clear it") end)
+    pcall(function() M.questHud:setToolTip("drag to move · click a quest's title to fold it · click a step (or go ▸) to walk there, finished steps too · click elsewhere on a quest to open or fold its hint · click a finished quest to clear it · mouse wheel scrolls") end)
   end
   local alpha = math.floor(255 * math.max(0, math.min(100, tonumber(M.cfg.questHudOpacity) or 100)) / 100 + 0.5)
   M.questHud:setStyleSheet(string.format([[
@@ -3096,6 +3109,7 @@ function M.drawQuestTracker()
   local okF, cw, ch = pcall(calcFontSize, size, font)
   if not okF or not cw then cw, ch = 7, 14 end
   local lineH = ch * 1.35
+  M.questLineH = lineH
   local layout, widest, total = {}, 0, 2
   for i, id in ipairs(ids) do
     local card = M.questCards[i]
@@ -3130,9 +3144,8 @@ function M.drawQuestTracker()
   M.questCardLayout = layout
   -- a fixed width (wider only for a line that doesn't wrap, like a long quest name)
   M.questHudSize = { w = math.min(600, math.max(HUD_COLS, widest + 3) * cw + 24), h = total }
-  M.layoutQuestHud()
   M.questHud:show()
-  for i = 1, #ids do M.questCards[i]:show() end
+  M.layoutQuestHud()   -- shows the cards that fit
   M.raiseQuestHud()
 end
 
@@ -3144,6 +3157,7 @@ function M.raiseQuestHud()
       local c = M.questCards and M.questCards[i]
       if c then pcall(function() c:raise() end) end
     end
+    for _, b in ipairs({ M.ScrollUp, M.ScrollDown }) do pcall(function() b:raise() end) end
   end
 end
 
@@ -3201,7 +3215,18 @@ function M.questHudClick(id, at)
   if ca then
     local line = math.floor((at - ca.top) / ca.lineH) + 1
     local a = ca.acts[line]
+    if a and a.fold then
+      M.cfg.questFolded = M.cfg.questFolded or {}
+      local k = tostring(a.id)
+      M.cfg.questFolded[k] = (not M.cfg.questFolded[k]) or nil
+      M.saveSettings()
+      return M.drawQuestTracker()
+    end
     if a and a.master then return M.questGoMaster(a.id) end
+    if a and a.turnIn then
+      if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return M.say("not in the game - nothing sent") end
+      return M.sendOwn("quest complete " .. a.id, true)
+    end
     if a then return M.questGoStep(a.id, a.n) end
   end
   local Q = M.quests[id] or {}
@@ -3267,7 +3292,10 @@ function M.layoutQuestHud()
     local okT, t = pcall(getBorderTop); if okT and t then top = t end
   end
   local w, h = M.questHudSize.w, M.questHudSize.h
+  local _, Hwin = getMainWindowSize()
+  Hwin = tonumber(Hwin) or 600
   local margin = 10
+  h = math.min(h, Hwin - 2 * margin)
   local x = (M.cfg.questHudSide == "left") and (left + margin) or (W - right - w - margin - 16)
   local y = top + margin
   local pos = M.cfg.questHudPos
@@ -3276,12 +3304,63 @@ function M.layoutQuestHud()
     x = math.max(0, math.min(tonumber(pos[1]), W - w))
     y = math.max(0, math.min(tonumber(pos[2]), (H or 600) - h))
   end
+  -- taller than the room below its top: the cards that fit, from the first one scrolled to, with
+  -- "▲ N more" / "▼ N more" bars to click (or the mouse wheel)
+  local lay = M.questCardLayout or {}
+  local total = M.questHudSize.h
+  local avail = Hwin - margin - y
+  local scroll = total > avail
+  local first = scroll and math.max(1, math.min(M.questHudFirst or 1, #lay)) or 1
+  M.questHudFirst = first
+  local barH = math.ceil(M.questLineH or 18)
+  local top = (scroll and first > 1) and barH or 0
+  local room = avail - top - (scroll and barH or 0) - 2
+  local used, lastShown, clipped = 0, first - 1, false
+  for i, l in ipairs(lay) do
+    local c = M.questCards and M.questCards[i]
+    if c then
+      if i >= first and used < room and (used == 0 or used + math.min(l.h, 3 * barH) <= room) then
+        local hh = math.min(l.h, room - used)
+        if hh < l.h then clipped = true end
+        c:move(x + 1, y + 1 + top + used); c:resize(w - 2, hh); c:show()
+        used = used + hh; lastShown = i
+      else
+        c:hide()
+      end
+    end
+  end
+  local below = #lay - lastShown
+  local function bar(name, show, at, text, dir)
+    local b = M[name]
+    if not show then if b then b:hide() end return end
+    if not b then
+      b = Geyser.Label:new({ name = "ovenQuest" .. name, x = 0, y = 0, width = 100, height = barH })
+      b:setStyleSheet("background-color: rgba(255,255,255,12); qproperty-alignment: 'AlignCenter';")
+      M[name] = b
+    end
+    b:setClickCallback(function() M.questScroll(dir) end)
+    pcall(function() b:setWheelCallback(function(ev) M.questWheel(ev) end) end)
+    b:rawEcho(span(C.slot, text))
+    b:move(x + 1, at); b:resize(w - 2, barH); b:show()
+  end
+  bar("ScrollUp", scroll and first > 1, y + 1, string.format("▲ %d more", first - 1), -1)
+  local downN = below + (clipped and 1 or 0)
+  bar("ScrollDown", scroll and downN > 0, y + 1 + top + used, string.format("▼ %d more", math.max(1, below)), 1)
+  if scroll then h = top + used + ((downN > 0) and barH or 0) + 2 end
   M.questHud:move(x, y)
   M.questHud:resize(w, h)
-  for i, l in ipairs(M.questCardLayout or {}) do
-    local c = M.questCards and M.questCards[i]
-    if c then c:move(x + 1, y + 1 + l.off); c:resize(w - 2, l.h) end
-  end
+end
+
+-- scroll the quest panel a card at a time (the bars, or the mouse wheel over it)
+function M.questScroll(dir)
+  local n = #(M.questCardLayout or {})
+  M.questHudFirst = math.max(1, math.min((M.questHudFirst or 1) + dir, n))
+  M.layoutQuestHud()
+  M.raiseQuestHud()
+end
+function M.questWheel(ev)
+  local d = type(ev) == "table" and tonumber(ev.angleDeltaY) or 0
+  if d > 0 then M.questScroll(-1) elseif d < 0 then M.questScroll(1) end
 end
 
 -- quietly ask the game for a quest's details (nothing shown in the main window)

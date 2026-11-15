@@ -793,18 +793,21 @@ def quest_steps_are_links():
       sbo.questTarget = function(ph) return ROOMS[ph.n], 'abbot' end
       roomExists = function() return true end; getRoomName = function(id) return 'room ' .. id end
       WALKS = {}; sbo.mapWalkTo = function(id) WALKS[#WALKS+1] = id end""")
-    html_acts = o.ev("function() local h, w, a = sbo.questCardHtml('77', sbo.quests['77']) local out = {} for k, v in pairs(a) do out[#out+1] = k .. '=' .. v.n end table.sort(out) return table.concat(out, ',') , #h end")
+    html_acts = o.ev("function() local h, w, a = sbo.questCardHtml('77', sbo.quests['77']) local out = {} for k, v in pairs(a) do out[#out+1] = k .. '=' .. (v.fold and 'fold' or v.n) end table.sort(out) return table.concat(out, ',') , #h end")
     acts, nlines = html_acts()
     # line 1 the title; 2 step 1 (done); 3 step 2; 4 its "→ room 200  go ▸"
-    eq(acts, "2=1,3=2,4=2", "every step line, and the go line, is a link")
+    eq(acts, "1=fold,2=1,3=2,4=2", "the title folds; every step line, and the go line, is a link")
     o.lua("sbo.questCardActs = { ['77'] = { acts = select(3, sbo.questCardHtml('77', sbo.quests['77'])), lineH = 18, top = 4 } }")
     o.lua("sbo.questHudClick('77', 4 + 18 * 1 + 5)")   # on step 1 (finished)
     o.lua("sbo.questHudClick('77', 4 + 18 * 3 + 5)")   # on go ▸
     eq(list(o.ev("WALKS").values()), [100, 200], "a finished step still goes back to its place; go ▸ to the next")
     assert "(done)" in o.ev("SAYS[1]"), o.ev("SAYS[1]")
-    # the title line: not a step - the card's usual click (hint / refresh), no walk
-    o.lua("sbo.questRefresh = function() end; sbo.questHudClick('77', 4 + 5)")
-    eq(len(o.ev("WALKS")), 2, "the title isn't a link")
+    # the title line folds the quest (and unfolds it)
+    o.lua("sbo.drawQuestTracker = function() end; sbo.questHudClick('77', 4 + 5)")
+    eq((len(o.ev("WALKS")), o.ev("sbo.cfg.questFolded['77']")), (2, True), "folded, no walk")
+    eq(o.ev("#select(1, sbo.questCardHtml('77', sbo.quests['77']))"), 1, "folded: the title alone")
+    o.lua("sbo.questHudClick('77', 4 + 5)")
+    eq(o.ev("sbo.cfg.questFolded['77']"), None, "unfolded")
     # the questmaster: a link back to where the quest was taken
     o.lua("""sbo.mapRoom = 555; sbo.questReplyRequest = true
       sbo.rememberQuests({ list = {}, detail = { id = '78', name = 'Supplies', master = 'the Abbot', total = 1, done = 0,
@@ -813,12 +816,59 @@ def quest_steps_are_links():
     h, w, a = o.ev("function() return sbo.questCardHtml('78', sbo.quests['78']) end")()
     last = max(a.keys())
     assert a[last].master and "the Abbot" in h[last] and "go ▸" in h[last], h[last]
+    assert "&amp;" not in h[last], h[last]
     o.lua("WALKS = {}; sbo.questGoMaster('78')")
     eq(list(o.ev("WALKS").values()), [555], "back to the abbot")
     # finished: its "return to" line is a link too
     o.lua("sbo.quests['78'].complete = true; sbo.quests['78'].done = 1; sbo.quests['78'].phases[1].done = true")
     h, w, a = o.ev("function() return sbo.questCardHtml('78', sbo.quests['78']) end")()
     assert any(v.master for v in a.values()), "the complete card's link"
+    # and a turn-in button: sends quest complete 78
+    line_no = [k for k, v in a.items() if v.turnIn][0]
+    assert "turn in" in h[line_no] and "quest complete 78" in h[line_no], h[line_no]
+    o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c end
+      gmcp.char = { status = { state = 'playing' } }; sbo.lastStatusPrompt = '<281hp 696sp 457st>'""")
+    o.lua(f"sbo.questCardActs = {{ ['78'] = {{ acts = select(3, sbo.questCardHtml('78', sbo.quests['78'])), lineH = 18, top = 4 }} }}; sbo.questHudClick('78', 4 + 18 * {line_no - 1} + 5)")
+    eq(list(o.ev("SENT").values()), ["quest complete 78"], "turned in")
+    # the reward: on the card, finished or not
+    o.lua("sbo.quests['78'].rewards = { { '19', 'quest points' }, { '0', 'build points' }, { '6,640', 'experience points' } }; sbo.quests['78'].upTo = true")
+    h = list(o.lua("return (sbo.questCardHtml('78', sbo.quests['78']))").values())
+    import re as _re
+    h = [_re.sub("<[^>]+>", "", x) for x in h]
+    assert not any("&amp;" in x for x in h), h
+    rw = [x for x in h if "quest points" in x]
+    assert rw and "6,640" in rw[0] and "build points" not in rw[0] and "Up to" in rw[0], h
+
+
+@test
+def quest_panel_scrolls():
+    o = Oven()
+    o.lua("""getMainWindowSize = function() return 1600, 400 end
+      sbo.cfg.questPins = {}
+      for i = 1, 12 do
+        local id = tostring(100 + i)
+        sbo.quests[id] = { name = 'Quest ' .. i, total = 2, done = 0, phases = { { n = 1, text = 'Do a thing' }, { n = 2, text = 'Do another' } } }
+        sbo.cfg.questPins[id] = true
+      end
+      sbo.drawQuestTracker()""")
+    shown = lambda: [i for i in range(1, 13) if o.ev(f"sbo.questCards[{i}].shown")]
+    first = shown()
+    assert 0 < len(first) < 12 and first[0] == 1, first
+    assert o.ev("sbo.ScrollDown.shown") and not o.ev("sbo.ScrollUp ~= nil and sbo.ScrollUp.shown"), "only ▼ at the top of the list"
+    assert "more" in o.ev("sbo.ScrollDown.html")
+    # the wheel (or ▼) moves on a card
+    o.lua("sbo.questWheel({ angleDeltaY = -120 })")
+    eq(shown()[0], 2, "scrolled down one")
+    assert o.ev("sbo.ScrollUp.shown") and "▲ 1 more" in o.ev("sbo.ScrollUp.html")
+    o.lua("sbo.questWheel({ angleDeltaY = 120 })")
+    eq(shown()[0], 1, "and back")
+    # folding cards makes room: all fit, no bars
+    o.lua("""sbo.cfg.questFolded = {} for id in pairs(sbo.cfg.questPins) do sbo.cfg.questFolded[id] = true end sbo.drawQuestTracker()""")
+    eq(shown(), list(range(1, 13)), "folded, all twelve fit")
+    assert not o.ev("sbo.ScrollDown.shown")
+    # the number: bright, not grey
+    h = o.ev("select(1, sbo.questCardHtml('101', sbo.quests['101']))[1]")
+    assert "<b>" in h and "#101" in h, h
 
 
 @test
@@ -2526,7 +2576,7 @@ def quest_hint_paragraphs_and_folding():
     panel = " ".join(_re.sub("<[^>]+>", "", x).replace("\xa0", " ") for x in o.lua("return (sbo.questCardHtml('3519', sbo.quests['3519']))").values())
     panel = _re.sub(r"\s+", " ", panel)   # a phrase can wrap across lines
     assert "you areAdventurer" not in panel and "you are Adventurer" in panel, f"lines don't glue together: {panel}"
-    assert "Rewards" in panel and "25,000 gold pieces" in panel and "a velocity token" in panel, panel
+    assert "Up to" in panel and "25,000 gold pieces" in panel and "a velocity token" in panel, panel
     assert "0 piety" not in panel, "rewards of nothing left out"
     # and the quest info layout shows them, and the time left
     o.L.globals().LINES = o.L.table_from(lines[lines.index(next(l for l in lines if l.startswith("This quest"))):])
