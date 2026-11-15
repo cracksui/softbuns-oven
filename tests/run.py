@@ -2368,7 +2368,8 @@ def eq_stat_totals():
     assert cloak.split()[-3:] == ["5", "1", "(2)"], cloak
     assert "(badly worn)" in out and "glows" not in out, out
     assert "?" in next(l for l in lines if "a torch" in l), "never looked at"
-    assert "2 st 15 pb (from 2 of 3 items)" in out, out
+    tot = next(l for l in lines if l.startswith("total"))
+    assert "2 st 15 pb (from 2 of 3)" in tot and tot.split()[-3:] == ["7", "3", "(3)"], f"AR 7, str 3, three others: {tot}"
     assert "Armor " not in out, "no AR table at the bottom: it's in the headers"
     # the column off (sbo config eq.stats off): no table, the weight still there
     o.lua("sbo.command('config eq.stats off')")

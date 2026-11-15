@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.34.0"
+M.version = "1.35.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1113,9 +1113,11 @@ function M.eqTable(out, rows, width)
     end
   end
   local cols = {}
+  local colSum = {}
+  for _, st in pairs(stats) do for k, n in pairs(st.v) do colSum[k] = (colSum[k] or 0) + n end end
   for _, c in ipairs(M.EQ_COLS) do
     if used[c[2]] then
-      local w = ulen(c[1])
+      local w = math.max(ulen(c[1]), ulen(tostring(colSum[c[2]] or "")))
       for _, st in pairs(stats) do local n = st.v[c[2]]; if n then w = math.max(w, ulen(tostring(n))) end end
       cols[#cols + 1] = { head = c[1], key = c[2], w = w }
     end
@@ -1178,7 +1180,7 @@ function M.eqTable(out, rows, width)
       end
     end
   end
-  -- under the list: what it all weighs
+  -- under the list, in the same columns: the totals, and what it all weighs in the name's place
   local pb, weighed, worn = 0, 0, 0
   for _, r in ipairs(rows) do
     if not r.divider and not r.empty then
@@ -1190,10 +1192,27 @@ function M.eqTable(out, rows, width)
       end
     end
   end
-  if weighed > 0 then
+  local sums, otherSum, known = {}, 0, 0
+  for _, st in pairs(stats) do
+    known = known + 1
+    for k, n in pairs(st.v) do sums[k] = (sums[k] or 0) + n end
+    otherSum = otherSum + st.other
+  end
+  if weighed > 0 or known > 0 then
     out[#out + 1] = { { C.dim, string.rep("─", math.max(4, width)) } }
-    local l = { { C.slot, pad("weight", slotW) }, { C.dim, " │ " }, { C.num, string.format("%d st %d pb", math.floor(pb / 100), pb % 100) } }
-    if weighed < worn then l[#l + 1] = { C.dim, string.format(" (from %d of %d items)", weighed, worn) } end
+    local l = { { C.slot, pad("total", slotW) }, { C.dim, " │ " } }
+    local wt = weighed > 0 and string.format("%d st %d pb", math.floor(pb / 100), pb % 100) or ""
+    local note = (known < worn) and string.format(" (from %d of %d)", math.max(known, weighed), worn) or ""
+    l[#l + 1] = { C.num, wt }
+    l[#l + 1] = { C.dim, note }
+    l[#l + 1] = { C.text, string.rep(" ", math.max(1, nameW + 1 - ulen(wt) - ulen(note))) }
+    for _, c in ipairs(cols) do
+      local n = sums[c.key]
+      local txt = (n and n ~= 0) and tostring(n) or ""
+      local w = math.max(c.w, ulen(txt))
+      l[#l + 1] = { n and (c.key == "ar" and C.num or (n >= 0 and C.plus or C.minus)) or C.dim, string.rep(" ", w - ulen(txt) + 1) .. txt }
+    end
+    if otherSum > 0 then l[#l + 1] = { C.dim, string.format("  (%d)", otherSum) } end
     out[#out + 1] = l
   end
 end
