@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.17.0"
+M.version = "1.18.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2604,6 +2604,8 @@ function M.rememberQuests(q, bare)
     -- taken again (you undertake / quest request): done before doesn't count
     if M.questReplyRequest and (Q.complete or Q.turnedIn) then M.questInProgress(Q, true) end
     for k, v in pairs(d) do Q[k] = v end
+    -- taken here: the questmaster's room (the HUD's link back to them)
+    if M.questReplyRequest and M.mapRoom then Q.masterRoom = M.mapRoom end
     if d.total and d.done < d.total then M.questInProgress(Q) end
     Q.seen = now
     Q.active = true
@@ -2929,6 +2931,10 @@ local function questCardHtml(id, Q)
     local who = Q.turnIn or Q.master
     local tail = (who and (" · return to " .. who) or "") .. " · stays until you quest complete"
     add(span(C.plus, " complete") .. span(C.dim, tail), 9 + ulen(tail))
+    if who then
+      add("   " .. span(C.dim, "↩ ") .. span(C.item, who) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>", ulen(who) + 10)
+      acts[#html] = { id = id, master = true }
+    end
   elseif Q.phases then
     local first = true
     for _, ph in ipairs(Q.phases) do
@@ -2961,6 +2967,11 @@ local function questCardHtml(id, Q)
         end
         first = false
       end
+    end
+    local who = Q.turnIn or Q.master
+    if who then
+      add("   " .. span(C.dim, "↩ " .. who .. "&nbsp;&nbsp;") .. "<u>" .. span(C.dim, "go ▸") .. "</u>", ulen(who) + 10)
+      acts[#html] = { id = id, master = true }
     end
   else
     add(span(C.dim, " (click to load its steps)"), 27)
@@ -3190,6 +3201,7 @@ function M.questHudClick(id, at)
   if ca then
     local line = math.floor((at - ca.top) / ca.lineH) + 1
     local a = ca.acts[line]
+    if a and a.master then return M.questGoMaster(a.id) end
     if a then return M.questGoStep(a.id, a.n) end
   end
   local Q = M.quests[id] or {}
@@ -3424,6 +3436,20 @@ function M.questGo(id)
   end
   M.say(string.format("#%s step %d → %s · %s #%d", qid, ph.n, why or "?", getRoomName(room) or "?", room))
   M.mapWalkTo(room)
+end
+
+-- back to whoever gave the quest (or the one to return to): where you took it, else by name
+function M.questGoMaster(id)
+  local Q = M.quests[tostring(id)] or {}
+  local who = Q.turnIn or Q.master
+  local same = not Q.turnIn or not Q.master or Q.turnIn:lower() == Q.master:lower()
+  if same and Q.masterRoom and roomExists(Q.masterRoom) then
+    M.say(string.format("#%s → %s · %s #%d (where you took the quest)", id, who or "the questmaster",
+      getRoomName(Q.masterRoom) or "?", Q.masterRoom))
+    return M.mapWalkTo(Q.masterRoom)
+  end
+  if not who then return M.say("quest " .. id .. ": Oven doesn't know who gave it (quest info " .. id .. " says)") end
+  return M.mapRun(who:lower():gsub("^the ", ""))
 end
 
 -- one step of a quest, done or not: walk to where it is

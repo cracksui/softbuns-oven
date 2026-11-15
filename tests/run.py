@@ -805,6 +805,20 @@ def quest_steps_are_links():
     # the title line: not a step - the card's usual click (hint / refresh), no walk
     o.lua("sbo.questRefresh = function() end; sbo.questHudClick('77', 4 + 5)")
     eq(len(o.ev("WALKS")), 2, "the title isn't a link")
+    # the questmaster: a link back to where the quest was taken
+    o.lua("""sbo.mapRoom = 555; sbo.questReplyRequest = true
+      sbo.rememberQuests({ list = {}, detail = { id = '78', name = 'Supplies', master = 'the Abbot', total = 1, done = 0,
+        phases = { { n = 1, text = 'Find a lemon' } } } }, false)""")
+    eq(o.ev("sbo.quests['78'].masterRoom"), 555, "the room you took it in")
+    h, w, a = o.ev("function() return sbo.questCardHtml('78', sbo.quests['78']) end")()
+    last = max(a.keys())
+    assert a[last].master and "the Abbot" in h[last] and "go ▸" in h[last], h[last]
+    o.lua("WALKS = {}; sbo.questGoMaster('78')")
+    eq(list(o.ev("WALKS").values()), [555], "back to the abbot")
+    # finished: its "return to" line is a link too
+    o.lua("sbo.quests['78'].complete = true; sbo.quests['78'].done = 1; sbo.quests['78'].phases[1].done = true")
+    h, w, a = o.ev("function() return sbo.questCardHtml('78', sbo.quests['78']) end")()
+    assert any(v.master for v in a.values()), "the complete card's link"
 
 
 @test
