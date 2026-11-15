@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.26.1"
+M.version = "1.27.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11238,9 +11238,20 @@ RGB.you, RGB.youIn = bgr(255, 255, 255), bgr(230, 40, 40)
 RGB.friend, RGB.route, RGB.run = bgr(60, 230, 240), bgr(255, 230, 30), bgr(255, 160, 30)
 RGB.found, RGB.sign = bgr(255, 60, 200), bgr(250, 250, 250)
 
+-- muted: mostly grey and darker, a hint of the colour left - so highlights stand out. The maps have only a few
+-- hundred colours, so each is worked out once
+M.WORLD_MUTE = setmetatable({}, { __index = function(t, k)
+  local b, g, r = k:byte(1, 3)
+  local l = 0.3 * r + 0.59 * g + 0.11 * b
+  local function m(c) return math.floor((l * 0.75 + c * 0.25) * 0.5) end
+  local v = string.char(m(b), m(g), m(r))
+  t[k] = v
+  return v
+end })
+
 -- the part on show, outW × outH pixels around (cx, cy) at zoom (screen pixels per room): rows top first,
 -- each a string of outW × 3 bytes (b, g, r)
-function M.worldCut(img, cx, cy, zoom, outW, outH)
+function M.worldCut(img, cx, cy, zoom, outW, outH, mute)
   local rows = {}
   local data, H, row, off = img.data, img.h, img.row, img.off
   local blackRow = string.rep("\0", outW * 3)
@@ -11257,6 +11268,7 @@ function M.worldCut(img, cx, cy, zoom, outW, outH)
         seg = string.rep("\0", (a - x0) * 3) .. (b >= a and data:sub(o + a * 3 + 1, o + b * 3 + 3) or "")
         seg = seg .. string.rep("\0", srcW * 3 - #seg)
       end
+      if mute then seg = seg:gsub("...", M.WORLD_MUTE) end
       local r = zoom == 1 and seg or seg:gsub("...", function(p) return p:rep(zoom) end)
       r = r:sub(1, outW * 3)
       for _ = 1, zoom do if #rows < outH then rows[#rows + 1] = r end end
@@ -11275,7 +11287,8 @@ function M.worldCut(img, cx, cy, zoom, outW, outH)
           local x = x0 + ox * step
           if x < 0 or x >= img.w then t[#t + 1] = "\0\0\0" else t[#t + 1] = data:sub(o + x * 3 + 1, o + x * 3 + 3) end
         end
-        rows[#rows + 1] = table.concat(t)
+        local r = table.concat(t)
+        rows[#rows + 1] = mute and r:gsub("...", M.WORLD_MUTE) or r
       end
     end
     M.worldView = { x0 = x0, y0 = y0, zoom = zoom }
@@ -11350,7 +11363,9 @@ function M.worldDrawNow()
   if v.follow and here and here.map == mapName then v.cx, v.cy = here.x, here.y end
   v.cx, v.cy = v.cx or math.floor(img.w / 2), v.cy or math.floor(img.h / 2)
   v.map = mapName
-  local rows = M.worldCut(img, v.cx, v.cy, zoom, outW, outH)
+  local route = M.worldRoute()
+  local mute = (M.worldFound and #M.worldFound > 0) or #route > 0
+  local rows = M.worldCut(img, v.cx, v.cy, zoom, outW, outH, mute)
   local dot = math.max(zoom, 3)
   local function at(room)
     local p = M.worldPos(room)
@@ -11364,10 +11379,10 @@ function M.worldDrawNow()
   -- search matches
   for _, id in ipairs(M.worldFound or {}) do
     local p = at(id)
-    if p then M.worldPaint(rows, outW, p.x, p.y, dot + 2, RGB.found) end
+    if p then M.worldPaint(rows, outW, p.x, p.y, dot + 9, RGB.black); M.worldPaint(rows, outW, p.x, p.y, dot + 6, RGB.found) end
   end
   -- the route
-  for _, seg in ipairs(M.worldRoute()) do
+  for _, seg in ipairs(route) do
     if seg.walk then
       for _, r in ipairs(seg.walk) do
         local p = at(r)
@@ -11504,6 +11519,34 @@ function M.worldOnRoom()
   if M.mapMode == "world" then M.worldDraw() end
 end
 
+-- move and zoom so these rooms are all in view (the map most of them are on); one alone: close up
+function M.worldFit(ids)
+  local byMap = {}
+  for _, id in ipairs(ids or {}) do
+    local p = M.worldPos(id)
+    if p then byMap[p.map] = byMap[p.map] or {}; table.insert(byMap[p.map], p) end
+  end
+  local best, bestN
+  for name, ps in pairs(byMap) do if not bestN or #ps > bestN then best, bestN = name, #ps end end
+  if not best then return end
+  local x1, y1, x2, y2 = math.huge, math.huge, -math.huge, -math.huge
+  for _, p in ipairs(byMap[best]) do
+    x1, y1 = math.min(x1, p.x), math.min(y1, p.y); x2, y2 = math.max(x2, p.x), math.max(y2, p.y)
+  end
+  local lab = M.worldLabel
+  local okW, lw = pcall(function() return lab and lab:get_width() end)
+  local okH, lh = pcall(function() return lab and lab:get_height() end)
+  local outW, outH = (okW and tonumber(lw)) or 400, (okH and tonumber(lh)) or 300
+  local v = V()
+  local zi = 1
+  for i, z in ipairs(M.WORLD_ZOOMS) do
+    if z <= 4 and (x2 - x1 + 12) * z <= outW and (y2 - y1 + 12) * z <= outH then zi = i end
+  end
+  v.map, v.follow, v.zoomI = best, false, zi
+  v.cx, v.cy = math.floor((x1 + x2) / 2 + 0.5), math.floor((y1 + y2) / 2 + 0.5)
+  M.worldDraw()
+end
+
 -- search: the matches that have a place on the world map
 function M.worldSearch(q)
   if not q or q == "" then M.worldFound = nil; return M.worldDraw() end
@@ -11525,7 +11568,7 @@ function M.worldSearch(q)
     end
   end
   M.worldFound = found
-  M.worldDraw()
+  if #found > 0 then M.worldFit(found) else M.worldDraw() end
   return #found
 end
 end

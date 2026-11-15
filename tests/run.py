@@ -922,6 +922,15 @@ def world_map():
     eq(o.ev("sbo.worldV.follow"), False, "dragging stops following")
     o.lua("sbo.worldFollow()")
     eq(o.ev("sbo.worldV.follow"), True, "◎ follows again")
+    # a search: zoomed and moved to fit its matches; the map muted so they stand out
+    o.lua("""sbo.mapSearchRooms = function() return { 1000 + 1 * 10 + 1, 1000 + 4 * 10 + 8 } end
+      sbo.worldLabel.get_width = function() return 120 end; sbo.worldLabel.get_height = function() return 80 end
+      sbo.worldSearch('x')""")
+    eq((o.ev("sbo.worldV.cx"), o.ev("sbo.worldV.cy"), o.ev("sbo.worldV.follow")), (5, 3, False), "centred on the matches")
+    eq(o.ev("sbo.WORLD_ZOOMS[sbo.worldV.zoomI]"), 4, "as close as fits")
+    muted = o.ev("""function() local img = sbo.worldImage('Alyria') local r = sbo.worldCut(img, 7, 2, 1, 4, 4, true)
+      local b, g, rr = r[3]:byte(7, 9) return rr + g + b end""")()
+    assert muted < 200 * 0.6, f"the blue pixel, muted: {muted}"
 
 
 @test
