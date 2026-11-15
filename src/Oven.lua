@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.23.1"
+M.version = "1.24.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3092,14 +3092,16 @@ local function questCardHtml(id, Q)
   return html, widest, acts
 end
 
-local function hudCallbacks(label, id)
-  label:setClickCallback(function(ev) M.hudPress(ev, id) end)
+-- every card line is its own label: a click is on exactly the line you see (no guessing from where in
+-- the card it landed). act: what the line does when clicked (a step, go ▸, turn in, fold…), or nil
+local function hudCallbacks(label, id, act)
+  label:setClickCallback(function(ev) M.hudPress(ev, id, act) end)
   pcall(function() label:setWheelCallback(function(ev) M.questWheel(ev) end) end)
-  label:setMoveCallback(function(ev) M.hudMove(ev, label, id) end)
+  label:setMoveCallback(function(ev) M.hudMove(ev) end)
   label:setReleaseCallback(function(ev) M.hudRelease(ev) end)
-  pcall(function() label:setCursor("OpenHand") end)
-  label.ovenCursor = "OpenHand"
+  pcall(function() label:setCursor(act and "PointingHand" or "OpenHand") end)
 end
+M.hudCallbacks = hudCallbacks
 
 -- the HUD: a frame, with one card per pinned quest inside it (each its own click area)
 M.questCardHtml = questCardHtml
@@ -3114,6 +3116,7 @@ function M.drawQuestTracker()
     if M.questHud then M.questHud:hide() end
     for _, c in ipairs(M.questCards) do c:hide() end
     for _, b in ipairs({ M.ScrollUp, M.ScrollDown }) do pcall(function() b:hide() end) end
+    for _, labs in pairs(M.questLines or {}) do for _, lab in ipairs(labs) do lab:hide() end end
     return
   end
   table.sort(ids, function(a, b2) return tonumber(a) < tonumber(b2) end)
@@ -3149,20 +3152,36 @@ function M.drawQuestTracker()
       for k, a in pairs(acts or {}) do moved[k + 1] = a end
       acts = moved
     end
-    -- which line a click lands on: 4px of padding, then lines of lineH
-    M.questCardActs = M.questCardActs or {}
-    M.questCardActs[tostring(id)] = { acts = acts or {}, lineH = lineH, top = 4 }
     widest = math.max(widest, w)
     card:setStyleSheet(string.format([[
-      background-color: transparent; padding: 4px 8px; qproperty-alignment: 'AlignTop | AlignLeft';
-      border-bottom: %s;]], (i < #ids) and "1px solid rgba(255,255,255,28)" or "0px"))
-    card:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt;\">%s</div>",
-      font, size, table.concat(html, "<br>")))
+      background-color: transparent; border-bottom: %s;]], (i < #ids) and "1px solid rgba(255,255,255,28)" or "0px"))
+    card:rawEcho("")
+    -- its lines, each a label of its own
+    M.questLines = M.questLines or {}
+    M.questLines[i] = M.questLines[i] or {}
+    local labs = M.questLines[i]
+    for j, h in ipairs(html) do
+      local lab = labs[j]
+      if not lab then
+        lab = Geyser.Label:new({ name = "ovenQuestLine" .. i .. "_" .. j, x = 0, y = 0, width = 100, height = 16 })
+        lab:setStyleSheet("background-color: transparent; padding: 0px 8px; qproperty-alignment: 'AlignVCenter | AlignLeft';")
+        labs[j] = lab
+      end
+      hudCallbacks(lab, id, (acts or {})[j])
+      lab:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt;\">%s</div>",
+        font, size, h))
+    end
+    for j = #html + 1, #labs do labs[j]:hide() end
+    M.questLineCount = M.questLineCount or {}
+    M.questLineCount[i] = #html
     local h = math.ceil(#html * lineH) + 9
     layout[i] = { off = total - 1, h = h }
     total = total + h
   end
-  for i = #ids + 1, #M.questCards do M.questCards[i]:hide() end
+  for i = #ids + 1, #M.questCards do
+    M.questCards[i]:hide()
+    for _, lab in ipairs((M.questLines or {})[i] or {}) do lab:hide() end
+  end
   M.questCardLayout = layout
   -- a fixed width (wider only for a line that doesn't wrap, like a long quest name)
   M.questHudSize = { w = math.min(600, math.max(HUD_COLS, widest + 3) * cw + 24), h = total }
@@ -3179,18 +3198,19 @@ function M.raiseQuestHud()
       local c = M.questCards and M.questCards[i]
       if c then pcall(function() c:raise() end) end
     end
+    for _, labs in pairs(M.questLines or {}) do for _, lab in ipairs(labs) do pcall(function() lab:raise() end) end end
     for _, b in ipairs({ M.ScrollUp, M.ScrollDown }) do pcall(function() b:raise() end) end
   end
 end
 
 -- dragging the HUD: like Mudlet's own Adjustable.Container, measure the drag with
 -- getMousePosition() (window coordinates) from where the button went down
-function M.hudPress(ev, id)
+function M.hudPress(ev, id, act)
   if type(ev) == "table" and ev.button and ev.button ~= "LeftButton" then return end
   local ok, mx, my = pcall(getMousePosition)
   if not ok or not mx then M.questRefresh("all"); return end
   M.hudDrag = { mx = mx, my = my, x = M.questHud:get_x(), y = M.questHud:get_y(), moved = 0, started = os.time(),
-                at = type(ev) == "table" and tonumber(ev.y) or nil, id = id }
+                id = id, act = act }
   pcall(function() M.questHud:setCursor("ClosedHand") end)
   -- some setups (e.g. Linux under WSL) don't deliver mouse-move events while the button is
   -- held, so also follow the cursor with a short timer until the button is released
@@ -3204,27 +3224,9 @@ function M.hudPress(ev, id)
     M.hudMove()
   end, true)
 end
--- the line under the mouse on a card: its link, if it is one
-function M.questActAt(id, y)
-  local ca = id and y and (M.questCardActs or {})[tostring(id)]
-  if not ca then return nil end
-  return ca.acts[math.floor((y - ca.top) / ca.lineH) + 1]
-end
-
-function M.hudMove(ev, label, id)
+function M.hudMove(ev)
   local d = M.hudDrag
-  if not d then
-    -- hovering: a pointing hand over a link (a step, go ▸, turn in, the title, the hint's open/fold),
-    -- the open hand (drag) everywhere else
-    if label and type(ev) == "table" then
-      local want = M.questActAt(id, tonumber(ev.y)) and "PointingHand" or "OpenHand"
-      if label.ovenCursor ~= want then
-        label.ovenCursor = want
-        pcall(function() label:setCursor(want) end)
-      end
-    end
-    return
-  end
+  if not d then return end
   local ok, mx, my = pcall(getMousePosition)
   if not ok or not mx then return end
   local dx, dy = mx - d.mx, my - d.my
@@ -3240,7 +3242,8 @@ function M.hudRelease(ev)
   pcall(function() M.questHud:setCursor("OpenHand") end)
   if not d then return end
   if d.moved < 4 then
-    M.questHudClick(d.id, d.at) -- a click, not a drag
+    -- a click, not a drag: the line's own link, else the card's click
+    if d.act then M.questAct(d.act) else M.questHudClick(d.id) end
   else
     M.saveSettings()            -- remember where it was dropped
   end
@@ -3248,29 +3251,30 @@ end
 
 -- a click on a quest card: a finished quest is cleared; any other opens or folds its hint (when there's a
 -- hint to fold), else refreshes it; a click on the frame (between cards) refreshes them all
-function M.questHudClick(id, at)
-  if not id then return M.questRefresh("all") end
-  -- on a step (or its "go ▸"): go there - finished steps too, to backtrack
-  local ca = at and (M.questCardActs or {})[tostring(id)]
-  if ca then
-    local line = math.floor((at - ca.top) / ca.lineH) + 1
-    local a = ca.acts[line]
-    if a and a.fold then
+-- a link on a card line: fold, a step (done ones too), go ▸, back to the questmaster, turn in
+function M.questAct(a)
+  if not a then return end
+  do
+    if a.fold then
       M.cfg.questFolded = M.cfg.questFolded or {}
       local k = tostring(a.id)
       M.cfg.questFolded[k] = (not M.cfg.questFolded[k]) or nil
       M.saveSettings()
       return M.drawQuestTracker()
     end
-    if a and a.master then return M.questGoMaster(a.id) end
-    if a and (a.get or a.deliver) then return M.questGoStep(a.id, a.n, a.get and "get" or "deliver") end
-    -- (a.hint: the card's own click below - it opens or folds the hint)
-    if a and a.turnIn then
+    if a.master then return M.questGoMaster(a.id) end
+    if a.get or a.deliver then return M.questGoStep(a.id, a.n, a.get and "get" or "deliver") end
+    if a.hint then return M.questHudClick(a.id) end   -- the card's own click: opens or folds the hint
+    if a.turnIn then
       if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return M.say("not in the game - nothing sent") end
       return M.sendOwn("quest complete " .. a.id, true)
     end
-    if a then return M.questGoStep(a.id, a.n) end
+    return M.questGoStep(a.id, a.n)
   end
+end
+
+function M.questHudClick(id)
+  if not id then return M.questRefresh("all") end
   local Q = M.quests[id] or {}
   if questFinished(Q) then
     M.questPin(id, false)
@@ -3364,10 +3368,19 @@ function M.layoutQuestHud()
       if i >= first and used < room and (used == 0 or used + math.min(l.h, 3 * barH) <= room) then
         local hh = math.min(l.h, room - used)
         if hh < l.h then clipped = true end
-        c:move(x + 1, y + 1 + top + used); c:resize(w - 2, hh); c:show()
+        local cy = y + 1 + top + used
+        c:move(x + 1, cy); c:resize(w - 2, hh); c:show()
+        local lh = M.questLineH or 18
+        for j, lab in ipairs((M.questLines or {})[i] or {}) do
+          local ly = cy + 4 + (j - 1) * lh
+          if j <= ((M.questLineCount or {})[i] or 0) and ly + lh <= cy + hh + 1 then
+            lab:move(x + 1, math.floor(ly)); lab:resize(w - 2, math.ceil(lh)); lab:show()
+          else lab:hide() end
+        end
         used = used + hh; lastShown = i
       else
         c:hide()
+        for _, lab in ipairs((M.questLines or {})[i] or {}) do lab:hide() end
       end
     end
   end

@@ -798,22 +798,25 @@ def quest_steps_are_links():
     acts, nlines = html_acts()
     # line 1 the title; 2 step 1 (done); 3 step 2; 4 its "→ room 200  go ▸"
     eq(acts, "1=fold,2=1,3=2,4=2", "the title folds; every step line, and the go line, is a link")
-    o.lua("sbo.questCardActs = { ['77'] = { acts = select(3, sbo.questCardHtml('77', sbo.quests['77'])), lineH = 18, top = 4 } }")
-    o.lua("sbo.questHudClick('77', 4 + 18 * 1 + 5)")   # on step 1 (finished)
-    o.lua("sbo.questHudClick('77', 4 + 18 * 3 + 5)")   # on go ▸
+    # each line is its own label: a click lands on exactly that line
+    o.lua("""sbo.cfg.questPins = { ['77'] = true }; sbo.drawQuestTracker()
+      getMousePosition = function() return 10, 10 end
+      function CLICK(card, line) local l = WIDGETS['ovenQuestLine' .. card .. '_' .. line]; l.click({ button = 'LeftButton' }); sbo.hudRelease() end""")
+    o.lua("CLICK(1, 2)")   # step 1 (finished)
+    o.lua("CLICK(1, 4)")   # go ▸
     eq(list(o.ev("WALKS").values()), [100, 200], "a finished step still goes back to its place; go ▸ to the next")
     assert "(done)" in o.ev("SAYS[1]"), o.ev("SAYS[1]")
-    # hovering: a pointing hand over a link, the open hand elsewhere
-    o.lua("""LAB = { setCursor = function(self, c) self.cur = c end }
-      sbo.hudMove({ y = 4 + 18 * 1 + 5 }, LAB, '77')""")
-    eq(o.ev("LAB.cur"), "PointingHand", "over a step")
-    o.lua("sbo.hudMove({ y = 4 + 18 * 9 + 5 }, LAB, '77')")
-    eq(o.ev("LAB.cur"), "OpenHand", "below the links")
+    # the cursor: a pointing hand on a link line
+    o.lua("""CUR = {}; sbo.hudCallbacks({ setClickCallback = function() end, setMoveCallback = function() end, setReleaseCallback = function() end,
+        setCursor = function(self, c) CUR[#CUR+1] = c end }, '77', { id = '77', n = 1 })
+      sbo.hudCallbacks({ setClickCallback = function() end, setMoveCallback = function() end, setReleaseCallback = function() end,
+        setCursor = function(self, c) CUR[#CUR+1] = c end }, '77', nil)""")
+    eq(list(o.ev("CUR").values()), ["PointingHand", "OpenHand"], "a link line, a plain line")
     # the title line folds the quest (and unfolds it)
-    o.lua("sbo.drawQuestTracker = function() end; sbo.questHudClick('77', 4 + 5)")
+    o.lua("CLICK(1, 1); sbo.drawQuestTracker = function() end")
     eq((len(o.ev("WALKS")), o.ev("sbo.cfg.questFolded['77']")), (2, True), "folded, no walk")
     eq(o.ev("#select(1, sbo.questCardHtml('77', sbo.quests['77']))"), 1, "folded: the title alone")
-    o.lua("sbo.questHudClick('77', 4 + 5)")
+    o.lua("sbo.questAct({ id = '77', fold = true })")
     eq(o.ev("sbo.cfg.questFolded['77']"), None, "unfolded")
     # the questmaster: a link back to where the quest was taken
     o.lua("""sbo.mapRoom = 555; sbo.questReplyRequest = true
@@ -835,7 +838,7 @@ def quest_steps_are_links():
     assert "turn in" in h[line_no] and "quest complete 78" in h[line_no], h[line_no]
     o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c end
       gmcp.char = { status = { state = 'playing' } }; sbo.lastStatusPrompt = '<281hp 696sp 457st>'""")
-    o.lua(f"sbo.questCardActs = {{ ['78'] = {{ acts = select(3, sbo.questCardHtml('78', sbo.quests['78'])), lineH = 18, top = 4 }} }}; sbo.questHudClick('78', 4 + 18 * {line_no - 1} + 5)")
+    o.lua("sbo.questAct({ id = '78', turnIn = true })")
     eq(list(o.ev("SENT").values()), ["quest complete 78"], "turned in")
     # the reward: on the card, finished or not
     o.lua("sbo.quests['78'].rewards = { { '19', 'quest points' }, { '0', 'build points' }, { '6,640', 'experience points' } }; sbo.quests['78'].upTo = true")
@@ -3094,7 +3097,7 @@ def notes_off_the_bar():
       sbo.drawBar()''')
     bar = o.ev("BAR") or ""
     assert "step 1 done" not in bar and "arrived" not in bar, "nothing on the bar but the prompt"
-    assert "step 1 done" in (o.ev("CARDS.ovenQuestCard1") or ""), "the quest note is on the quest HUD"
+    assert "step 1 done" in (o.ev("CARDS.ovenQuestLine1_1") or ""), "the quest note is on the quest HUD"
     assert any("walk arrived" in m for m in o.ev("LOG").values()), "the walk note is a line in the game text"
 
 
