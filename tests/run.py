@@ -2344,22 +2344,36 @@ def eq_stat_totals():
     o = Oven()
     o.lua("""sbo.cfg.eqStats = true
       sbo.items["a silver ring"] = { ar = 2, affects = { { "strength", 2 }, { "hit-roll", 1 } }, weight = { "0", "40" } }
-      sbo.items["a cloak"] = { ar = 5, affects = { { "strength", 1 }, { "dexterity", -1 } }, weight = { "1", "75" } }""")
-    out = o.lua("""local rows = sbo.formatters.eq({ "You are using:", "<worn on finger>      a silver ring (new)..it glows blue!",
-        "<worn about body>    a cloak", "<held>               a torch" }, 90)
-      local s = {} for _, r in ipairs(rows) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end
-      return table.concat(s)""")
-    # each item's stats on its line (the aura isn't part of the name); under them only the weight
-    assert "+2 strength" in out and "glows" not in out, out
-    assert "weight" in out and "2 st 15 pb (from 2 of 3 items)" in out, out
-    assert "+3 strength" not in out and "total" not in out, f"no stat totals: {out}"
-    # the column off (sbo config eq.stats off): no stats, the weight still there
+      sbo.items["a cloak"] = { ar = 5, affects = { { "strength", 1 }, { "dexterity", -1 }, { "fire-damage", 2 } }, weight = { "1", "75" } }""")
+    def eqtext(*lines):
+        o.L.globals().EQL = o.L.table_from(list(lines))
+        return o.lua("""local raw = {} for _, l in ipairs(EQL) do raw[#raw+1] = l end
+          local rows = sbo.formatters.eq(raw, 90)
+          local s = {} for _, r in ipairs(rows) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end
+          return table.concat(s)""")
+    out = eqtext("You are using:", "<worn on finger>      a silver ring (new)..it glows blue!",
+        "<worn about body>    a cloak (badly worn)", "<held>               a torch", "",
+        "(Torso   )  20  (Reduces damage taken by 15.000%)", "(Arms    )  19  (Reduces damage taken by 14.250%)")
+    lines = out.split("\n")
+    # the headings once at the top: a column per stat the gear has
+    head = next(l for l in lines if "other" in l)
+    assert lines.index(head) < next(i for i, l in enumerate(lines) if l.startswith("── ")), out
+    assert "AR" in head and "str" in head and "kno" not in head, head
+    # the parts of the body follow the armour locations, their AR and damage cut in the header
+    assert any(l.startswith("── torso") and "AR 20" in l and "15.00%" in l for l in lines), out
+    assert any(l.startswith("── arms") and "AR 19" in l for l in lines), out
+    ring = next(l for l in lines if "silver ring" in l)
+    assert ring.split()[-3:] == ["2", "2", "(1)"], f"AR 2, str 2, one other (hit-roll): {ring}"
+    cloak = next(l for l in lines if "a cloak" in l)
+    assert cloak.split()[-3:] == ["5", "1", "(2)"], cloak
+    assert "(badly worn)" in out and "glows" not in out, out
+    assert "?" in next(l for l in lines if "a torch" in l), "never looked at"
+    assert "2 st 15 pb (from 2 of 3 items)" in out, out
+    assert "Armor " not in out, "no AR table at the bottom: it's in the headers"
+    # the column off (sbo config eq.stats off): no table, the weight still there
     o.lua("sbo.command('config eq.stats off')")
-    eq(o.ev("sbo.cfg.eqStats"), False, "turned off")
-    out = o.lua("""local rows = sbo.formatters.eq({ "You are using:", "<worn on finger>      a silver ring", "<worn about body>    a cloak" }, 90)
-      local s = {} for _, r in ipairs(rows) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end
-      return table.concat(s)""")
-    assert "+2 strength" not in out and "2 st 15 pb" in out, out
+    out = eqtext("You are using:", "<worn on finger>      a silver ring", "<worn about body>    a cloak")
+    assert not any("AR" in l and l.rstrip().endswith("other") for l in out.split("\n")) and "2 st 15 pb" in out, out
 
 
 WHERE_LIST = """Where is what? Features that Towne of Rune might contain that you may be interested in:

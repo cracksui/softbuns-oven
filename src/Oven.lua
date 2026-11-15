@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.32.0"
+M.version = "1.33.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1051,14 +1051,151 @@ function M.eqTotalGroups(cells)
 end
 
 -- eq's order: head to toe, by part of the body
+-- (the armour locations: an item's own AR counts where it's worn - M.arLocationFor - so each part's
+-- header can carry the game's AR and damage cut for it)
 M.EQ_REGIONS = {
-  { "head", { "head", "face", "neck", "amulet" } },
-  { "body", { "cloak", "wing (L)", "wing (R)", "torso", "waist", "hip" } },
-  { "arms & hands", { "arms", "wrist", "hands", "finger" } },
-  { "held", { "hand (R)", "hand (L)", "shield", "light" } },
-  { "legs", { "legs", "feet", "tail" } },
-  { "other", { "spellbook", "tome", "quiver", "aura" } },
+  { "head", { "head", "face" } },
+  { "torso", { "neck", "amulet", "cloak", "wing (L)", "wing (R)", "torso", "waist" } },
+  { "arms", { "arms", "wrist", "hands", "finger", "shield" } },
+  { "legs", { "legs", "feet" } },
+  { "tail", { "tail" } },
+  { "other", { "hand (R)", "hand (L)", "light", "hip", "spellbook", "tome", "quiver", "aura" } },
 }
+
+-- "── head ─────────────── AR 27 · −20.25% ──": where a part of the body starts, and its armour
+function M.eqDivider(out, r, width)
+  local t = "── " .. r.divider .. " "
+  local tail = {}
+  if r.ar then
+    tail = { { C.key, " AR " }, { C.num, tostring(r.ar) } }
+    if r.cut then tail[#tail + 1] = { C.dim, " · " }; tail[#tail + 1] = { C.plus, string.format("−%.2f%%", r.cut) }; tail[#tail + 1] = { C.dim, " damage" } end
+    tail[#tail + 1] = { C.dim, " ──" }
+  end
+  local fill = math.max(4, width - ulen(t) - segLen(tail))
+  local row = { { C.dim, t }, { C.dim, string.rep("─", fill) } }
+  for _, x in ipairs(tail) do row[#row + 1] = x end
+  out[#out + 1] = row
+end
+
+-- eq as a table: a column per stat your gear has (AR, the attributes, hp / sp / st), headed once at the
+-- top, and how many other stats each piece has; an item never looked at shows "?"
+M.EQ_COLS = {
+  { "AR", "ar" }, { "str", "strength" }, { "kno", "knowledge" }, { "wis", "wisdom" }, { "agi", "agility" },
+  { "vit", "vitality" }, { "per", "personality" }, { "cou", "courage" }, { "luk", "luck" }, { "san", "sanity" },
+  { "hp", "hp" }, { "sp", "spell-points" }, { "st", "stamina" },
+}
+function M.eqTable(out, rows, width)
+  local slotW = 0
+  for _, r in ipairs(rows) do if not r.divider then slotW = math.max(slotW, ulen(slotLabel(r[1]))) end end
+  slotW = math.min(slotW, 22)
+  local indent = slotW + 3
+  -- each worn item's numbers
+  local stats, used = {}, {}
+  local colKey = {}
+  for _, c in ipairs(M.EQ_COLS) do colKey[c[2]] = true end
+  for i, r in ipairs(rows) do
+    if not r.divider and not r.empty then
+      local it = M.items and M.items[(stripConds(r[2]))]
+      if it then
+        local v, other = {}, 0
+        if tonumber(it.ar) and tonumber(it.ar) ~= 0 then v.ar = tonumber(it.ar) end
+        for _, list in ipairs({ it.affects or {}, it.relicAffects or {} }) do
+          for _, af in ipairs(list) do
+            local k, n = af[1], tonumber(af[2]) or 0
+            if colKey[k] and k ~= "ar" then v[k] = (v[k] or 0) + n
+            elseif n ~= 0 then other = other + 1 end
+          end
+        end
+        for k, n in pairs(v) do if n ~= 0 then used[k] = true end end
+        stats[i] = { v = v, other = other }
+      end
+    end
+  end
+  local cols = {}
+  for _, c in ipairs(M.EQ_COLS) do
+    if used[c[2]] then
+      local w = ulen(c[1])
+      for _, st in pairs(stats) do local n = st.v[c[2]]; if n then w = math.max(w, ulen(tostring(n))) end end
+      cols[#cols + 1] = { head = c[1], key = c[2], w = w }
+    end
+  end
+  local colsW = 0
+  for _, c in ipairs(cols) do colsW = colsW + c.w + 1 end
+  local otherW = 6
+  -- the names get what's left (long ones wrap, the numbers stay on their first line)
+  local longest = 0
+  for _, r in ipairs(rows) do if not r.divider and not r.empty then longest = math.max(longest, segLen(itemSegs(r[2]))) end end
+  local nameW = math.max(16, math.min(longest, width - indent - colsW - otherW - 2))
+  -- the column headings, once
+  local hdr = { { C.text, string.rep(" ", indent + nameW + 1) } }
+  for _, c in ipairs(cols) do hdr[#hdr + 1] = { C.key, string.rep(" ", c.w - ulen(c.head) + 1) .. c.head } end
+  hdr[#hdr + 1] = { C.key, "  other" }
+  out[#out + 1] = hdr
+  local prev
+  for i, r in ipairs(rows) do
+    if r.divider then
+      M.eqDivider(out, r, width); prev = nil
+    else
+      local sl = M.slotByName[r[1]:lower()]
+      local group = sl and sl.key or r[1]
+      local label = (group == prev) and "" or slotLabel(r[1])
+      prev = group
+      local pre = { { r.empty and C.dim or C.slot, pad(label, slotW) }, { C.dim, " │ " } }
+      if r.empty then
+        local row = { unpack(pre) }
+        row[#row + 1] = r.donation and { C.dim, "empty · donation-only slot" } or { C.flag, "empty" }
+        out[#out + 1] = row
+      else
+        -- the name, wrapped to its column
+        local lines = wrapWords(r[2] and (select(1, stripConds(r[2]))) or "", indent + nameW, indent, C.item, pre, indent)
+        local first = lines[1]
+        -- conditions other than good ones ("slightly worn") after the name
+        local _, conds = stripConds(r[2])
+        local bad = {}
+        for _, c in ipairs(conds) do if not goodCond[c:lower()] and not c:match("^lit$") then bad[#bad + 1] = c end end
+        if #bad > 0 then
+          local ctext = "(" .. table.concat(bad, ", ") .. ")"
+          local last = lines[#lines]
+          if segLen(last) + 1 + ulen(ctext) <= indent + nameW then last[#last + 1] = { C.flag, " " .. ctext }
+          else lines[#lines + 1] = { { C.text, string.rep(" ", slotW) }, { C.dim, " │ " }, { C.flag, ctext } } end
+        end
+        local fw = segLen(first)
+        first[#first + 1] = { C.text, string.rep(" ", math.max(1, indent + nameW + 1 - fw)) }
+        local st = stats[i]
+        if not st then
+          first[#first + 1] = { C.dim, string.rep(" ", math.max(0, (cols[1] and cols[1].w or 1) - 1) + 1) .. "?" }
+        else
+          for _, c in ipairs(cols) do
+            local n = st.v[c.key]
+            local txt = n and tostring(n) or ""
+            first[#first + 1] = { n and (c.key == "ar" and C.num or (n >= 0 and C.plus or C.minus)) or C.dim,
+              string.rep(" ", c.w - ulen(txt) + 1) .. txt }
+          end
+          if st.other > 0 then first[#first + 1] = { C.dim, string.format("  (%d)", st.other) } end
+        end
+        for _, l in ipairs(lines) do out[#out + 1] = l end
+      end
+    end
+  end
+  -- under the list: what it all weighs
+  local pb, weighed, worn = 0, 0, 0
+  for _, r in ipairs(rows) do
+    if not r.divider and not r.empty then
+      worn = worn + 1
+      local it = M.items and M.items[(stripConds(r[2]))]
+      if it and it.weight then
+        pb = pb + (tonumber(it.weight[1]) or 0) * 100 + (tonumber(it.weight[2]) or 0)
+        weighed = weighed + 1
+      end
+    end
+  end
+  if weighed > 0 then
+    out[#out + 1] = { { C.dim, string.rep("─", math.max(4, width)) } }
+    local l = { { C.slot, pad("weight", slotW) }, { C.dim, " │ " }, { C.num, string.format("%d st %d pb", math.floor(pb / 100), pb % 100) } }
+    if weighed < worn then l[#l + 1] = { C.dim, string.format(" (from %d of %d items)", weighed, worn) } end
+    out[#out + 1] = l
+  end
+end
 
 local function renderSlots(out, slots, width, withStats)
   local slotW = 0
@@ -1078,8 +1215,7 @@ local function renderSlots(out, slots, width, withStats)
   for _, r in ipairs(slots) do
    if r.divider then
     -- "── head ─────": where one part of the body starts
-    local t = "── " .. r.divider .. " "
-    out[#out + 1] = { { C.dim, t .. string.rep("─", math.max(4, width - ulen(t))) } }
+    M.eqDivider(out, r, width)
     prev = nil
    else
     local sl = M.slotByName[r[1]:lower()]
@@ -1296,11 +1432,13 @@ function M.formatters.eq(raw, width)
     end
     if region[1] == "other" then for _, r in ipairs(unknown) do part[#part + 1] = r end end   -- slots we don't know: still shown
     if #part > 0 then
-      rows[#rows + 1] = { divider = region[1] }
+      local loc
+      for _, a in ipairs(ar) do if a[1]:lower() == region[1] then loc = a end end
+      rows[#rows + 1] = { divider = region[1], ar = loc and tonumber(loc[2]), cut = loc and tonumber(loc[3]) }
       for _, r in ipairs(part) do rows[#rows + 1] = r end
     end
   end
-  renderSlots(out, rows, width, M.cfg.eqStats)
+  if M.cfg.eqStats then M.eqTable(out, rows, width) else renderSlots(out, rows, width, false) end
 
   if #ar > 0 then
     -- damage reduction per AR point, measured from this eq (0.75% at the moment)
@@ -1334,8 +1472,10 @@ function M.formatters.eq(raw, width)
     end
     head[#head + 1] = { C.dim, cell("total") }
     arRow[#arRow + 1] = { C.num, cell(tostring(total)) }
-    blank(out)
-    if 10 + cw * (#ar + 1) <= width then
+    -- (shown in each part's header now; the table only when there were no parts to put it in)
+    if #rows > 0 then
+    elseif 10 + cw * (#ar + 1) <= width then
+      blank(out)
       out[#out + 1] = head; out[#out + 1] = arRow; out[#out + 1] = dmgRow
     else
       -- too narrow for columns: one location per line
