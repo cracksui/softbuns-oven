@@ -792,6 +792,7 @@ def quest_steps_are_links():
       ROOMS = { [1] = 100, [2] = 200 }
       sbo.questTarget = function(ph) return ROOMS[ph.n], 'abbot' end
       roomExists = function() return true end; getRoomName = function(id) return 'room ' .. id end
+      getPath = function() return false end
       WALKS = {}; sbo.mapWalkTo = function(id) WALKS[#WALKS+1] = id end""")
     html_acts = o.ev("function() local h, w, a = sbo.questCardHtml('77', sbo.quests['77']) local out = {} for k, v in pairs(a) do out[#out+1] = k .. '=' .. (v.fold and 'fold' or v.n) end table.sort(out) return table.concat(out, ',') , #h end")
     acts, nlines = html_acts()
@@ -844,6 +845,28 @@ def quest_steps_are_links():
     assert not any("&amp;" in x for x in h), h
     rw = [x for x in h if "quest points" in x]
     assert rw and "6,640" in rw[0] and "build points" not in rw[0] and "Up to" in rw[0], h
+
+
+@test
+def quest_shop_in_town_first():
+    o = Oven()
+    o.lua("""sbo.mapRoom = 1
+      AREA = { [1] = 5, [28017] = 5, [10682] = 9, [22434] = 7 }
+      roomExists = function(id) return AREA[tonumber(id)] ~= nil end
+      getRoomArea = function(id) return AREA[tonumber(id)] end
+      getPath = function(a, b) speedWalkDir = {}; for i = 1, (AREA[tonumber(b)] == 5 and 4 or 40) do speedWalkDir[i] = 'n' end return true end
+      sbo.dbx("INSERT INTO shops (room, name) VALUES (10682, 'local butcher shop')")
+      sbo.dbx("INSERT INTO shops (room, name) VALUES (28017, 'local butcher shop')")
+      sbo.dbx("INSERT INTO shops (room, name) VALUES (22434, 'the Wandering Sidhe Bar')")
+      sbo.dbx("INSERT INTO shop_items (room, item, cost) VALUES (10682, 'A T-bone steak', 125)")
+      sbo.dbx("INSERT INTO shop_items (room, item, cost) VALUES (22434, 'A T-bone steak', 250)")""")
+    room, why = o.ev("function() return sbo.questTarget({ n = 1, text = \"Locate and deliver a T-bone steak to Taron, Lord Vendredi's assistant\" }, nil) end")()
+    eq(room, 28017, "the butcher's in town: same name as one that sells it")
+    assert "likely sells" in why, why
+    # no shop of that kind in town: the nearest that's listed
+    o.lua("AREA[1] = 9")
+    room, why = o.ev("function() return sbo.shopSelling('a T-bone steak') end")()
+    eq(room, 10682, "in your area, and listed")
 
 
 @test

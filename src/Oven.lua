@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.21.1"
+M.version = "1.22.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3432,25 +3432,50 @@ local function stepItem(text)
 end
 local function bare(n) return (trim(n or ""):lower():gsub("^an? ", ""):gsub("^the ", "")) end
 
--- a shop Oven has listed whose stock is exactly that item (not "white wine" for "Sepharian white wine"):
--- the nearest one
-function M.shopSelling(item)
+-- a shop Oven has listed whose stock is exactly that item (not "white wine" for "Sepharian white wine"),
+-- or one of the same name whose stock it hasn't listed yet (shops of a kind - "local butcher shop" -
+-- sell the same things): one in your area (or the step's) first, a listed one before a likely one,
+-- then the nearest
+function M.shopSelling(item, wantArea)
   local want = bare(item)
   if want == "" then return nil end
-  local best, steps, label
+  local here = M.mapRoom
+  local hereArea = wantArea or (here and getRoomArea(here))
+  local cands, sellerNames = {}, {}
+  local function steps(id)
+    if here and id == here then return 0 end
+    if here and getPath(here, id) then return #speedWalkDir end
+    return 9999
+  end
   for _, r in ipairs(M.dbRows([[SELECT i.room, i.item, i.cost, ifnull(i.currency, 'gold') AS currency, s.name FROM shop_items i
       LEFT JOIN shops s ON s.room = i.room WHERE instr(lower(i.item), %s) > 0]], want)) do
     local id = tonumber(r.room)
     if id and bare(r.item) == want and roomExists(id) then
-      local n = 9999
-      if M.mapRoom and id == M.mapRoom then n = 0 elseif M.mapRoom and getPath(M.mapRoom, id) then n = #speedWalkDir end
-      if not steps or n < steps then
-        best, steps = id, n
-        label = string.format("%s sells %s (%s %s)", r.name or "a shop", r.item, tostring(r.cost), r.currency)
+      if r.name then sellerNames[r.name] = r.item end
+      cands[#cands + 1] = { id = id, listed = true,
+        label = string.format("%s sells %s (%s %s)", r.name or "a shop", r.item, tostring(r.cost), r.currency) }
+    end
+  end
+  for name, it in pairs(sellerNames) do
+    for _, r in ipairs(M.dbRows([[SELECT s.room FROM shops s WHERE s.name = %s
+        AND NOT EXISTS (SELECT 1 FROM shop_items i WHERE i.room = s.room)]], name)) do
+      local id = tonumber(r.room)
+      if id and roomExists(id) then
+        cands[#cands + 1] = { id = id, listed = false,
+          label = string.format("%s - likely sells %s (others of that name do; its list isn't known yet)", name, it) }
       end
     end
   end
-  return best, label
+  local best, bestKey
+  for _, c in ipairs(cands) do
+    local away = (hereArea and getRoomArea(c.id) ~= hereArea) and 1 or 0
+    local key = { away, c.listed and 0 or 1, steps(c.id) }
+    local better = not bestKey or key[1] < bestKey[1] or (key[1] == bestKey[1] and (key[2] < bestKey[2]
+      or (key[2] == bestKey[2] and key[3] < bestKey[3])))
+    if better then best, bestKey = c, key end
+  end
+  if not best then return nil end
+  return best.id, best.label
 end
 
 function M.questTarget(ph, qid)
@@ -3458,7 +3483,14 @@ function M.questTarget(ph, qid)
   -- an item to get that a shop you know sells (exactly that item): that shop, before anything else
   local item = stepItem(ph.text)
   if item then
-    local okS, room, label = pcall(M.shopSelling, item)
+    local stepArea
+    if ph.area then
+      -- getAreaTable: area name → its number
+      for areaName, areaId in pairs(getAreaTable and getAreaTable() or {}) do
+        if tostring(areaName):lower():find(ph.area:lower(), 1, true) then stepArea = areaId; break end
+      end
+    end
+    local okS, room, label = pcall(M.shopSelling, item, stepArea)
     if okS and room then return room, label end
   end
   -- the game's quest log names the room for many steps
@@ -3537,7 +3569,7 @@ function M.questGo(id)
       qid, ph.n, ph.text, #names > 0 and ("'" .. table.concat(names, "' / '") .. "'") or "it"))
   end
   M.say(string.format("#%s step %d → %s · %s #%d", qid, ph.n, why or "?", getRoomName(room) or "?", room))
-  M.mapWalkTo(room)
+  M.goTo(room)
 end
 
 -- back to whoever gave the quest (or the one to return to): where you took it, else by name
@@ -3548,7 +3580,7 @@ function M.questGoMaster(id)
   if same and Q.masterRoom and roomExists(Q.masterRoom) then
     M.say(string.format("#%s → %s · %s #%d (where you took the quest)", id, who or "the questmaster",
       getRoomName(Q.masterRoom) or "?", Q.masterRoom))
-    return M.mapWalkTo(Q.masterRoom)
+    return M.goTo(Q.masterRoom)
   end
   if not who then return M.say("quest " .. id .. ": Oven doesn't know who gave it (quest info " .. id .. " says)") end
   return M.mapRun(who:lower():gsub("^the ", ""))
@@ -3567,7 +3599,7 @@ function M.questGoStep(id, n)
       id, ph.n, ph.text, #names > 0 and ("'" .. table.concat(names, "' / '") .. "'") or "it"))
   end
   M.say(string.format("#%s step %d%s → %s · %s #%d", id, ph.n, ph.done and " (done)" or "", why or "?", getRoomName(room) or "?", room))
-  M.mapWalkTo(room)
+  M.goTo(room)
 end
 
 function M.questRefresh(id)
