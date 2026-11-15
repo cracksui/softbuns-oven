@@ -2358,7 +2358,7 @@ def eq_stat_totals():
     # the headings once at the top: a column per stat the gear has
     head = next(l for l in lines if "other" in l)
     assert lines.index(head) < next(i for i, l in enumerate(lines) if l.startswith("── ")), out
-    assert "AR" in head and "str" in head and "kno" not in head, head
+    assert "AR" in head and " sr" in head and " kn" not in head, head
     # the parts of the body follow the armour locations, their AR and damage cut in the header
     assert any(l.startswith("── torso") and "AR 20" in l and "15.00%" in l for l in lines), out
     assert any(l.startswith("── arms") and "AR 19" in l for l in lines), out

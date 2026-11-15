@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.33.0"
+M.version = "1.33.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1059,7 +1059,7 @@ M.EQ_REGIONS = {
   { "arms", { "arms", "wrist", "hands", "finger", "shield" } },
   { "legs", { "legs", "feet" } },
   { "tail", { "tail" } },
-  { "other", { "hand (R)", "hand (L)", "light", "hip", "spellbook", "tome", "quiver", "aura" } },
+  { "held", { "hand (R)", "hand (L)", "light", "hip", "spellbook", "tome", "quiver", "aura" } },
 }
 
 -- "── head ─────────────── AR 27 · −20.25% ──": where a part of the body starts, and its armour
@@ -1080,8 +1080,9 @@ end
 -- eq as a table: a column per stat your gear has (AR, the attributes, hp / sp / st), headed once at the
 -- top, and how many other stats each piece has; an item never looked at shows "?"
 M.EQ_COLS = {
-  { "AR", "ar" }, { "str", "strength" }, { "kno", "knowledge" }, { "wis", "wisdom" }, { "agi", "agility" },
-  { "vit", "vitality" }, { "per", "personality" }, { "cou", "courage" }, { "luk", "luck" }, { "san", "sanity" },
+  -- two letters each (strength is sr: st is stamina, as the prompt has it)
+  { "AR", "ar" }, { "sr", "strength" }, { "kn", "knowledge" }, { "wi", "wisdom" }, { "ag", "agility" },
+  { "vi", "vitality" }, { "pe", "personality" }, { "co", "courage" }, { "lu", "luck" }, { "sa", "sanity" },
   { "hp", "hp" }, { "sp", "spell-points" }, { "st", "stamina" },
 }
 function M.eqTable(out, rows, width)
@@ -1430,7 +1431,7 @@ function M.formatters.eq(raw, width)
         end
       end
     end
-    if region[1] == "other" then for _, r in ipairs(unknown) do part[#part + 1] = r end end   -- slots we don't know: still shown
+    if region[1] == "held" then for _, r in ipairs(unknown) do part[#part + 1] = r end end   -- slots we don't know: still shown
     if #part > 0 then
       local loc
       for _, a in ipairs(ar) do if a[1]:lower() == region[1] then loc = a end end
