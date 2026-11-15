@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.25.1"
+M.version = "1.26.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -196,6 +196,8 @@ local SCHEMA = {
   "CREATE INDEX IF NOT EXISTS room_mobs_key ON room_mobs (key)",
   -- players' names (clan-tagged in a room, on a channel, in who): never saved as mobs
   "CREATE TABLE IF NOT EXISTS players (name TEXT PRIMARY KEY, last INTEGER)",
+  -- where a room is on the world map (GMCP's coord when you were there): the world map places town rooms by it
+  "CREATE TABLE IF NOT EXISTS room_xy (room INTEGER PRIMARY KEY, map TEXT, x INTEGER, y INTEGER)",
 }
 
 local SCHEMA_ADD = {
@@ -10290,6 +10292,7 @@ end
 -- what a friend's Oven said: walk, or show
 function M.friendWhere(n, walk)
   M.friendAsk(n, function(room, why)
+    if room then M.friendSeen = M.friendSeen or {}; M.friendSeen[n:lower()] = { room = tonumber(room), at = os.time() }; if M.worldDraw then M.worldDraw() end end
     local who = cap1(friendKey(n))
     if not room then return M.say(who .. ": " .. why) end
     if not roomExists(room) then return M.say(who .. " is in room #" .. room .. ", which isn't on your map") end
@@ -10880,6 +10883,7 @@ function M.onRoom()
   local id = M.mapRoomId()
   if not id then return end
   M.mapRoom = id
+  pcall(M.worldOnRoom)
   if roomExists(id) then M.centerOn(id) end
   pcall(M.drawMapHeader)
   -- walking: arrived where the next step should take us?
@@ -10911,6 +10915,7 @@ end
 function M.walkStep()
   local w = M.walk
   if not w then return end
+  if M.mapMode == "world" and M.worldDraw then M.worldDraw() end
   w.from = M.mapRoom
   local mine, step = w, w.step
   M.sendOwn(w.dirs[w.step], false)
@@ -10945,7 +10950,7 @@ local mapButtonStyle = [[
 
 -- bump when the panel's contents change, so a panel built by an older version (in the same
 -- Mudlet session) is rebuilt after an update instead of keeping its old layout
-local MAP_PANEL_LAYOUT = 4
+local MAP_PANEL_LAYOUT = 5
 
 function M.createMapPanel()
   if M.mapPanel and M.mapPanelLayout == MAP_PANEL_LAYOUT then return end
@@ -10966,8 +10971,8 @@ function M.createMapPanel()
   local header = Geyser.HBox:new({ name = "ovenMapHeader", height = 24, v_policy = Geyser.Fixed }, box)
   M.mapRoomLabel = Geyser.Label:new({ name = "ovenMapRoom" }, header)
   M.mapRoomLabel:setStyleSheet(mapHeaderStyle)
-  local function button(name, text, tip, fn)
-    local b = Geyser.Label:new({ name = name, width = 28, h_policy = Geyser.Fixed }, header)
+  local function button(name, text, tip, fn, width)
+    local b = Geyser.Label:new({ name = name, width = width or 28, h_policy = Geyser.Fixed }, header)
     b:setStyleSheet(mapButtonStyle)
     b:echo(text)
     pcall(function() b:setToolTip(tip) end)
@@ -10975,10 +10980,26 @@ function M.createMapPanel()
     b:setClickCallback(function() fn() end)
     return b
   end
-  button("ovenMapZoomOut", "−", "zoom out", function() M.mapZoom(1.25) end)
-  button("ovenMapZoomIn", "+", "zoom in", function() M.mapZoom(0.8) end)
-  button("ovenMapCentre", "◎", "centre on you", function() M.centerOn(M.mapRoom) end)
-  M.mapWidget = Geyser.Mapper:new({ name = "ovenMapper", v_policy = Geyser.Dynamic }, box)
+  -- world / local: the game's world map, or Mudlet's map of rooms
+  M.mapModeButton = button("ovenMapMode", "world", "switch between the world map and the room map", function()
+    M.mapSetMode(M.mapMode == "world" and "local" or "world")
+  end, 52)
+  button("ovenMapZoomOut", "−", "zoom out", function() if M.mapMode == "world" then M.worldZoom(-1) else M.mapZoom(1.25) end end)
+  button("ovenMapZoomIn", "+", "zoom in", function() if M.mapMode == "world" then M.worldZoom(1) else M.mapZoom(0.8) end end)
+  button("ovenMapCentre", "◎", "centre on you", function() if M.mapMode == "world" then M.worldFollow() else M.centerOn(M.mapRoom) end end)
+  -- the room map and the world map share one place; one is shown
+  local stack = Geyser.Container:new({ name = "ovenMapStack", v_policy = Geyser.Dynamic }, box)
+  M.mapWidget = Geyser.Mapper:new({ name = "ovenMapper", x = 0, y = 0, width = "100%", height = "100%" }, stack)
+  M.worldLabel = Geyser.Label:new({ name = "ovenWorldMap", x = 0, y = 0, width = "100%", height = "100%" }, stack)
+  M.worldLabel:setClickCallback(function(ev) M.worldPress(ev) end)
+  M.worldLabel:setReleaseCallback(function(ev) M.worldRelease(ev) end)
+  M.worldLabel:setMoveCallback(function() M.worldMove() end)
+  pcall(function() M.worldLabel:setWheelCallback(function(ev) M.worldWheel(ev) end) end)
+  pcall(function() M.worldLabel:setCursor("OpenHand") end)
+  pcall(function() M.worldLabel:setToolTip("drag to move · wheel or −/+ to zoom · ◎ follows you · click a spot for its place and terrain") end)
+  local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info
+  local startWild = type(info) == "table" and tostring(info.wilds) == "true"
+  M.mapSetMode(M.cfg.mapWorldAuto ~= false and (startWild and "world" or "local") or (M.cfg.mapMode or "local"), true)
   if M.cfg.mapZoom then pcall(setMapZoom, M.cfg.mapZoom) end
   -- search, along the bottom: matches in the area on show light up, the list goes to the Inspector
   local footer = Geyser.HBox:new({ name = "ovenMapFooter", height = 24, v_policy = Geyser.Fixed }, box)
@@ -11002,6 +11023,511 @@ function M.createMapPanel()
   pcall(function() clear:setCursor("PointingHand") end)
   clear:setClickCallback(function() M.mapSearch("") end)
   M.mapSearchDraw()
+end
+
+---------------------------------------------------------------------------
+-- The world map: the game's own bitmaps of the wilds (MateriaMagicaLLC/images on GitHub), one pixel a
+-- room, in the Map panel (its Local / World switch). A wilderness room's number is its pixel
+-- (room = offset + y × width + x: 1,060,834 on Alyria - every wild room Oven had seen fits); rooms in
+-- towns are placed where GMCP said they were when you were there (Oven keeps it), or where any room of
+-- their area was. Oven cuts out the part on show, enlarges it with sharp pixels, and paints on it: you,
+-- friends Oven has asked about, the walk or run you're on (or the one it's asking you about), search
+-- matches and the signposts you've read. Drag to pan, the wheel or −/+ to zoom, ◎ to follow you again.
+---------------------------------------------------------------------------
+do
+local BASE = "https://raw.githubusercontent.com/MateriaMagicaLLC/images/refs/heads/master/"
+-- GMCP's map name (room.info coord.name) → the game's bitmap
+M.WORLD_FILES = {
+  { match = "alyria", file = "alyria.bmp", offset = 1060834 },
+  { match = "underworld", file = "underworld.bmp" },
+  { match = "faerie", file = "faerieplane.bmp" },
+  { match = "sigil", file = "sigilug.bmp" },
+  { match = "lasler", file = "laslerwild.bmp" },
+  { match = "verity", file = "verity.bmp" },
+  { match = "ien", file = "ien.bmp" },
+}
+M.WORLD_ZOOMS = { 0.25, 0.5, 1, 2, 3, 4, 6, 8 }
+
+local function W() M.cfg.world = M.cfg.world or { offsets = {}, terrain = {} } return M.cfg.world end
+local function le(s, i, n) local v = 0 for k = n - 1, 0, -1 do v = v * 256 + s:byte(i + k) end return v end
+local function dir() return getMudletHomeDir() .. "/oven_maps" end
+
+function M.worldFileFor(mapName)
+  local n = tostring(mapName or ""):lower()
+  for _, e in ipairs(M.WORLD_FILES) do if n:find(e.match, 1, true) then return e end end
+end
+
+-- a bitmap, read once: { data, w, h, row (bytes a row), name }
+M.worldImages = M.worldImages or {}
+function M.worldImage(mapName)
+  local e = M.worldFileFor(mapName)
+  if not e then return nil, "no world map for " .. tostring(mapName) end
+  local img = M.worldImages[e.file]
+  if img then return img end
+  local path = dir() .. "/" .. e.file
+  local f = io.open(path, "rb")
+  if not f then M.worldFetch(e); return nil, "downloading the " .. tostring(mapName) .. " map…" end
+  local data = f:read("*a"); f:close()
+  if #data < 54 or data:sub(1, 2) ~= "BM" then os.remove(path); return nil, "the map file was damaged - fetching it again" end
+  local w, h, bpp = le(data, 19, 4), le(data, 23, 4), le(data, 29, 2)
+  if bpp ~= 24 then return nil, "the map isn't a 24-bit bitmap" end
+  img = { data = data, w = w, h = h, row = math.ceil(w * 3 / 4) * 4, off = le(data, 11, 4), name = mapName }
+  M.worldImages[e.file] = img
+  return img
+end
+
+-- fetched from the game's GitHub when first needed (only while you look at the world map)
+function M.worldFetch(e)
+  M.worldFetching = M.worldFetching or {}
+  if M.worldFetching[e.file] then return end
+  M.worldFetching[e.file] = true
+  pcall(lfs and lfs.mkdir or function() end, dir())
+  if not M.worldDlHandler then
+    M.worldDlHandler = registerAnonymousEventHandler("sysDownloadDone", function(_, file)
+      for name in pairs(M.worldFetching or {}) do
+        if file == dir() .. "/" .. name then M.worldFetching[name] = nil; M.worldDraw() end
+      end
+    end)
+    registerAnonymousEventHandler("sysDownloadError", function(_, err, file)
+      for name in pairs(M.worldFetching or {}) do
+        if file == dir() .. "/" .. name then M.worldFetching[name] = nil; M.say("couldn't download the world map: " .. tostring(err)) end
+      end
+    end)
+  end
+  downloadFile(dir() .. "/" .. e.file, BASE .. e.file)
+end
+
+-- the room you're in: its map and pixel, and what the map learns from it (the wilds' numbering, the
+-- colour each terrain is, where town rooms are)
+function M.worldNote(info)
+  if type(info) ~= "table" or type(info.coord) ~= "table" then return end
+  local num, x, y = tonumber(info.num), tonumber(info.coord.x), tonumber(info.coord.y)
+  local name = info.coord.name
+  if not (num and x and y and name) then return end
+  local w = W()
+  local wild = tostring(info.wilds) == "true"
+  M.worldHere = { map = name, x = x, y = y, room = num, wild = wild }
+  if wild then
+    local img = M.worldImages[(M.worldFileFor(name) or {}).file or ""]
+    local width = img and img.w or 2300
+    local off = num - (y * width + x)
+    if w.offsets[name] ~= off then w.offsets[name] = off; M.saveSettings() end
+    -- the colour of this terrain
+    if img and info.terrain then
+      local o = img.off + (img.h - 1 - y) * img.row + x * 3 + 1
+      local b, g, r = img.data:byte(o, o + 2)
+      if r then
+        local key = string.format("%02x%02x%02x", r, g, b)
+        if w.terrain[key] ~= info.terrain then w.terrain[key] = info.terrain end
+      end
+    end
+  else
+    M.worldRoomXY = M.worldRoomXY or {}
+    local k = M.worldRoomXY[num]
+    if not k or k.x ~= x or k.y ~= y then
+      M.worldRoomXY[num] = { map = name, x = x, y = y }
+      M.dbx("INSERT OR REPLACE INTO room_xy (room, map, x, y) VALUES (%s, %s, %s, %s)", num, name, x, y)
+    end
+  end
+end
+
+-- a room's place on a world map: { map, x, y } or nil
+function M.worldPos(room)
+  room = tonumber(room)
+  if not room then return nil end
+  M.worldRoomXY = M.worldRoomXY or {}
+  local k = M.worldRoomXY[room]
+  if k == nil then
+    local r = M.dbRow("SELECT map, x, y FROM room_xy WHERE room = %s", room)
+    k = r and { map = r.map, x = tonumber(r.x), y = tonumber(r.y) } or false
+    M.worldRoomXY[room] = k
+  end
+  if k then return k end
+  -- the wilds: the room number is the pixel
+  local w = W()
+  local maps = {}
+  local cur = M.worldHere and M.worldHere.map
+  if cur then maps[#maps + 1] = cur end
+  for name in pairs(w.offsets) do if name ~= cur then maps[#maps + 1] = name end end
+  if not w.offsets.Alyria and cur ~= "Alyria" then maps[#maps + 1] = "Alyria" end
+  for _, name in ipairs(maps) do
+    local e = M.worldFileFor(name)
+    local off = w.offsets[name] or (e and e.offset)
+    local img = e and M.worldImages[e.file]
+    local width, height = img and img.w or 2300, img and img.h or 1500
+    if off then
+      local v = room - off
+      if v >= 0 and v < width * height then return { map = name, x = v % width, y = math.floor(v / width) } end
+    end
+  end
+  -- a town room not visited: where any room of its area is
+  local a = roomExists(room) and getRoomArea(room)
+  if a then
+    M.worldAreaXY = M.worldAreaXY or {}
+    if M.worldAreaXY[a] == nil then
+      M.worldAreaXY[a] = false
+      for _, r in ipairs(M.dbRows("SELECT room, map, x, y FROM room_xy LIMIT 5000")) do
+        if roomExists(tonumber(r.room)) and getRoomArea(tonumber(r.room)) == a then
+          M.worldAreaXY[a] = { map = r.map, x = tonumber(r.x), y = tonumber(r.y), area = true }
+          break
+        end
+      end
+    end
+    return M.worldAreaXY[a] or nil
+  end
+end
+
+-- the walk you're on (or the one Oven's asking about) as world-map pieces: { walk = {rooms} } / { run = {from, to} }
+function M.worldRoute()
+  local segs = {}
+  local A = M.goAsk
+  if A and os.time() - A.at <= 60 then return A.route or {} end
+  local w = M.walk
+  if w and w.path then
+    local rest = {}
+    for i = w.step or 1, #w.path do rest[#rest + 1] = w.path[i] end
+    segs[#segs + 1] = { walk = rest }
+    if w.thenRun then
+      local e = M.runData().ends[w.thenRun]
+      if e then segs[#segs + 1] = { run = { w.path[#w.path], e } } end
+      if e and w.target and getPath(e, w.target) then
+        local after = {}
+        for i, r in ipairs(speedWalkPath) do after[i] = tonumber(r) end
+        segs[#segs + 1] = { walk = after }
+      end
+    end
+  end
+  local R = M.running
+  if R and R.name then
+    local e = M.runData().ends[R.name]
+    if e then segs[#segs + 1] = { run = { M.mapRoom, e } } end
+  end
+  return segs
+end
+
+-- the plan for here → target, as world-map pieces (the leave-town question shows it)
+function M.worldPlanRoute(here, target)
+  if not getPath(here, target) then return {} end
+  local dirs, path = {}, {}
+  for i, d in ipairs(speedWalkDir) do dirs[i] = d; path[i] = tonumber(speedWalkPath[i]) end
+  local okP, plan = pcall(M.runPlan, here, target, dirs, path)
+  if not (okP and plan) then return { { walk = path } } end
+  local segs = {}
+  if plan.k > 0 and getPath(here, plan.start) then
+    local p = {}
+    for i, r in ipairs(speedWalkPath) do p[i] = tonumber(r) end
+    segs[#segs + 1] = { walk = p }
+  end
+  local e = M.runData().ends[plan.name]
+  if e then
+    segs[#segs + 1] = { run = { plan.start, e } }
+    if getPath(e, target) then
+      local p = {}
+      for i, r in ipairs(speedWalkPath) do p[i] = tonumber(r) end
+      segs[#segs + 1] = { walk = p }
+    end
+  end
+  return segs
+end
+
+---------------------------------------------------------------- drawing
+-- (bitmap bytes are blue, green, red)
+local function bgr(r, g, b) return string.char(b, g, r) end
+local RGB = { black = "\0\0\0" }
+RGB.you, RGB.youIn = bgr(255, 255, 255), bgr(230, 40, 40)
+RGB.friend, RGB.route, RGB.run = bgr(60, 230, 240), bgr(255, 230, 30), bgr(255, 160, 30)
+RGB.found, RGB.sign = bgr(255, 60, 200), bgr(250, 250, 250)
+
+-- the part on show, outW × outH pixels around (cx, cy) at zoom (screen pixels per room): rows top first,
+-- each a string of outW × 3 bytes (b, g, r)
+function M.worldCut(img, cx, cy, zoom, outW, outH)
+  local rows = {}
+  local data, H, row, off = img.data, img.h, img.row, img.off
+  local blackRow = string.rep("\0", outW * 3)
+  if zoom >= 1 then
+    local srcW, srcH = math.ceil(outW / zoom) + 1, math.ceil(outH / zoom) + 1
+    local x0, y0 = cx - math.floor(srcW / 2), cy - math.floor(srcH / 2)
+    for sy = 0, srcH - 1 do
+      local y = y0 + sy
+      local seg
+      if y < 0 or y >= H then seg = string.rep("\0", srcW * 3)
+      else
+        local a, b = math.max(0, x0), math.min(img.w - 1, x0 + srcW - 1)
+        local o = off + (H - 1 - y) * row
+        seg = string.rep("\0", (a - x0) * 3) .. (b >= a and data:sub(o + a * 3 + 1, o + b * 3 + 3) or "")
+        seg = seg .. string.rep("\0", srcW * 3 - #seg)
+      end
+      local r = zoom == 1 and seg or seg:gsub("...", function(p) return p:rep(zoom) end)
+      r = r:sub(1, outW * 3)
+      for _ = 1, zoom do if #rows < outH then rows[#rows + 1] = r end end
+    end
+    M.worldView = { x0 = x0, y0 = y0, zoom = zoom }
+  else
+    local step = math.floor(1 / zoom + 0.5)
+    local x0, y0 = cx - math.floor(outW * step / 2), cy - math.floor(outH * step / 2)
+    for oy = 0, outH - 1 do
+      local y = y0 + oy * step
+      if y < 0 or y >= H then rows[#rows + 1] = blackRow
+      else
+        local o = off + (H - 1 - y) * row
+        local t = {}
+        for ox = 0, outW - 1 do
+          local x = x0 + ox * step
+          if x < 0 or x >= img.w then t[#t + 1] = "\0\0\0" else t[#t + 1] = data:sub(o + x * 3 + 1, o + x * 3 + 3) end
+        end
+        rows[#rows + 1] = table.concat(t)
+      end
+    end
+    M.worldView = { x0 = x0, y0 = y0, zoom = zoom }
+  end
+  return rows
+end
+
+-- a square of colour on the cut-out (centred on a map pixel)
+function M.worldPaint(rows, outW, sx, sy, size, col)
+  local v = M.worldView
+  local px = (sx - v.x0) * v.zoom + v.zoom / 2
+  local py = (sy - v.y0) * v.zoom + v.zoom / 2
+  local half = size / 2
+  local x1, x2 = math.max(0, math.floor(px - half)), math.min(outW - 1, math.floor(px + half - 0.001))
+  local y1, y2 = math.max(0, math.floor(py - half)), math.min(#rows - 1, math.floor(py + half - 0.001))
+  if x2 < x1 or y2 < y1 then return end
+  local fill = col:rep(x2 - x1 + 1)
+  for y = y1, y2 do
+    local r = rows[y + 1]
+    rows[y + 1] = r:sub(1, x1 * 3) .. fill .. r:sub((x2 + 1) * 3 + 1)
+  end
+end
+
+-- a straight line between two map pixels (a run: the game picks the roads, this is just from → to)
+local function line(x1, y1, x2, y2, fn)
+  local dx, dy = math.abs(x2 - x1), math.abs(y2 - y1)
+  local n = math.max(dx, dy)
+  for i = 0, n do
+    fn(math.floor(x1 + (x2 - x1) * i / math.max(1, n) + 0.5), math.floor(y1 + (y2 - y1) * i / math.max(1, n) + 0.5))
+  end
+end
+
+-- a 24-bit bitmap from rows (top first)
+function M.worldBmp(rows, outW)
+  local pad = (4 - (outW * 3) % 4) % 4
+  local h = #rows
+  local size = 54 + (outW * 3 + pad) * h
+  local function u32(n) return string.char(n % 256, math.floor(n / 256) % 256, math.floor(n / 65536) % 256, math.floor(n / 16777216) % 256) end
+  local head = "BM" .. u32(size) .. u32(0) .. u32(54) .. u32(40) .. u32(outW) .. u32(h) .. "\1\0\24\0" .. u32(0)
+    .. u32(size - 54) .. u32(2835) .. u32(2835) .. u32(0) .. u32(0)
+  local body = {}
+  local padding = string.rep("\0", pad)
+  for i = h, 1, -1 do body[#body + 1] = rows[i] .. padding end
+  return head .. table.concat(body)
+end
+
+-- the view: which map, centre, zoom, following you or not
+local function V()
+  M.worldV = M.worldV or { zoomI = 5, follow = true }
+  return M.worldV
+end
+
+-- draw it (a moment later: several changes at once draw once)
+function M.worldDraw()
+  if M.worldDrawTimer then return end
+  M.worldDrawTimer = tempTimer(0.05, function() M.worldDrawTimer = nil; pcall(M.worldDrawNow) end)
+end
+
+function M.worldDrawNow()
+  local lab = M.worldLabel
+  if not lab or M.mapMode ~= "world" then return end
+  local v = V()
+  local here = M.worldHere
+  local mapName = v.map or (here and here.map) or "Alyria"
+  local img, why = M.worldImage(mapName)
+  if not img then lab:setStyleSheet("background-color: rgba(10,10,14,255); color: #808080; qproperty-alignment: 'AlignCenter';"); lab:echo(why or "") return end
+  local okW, lw = pcall(function() return lab:get_width() end)
+  local okH, lh = pcall(function() return lab:get_height() end)
+  local outW = math.max(40, math.floor(((okW and tonumber(lw)) or 400) / 4) * 4)
+  local outH = math.max(40, math.floor((okH and tonumber(lh)) or 300))
+  local zoom = M.WORLD_ZOOMS[v.zoomI] or 4
+  if v.follow and here and here.map == mapName then v.cx, v.cy = here.x, here.y end
+  v.cx, v.cy = v.cx or math.floor(img.w / 2), v.cy or math.floor(img.h / 2)
+  v.map = mapName
+  local rows = M.worldCut(img, v.cx, v.cy, zoom, outW, outH)
+  local dot = math.max(zoom, 3)
+  local function at(room)
+    local p = M.worldPos(room)
+    if p and p.map == mapName then return p end
+  end
+  -- signposts you've read
+  for _, sp in ipairs(M.signposts()) do
+    local p = at(sp.room)
+    if p then M.worldPaint(rows, outW, p.x, p.y, math.max(zoom, 2), RGB.sign) end
+  end
+  -- search matches
+  for _, id in ipairs(M.worldFound or {}) do
+    local p = at(id)
+    if p then M.worldPaint(rows, outW, p.x, p.y, dot + 2, RGB.found) end
+  end
+  -- the route
+  for _, seg in ipairs(M.worldRoute()) do
+    if seg.walk then
+      for _, r in ipairs(seg.walk) do
+        local p = at(r)
+        if p then M.worldPaint(rows, outW, p.x, p.y, math.max(zoom, 2), RGB.route) end
+      end
+    elseif seg.run then
+      local a, b = at(seg.run[1]), at(seg.run[2])
+      if a and b then
+        local k = 0
+        line(a.x, a.y, b.x, b.y, function(x, y)
+          k = k + 1
+          if k % math.max(1, math.floor(3 / math.max(zoom, 0.25))) == 0 or zoom >= 2 then
+            M.worldPaint(rows, outW, x, y, math.max(zoom, 2), RGB.run)
+          end
+        end)
+      end
+    end
+  end
+  -- friends Oven has asked about (the last hour)
+  for _, f in pairs(M.friendSeen or {}) do
+    if os.time() - (f.at or 0) < 3600 then
+      local p = at(f.room)
+      if p then M.worldPaint(rows, outW, p.x, p.y, dot + 9, RGB.black); M.worldPaint(rows, outW, p.x, p.y, dot + 5, RGB.friend) end
+    end
+  end
+  -- you
+  if here and here.map == mapName then
+    M.worldPaint(rows, outW, here.x, here.y, dot + 13, RGB.black)
+    M.worldPaint(rows, outW, here.x, here.y, dot + 10, RGB.you)
+    M.worldPaint(rows, outW, here.x, here.y, dot + 5, RGB.youIn)
+  end
+  -- written to a new file each time (Qt keeps images it has shown by name)
+  M.worldSeq = (M.worldSeq or 0) + 1
+  local path = string.format("%s/oven_world_%d.bmp", dir(), M.worldSeq)
+  local f = io.open(path, "wb")
+  if not f then return end
+  f:write(M.worldBmp(rows, outW)); f:close()
+  lab:echo("")
+  lab:setStyleSheet(string.format("border-image: url(%s);", path:gsub("\\", "/")))
+  if M.worldLastFile then os.remove(M.worldLastFile) end
+  M.worldLastFile = path
+  M.worldDrawStatus()
+end
+
+-- the footer's note: where the view is, and the zoom
+function M.worldDrawStatus()
+  if not M.mapSearchStatus or M.mapMode ~= "world" or M.mapSearchQuery then return end
+  local v = V()
+  M.mapSearchStatus:echo(string.format("<span style=\"color:#808080;\">%s %d,%d · ×%s%s</span>", v.map or "", v.cx or 0, v.cy or 0,
+    tostring(M.WORLD_ZOOMS[v.zoomI]), v.follow and "" or " · ◎ to follow"))
+end
+
+---------------------------------------------------------------- moving about
+function M.worldZoom(dir)
+  local v = V()
+  v.zoomI = math.max(1, math.min(#M.WORLD_ZOOMS, v.zoomI + dir))
+  M.worldDraw()
+end
+function M.worldFollow()
+  V().follow = true
+  M.worldDraw()
+end
+function M.worldWheel(ev)
+  local d = type(ev) == "table" and tonumber(ev.angleDeltaY) or 0
+  if d > 0 then M.worldZoom(1) elseif d < 0 then M.worldZoom(-1) end
+end
+-- drag to pan: the mouse's travel in screen pixels, over the zoom
+function M.worldPress(ev)
+  if type(ev) == "table" and ev.button and ev.button ~= "LeftButton" then return end
+  local ok, mx, my = pcall(getMousePosition)
+  if not ok or not mx then return end
+  local v = V()
+  M.worldDrag = { mx = mx, my = my, cx = v.cx or 0, cy = v.cy or 0, moved = 0, ex = type(ev) == "table" and tonumber(ev.x), ey = type(ev) == "table" and tonumber(ev.y) }
+  if M.worldPoll then killTimer(M.worldPoll) end
+  M.worldPoll = tempTimer(0.05, function() if M.worldDrag then M.worldMove() else killTimer(M.worldPoll); M.worldPoll = nil end end, true)
+end
+function M.worldMove()
+  local d = M.worldDrag
+  if not d then return end
+  local ok, mx, my = pcall(getMousePosition)
+  if not ok or not mx then return end
+  local dx, dy = mx - d.mx, my - d.my
+  d.moved = math.max(d.moved, math.abs(dx) + math.abs(dy))
+  if d.moved < 4 then return end
+  local v = V()
+  local z = M.WORLD_ZOOMS[v.zoomI] or 4
+  v.follow = false
+  v.cx, v.cy = math.floor(d.cx - dx / z + 0.5), math.floor(d.cy - dy / z + 0.5)
+  M.worldDraw()
+end
+function M.worldRelease()
+  local d = M.worldDrag
+  M.worldDrag = nil
+  if M.worldPoll then killTimer(M.worldPoll); M.worldPoll = nil end
+  if not d or d.moved >= 4 then return end
+  -- a click: what's there (its place, and the terrain when Oven has learned that colour)
+  local v, vw = V(), M.worldView
+  if not (vw and d.ex and d.ey) then return end
+  local sx, sy = math.floor(vw.x0 + d.ex / vw.zoom), math.floor(vw.y0 + d.ey / vw.zoom)
+  local img = M.worldImage(v.map or "Alyria")
+  local terrain
+  if img and sx >= 0 and sy >= 0 and sx < img.w and sy < img.h then
+    local o = img.off + (img.h - 1 - sy) * img.row + sx * 3 + 1
+    local b, g, r = img.data:byte(o, o + 2)
+    terrain = r and W().terrain[string.format("%02x%02x%02x", r, g, b)]
+  end
+  if M.mapSearchStatus then
+    M.mapSearchStatus:echo(string.format("<span style=\"color:#c0c0c0;\">%d,%d%s</span>", sx, sy, terrain and (" · " .. terrain) or ""))
+  end
+end
+
+---------------------------------------------------------------- the switch
+function M.mapSetMode(mode, auto)
+  if mode ~= "world" then mode = "local" end
+  M.mapMode = mode
+  if not auto then M.cfg.mapMode = mode; M.saveSettings() end
+  if M.worldLabel then
+    if mode == "world" then M.worldLabel:show(); if M.mapWidget then M.mapWidget:hide() end
+    else M.worldLabel:hide(); if M.mapWidget then M.mapWidget:show() end end
+  end
+  if M.mapModeButton then M.mapModeButton:echo(mode == "world" and "local" or "world") end
+  if mode == "world" then M.worldDraw() else pcall(M.mapSearchDraw) end
+end
+
+-- a room change: the world map follows; into the wilds it switches to World, back in a town to Local
+function M.worldOnRoom()
+  local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info
+  pcall(M.worldNote, info)
+  local wild = M.worldHere and M.worldHere.wild
+  if M.cfg.mapWorldAuto ~= false and M.worldWasWild ~= nil and wild ~= M.worldWasWild then
+    M.mapSetMode(wild and "world" or "local", true)
+  end
+  M.worldWasWild = wild
+  if M.mapMode == "world" then M.worldDraw() end
+end
+
+-- search: the matches that have a place on the world map
+function M.worldSearch(q)
+  if not q or q == "" then M.worldFound = nil; return M.worldDraw() end
+  local found, seen = {}, {}
+  local function add(id) id = tonumber(id); if id and not seen[id] and M.worldPos(id) then seen[id] = true; found[#found + 1] = id end end
+  for _, id in ipairs(M.mapSearchRooms(q)) do add(id) end
+  -- signposts by what they say, and the runs they list
+  local ql = q:lower()
+  for _, row in ipairs(M.dbRows("SELECT room, sign, dests FROM signposts WHERE exact = 1")) do
+    if (row.sign or ""):lower():find(ql, 1, true) or (row.dests or ""):lower():find(ql, 1, true) then add(row.room) end
+  end
+  -- an area by name: where Oven knows it is
+  for name, a in pairs(getAreaTable and getAreaTable() or {}) do
+    if tostring(name):lower():find(ql, 1, true) then
+      for _, r in ipairs(M.dbRows("SELECT room FROM room_xy")) do
+        local id = tonumber(r.room)
+        if roomExists(id) and getRoomArea(id) == a then add(id); break end
+      end
+    end
+  end
+  M.worldFound = found
+  M.worldDraw()
+  return #found
+end
 end
 
 ---------------------------------------------------------------------------
@@ -11070,10 +11596,16 @@ function M.mapSearch(q)
   q = trim(q or "")
   if q == "" then
     M.mapSearchQuery, M.mapSearchCount = nil, nil
+    pcall(M.worldSearch, "")
     return M.mapSearchLight()
   end
   M.mapSearchQuery = q
   M.mapSearchLight()
+  local okW, n = pcall(M.worldSearch, q)
+  if okW and M.mapMode == "world" and M.mapSearchStatus and M.mapSearchCount then
+    M.mapSearchCount.here = n or 0
+    pcall(M.mapSearchDraw)
+  end
   if tonumber(q) then return M.mapShow(tonumber(q)) end
   M.placesFind(q)
 end
@@ -12338,6 +12870,9 @@ function M.goTo(id)
   if inWilds then return M.mapWalkTo(id) end
   local function areaName(a) return a and getRoomAreaName(a) or "?" end
   M.goAsk = { id = id, at = os.time() }
+  local okRt, route = pcall(M.worldPlanRoute, here, id)
+  M.goAsk.route = okRt and route or {}
+  if M.worldDraw then M.worldDraw() end
   local okR, lines, sum = pcall(M.routePlanLines, here, id)
   local head = string.format("that leaves %s - %s is in %s:", areaName(hereArea), getRoomName(id) or ("#" .. id), areaName(getRoomArea(id)))
   if okR and lines then

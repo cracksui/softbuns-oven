@@ -851,6 +851,64 @@ def quest_steps_are_links():
 
 
 @test
+def world_map():
+    import struct, os as _os
+    o = Oven()
+    home = o.L.globals().OVEN_TEST_HOME
+    _os.makedirs(home + "/oven_maps", exist_ok=True)
+    # a 10 × 6 Alyria: green, with one blue pixel at (7, 2)
+    W_, H_ = 10, 6
+    rowb = ((W_ * 3 + 3) // 4) * 4
+    px = {(7, 2): bytes([200, 0, 0])}
+    body = b"".join(b"".join(px.get((x, y), bytes([0, 160, 0])) for x in range(W_)).ljust(rowb, b"\0") for y in range(H_ - 1, -1, -1))
+    head = b"BM" + struct.pack("<IHHI", 54 + len(body), 0, 0, 54) + struct.pack("<IiiHHIIiiII", 40, W_, H_, 1, 24, 0, len(body), 2835, 2835, 0, 0)
+    open(home + "/oven_maps/alyria.bmp", "wb").write(head + body)
+    o.lua("""sbo.WORLD_FILES[1].offset = 1000
+      roomExists = function(id) return true end; getRoomArea = function(id) return tonumber(id) >= 5000 and 7 or 1 end""")
+    # a wild room's number is its pixel; GMCP teaches the numbering and the terrain's colour
+    o.lua("""sbo.worldImage('Alyria')
+      sbo.worldNote({ num = '1027', wilds = 'true', terrain = 'lake', coord = { name = 'Alyria', x = 7, y = 2 } })""")
+    eq(o.ev("sbo.cfg.world.offsets.Alyria"), 1000, "offset learned")
+    eq(o.ev("sbo.cfg.world.terrain['0000c8']"), "lake", "the blue pixel is a lake")
+    p = o.ev("sbo.worldPos(1000 + 3 * 10 + 4)")
+    eq((p.x, p.y), (4, 3), "room → pixel")
+    # a town room: where GMCP said it was; another of its area: there too
+    o.lua("sbo.worldNote({ num = '5001', wilds = 'false', coord = { name = 'Alyria', x = 2, y = 1 } })")
+    eq((o.ev("sbo.worldPos(5001).x"), o.ev("sbo.worldPos(5001).y")), (2, 1), "a visited town room")
+    o.lua("sbo.worldRoomXY = {}")
+    eq(o.ev("sbo.worldPos(5999).x"), 2, "a room of the same area")
+    # the cut-out at ×2, sharp: 4 × 4 screen pixels around (7, 2)
+    n, w1, blue = o.ev("""function() local img = sbo.worldImage('Alyria') local r = sbo.worldCut(img, 7, 2, 2, 4, 4)
+      return #r, #r[1], r[3]:sub(1 + 2 * 3, 3 + 2 * 3) == string.char(200, 0, 0) end""")()
+    eq((n, w1, blue), (4, 12, True), "4 rows of 4 pixels, (7,2) in the middle, two screen pixels a room")
+    # the bitmap it writes reads back
+    ok = o.ev("""function() local img = sbo.worldImage('Alyria') local r = sbo.worldCut(img, 5, 3, 1, 8, 6) local b = sbo.worldBmp(r, 8)
+      local function le(i) return b:byte(i) + b:byte(i + 1) * 256 end
+      return b:sub(1, 2) == 'BM' and le(19) == 8 and le(23) == 6 and #b == 54 + 8 * 3 * 6 end""")()
+    assert ok, "a 8 × 6 bitmap"
+    # the panel: World draws a file with you on it; walking into the wilds switches to World, a town back to Local
+    o.lua("""sbo.cfg.map = true; sbo.cfg.mapPanel = true; sbo.createMapPanel()
+      gmcp.room = { info = { num = '1027', wilds = 'true', terrain = 'lake', coord = { name = 'Alyria', x = 7, y = 2 } } }
+      sbo.worldWasWild = false; sbo.worldOnRoom(); runTimers()""")
+    eq(o.ev("sbo.mapMode"), "world", "into the wilds: World")
+    css = o.ev("WIDGETS.ovenWorldMap.css") or ""
+    assert "border-image" in css and "oven_world_" in css, css
+    o.lua("""gmcp.room.info = { num = '5001', wilds = 'false', coord = { name = 'Alyria', x = 2, y = 1 } }; sbo.worldOnRoom(); runTimers()""")
+    eq(o.ev("sbo.mapMode"), "local", "back in town: Local")
+    # the button switches by hand
+    o.lua("sbo.mapSetMode('world')")
+    eq((o.ev("sbo.mapMode"), o.ev("WIDGETS.ovenWorldMap.shown")), ("world", True), "switched")
+    # zoom and drag
+    o.lua("sbo.worldZoom(1)")
+    eq(o.ev("sbo.worldV.zoomI"), 6, "zoomed in")
+    o.lua("""MX, MY = 100, 100; getMousePosition = function() return MX, MY end
+      sbo.worldPress({ button = 'LeftButton', x = 10, y = 10 }); MX = 140; sbo.worldMove(); sbo.worldRelease()""")
+    eq(o.ev("sbo.worldV.follow"), False, "dragging stops following")
+    o.lua("sbo.worldFollow()")
+    eq(o.ev("sbo.worldV.follow"), True, "◎ follows again")
+
+
+@test
 def route_plan_text():
     o = Oven()
     o.lua("""sbo.mapRoom = 1
