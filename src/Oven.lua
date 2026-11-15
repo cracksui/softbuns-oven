@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.29.1"
+M.version = "1.29.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1111,8 +1111,8 @@ local function renderSlots(out, slots, width, withStats)
       end
     end
   end
-  -- everything the stats column adds up to, under the list: a line or two, and what it all weighs
-  if withStats then
+  -- under the list: what it all weighs (with or without the stats column)
+  do
     local ar, sums, order, known, worn, pb, weighed = 0, {}, {}, 0, 0, 0, 0
     for _, r in ipairs(slots) do
       if not r.empty then
@@ -1134,7 +1134,7 @@ local function renderSlots(out, slots, width, withStats)
         end
       end
     end
-    if known > 0 then
+    if weighed > 0 then
       out[#out + 1] = { { C.dim, string.rep(" ", slotW) .. " ├" .. string.rep("─", math.max(4, width - slotW - 2)) } }
       local cells = {}
       local function add(col, txt, kcol, k)

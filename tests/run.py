@@ -2339,6 +2339,13 @@ def eq_stat_totals():
     assert "+2 strength" in out and "glows" not in out, out
     assert "weight" in out and "2 st 15 pb (from 2 of 3 items)" in out, out
     assert "+3 strength" not in out and "total" not in out, f"no stat totals: {out}"
+    # the column off (sbo config eq.stats off): no stats, the weight still there
+    o.lua("sbo.command('config eq.stats off')")
+    eq(o.ev("sbo.cfg.eqStats"), False, "turned off")
+    out = o.lua("""local rows = sbo.formatters.eq({ "You are using:", "<worn on finger>      a silver ring", "<worn about body>    a cloak" }, 90)
+      local s = {} for _, r in ipairs(rows) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end
+      return table.concat(s)""")
+    assert "+2 strength" not in out and "2 st 15 pb" in out, out
 
 
 WHERE_LIST = """Where is what? Features that Towne of Rune might contain that you may be interested in:
