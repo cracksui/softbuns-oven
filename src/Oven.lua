@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.24.0"
+M.version = "1.25.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11679,7 +11679,16 @@ function M.mapWalkTo(id, onFoot)
     if okP and plan then return M.runVia(plan, id, dirs) end
   end
   M.walk = { dirs = dirs, path = path, step = 1 }
-  M.notifyWalk(string.format("%d step%s…", #dirs, #dirs == 1 and "" or "s"))
+  -- leaving the area: the walk in brief (areas, enter …); in town, just the count
+  local leaves = false
+  local ha = getRoomArea(M.mapRoom)
+  for _, r in ipairs(path) do if getRoomArea(r) ~= ha then leaves = true; break end end
+  if leaves then
+    local okF, f = pcall(M.routeFoot, dirs, path)
+    M.notifyWalk(string.format("%d step%s on foot · %s", #dirs, #dirs == 1 and "" or "s", okF and f or ""))
+  else
+    M.notifyWalk(string.format("%d step%s…", #dirs, #dirs == 1 and "" or "s"))
+  end
   M.walkStep()
 end
 
@@ -11943,10 +11952,59 @@ function M.signposts()
   return out
 end
 
+-- a signpost by what it says it is ("outside Sigil's north gate"), else the room's name
+local function signLabel(room)
+  local sp = room and M.signAt and M.signAt(room)
+  local t = sp and sp.sign
+  if t then
+    t = t:gsub("^an? weatherbeaten signpost%s*", ""):gsub("^a signpost%s*", "")
+    if t ~= "" then return "signpost " .. t end
+  end
+  return room and roomExists(room) and getRoomName(room) or ("#" .. tostring(room))
+end
+M.signLabel = signLabel
+
+local STD_DIRS = { n=1,s=1,e=1,w=1,u=1,d=1,ne=1,nw=1,se=1,sw=1,up=1,down=1,north=1,south=1,east=1,west=1,
+  northeast=1,northwest=1,southeast=1,southwest=1,["in"]=1,out=1 }
+-- a walk in brief: the areas it passes through, and any "enter mirror" on the way
+local function footSummary(dirs, path)
+  local parts, lastArea = {}, nil
+  for i, r in ipairs(path or {}) do
+    local d = dirs[i]
+    if d and not STD_DIRS[d] then parts[#parts + 1] = d end
+    local a = getRoomArea(tonumber(r))
+    local an = a and getRoomAreaName(a)
+    if an and an ~= "" and an ~= lastArea then parts[#parts + 1] = an; lastArea = an end
+  end
+  return table.concat(parts, " → ")
+end
+M.routeFoot = footSummary
+
+-- the plan for a walk from here to target, in one line: what a run (and its signposts) or a walk will do
+function M.routePlanText(here, target)
+  if not here or not target or not getPath(here, target) then return nil end
+  local dirs, path = {}, {}
+  for i, d in ipairs(speedWalkDir) do dirs[i] = d; path[i] = tonumber(speedWalkPath[i]) end
+  local okP, plan = pcall(M.runPlan, here, target, dirs, path)
+  local name = roomExists(target) and getRoomName(target) or ("#" .. target)
+  if okP and plan then
+    local bits = {}
+    if plan.k > 0 then bits[#bits + 1] = string.format("%d step%s → %s", plan.k, plan.k == 1 and "" or "s", signLabel(plan.start))
+    else bits[#bits + 1] = "from " .. signLabel(plan.start) end
+    local e = M.runData().ends[plan.name]
+    bits[#bits + 1] = "run " .. plan.name .. (e and (" → " .. signLabel(e)) or " (its end not known yet)")
+    if plan.unknown then bits[#bits + 1] = "walk the rest → " .. name
+    elseif plan.after > 0 then bits[#bits + 1] = string.format("%d step%s → %s", plan.after, plan.after == 1 and "" or "s", name) end
+    return "plan: " .. table.concat(bits, " · ") .. string.format("  (≈%d instead of %d on foot)", plan.cost, #dirs)
+  end
+  return string.format("plan: %d step%s on foot · %s", #dirs, #dirs == 1 and "" or "s", footSummary(dirs, path))
+end
+
 function M.runVia(plan, target, dirs)
   local parts = {}
-  if plan.k > 0 then parts[#parts + 1] = string.format("%d step%s to the signpost", plan.k, plan.k == 1 and "" or "s") end
-  parts[#parts + 1] = "run " .. plan.name
+  if plan.k > 0 then parts[#parts + 1] = string.format("%d step%s to the %s", plan.k, plan.k == 1 and "" or "s", signLabel(plan.start)) end
+  local e = M.runData().ends[plan.name]
+  parts[#parts + 1] = "run " .. plan.name .. (e and (" to the " .. signLabel(e)) or "")
   if target then
     if plan.unknown then parts[#parts + 1] = "walk the rest"
     elseif plan.after > 0 then parts[#parts + 1] = string.format("%d step%s", plan.after, plan.after == 1 and "" or "s") end
@@ -12236,8 +12294,10 @@ function M.goTo(id)
   if inWilds then return M.mapWalkTo(id) end
   local function areaName(a) return a and getRoomAreaName(a) or "?" end
   M.goAsk = { id = id, at = os.time() }
-  say(string.format("that leaves %s - %s is in %s (%d steps on foot) · y to go, n to stay",
-    areaName(hereArea), getRoomName(id) or ("#" .. id), areaName(getRoomArea(id)), steps))
+  local okR, plan = pcall(M.routePlanText, here, id)
+  say(string.format("that leaves %s - %s is in %s · %s · y to go, n to stay",
+    areaName(hereArea), getRoomName(id) or ("#" .. id), areaName(getRoomArea(id)),
+    okR and plan or string.format("%d steps on foot", steps)))
 end
 
 -- your answer to that question: true if it was one (and it isn't sent to the game)

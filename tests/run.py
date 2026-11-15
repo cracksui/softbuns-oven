@@ -851,6 +851,34 @@ def quest_steps_are_links():
 
 
 @test
+def route_plan_text():
+    o = Oven()
+    o.lua("""sbo.mapRoom = 1
+      -- 1-3 Sigil (area 1); 10 the north-gate signpost and 20 Vospire's east gate (area 2, the wilds); 30 Main Street (area 3)
+      AREA = { [1] = 1, [2] = 1, [3] = 1, [10] = 2, [20] = 2, [30] = 3, [5] = 1 }
+      NAMES = { [1] = 'Library', [10] = 'North Road', [20] = 'East Road', [30] = 'Main Street' }
+      roomExists = function(id) return AREA[tonumber(id)] ~= nil end
+      getRoomArea = function(id) return AREA[tonumber(id)] end
+      getRoomAreaName = function(a) return ({ 'Sigil', 'Alyria', 'Vospire' })[a] end
+      getRoomName = function(id) return NAMES[tonumber(id)] or ('room ' .. id) end
+      ROUTES = { ['1>10'] = { {'n',2}, {'n',3}, {'n',10} }, ['20>30'] = { {'w',30} },
+        ['1>30'] = {}, ['10>30'] = {} }
+      for i = 1, 60 do table.insert(ROUTES['1>30'], { i == 30 and 'enter mirror' or 'w', i < 20 and 2 or (i < 59 and 10 or 30) }) end
+      getPath = function(a, b) local r = ROUTES[tonumber(a) .. '>' .. tonumber(b)]; if not r then return false end
+        speedWalkDir, speedWalkPath = {}, {}
+        for i, x in ipairs(r) do speedWalkDir[i] = x[1]; speedWalkPath[i] = tostring(x[2]) end return true end
+      sbo.signposts = function() return { { room = 10, dests = { vospire = 'north' } } } end
+      sbo.signAt = function(r) if r == 10 then return { sign = "a weatherbeaten signpost outside Sigil's north gate" } end
+        if r == 20 then return { sign = "a weatherbeaten signpost outside Vospire's east gate" } end end
+      sbo.cfg.runs = { names = { vospire = {} }, ends = { vospire = 20 }, endsFixed = 1 }""")
+    plan = o.ev("sbo.routePlanText(1, 30)")
+    eq(plan, "plan: 3 steps → signpost outside Sigil's north gate · run vospire → signpost outside Vospire's east gate · 1 step → Main Street  (≈29 instead of 60 on foot)", "a run, with its signposts")
+    # no run worth it: on foot, the areas and the mirror
+    o.lua("sbo.cfg.runs.ends = {}; sbo.signposts = function() return {} end")
+    eq(o.ev("sbo.routePlanText(1, 30)"), "plan: 60 steps on foot · Sigil → Alyria → enter mirror → Vospire", "on foot")
+
+
+@test
 def quest_shop_in_town_first():
     o = Oven()
     o.lua("""sbo.mapRoom = 1
