@@ -784,6 +784,45 @@ def melee_by_weapon():
 
 
 @test
+def eqdb_list_and_lookup():
+    o = Oven()
+    eq(tuple(o.ev("function() return sbo.classify('check eqlookup 2acf8c203696532d8bdaa1064553483ec0a68fa5') end")()),
+       ("item", "eqlookup 2acf8c203696532d8bdaa1064553483ec0a68fa5"), "clicking a result: an item page")
+    eq(o.ev("sbo.classify('check time')"), None, "other checks are left alone")
+    o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c end
+      R = {}; selectSection = function(a, n) SELN = n; return true end
+      replace = function(t) R[#R+1] = t end; deselect = function() end; resetFormat = function() end
+      FG = 0; setFgColor = function() FG = FG + 1 end
+      GAG = 0; deleteLine = function() GAG = GAG + 1 end""")
+    o.lua("sbo.eqdbNoteSend('eqdb wear legs levels 40 60')")
+    def ln(text):
+        o.L.globals().line = text
+        return o.ev("sbo.eqdbLine")(text)
+    assert ln(" --- Searching for between levels 40-60 --- ")
+    assert "eqdb: levels 40-60" in o.ev("R[1]"), o.ev("R[1]")
+    # a result: the number dimmed, the line itself (the link) kept
+    assert ln("53   a pearl-inlaid nunchaku                 ") and o.ev("SELN") == 5 and o.ev("#R") == 1
+    # the pager: answered
+    assert ln("[C]ontinue [R]edraw [B]ack [E]xit: ") and o.ev("SENT[#SENT]") == "c" and o.ev("GAG") == 1
+    assert ln("---------- Terminating at 100 results ----------") and "narrow the search" in o.ev("R[2]")
+    # done: lines after it are someone else's
+    assert not ln("53   something said in a channel")
+    # clicking a result: the page is read like a look, and the item is known from then on
+    o2 = Oven()
+    robe = ["Item 'a black monk's robe' is type armor, alignment 0, made of cloth (in (new) condition),[EQDB]",
+      "has keywords 'pile black cloth monks robe about cat2', equipped about the body.",
+      "This item weighs 0 stones and 5 pebbles, and is valued at 1,125 gold. {Cat. 2}",
+      "This level 25 item has no special attributes.", "Armor resistance is 3.", "*This item may be repaired 1 time.",
+      "A nondescript black robe, the cowl is large and covers the head and face"]
+    o2.lua('sbo.cfg.promptPattern = "<%d+hp"')
+    o2.L.globals().ROBE = o2.L.table_from(robe)
+    o2.lua("""sbo.onSend(nil, 'check eqlookup 2acf8c203696532d8bdaa1064553483ec0a68fa5')
+      for _, l in ipairs(ROBE) do line = l; sbo.onLine() end
+      line = '<270hp 550sp 401st>'; sbo.onLine(); runTimers()""")
+    eq(o2.ev("sbo.items[\"a black monk's robe\"].level"), "25", "remembered")
+
+
+@test
 def eq_weapon_lines_belong():
     o = Oven()
     shape = o.ev("sbo.shapes.eq")

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.14.0"
+M.version = "1.15.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -390,6 +390,9 @@ M.commands = {
   -- "auction info": the item on auction, laid out like any item
   { word = "auction",   min = 3, kind = "item",
     argsOk = function(r) local w = r:match("^(%S+)") return w ~= nil and ("info"):sub(1, #w) == w end },
+  -- "check eqlookup <hash>" (clicking an eqdb result): an item page, laid out like any item
+  { word = "check",     min = 5, kind = "item",
+    argsOk = function(r) return r:match("^eqlookup%s+%x+$") ~= nil end },
   { word = "shop",      min = 2, kind = "shop",
     argsOk = function(r) return r ~= "" and (("list"):sub(1, #r) == r or ("inventory"):sub(1, #r) == r) end },
 }
@@ -5889,6 +5892,65 @@ function M.upgradeWhy(cur, best, w)
 end
 
 ---------------------------------------------------------------------------
+-- eqdb: the game's item directory. Its results are links ("check eqlookup …" shows the item), which
+-- Mudlet can't hand to a script - so the list is restyled where it stands rather than redrawn, and
+-- every result stays clickable. The pager is answered for you (at most 100 results, 2 screens).
+-- Clicking a result: laid out like any item you look at (M.commands: check eqlookup).
+---------------------------------------------------------------------------
+do
+local function fg(name)
+  local c = color_table and color_table[name]
+  if c then setFgColor(c[1], c[2], c[3]) end
+end
+local function restyle(text, colour)
+  -- the whole line: replaced with Oven's text, in one colour
+  if selectSection(0, ulen(line)) then
+    replace(text)
+    if selectSection(0, ulen(text)) then fg(colour) end
+    deselect(); resetFormat()
+  end
+end
+
+function M.eqdbNoteSend(cmd)
+  local c = trim(cmd or ""):lower()
+  if c:match("^eqdb%s") or c == "eqdb" then M.eqdbAt = os.time(); M.eqdbN = 0 end
+end
+
+-- one line of eqdb's reply: true if it was handled (nothing more to do with it)
+function M.eqdbLine(l)
+  if not M.eqdbAt or os.time() - M.eqdbAt > 30 then return false end
+  local t = trim(l)
+  local what = t:match("^%-%-%- Searching for (.-) %-%-%-$")
+  if what then
+    restyle("── eqdb: " .. what:gsub("^between ", "") .. " " .. string.rep("─", 30), C.title)
+    return true
+  end
+  local n, name = l:match("^(%d+)%s+(.-)%s*$")
+  if n and name ~= "" then
+    M.eqdbN = math.max(M.eqdbN or 0, tonumber(n))
+    -- the number dim, the name left as the game's link
+    local nl = #(l:match("^%d+%s*"))
+    if selectSection(0, nl) then fg(C.dim); deselect(); resetFormat() end
+    return true
+  end
+  local most = t:match("^%-+ Terminating at (%d+) results %-+$")
+  if most then
+    restyle(most .. " results - the most eqdb shows; narrow the search (wear, type, levels) for the rest · click one to see it", C.dim)
+    M.eqdbAt = nil
+    return true
+  end
+  -- the pager: answered, so the list comes in one piece
+  if t:match("^%[C%]ontinue") then
+    deleteLine()
+    M.sendOwn("c", false)
+    M.eqdbAt = os.time()
+    return true
+  end
+  return false
+end
+end
+
+---------------------------------------------------------------------------
 -- The practice dummy: real damage numbers for your attacks. It says its health every round and
 -- is whole again by the next, so 10000 minus what it says is exactly that round's damage.
 -- A round can hold several landings (two kicks sent quickly, two casts, "You cast spark one
@@ -8212,6 +8274,7 @@ function M.onSend(_, cmd)
   cmd = M.expandAlias(cmd)
   pcall(M.recordCommand, cmd)
   pcall(M.dummyNoteSend, cmd)
+  pcall(M.eqdbNoteSend, cmd)
   pcall(M.noteLootCommand, cmd)
   pcall(M.noteEnterCommand, cmd)
   pcall(M.noteRunCommand, cmd)
@@ -10081,6 +10144,10 @@ end
 function M.onLineWork()
   local cap = M.cap
   pcall(M.dummyNoteLine, line)
+  if M.eqdbAt and not cap then
+    local okE, done = pcall(M.eqdbLine, line)
+    if okE and done then pcall(M.recordLine, line, false); return end
+  end
   -- Oven talking to Oven (tells ending "#3f2a"): handled, and kept off the screen
   if line:find("#", 1, true) and line:find(" tell", 1, true) then
     local okW, mine = pcall(M.wireLine, line)
