@@ -802,6 +802,12 @@ def quest_steps_are_links():
     o.lua("sbo.questHudClick('77', 4 + 18 * 3 + 5)")   # on go ▸
     eq(list(o.ev("WALKS").values()), [100, 200], "a finished step still goes back to its place; go ▸ to the next")
     assert "(done)" in o.ev("SAYS[1]"), o.ev("SAYS[1]")
+    # hovering: a pointing hand over a link, the open hand elsewhere
+    o.lua("""LAB = { setCursor = function(self, c) self.cur = c end }
+      sbo.hudMove({ y = 4 + 18 * 1 + 5 }, LAB, '77')""")
+    eq(o.ev("LAB.cur"), "PointingHand", "over a step")
+    o.lua("sbo.hudMove({ y = 4 + 18 * 9 + 5 }, LAB, '77')")
+    eq(o.ev("LAB.cur"), "OpenHand", "below the links")
     # the title line folds the quest (and unfolds it)
     o.lua("sbo.drawQuestTracker = function() end; sbo.questHudClick('77', 4 + 5)")
     eq((len(o.ev("WALKS")), o.ev("sbo.cfg.questFolded['77']")), (2, True), "folded, no walk")

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.21.0"
+M.version = "1.21.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3006,6 +3006,7 @@ local function questCardHtml(id, Q)
       end
     end
   end
+  local cardLines = html   -- (the blurb below has its own html())
   -- the quest's blurb (often holds hints), dimmed
   if M.cfg.questHudBlurb and Q.desc and #Q.desc > 0 and not finished then
     -- laid out first (paragraphs with a gap between them, lists and headings on their own lines)…
@@ -3061,10 +3062,11 @@ local function questCardHtml(id, Q)
       if open or i <= SHOW then add(x[1], x[2]) end
     end
     if #lines > SHOW then
-      if open then add(span(C.slot, " ▾ click to fold the hint"), 25)
+      if open then add(span(C.slot, " ▾ click to fold the hint"), 25); acts[#cardLines] = { id = id, hint = true }
       else
         local more = #lines - SHOW
         add(span(C.slot, string.format(" ▸ %d more line%s · click to open", more, more == 1 and "" or "s")), 32)
+        acts[#cardLines] = { id = id, hint = true }
       end
     end
   end
@@ -3074,9 +3076,10 @@ end
 local function hudCallbacks(label, id)
   label:setClickCallback(function(ev) M.hudPress(ev, id) end)
   pcall(function() label:setWheelCallback(function(ev) M.questWheel(ev) end) end)
-  label:setMoveCallback(function(ev) M.hudMove(ev) end)
+  label:setMoveCallback(function(ev) M.hudMove(ev, label, id) end)
   label:setReleaseCallback(function(ev) M.hudRelease(ev) end)
   pcall(function() label:setCursor("OpenHand") end)
+  label.ovenCursor = "OpenHand"
 end
 
 -- the HUD: a frame, with one card per pinned quest inside it (each its own click area)
@@ -3182,9 +3185,27 @@ function M.hudPress(ev, id)
     M.hudMove()
   end, true)
 end
-function M.hudMove(ev)
+-- the line under the mouse on a card: its link, if it is one
+function M.questActAt(id, y)
+  local ca = id and y and (M.questCardActs or {})[tostring(id)]
+  if not ca then return nil end
+  return ca.acts[math.floor((y - ca.top) / ca.lineH) + 1]
+end
+
+function M.hudMove(ev, label, id)
   local d = M.hudDrag
-  if not d then return end
+  if not d then
+    -- hovering: a pointing hand over a link (a step, go ▸, turn in, the title, the hint's open/fold),
+    -- the open hand (drag) everywhere else
+    if label and type(ev) == "table" then
+      local want = M.questActAt(id, tonumber(ev.y)) and "PointingHand" or "OpenHand"
+      if label.ovenCursor ~= want then
+        label.ovenCursor = want
+        pcall(function() label:setCursor(want) end)
+      end
+    end
+    return
+  end
   local ok, mx, my = pcall(getMousePosition)
   if not ok or not mx then return end
   local dx, dy = mx - d.mx, my - d.my
@@ -3223,6 +3244,7 @@ function M.questHudClick(id, at)
       return M.drawQuestTracker()
     end
     if a and a.master then return M.questGoMaster(a.id) end
+    -- (a.hint: the card's own click below - it opens or folds the hint)
     if a and a.turnIn then
       if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return M.say("not in the game - nothing sent") end
       return M.sendOwn("quest complete " .. a.id, true)
@@ -3339,6 +3361,7 @@ function M.layoutQuestHud()
       M[name] = b
     end
     b:setClickCallback(function() M.questScroll(dir) end)
+    pcall(function() b:setCursor("PointingHand") end)
     pcall(function() b:setWheelCallback(function(ev) M.questWheel(ev) end) end)
     b:rawEcho(span(C.slot, text))
     b:move(x + 1, at); b:resize(w - 2, barH); b:show()
