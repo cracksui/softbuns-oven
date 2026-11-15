@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.29.0"
+M.version = "1.29.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1142,29 +1142,18 @@ local function renderSlots(out, slots, width, withStats)
         if k then c[2] = { kcol, " " .. k } end
         cells[#cells + 1] = c
       end
+      -- only what it all weighs (the stats are on each item's line)
       if weighed > 0 then
         add(C.num, string.format("%d st %d pb", math.floor(pb / 100), pb % 100), C.dim,
-          (weighed < worn or known < worn) and string.format("weight (from %d of %d items)", weighed, worn) or "weight")
+          weighed < worn and string.format("(from %d of %d items)", weighed, worn) or nil)
       end
-      -- in the usual order (attributes, armor, offense…), without the group names
-      local kv = {}
-      if ar ~= 0 then kv[#kv + 1] = { k = "AR", v = ar } end
-      for _, k in ipairs(order) do if sums[k] ~= 0 then kv[#kv + 1] = { k = k, v = sums[k] } end end
-      for _, g in ipairs(M.eqTotalGroups(kv)) do
-        for _, c in ipairs(g) do
-          if c.k == "AR" then add(C.num, tostring(c.v), C.key, "AR")
-          else add(c.v >= 0 and C.plus or C.minus, M.eqTotalNum(c), C.item, c.k) end
-        end
-      end
-      -- (the weight already says how many are known, when it's there)
-      if known < worn and weighed == 0 then add(C.dim, string.format("(from %d of %d items)", known, worn)) end
       -- the cells, flowed across as many lines as they need
       local room = math.max(20, width - indent)
       local l, used = nil, 0
       for _, c in ipairs(cells) do
         local w = segLen(c)
         if not l or used + 3 + w > room then
-          l = { { C.slot, pad(l and "" or "total", slotW) }, { C.dim, " │ " } }
+          l = { { C.slot, pad(l and "" or "weight", slotW) }, { C.dim, " │ " } }
           out[#out + 1] = l
           used = 0
         else

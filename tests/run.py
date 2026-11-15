@@ -2329,29 +2329,16 @@ def scan_marks():
 def eq_stat_totals():
     o = Oven()
     o.lua("""sbo.cfg.eqStats = true
-      sbo.items["a silver ring"] = { ar = 2, affects = { { "strength", 2 }, { "hit-roll", 1 } } }
-      sbo.items["a cloak"] = { ar = 5, affects = { { "strength", 1 }, { "dexterity", -1 } } }""")
-    out = o.lua("""local rows = sbo.formatters.eq({ "You are using:", "<worn on finger>      a silver ring",
-        "<worn about body>    a cloak", "<held>               a torch" }, 90)
-      local s = {} for _, r in ipairs(rows) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end
-      return table.concat(s)""")
-    lines = out.split("\n")
-    tot = [i for i, l in enumerate(lines) if l.strip().startswith("total")]
-    assert tot, out
-    block = lines[tot[0]:]
-    row = lambda word: next(l for l in block if word in l)
-    # compact: one flowing line, attributes first (the game's order), then armor, offense
-    assert "+3 strength" in block[0] and "-1 dexterity" in block[0] and "7 AR" in block[0] and "+1 hit-roll" in block[0], out
-    assert block[0].index("strength") < block[0].index("dexterity") < block[0].index("AR") < block[0].index("hit-roll"), out
-    assert "from 2 of 3 items" in out, out
-    # with weights: what you wear weighs
-    o.lua("""sbo.items["a silver ring"].weight = { "0", "40" }; sbo.items["a cloak"].weight = { "1", "75" }""")
+      sbo.items["a silver ring"] = { ar = 2, affects = { { "strength", 2 }, { "hit-roll", 1 } }, weight = { "0", "40" } }
+      sbo.items["a cloak"] = { ar = 5, affects = { { "strength", 1 }, { "dexterity", -1 } }, weight = { "1", "75" } }""")
     out = o.lua("""local rows = sbo.formatters.eq({ "You are using:", "<worn on finger>      a silver ring (new)..it glows blue!",
         "<worn about body>    a cloak", "<held>               a torch" }, 90)
       local s = {} for _, r in ipairs(rows) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end
       return table.concat(s)""")
-    assert "2 st 15 pb weight (from 2 of 3 items)" in out and out.count("2 of 3") == 1, out
-    assert "glows" not in out and "+3 strength" in out, f"the aura isn't part of the name: {out}"
+    # each item's stats on its line (the aura isn't part of the name); under them only the weight
+    assert "+2 strength" in out and "glows" not in out, out
+    assert "weight" in out and "2 st 15 pb (from 2 of 3 items)" in out, out
+    assert "+3 strength" not in out and "total" not in out, f"no stat totals: {out}"
 
 
 WHERE_LIST = """Where is what? Features that Towne of Rune might contain that you may be interested in:
