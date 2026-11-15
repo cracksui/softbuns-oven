@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.26.0"
+M.version = "1.26.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14646,7 +14646,9 @@ function M.barClick(ev)
   local w = M.bar:get_width()
   if ev.x < w - tagW then return end
   local st = (M.updState or {}).state
-  if st == "check" or st == "down" or M.updating then return say("already checking for an update…") end
+  M.updateStale()
+  st = (M.updState or {}).state
+  if (st == "check" or st == "down" or M.updating) and M.pending then return say("already checking for an update…") end
   M.update()
 end
 
@@ -14715,12 +14717,25 @@ function M.update(arg)
   end
   if M.REPO:find("@@", 1, true) then return say("no GitHub repository configured in this build") end
   M.pending = (arg == "force") and "force" or "update"
+  M.pendingAt = os.time()
   M.notify("checking for updates…")
   M.fetchVersion()
 end
 
+-- a check whose download never answered (no done, no error) is given up after 90 seconds
+function M.updateStale()
+  if M.pending and M.pendingAt and os.time() - M.pendingAt > 90 then
+    M.pending = nil
+    M.updState = { state = "err" }
+    pcall(M.drawBar)
+    return true
+  end
+end
+
 function M.checkForUpdate()
+  M.updateStale()
   if M.REPO:find("@@", 1, true) or not M.cfg.updateCheck or M.pending then return end
+  M.pendingAt = os.time()
   M.pending = M.cfg.autoUpdate and "auto" or "check"
   if M.cfg.bar then M.updState = { state = "check" }; pcall(M.drawBar) end
   M.fetchVersion()
@@ -14735,6 +14750,8 @@ function M.startUpdatePoll()
 end
 
 function M.onDownload(event, file, err)
+  -- Mudlet's sysDownloadError gives (error, file); sysDownloadDone gives (file)
+  if event == "sysDownloadError" and file ~= M.dl.version and file ~= M.dl.pkg and file ~= M.dl.api then file, err = err, file end
   if file ~= M.dl.version and file ~= M.dl.pkg and file ~= M.dl.api then return end
   local mode = M.pending
   if not mode then return end  -- nothing of ours in flight

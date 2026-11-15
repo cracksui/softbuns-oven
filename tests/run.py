@@ -851,6 +851,22 @@ def quest_steps_are_links():
 
 
 @test
+def update_check_never_sticks():
+    o = Oven()
+    o.lua("""sbo.REPO = 'x/y'; sbo.cfg.updateCheck = true; DL = {}; downloadFile = function(f, u) DL[#DL+1] = f end
+      sbo.checkForUpdate()""")
+    assert o.ev("sbo.pending"), "checking"
+    # Mudlet's error: (event, message, file) - the check ends, it doesn't hang
+    o.lua("sbo.onDownload('sysDownloadError', 'Host not found', DL[#DL])")
+    eq(o.ev("DL[#DL]"), o.ev("sbo.dl.version"), "the commit lookup failed: on to the version file")
+    o.lua("sbo.onDownload('sysDownloadError', 'Host not found', DL[#DL])")
+    eq(o.ev("sbo.pending"), None, "that failing too ends the check")
+    # no answer at all: given up after 90 s, and the next check goes ahead
+    o.lua("sbo.checkForUpdate(); sbo.pendingAt = os.time() - 120; DL = {}; sbo.checkForUpdate()")
+    assert o.ev("#DL") > 0, "a fresh check started"
+
+
+@test
 def world_map():
     import struct, os as _os
     o = Oven()
