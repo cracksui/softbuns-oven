@@ -912,6 +912,19 @@ def hidden_rooms_mapped():
     o.lua("""sbo.tempNoteSend('n'); sbo.tempLastDirAt = os.time() - 60
       GO(nil, 'A Meeting of Corridors', { n = -99, n_realnum = 42706, e = -99, e_realnum = 42717, w = -99, w_realnum = 42715 })""")
     eq(o.ev("sbo.mapRoom"), B + 42716, "back east, by the way back")
+    # following, into a disguised room (no exits): the room comes first, then "Roarke drifts east. / You follow Roarke."
+    o.lua("""GO(nil, 'Mirrored Hallway', {})""")
+    eq(o.ev("sbo.mapRoom"), B + 42716, "not placed yet")
+    o.feed("Roarke drifts east.", "You follow Roarke.")
+    eq(o.ev("sbo.mapRoom"), B + 42717, "placed once the follow line says which way")
+    eq(o.ev("ROOMS[%d].x" % (B + 42717)), 1, "a step east")
+    # its real name, seen later, replaces the disguise; a disguised visit doesn't rename it back
+    o.lua("""GO('w', 'A Meeting of Corridors', { n = -99, n_realnum = 42706, e = -99, e_realnum = 42717, w = -99, w_realnum = 42715 })
+      GO('e', 'A Five-Way Intersection', { w = -99, w_realnum = 42716, e = -99, e_realnum = 42718 })""")
+    eq(o.ev("NAMES[%d]" % (B + 42717)), "A Five-Way Intersection", "the real name")
+    o.lua("""GO('w', 'A Meeting of Corridors', { n = -99, n_realnum = 42706, e = -99, e_realnum = 42717, w = -99, w_realnum = 42715 })
+      GO('e', 'Mirrored Hallway', {})""")
+    eq(o.ev("NAMES[%d]" % (B + 42717)), "A Five-Way Intersection", "kept")
     # out of the area: the temporary map goes
     o.lua("""gmcp.room = { info = { num = 27937, zone = 'Sigil', name = 'Street', wilds = 'false', coord = { id = 1, name = 'Alyria', x = 435, y = 1226 } } }
       sbo.onRoom()""")

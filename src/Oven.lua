@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.29.2"
+M.version = "1.30.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10446,6 +10446,7 @@ end
 function M.onLineWork()
   local cap = M.cap
   pcall(M.dummyNoteLine, line)
+  if M.tempMap then pcall(M.tempNoteLine, line) end
   if line:find("takes your payment and hands you", 1, true) then pcall(M.noteBought, line) end
   if M.eqdbAt and not cap then
     local okE, done = pcall(M.eqdbLine, line)
@@ -10889,6 +10890,35 @@ function M.tempNoteSend(cmd)
   if d then M.tempLastDir, M.tempLastDirAt = d, os.time() end
 end
 
+-- following someone: "Roarke drifts south." then "You follow Roarke." - you went south too
+local DIRWORDS = "north south east west northeast northwest southeast southwest up down"
+function M.tempNoteLine(l)
+  local t = trim(l)
+  local who, dir = t:match("^(.-) %a+ (%a+)%.$")
+  if who and DIRWORDS:find("%f[%a]" .. (dir or "") .. "%f[%A]") then
+    M.tempLeave = { who = who, dir = DIRS[dir], at = os.time() }
+    return
+  end
+  local f = t:match("^You follow (.-)%.$")
+  local L = M.tempLeave
+  if f and L and L.who == f and os.time() - L.at <= 3 then
+    M.tempLastDir, M.tempLastDirAt = L.dir, os.time()
+    M.tempLeave = nil
+    -- the room arrived before this line and couldn't be placed: again, now the way is known
+    local T = M.tempMap
+    if T and T.pending and os.time() - T.pending.at <= 2 then
+      local P = T.pending
+      T.pending = nil
+      T.lastInfo, T.lastReal, T.last = P.lastInfo, P.lastReal, P.last
+      local id = M.tempOnRoom(P.info)
+      if id then
+        M.mapRoom = id
+        pcall(centerview, id)
+      end
+    end
+  end
+end
+
 local function hidden(info) return type(info) == "table" and (tonumber(info.num) or 0) <= 0 and info.name ~= nil end
 
 -- the room's real number, and which way you came. In order:
@@ -10939,20 +10969,49 @@ function M.tempOnRoom(info)
   local typed = M.tempLastDirAt and os.time() - M.tempLastDirAt <= 5 and M.tempLastDir or nil
   M.tempLastDir = nil
   local real, came = M.tempRealnum(info, T.lastInfo, T.lastReal, typed)
-  if not real then T.lastInfo, T.last, T.lastReal = info, nil, nil; return nil end
+  if not real then
+    -- kept a moment: "You follow …" may come just after, and say which way
+    T.pending = { info = info, lastInfo = T.lastInfo, lastReal = T.lastReal, last = T.last, at = os.time() }
+    T.lastInfo, T.last, T.lastReal = info, nil, nil
+    return nil
+  end
+  T.pending = nil
   local id = M.TEMP_BASE + real
   if not roomExists(id) then
     addRoom(id)
     setRoomArea(id, T.area)
-    local x, y, z = 0, 0, 0
+    local x, y, z
     local st = came and STEP[came]
     if T.last and roomExists(T.last) and st then
       local px, py, pz = getRoomCoordinates(T.last)
       x, y, z = (px or 0) + st[1], (py or 0) + st[2], (pz or 0) + st[3]
     end
+    -- else beside a neighbour already on the map (its exit says which side)
+    if not x and type(info.exits) == "table" then
+      for dir, step in pairs(STEP) do
+        local r = tonumber(info.exits[dir .. "_realnum"])
+        if r and roomExists(M.TEMP_BASE + r) then
+          local px, py, pz = getRoomCoordinates(M.TEMP_BASE + r)
+          x, y, z = (px or 0) - step[1], (py or 0) - step[2], (pz or 0) - step[3]
+          break
+        end
+      end
+    end
+    -- else a piece of map of its own, to one side (not on top of the first room)
+    if not x then
+      T.clusters = (T.clusters or 0) + 1
+      x, y, z = (T.clusters - 1) * 30, 0, 0
+    end
     setRoomCoordinates(id, x, y, z)
   end
-  setRoomName(id, info.name or "?")
+  -- a disguised visit (disoriented: no exits shown, a name like "Mirrored Hallway") never renames a room;
+  -- a normal visit later gives it its real name
+  local exitsShown = type(info.exits) == "table" and next(info.exits) ~= nil
+  T.named = T.named or {}
+  if exitsShown or not T.named[id] then
+    setRoomName(id, info.name or "?")
+    if exitsShown then T.named[id] = true end
+  end
   T.rooms[id] = true
   -- its exits: to rooms already on the map linked, the rest stubs
   for dir, step in pairs(STEP) do
