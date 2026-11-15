@@ -3280,6 +3280,10 @@ def top_bar():
         o2 = Oven(prev="setBorderTop(%d)" % left)
         o2.lua("""sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300, sp = 700, st = 460 }; sbo.lastPromptText = "<291hp 696sp 457st>"; sbo.showBar(true)""")
         eq((o2.ev("getBorderTop()"), o2.ev("WIDGETS.ovenSessionBarLabel.y")), (h, 0), f"one row at the top (border was {left})")
+    # the same background as the prompt bar, also after a colour change
+    eq(o.ev("WIDGETS.ovenSessionBarLabel.css"), o.ev("WIDGETS.ovenPromptBarLabel.css"), "same colour")
+    o.lua("sbo.command('bar bg 40 10 10')")
+    eq(o.ev("WIDGETS.ovenSessionBarLabel.css"), o.ev("WIDGETS.ovenPromptBarLabel.css"), "same colour after a change")
     # top bar off, a row left over from before: given back
     o4 = Oven(prev="setBorderTop(40)")
     o4.lua("""sbo.cfg.bar = true; sbo.cfg.barTop = false; sbo.cfg.maxes = { hp = 300 }; sbo.lastPromptText = "<291hp>"; sbo.showBar(true)""")

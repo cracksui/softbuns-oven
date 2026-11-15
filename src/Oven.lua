@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.31.2"
+M.version = "1.31.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7373,6 +7373,10 @@ function M.layoutBar()
   end
   M.topChecked = true
   if sessionOn then
+    -- the same colour as the prompt bar, every time it's placed (a label left from before can keep an old style)
+    local r, g, b = M.barBg()
+    local css = string.format("background-color: rgb(%d,%d,%d); padding-left: 4px; qproperty-alignment: 'AlignVCenter | AlignLeft';", r, g, b)
+    if M.sbarCss ~= css then M.sbar:setStyleSheet(css); M.sbarCss = css end
     M.sbar:show()
     M.sbar:move(left, atTop and (M.baseTop or 0) or (H - h))
     M.sbar:resize(W - left - right, h)
@@ -7616,7 +7620,7 @@ function M.applyBarBg()
   local css = string.format(
     "background-color: rgb(%d,%d,%d); padding-left: 4px; qproperty-alignment: 'AlignVCenter | AlignLeft';", r, g, b)
   if M.bar then M.bar:setStyleSheet(css) end
-  if M.sbar then M.sbar:setStyleSheet(css) end
+  if M.sbar then M.sbar:setStyleSheet(css); M.sbarCss = css end
   if M.cbar then M.cbar:setStyleSheet(css) end
 end
 
