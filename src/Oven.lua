@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.28.1"
+M.version = "1.29.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -508,6 +508,7 @@ M.formatters = {}
 -- (Materia Magica always uses <...>; the slot name must be words, so "<1hp 1sp 1st>" isn't one)
 local function parseSlot(l)
   local slot, item = l:match("^%s*<([%a][%a ']*)>%s*(.-)%s*$")
+  if item then item = M.stripAura and M.stripAura(item) or item end
   if slot and item ~= "" then return trim(slot), item end
 end
 
@@ -624,7 +625,11 @@ local function subhead(out, text)
 end
 
 -- trailing "(new) (unlit)" -> name, {"new","unlit"}
+-- "..it glows blue!" (detect magic shows an item's aura after its name): not part of the name
+function M.stripAura(s) return (s:gsub("%.%.+%s*[Ii]t [^%.!]-[!%.]%s*$", "")) end
+
 local function stripConds(s)
+  s = M.stripAura(s)
   local conds = {}
   while true do
     local body, c = s:match("^(.-)%s*%(([^()]+)%)%s*$")
@@ -1106,9 +1111,9 @@ local function renderSlots(out, slots, width, withStats)
       end
     end
   end
-  -- everything the stats column adds up to, under the list
+  -- everything the stats column adds up to, under the list: a line or two, and what it all weighs
   if withStats then
-    local ar, sums, order, known, worn = 0, {}, {}, 0, 0
+    local ar, sums, order, known, worn, pb, weighed = 0, {}, {}, 0, 0, 0, 0
     for _, r in ipairs(slots) do
       if not r.empty then
         worn = worn + 1
@@ -1116,6 +1121,10 @@ local function renderSlots(out, slots, width, withStats)
         if it then
           known = known + 1
           ar = ar + (tonumber(it.ar) or 0)
+          if it.weight then
+            pb = pb + (tonumber(it.weight[1]) or 0) * 100 + (tonumber(it.weight[2]) or 0)
+            weighed = weighed + 1
+          end
           for _, list in ipairs({ it.affects or {}, it.relicAffects or {} }) do
             for _, af in ipairs(list) do
               if not sums[af[1]] then order[#order + 1] = af[1] end
@@ -1126,48 +1135,42 @@ local function renderSlots(out, slots, width, withStats)
       end
     end
     if known > 0 then
-      -- sorted into groups, one group per line, values lined up in columns
-      local cells = {}
-      if ar ~= 0 then cells[#cells + 1] = { k = "AR", v = ar } end
-      for _, k in ipairs(order) do
-        if sums[k] ~= 0 then cells[#cells + 1] = { k = k, v = sums[k] } end
-      end
       out[#out + 1] = { { C.dim, string.rep(" ", slotW) .. " ├" .. string.rep("─", math.max(4, width - slotW - 2)) } }
-      local blank = function() return { { C.text, string.rep(" ", slotW) }, { C.dim, " │ " } } end
-      if #cells == 0 then
-        out[#out + 1] = { { C.slot, pad("total", slotW) }, { C.dim, " │ " }, { C.dim, "—" } }
-      else
-        local groups = M.eqTotalGroups(cells)
-        local gW, vW, kW = 0, 0, 0
-        for _, g in ipairs(groups) do
-          gW = math.max(gW, ulen(g.name))
-          for _, c in ipairs(g) do
-            vW = math.max(vW, ulen(M.eqTotalNum(c)))
-            kW = math.max(kW, ulen(c.k))
-          end
-        end
-        local cellW = vW + 1 + kW
-        local per = math.max(1, math.floor((width - indent - gW - 2 + 3) / (cellW + 3)))
-        local first = true
-        for _, g in ipairs(groups) do
-          for i = 1, #g, per do
-            local l = first and { { C.slot, pad("total", slotW) }, { C.dim, " │ " } } or blank()
-            first = false
-            l[#l + 1] = { C.dim, pad(i == 1 and g.name or "", gW) .. "  " }
-            for j = i, math.min(#g, i + per - 1) do
-              local c = g[j]
-              local num = M.eqTotalNum(c)
-              l[#l + 1] = { C.text, string.rep(" ", vW - ulen(num)) }
-              l[#l + 1] = { c.k == "AR" and C.num or (c.v >= 0 and C.plus or C.minus), num }
-              l[#l + 1] = { c.k == "AR" and C.key or C.item, " " .. (j < math.min(#g, i + per - 1) and pad(c.k, kW) .. "   " or c.k) }
-            end
-            out[#out + 1] = l
-          end
+      local cells = {}
+      local function add(col, txt, kcol, k)
+        local c = { { col, txt } }
+        if k then c[2] = { kcol, " " .. k } end
+        cells[#cells + 1] = c
+      end
+      if weighed > 0 then
+        add(C.num, string.format("%d st %d pb", math.floor(pb / 100), pb % 100), C.dim,
+          (weighed < worn or known < worn) and string.format("weight (from %d of %d items)", weighed, worn) or "weight")
+      end
+      -- in the usual order (attributes, armor, offense…), without the group names
+      local kv = {}
+      if ar ~= 0 then kv[#kv + 1] = { k = "AR", v = ar } end
+      for _, k in ipairs(order) do if sums[k] ~= 0 then kv[#kv + 1] = { k = k, v = sums[k] } end end
+      for _, g in ipairs(M.eqTotalGroups(kv)) do
+        for _, c in ipairs(g) do
+          if c.k == "AR" then add(C.num, tostring(c.v), C.key, "AR")
+          else add(c.v >= 0 and C.plus or C.minus, M.eqTotalNum(c), C.item, c.k) end
         end
       end
-      if known < worn then
-        out[#out + 1] = { { C.text, string.rep(" ", slotW) }, { C.dim, " │ " },
-          { C.dim, string.format("from %d of %d items - the ones marked ? haven't been looked at", known, worn) } }
+      -- (the weight already says how many are known, when it's there)
+      if known < worn and weighed == 0 then add(C.dim, string.format("(from %d of %d items)", known, worn)) end
+      -- the cells, flowed across as many lines as they need
+      local room = math.max(20, width - indent)
+      local l, used = nil, 0
+      for _, c in ipairs(cells) do
+        local w = segLen(c)
+        if not l or used + 3 + w > room then
+          l = { { C.slot, pad(l and "" or "total", slotW) }, { C.dim, " │ " } }
+          out[#out + 1] = l
+          used = 0
+        else
+          l[#l + 1] = { C.dim, " · " }; used = used + 3
+        end
+        addAll(l, c); used = used + w
       end
     end
   end
