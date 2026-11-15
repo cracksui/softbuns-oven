@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.31.3"
+M.version = "1.32.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1050,9 +1050,19 @@ function M.eqTotalGroups(cells)
   return res
 end
 
+-- eq's order: head to toe, by part of the body
+M.EQ_REGIONS = {
+  { "head", { "head", "face", "neck", "amulet" } },
+  { "body", { "cloak", "wing (L)", "wing (R)", "torso", "waist", "hip" } },
+  { "arms & hands", { "arms", "wrist", "hands", "finger" } },
+  { "held", { "hand (R)", "hand (L)", "shield", "light" } },
+  { "legs", { "legs", "feet", "tail" } },
+  { "other", { "spellbook", "tome", "quiver", "aura" } },
+}
+
 local function renderSlots(out, slots, width, withStats)
   local slotW = 0
-  for _, r in ipairs(slots) do slotW = math.max(slotW, ulen(slotLabel(r[1]))) end
+  for _, r in ipairs(slots) do if not r.divider then slotW = math.max(slotW, ulen(slotLabel(r[1]))) end end
   slotW = math.min(slotW, 22)
   local indent = slotW + 3
   -- stats column starts after the longest item name that leaves room for them
@@ -1060,12 +1070,18 @@ local function renderSlots(out, slots, width, withStats)
   if withStats then
     local longest = 0
     for _, r in ipairs(slots) do
-      if not r.empty then longest = math.max(longest, segLen(itemSegs(r[2]))) end
+      if not r.empty and not r.divider then longest = math.max(longest, segLen(itemSegs(r[2]))) end
     end
     statCol = indent + math.min(longest, math.max(16, width - indent - 24)) + 2
   end
   local prev
   for _, r in ipairs(slots) do
+   if r.divider then
+    -- "── head ─────": where one part of the body starts
+    local t = "── " .. r.divider .. " "
+    out[#out + 1] = { { C.dim, t .. string.rep("─", math.max(4, width - ulen(t))) } }
+    prev = nil
+   else
     local sl = M.slotByName[r[1]:lower()]
     local group = sl and sl.key or r[1]
     local label = (group == prev) and "" or slotLabel(r[1])
@@ -1097,26 +1113,28 @@ local function renderSlots(out, slots, width, withStats)
           row[#row + 1] = { C.dim, "?" }
         end
       else
-        local lines = flowUnits(units, math.max(10, width - statCol))
-        local first = 1
+        -- one line per item: what fits, then "…"
+        local lines = flowUnits(units, math.max(10, width - statCol - 2))
+        local one = lines[1] or {}
+        if #lines > 1 then one = { unpack(one) }; one[#one + 1] = { C.dim, " …" } end
         if nameW + 2 <= statCol then
           row[#row + 1] = { C.text, string.rep(" ", statCol - nameW) }
-          addAll(row, lines[1]); first = 2
-        end
-        for i = first, #lines do
+          addAll(row, one)
+        else
           local l = { unpack(cont) }
           l[#l + 1] = { C.text, string.rep(" ", statCol - indent) }
-          addAll(l, lines[i])
+          addAll(l, one)
           out[#out + 1] = l
         end
       end
     end
+   end
   end
   -- under the list: what it all weighs (with or without the stats column)
   do
     local ar, sums, order, known, worn, pb, weighed = 0, {}, {}, 0, 0, 0, 0
     for _, r in ipairs(slots) do
-      if not r.empty then
+      if not r.empty and not r.divider then
         worn = worn + 1
         local it = M.items and M.items[(stripConds(r[2]))]
         if it then
@@ -1255,20 +1273,33 @@ function M.formatters.eq(raw, width)
     if a[1]:lower():match("tail") then hasTail = true end
     if a[1]:lower():match("wing") then hasWings = true end
   end
+  -- head to toe, a divider per part of the body (the slot names as the game has them)
+  local slotOf = {}
+  for _, sl in ipairs(M.slotTable) do slotOf[sl.key] = sl end
   local rows = {}
-  for _, sl in ipairs(M.slotTable) do
-    local worn = bySlot[sl.key] or {}
-    for _, r in ipairs(worn) do rows[#rows + 1] = r end
-    local applies = M.cfg.showEmpty and not sl.extra
-      and (sl.only ~= "donation" or M.cfg.showDonation)
-      and (sl.only ~= "tail" or hasTail) and (sl.only ~= "wings" or hasWings)
-    if applies then
-      for _ = #worn + 1, (sl.n or 1) do
-        rows[#rows + 1] = { sl.names[1], nil, empty = true, donation = sl.only == "donation" }
+  for _, region in ipairs(M.EQ_REGIONS) do
+    local part = {}
+    for _, key in ipairs(region[2]) do
+      local sl = slotOf[key]
+      if sl then
+        local worn = bySlot[key] or {}
+        for _, r in ipairs(worn) do part[#part + 1] = r end
+        local applies = M.cfg.showEmpty and not sl.extra
+          and (sl.only ~= "donation" or M.cfg.showDonation)
+          and (sl.only ~= "tail" or hasTail) and (sl.only ~= "wings" or hasWings)
+        if applies then
+          for _ = #worn + 1, (sl.n or 1) do
+            part[#part + 1] = { sl.names[1], nil, empty = true, donation = sl.only == "donation" }
+          end
+        end
       end
     end
+    if region[1] == "other" then for _, r in ipairs(unknown) do part[#part + 1] = r end end   -- slots we don't know: still shown
+    if #part > 0 then
+      rows[#rows + 1] = { divider = region[1] }
+      for _, r in ipairs(part) do rows[#rows + 1] = r end
+    end
   end
-  for _, r in ipairs(unknown) do rows[#rows + 1] = r end   -- slots we don't know: still shown
   renderSlots(out, rows, width, M.cfg.eqStats)
 
   if #ar > 0 then
