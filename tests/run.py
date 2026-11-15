@@ -879,8 +879,13 @@ def quest_shop_in_town_first():
     eq(list(o.ev("WALKS").values()), [28450], "Taron: with Lord Vendredi, where the quest was taken")
     # the step itself: the shop, until the steak's in your inventory - then Taron
     o.lua("WALKS = {}; sbo.questGoStep('2452', 1)")
-    o.lua("sbo.cfg.carried = { at = os.time(), inv = { 'a T-bone steak' }, bags = {} }; sbo.questGoStep('2452', 1)")
-    eq(list(o.ev("WALKS").values()), [28017, 28450], "shop first, Taron once you carry it")
+    o.lua("sbo.cfg.carried = nil; sbo.drawQuestTracker = function() end")
+    o.feed("Strecht, the butcher takes your payment and hands you a T-bone steak.")
+    o.lua("sbo.questGoStep('2452', 1)")
+    eq(list(o.ev("WALKS").values()), [28017, 28450], "shop first, Taron once you've bought it")
+    import re as _re2
+    h, w, a = o.ev("function() return sbo.questCardHtml('2452', sbo.quests['2452']) end")()
+    assert not any("&amp;" in x for x in h.values()), list(h.values())
     # no shop of that kind in town: the nearest that's listed
     o.lua("AREA[1] = 9")
     room, why = o.ev("function() return sbo.shopSelling('a T-bone steak') end")()

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.23.0"
+M.version = "1.23.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2969,13 +2969,13 @@ local function questCardHtml(id, Q)
             if getRoom then
               local nm = getRoomName(getRoom) or ("#" .. getRoom)
               add("   " .. span(C.dim, "→ ") .. span(C.flag, nm) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>"
-                .. span(C.dim, "&nbsp;&nbsp;get it"), ulen(nm) + 18)
+                .. "&nbsp;&nbsp;" .. span(C.dim, "get it"), ulen(nm) + 18)
               acts[#html] = { id = id, n = ph.n, get = true }
             end
             local who = ph.text:match("deliver .- to ([^,]+)") or "?"
             if dRoom then
               add("   " .. span(C.dim, "→ ") .. span(C.flag, who) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>"
-                .. span(C.dim, "&nbsp;&nbsp;deliver"), ulen(who) + 18)
+                .. "&nbsp;&nbsp;" .. span(C.dim, "deliver"), ulen(who) + 18)
               acts[#html] = { id = id, n = ph.n, deliver = true }
             else
               add("   " .. span(C.dim, "→ " .. who .. " · not seen yet"), ulen(who) + 16)
@@ -5898,6 +5898,21 @@ function M.updateCarried(cap)
     c.bags[bag:lower()] = names
   end
   M.saveSettings()
+end
+
+-- "Strecht, the butcher takes your payment and hands you a T-bone steak.": it's in your inventory now
+-- (a quest delivery's link turns to the one to deliver it to)
+function M.noteBought(l)
+  local item = trim(l):match("takes your payment and hands you (.-)%.?$")
+  if not item or item == "" then return end
+  local c = M.cfg.carried or { inv = {}, bags = {} }
+  M.cfg.carried = c
+  c.inv = c.inv or {}
+  c.inv[#c.inv + 1] = item
+  c.at = c.at or os.time()
+  M.saveSettings()
+  M.dataChanged()
+  pcall(M.drawQuestTracker)
 end
 
 -- name -> "" (carried) or the container it's in
@@ -10409,6 +10424,7 @@ end
 function M.onLineWork()
   local cap = M.cap
   pcall(M.dummyNoteLine, line)
+  if line:find("takes your payment and hands you", 1, true) then pcall(M.noteBought, line) end
   if M.eqdbAt and not cap then
     local okE, done = pcall(M.eqdbLine, line)
     if okE and done then pcall(M.recordLine, line, false); return end
