@@ -867,6 +867,53 @@ def update_check_never_sticks():
 
 
 @test
+def hidden_rooms_mapped():
+    o = Oven()
+    o.lua("""ROOMS, AREAS, EXITS, STUBS, NAMES = {}, {}, {}, {}, {}
+      local nextArea = 100
+      getAreaTable = function() local t = {} for n, id in pairs(AREAS) do t[n] = id end return t end
+      addAreaName = function(n) nextArea = nextArea + 1; AREAS[n] = nextArea; return nextArea end
+      deleteArea = function(id) for n, a in pairs(AREAS) do if a == id then AREAS[n] = nil end end
+        for r, v in pairs(ROOMS) do if v.area == id then ROOMS[r] = nil end end end
+      roomExists = function(id) return ROOMS[tonumber(id)] ~= nil end
+      addRoom = function(id) ROOMS[id] = { x = 0, y = 0, z = 0 } end
+      setRoomArea = function(id, a) ROOMS[id].area = a end
+      setRoomName = function(id, n) NAMES[id] = n end
+      setRoomCoordinates = function(id, x, y, z) ROOMS[id].x, ROOMS[id].y, ROOMS[id].z = x, y, z end
+      getRoomCoordinates = function(id) local r = ROOMS[id] return r.x, r.y, r.z end
+      setExit = function(a, b, d) EXITS[a .. d] = b end
+      setExitStub = function(id, d, on) STUBS[id .. d] = on or nil end
+      updateMap = function() end; centerview = function() end; getRoomArea = function(id) return ROOMS[id] and ROOMS[id].area end
+      SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      function GO(dir, name, exits) if dir then sbo.tempNoteSend(dir) end
+        gmcp.room = { info = { num = -99, zone = 'Tower of Riga', name = name, exits = exits, wilds = 'false',
+          coord = { id = 2, name = 'Verity Isle', x = 69, y = 32 } } }
+        sbo.onRoom() end""")
+    B = 2000000000
+    # A Meeting of Corridors: east 42717, west 42715 - it's 42716
+    o.lua("""GO(nil, 'A Meeting of Corridors', { n = -99, n_realnum = 42706, e = -99, e_realnum = 42717, w = -99, w_realnum = 42715 })""")
+    eq(o.ev("sbo.mapRoom"), B + 42716, "worked out from east and west")
+    assert o.ev("STUBS[%d .. 'n']" % (B + 42716)), "north: a stub (not seen yet)"
+    # north, into the armory (one exit back south): it's 42706, through the exit taken
+    o.lua("""GO('n', 'A Cluttered Armory', { s = -99, s_realnum = 42716 })""")
+    eq(o.ev("sbo.mapRoom"), B + 42706, "through the exit taken")
+    eq((o.ev("ROOMS[%d].x" % (B + 42706)), o.ev("ROOMS[%d].y" % (B + 42706))), (0, 1), "a step north")
+    eq(o.ev("EXITS['%dn']" % (B + 42716)), B + 42706, "linked both ways")
+    eq(o.ev("EXITS['%ds']" % (B + 42706)), B + 42716, "")
+    eq(o.ev("NAMES[%d]" % (B + 42706)), "A Cluttered Armory", "named")
+    # back south: the same room, not a new one
+    o.lua("""GO('s', 'A Meeting of Corridors', { n = -99, n_realnum = 42706, e = -99, e_realnum = 42717, w = -99, w_realnum = 42715 })""")
+    eq(o.ev("sbo.mapRoom"), B + 42716, "the same room again")
+    # out of the area: the temporary map goes
+    o.lua("""gmcp.room = { info = { num = 27937, zone = 'Sigil', name = 'Street', wilds = 'false', coord = { id = 1, name = 'Alyria', x = 435, y = 1226 } } }
+      sbo.onRoom()""")
+    eq((o.ev("sbo.tempMap"), o.ev("next(AREAS)")), (None, None), "cleared on leaving")
+    # one left over from last time: cleared at the start
+    o.lua("addAreaName('Oven: Tower of Riga'); sbo.tempCleanup()")
+    eq(o.ev("next(AREAS)"), None, "cleared at the start")
+
+
+@test
 def world_map():
     import struct, os as _os
     o = Oven()

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.27.0"
+M.version = "1.28.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8583,6 +8583,7 @@ function M.onSend(_, cmd)
   pcall(M.recordCommand, cmd)
   pcall(M.dummyNoteSend, cmd)
   pcall(M.eqdbNoteSend, cmd)
+  pcall(M.tempNoteSend, cmd)
   pcall(M.noteLootCommand, cmd)
   pcall(M.noteEnterCommand, cmd)
   pcall(M.noteRunCommand, cmd)
@@ -10872,11 +10873,128 @@ end
 M.say = say
 
 ---------------------------------------------------------------------------
+-- Areas that hide their room numbers (GMCP room.info num = -99, e.g. the Tower of Riga): every exit
+-- still names the room it leads to by its real number (n_realnum…), so Oven knows which room you're in -
+-- the exit you came through, else the rooms east and west of you (±1) - and builds the area in the mapper
+-- as you walk: a temporary area ("Oven: Tower of Riga"), rooms placed a step from where you came from,
+-- exits linked (stubs where they lead somewhere not seen yet). Gone when you leave (and any left over
+-- from last time, at the start).
+---------------------------------------------------------------------------
+do
+M.TEMP_BASE = 2000000000   -- temporary rooms' numbers: this + the room's real number
+local PREFIX = "Oven: "
+local DIRS = { n = "n", s = "s", e = "e", w = "w", ne = "ne", nw = "nw", se = "se", sw = "sw", u = "u", d = "d",
+  north = "n", south = "s", east = "e", west = "w", northeast = "ne", northwest = "nw", southeast = "se", southwest = "sw",
+  up = "u", down = "d" }
+local STEP = { n = { 0, 1, 0 }, s = { 0, -1, 0 }, e = { 1, 0, 0 }, w = { -1, 0, 0 }, ne = { 1, 1, 0 }, nw = { -1, 1, 0 },
+  se = { 1, -1, 0 }, sw = { -1, -1, 0 }, u = { 0, 0, 1 }, d = { 0, 0, -1 } }
+M.TEMP_DIRS = DIRS
+
+-- which way you went (the last direction you sent)
+function M.tempNoteSend(cmd)
+  local d = DIRS[trim(cmd or ""):lower()]
+  if d then M.tempLastDir = d end
+end
+
+local function hidden(info) return type(info) == "table" and (tonumber(info.num) or 0) <= 0 and info.name ~= nil end
+
+-- the room's real number: through the exit you took, else from its east / west neighbours
+function M.tempRealnum(info, prev, dir)
+  local ex = type(info.exits) == "table" and info.exits or {}
+  if prev and dir and type(prev.exits) == "table" then
+    local r = tonumber(prev.exits[dir .. "_realnum"])
+    if r then return r end
+  end
+  local e, w = tonumber(ex.e_realnum), tonumber(ex.w_realnum)
+  if e and w and (e - w) == 2 then return w + 1 end
+  if e then return e - 1 end
+  if w then return w + 1 end
+end
+
+local function areaOf(zone)
+  local name = PREFIX .. tostring(zone or "somewhere")
+  local t = getAreaTable and getAreaTable() or {}
+  return t[name] or addAreaName(name)
+end
+
+function M.tempOnRoom(info)
+  local T = M.tempMap
+  if not hidden(info) then
+    if T then M.tempClear() end
+    return nil
+  end
+  if T and T.zone ~= info.zone then M.tempClear(); T = nil end
+  if not T then
+    T = { zone = info.zone, area = areaOf(info.zone), rooms = {} }
+    M.tempMap = T
+    M.say("this area hides its room numbers - Oven's mapping it as you go (\"" .. PREFIX .. tostring(info.zone) .. "\", gone when you leave)")
+  end
+  local real = M.tempRealnum(info, T.lastInfo, M.tempLastDir)
+  if not real then T.lastInfo, T.last = info, nil; return nil end
+  local id = M.TEMP_BASE + real
+  if not roomExists(id) then
+    addRoom(id)
+    setRoomArea(id, T.area)
+    local x, y, z = 0, 0, 0
+    local st = M.tempLastDir and STEP[M.tempLastDir]
+    if T.last and roomExists(T.last) and st then
+      local px, py, pz = getRoomCoordinates(T.last)
+      x, y, z = (px or 0) + st[1], (py or 0) + st[2], (pz or 0) + st[3]
+    end
+    setRoomCoordinates(id, x, y, z)
+  end
+  setRoomName(id, info.name or "?")
+  T.rooms[id] = true
+  -- its exits: to rooms already on the map linked, the rest stubs
+  for dir, step in pairs(STEP) do
+    local r = type(info.exits) == "table" and tonumber(info.exits[dir .. "_realnum"])
+    if r then
+      local to = M.TEMP_BASE + r
+      if roomExists(to) then
+        pcall(setExit, id, to, dir)
+        -- and back, when that room has the opposite way out (it was a stub)
+        local back = ({ n = "s", s = "n", e = "w", w = "e", ne = "sw", sw = "ne", nw = "se", se = "nw", u = "d", d = "u" })[dir]
+        pcall(setExitStub, to, back, false)
+        pcall(setExit, to, id, back)
+      else
+        pcall(setExitStub, id, dir, true)
+      end
+    end
+  end
+  pcall(updateMap)
+  T.last, T.lastInfo = id, info
+  return id
+end
+
+-- off the map: the temporary area, and every room in it
+function M.tempClear()
+  local T = M.tempMap
+  M.tempMap = nil
+  if T and T.area then pcall(deleteArea, T.area) end
+  pcall(updateMap)
+end
+
+-- left over from last time (Mudlet closed while you were inside one)
+function M.tempCleanup()
+  for name, id in pairs(getAreaTable and getAreaTable() or {}) do
+    if tostring(name):sub(1, #PREFIX) == PREFIX then pcall(deleteArea, id) end
+  end
+end
+end
+
+---------------------------------------------------------------------------
 -- Map: follow your room by GMCP room number, and walk where you double-click
 ---------------------------------------------------------------------------
 function M.mapRoomId()
   local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info
-  return info and tonumber(info.num)
+  if not info then return nil end
+  -- a room whose number is hidden (-99): its place on the temporary map Oven builds for the area
+  local n = tonumber(info.num)
+  if (n or 0) <= 0 or M.tempMap then
+    local ok, id = pcall(M.tempOnRoom, info)
+    if (n or 0) <= 0 then return ok and id or nil end
+  end
+  return n
 end
 
 function M.onRoom()
@@ -11103,7 +11221,7 @@ function M.worldNote(info)
   if type(info) ~= "table" or type(info.coord) ~= "table" then return end
   local num, x, y = tonumber(info.num), tonumber(info.coord.x), tonumber(info.coord.y)
   local name = info.coord.name
-  if not (num and x and y and name) then return end
+  if not (num and x and y and name) or num <= 0 then return end
   local w = W()
   local wild = tostring(info.wilds) == "true"
   M.worldHere = { map = name, x = x, y = y, room = num, wild = wild }
@@ -11695,7 +11813,9 @@ end
 -- the room you're in, for the kill / loot / death records
 function M.currentRoom()
   local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info or {}
-  return tonumber(info.num) or M.mapRoom
+  local n = tonumber(info.num)
+  if n and n > 0 then return n end
+  return M.mapRoom
 end
 
 local function ago(t)
@@ -12939,6 +13059,7 @@ function M.goAnswer(cmd)
 end
 
 function M.mapStart()
+  pcall(M.tempCleanup)
   if M.mapHandler then killAnonymousEventHandler(M.mapHandler) end
   M.mapHandler = registerAnonymousEventHandler("gmcp.room.info", function() M.onRoom() end)
   doSpeedWalk = function() M.doSpeedWalk() end   -- the global Mudlet's map calls
