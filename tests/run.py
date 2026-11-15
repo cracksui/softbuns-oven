@@ -3275,6 +3275,27 @@ def bar_from_gmcp():
 
 
 @test
+def score_tail_tidy():
+    o = Oven()
+    o.lua("sbo.quests['3390'] = { name = 'Cooking Adventurers' }")
+    lines = ["Player Information for: Softbuns", "  Hours Played:      107        Age:            15 years (Born 9/17/1504) [Created: In Antiquity]",
+      "  Class Level:        60        Total Level:    60", "  Class:           monk         Alignment:      42 (+neutral)",
+      "  Hit Points:        426/426    Practices:      122", "  Strength:           13/20     Vitality:       17/19",
+      "  Race:               sahuagin  Gender:         non-sexual",
+      "* If CPKed, your hoard would be valued at 67,668 gp.", "* You are carrying 13 items weighing 11 stones and 50 pebbles.",
+      "* The next phase of quest #3390 is: Phase 10: Keep cooking for players until you obtain the mark of spaghetti-and-pesto.",
+      "* The next phase of quest #3519 is: Phase 1: Locate and deliver a brick of cream cheese to the janitor."]
+    o.L.globals().SL = o.L.table_from(lines)
+    out = o.lua("""local raw = {} for _, l in ipairs(SL) do raw[#raw+1] = l end local l = sbo.format('score', '', raw, 100)
+      local s = {} for _, r in ipairs(l) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end return table.concat(s)""")
+    assert "Quests" in out and "#3390  Cooking Adventurers · step 10" in out and "#3519  step 1" in out, out
+    assert "The next phase" not in out, out
+    assert "13 items · 11 st 50 pb" in out and "67,668 gp" in out, out
+    last = [l for l in out.split("\n") if l.strip()][-1]
+    assert last.startswith("107 hours played") and "quest" not in last and "CPK" not in last, last
+
+
+@test
 def top_bar():
     o = Oven()
     o.lua("""sbo.cfg.bar = true; sbo.cfg.barSession = true; sbo.cfg.maxes = { hp = 300, sp = 700, st = 460 }

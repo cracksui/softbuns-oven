@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.33.1"
+M.version = "1.34.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2053,7 +2053,7 @@ M.commaNum = commaNum
 
 -- pull everything out of `score` into one table
 function M.parseScore(raw)
-  local sc = { info = {}, pools = {}, attrs = {}, ratings = {}, other = {} }
+  local sc = { info = {}, pools = {}, attrs = {}, ratings = {}, other = {}, quests = {} }
   for _, l in ipairs(raw) do
     local t = trim(l)
     local who = t:match("^Player Information for:%s*(.+)$")
@@ -2072,7 +2072,10 @@ function M.parseScore(raw)
       local hoard = s2:match("^If CPKed, your hoard would be valued at ([%d,]+) gp")
       local ci, cw = s2:match("^You are carrying (%d+) items weighing (.-)%.?$")
       local marks, rel = s2:match("^You have attained (%d+) marks and (%d+) relationships")
-      if e then sc.exp, sc.tnl = e, need
+      -- "The next phase of quest #3390 is: Phase 10: Keep cooking for players until…"
+      local qid, qn, qtext = s2:match("^The next phase of quest #(%d+) is:%s*Phase (%d+):%s*(.-)%s*$")
+      if qid then sc.quests[#sc.quests + 1] = { id = qid, n = qn, text = qtext }
+      elseif e then sc.exp, sc.tnl = e, need
       elseif mk then sc.mobKills, sc.mobDeaths = mk, md
       elseif pk then sc.pkKills, sc.pkDeaths = pk, pd
       elseif hoard then sc.hoard = hoard
@@ -2190,6 +2193,11 @@ function M.formatters.score(raw, width)
     local n, word = I["Reputation"]:match("^(%-?%d+)%s*%((.-)%)")
     cells[#cells + 1] = { "Reputation", n and { { C.num, n }, { C.dim, "  " .. word } } or { { C.item, I["Reputation"] } } }
   end
+  if sc.carry then
+    cells[#cells + 1] = { "Carrying", { { C.num, sc.carry[1] }, { C.dim, " items · " },
+      { C.num, (sc.carry[2]:gsub(" stones?", " st"):gsub(" pebbles?", " pb"):gsub(" and ", " ")) } } }
+  end
+  if sc.hoard then cells[#cells + 1] = { "CPK hoard", { { C.num, sc.hoard }, { C.dim, " gp" } } } end
   if #cells > 0 then subhead(out, "Standing"); grid(out, cells, width) end
 
   -- kill record, spelled out
@@ -2207,13 +2215,26 @@ function M.formatters.score(raw, width)
     end
   end
 
-  -- trivia, dimmed
+  -- your quests' next steps: one each, its number and name, the step, what to do (wrapped under it)
+  if #sc.quests > 0 then
+    subhead(out, "Quests")
+    local idW = 0
+    for _, q in ipairs(sc.quests) do idW = math.max(idW, ulen(q.id) + 1) end
+    for _, q in ipairs(sc.quests) do
+      local Q = M.quests and M.quests[q.id]
+      local head = { { C.num, pad("#" .. q.id, idW) }, { C.dim, "  " } }
+      if Q and Q.name then head[#head + 1] = { C.item, Q.name }; head[#head + 1] = { C.dim, " · " } end
+      head[#head + 1] = { C.dim, "step " .. q.n }
+      out[#out + 1] = head
+      addAll(out, wrapWords(q.text, width, idW + 2, C.text, { { C.text, string.rep(" ", idW + 2) } }, idW + 2))
+    end
+  end
+
+  -- the rest, dimmed: one short line
   local misc = {}
   if I["Hours Played"] then misc[#misc + 1] = I["Hours Played"] .. " hours played" end
   if I["Age"] then misc[#misc + 1] = "age " .. I["Age"]:gsub("%s*%[.-%]", "") end
   if I["Gender"] then misc[#misc + 1] = I["Gender"] end
-  if sc.hoard then misc[#misc + 1] = "CPK hoard " .. sc.hoard .. " gp" end
-  if sc.carry then misc[#misc + 1] = "carrying " .. sc.carry[1] .. " items (" .. sc.carry[2]:gsub(" stones", " st"):gsub(" pebbles", " pb") .. ")" end
   for k, v in pairs(I) do
     local known = { ["Class Level"] = 1, ["Total Level"] = 1, Race = 1, Class = 1, Practices = 1, ["Quest Points"] = 1,
                     Alignment = 1, Reputation = 1, ["Hours Played"] = 1, Age = 1, Gender = 1 }
