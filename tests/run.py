@@ -904,6 +904,14 @@ def hidden_rooms_mapped():
     # back south: the same room, not a new one
     o.lua("""GO('s', 'A Meeting of Corridors', { n = -99, n_realnum = 42706, e = -99, e_realnum = 42717, w = -99, w_realnum = 42715 })""")
     eq(o.ev("sbo.mapRoom"), B + 42716, "the same room again")
+    # following a friend: nothing typed - the new room's way back to this one says where it is
+    o.lua("""GO(nil, 'A Large Gallery', { e = -99, e_realnum = 42716, s = -99, s_realnum = 42725 })""")
+    eq(o.ev("sbo.mapRoom"), B + 42715, "came west: the room west of the last one")
+    eq(o.ev("ROOMS[%d].x" % (B + 42715)), -1, "placed a step west")
+    # a stale direction from long ago doesn't mislead
+    o.lua("""sbo.tempNoteSend('n'); sbo.tempLastDirAt = os.time() - 60
+      GO(nil, 'A Meeting of Corridors', { n = -99, n_realnum = 42706, e = -99, e_realnum = 42717, w = -99, w_realnum = 42715 })""")
+    eq(o.ev("sbo.mapRoom"), B + 42716, "back east, by the way back")
     # out of the area: the temporary map goes
     o.lua("""gmcp.room = { info = { num = 27937, zone = 'Sigil', name = 'Street', wilds = 'false', coord = { id = 1, name = 'Alyria', x = 435, y = 1226 } } }
       sbo.onRoom()""")

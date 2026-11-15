@@ -10890,20 +10890,35 @@ local STEP = { n = { 0, 1, 0 }, s = { 0, -1, 0 }, e = { 1, 0, 0 }, w = { -1, 0, 
   se = { 1, -1, 0 }, sw = { -1, -1, 0 }, u = { 0, 0, 1 }, d = { 0, 0, -1 } }
 M.TEMP_DIRS = DIRS
 
--- which way you went (the last direction you sent)
+local OPP = { n = "s", s = "n", e = "w", w = "e", ne = "sw", sw = "ne", nw = "se", se = "nw", u = "d", d = "u" }
+-- which way you went, when you typed it (a hint only - following someone, you type nothing)
 function M.tempNoteSend(cmd)
   local d = DIRS[trim(cmd or ""):lower()]
-  if d then M.tempLastDir = d end
+  if d then M.tempLastDir, M.tempLastDirAt = d, os.time() end
 end
 
 local function hidden(info) return type(info) == "table" and (tonumber(info.num) or 0) <= 0 and info.name ~= nil end
 
--- the room's real number: through the exit you took, else from its east / west neighbours
-function M.tempRealnum(info, prev, dir)
+-- the room's real number, and which way you came. In order:
+--  1. the way back: this room has an exit to the room you were in, so you came the opposite way, and
+--     the room you were in named this one (works when you're following someone - nothing typed)
+--  2. the direction you typed a moment ago, through that room's exit
+--  3. its east / west neighbours (±1)
+function M.tempRealnum(info, prev, prevReal, dir)
   local ex = type(info.exits) == "table" and info.exits or {}
-  if prev and dir and type(prev.exits) == "table" then
-    local r = tonumber(prev.exits[dir .. "_realnum"])
-    if r then return r end
+  local pex = prev and type(prev.exits) == "table" and prev.exits or nil
+  if pex and prevReal then
+    for d, back in pairs(OPP) do
+      if tonumber(ex[d .. "_realnum"]) == prevReal then
+        local came = back
+        local r = tonumber(pex[came .. "_realnum"])
+        if r then return r, came end
+      end
+    end
+  end
+  if pex and dir then
+    local r = tonumber(pex[dir .. "_realnum"])
+    if r then return r, dir end
   end
   local e, w = tonumber(ex.e_realnum), tonumber(ex.w_realnum)
   if e and w and (e - w) == 2 then return w + 1 end
@@ -10929,14 +10944,16 @@ function M.tempOnRoom(info)
     M.tempMap = T
     M.say("this area hides its room numbers - Oven's mapping it as you go (\"" .. PREFIX .. tostring(info.zone) .. "\", gone when you leave)")
   end
-  local real = M.tempRealnum(info, T.lastInfo, M.tempLastDir)
-  if not real then T.lastInfo, T.last = info, nil; return nil end
+  local typed = M.tempLastDirAt and os.time() - M.tempLastDirAt <= 5 and M.tempLastDir or nil
+  M.tempLastDir = nil
+  local real, came = M.tempRealnum(info, T.lastInfo, T.lastReal, typed)
+  if not real then T.lastInfo, T.last, T.lastReal = info, nil, nil; return nil end
   local id = M.TEMP_BASE + real
   if not roomExists(id) then
     addRoom(id)
     setRoomArea(id, T.area)
     local x, y, z = 0, 0, 0
-    local st = M.tempLastDir and STEP[M.tempLastDir]
+    local st = came and STEP[came]
     if T.last and roomExists(T.last) and st then
       local px, py, pz = getRoomCoordinates(T.last)
       x, y, z = (px or 0) + st[1], (py or 0) + st[2], (pz or 0) + st[3]
@@ -10962,7 +10979,7 @@ function M.tempOnRoom(info)
     end
   end
   pcall(updateMap)
-  T.last, T.lastInfo = id, info
+  T.last, T.lastInfo, T.lastReal = id, info, real
   return id
 end
 
