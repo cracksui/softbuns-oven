@@ -3274,15 +3274,16 @@ def top_bar():
     assert "Mail" in top and "L57" in top and "xp/hr" in top, top
     assert "SAFE" in bottom and "HP" in bottom and "Mail" not in bottom and "L57" not in bottom, bottom
     assert o.ev("WIDGETS.ovenSessionBarLabel.shown") and o.ev("getBorderTop()") > 0, "the top line takes room at the top"
-    # an update mid-session (a fresh Oven, the border still holding the old version's row): same place, not a row lower
+    # rows left over (updates, Mudlet keeping the border): exactly one row at the very top, however many there were
     h = o.ev("getBorderTop()")
-    o2 = Oven(prev="setBorderTop(%d); ovenTopBase = 0" % h)
-    o2.lua("""sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300, sp = 700, st = 460 }; sbo.lastPromptText = "<291hp 696sp 457st>"; sbo.showBar(true)""")
-    eq((o2.ev("getBorderTop()"), o2.ev("WIDGETS.ovenSessionBarLabel.y")), (h, 0), "the top row, once")
-    # (an older Oven that didn't keep it: its row is recognised too)
-    o3 = Oven(prev="setBorderTop(%d)" % h)
-    o3.lua("""sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300, sp = 700, st = 460 }; sbo.lastPromptText = "<291hp 696sp 457st>"; sbo.showBar(true)""")
-    eq(o3.ev("getBorderTop()"), h, "not two rows")
+    for left in (h, 3 * h):
+        o2 = Oven(prev="setBorderTop(%d)" % left)
+        o2.lua("""sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300, sp = 700, st = 460 }; sbo.lastPromptText = "<291hp 696sp 457st>"; sbo.showBar(true)""")
+        eq((o2.ev("getBorderTop()"), o2.ev("WIDGETS.ovenSessionBarLabel.y")), (h, 0), f"one row at the top (border was {left})")
+    # top bar off, a row left over from before: given back
+    o4 = Oven(prev="setBorderTop(40)")
+    o4.lua("""sbo.cfg.bar = true; sbo.cfg.barTop = false; sbo.cfg.maxes = { hp = 300 }; sbo.lastPromptText = "<291hp>"; sbo.showBar(true)""")
+    eq(o4.ev("getBorderTop()"), 0, "no leftover row")
     # off: all on the prompt bar again
     o.lua("sbo.command('config bar.top off')")
     bottom = _re.sub("<[^>]+>", "", o.ev("WIDGETS.ovenPromptBarLabel.html") or "")
