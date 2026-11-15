@@ -871,11 +871,18 @@ def route_plan_text():
       sbo.signAt = function(r) if r == 10 then return { sign = "a weatherbeaten signpost outside Sigil's north gate" } end
         if r == 20 then return { sign = "a weatherbeaten signpost outside Vospire's east gate" } end end
       sbo.cfg.runs = { names = { vospire = {} }, ends = { vospire = 20 }, endsFixed = 1 }""")
-    plan = o.ev("sbo.routePlanText(1, 30)")
-    eq(plan, "plan: 3 steps → signpost outside Sigil's north gate · run vospire → signpost outside Vospire's east gate · 1 step → Main Street  (≈29 instead of 60 on foot)", "a run, with its signposts")
+    lines, sum = o.ev("function() return sbo.routePlanLines(1, 30) end")()
+    eq(list(lines.values()), ["3 steps to the signpost outside Sigil's north gate", "run vospire to the signpost outside Vospire's east gate",
+        "1 step to Main Street"], "a run, with its signposts, a line each")
+    eq(sum, "about 29 steps instead of 60 on foot", "and what it saves")
+    # printed as numbered lines
+    o.lua("LOGS = {}; sbo.log = function(m) LOGS[#LOGS+1] = m end; sbo.sayPlan('walk:', ({ sbo.routePlanLines(1, 30) })[1], 'about 29')")
+    logs = list(o.ev("LOGS").values())
+    assert len(logs) == 5 and "1." in logs[1] and "3." in logs[3], logs
     # no run worth it: on foot, the areas and the mirror
     o.lua("sbo.cfg.runs.ends = {}; sbo.signposts = function() return {} end")
-    eq(o.ev("sbo.routePlanText(1, 30)"), "plan: 60 steps on foot · Sigil → Alyria → enter mirror → Vospire", "on foot")
+    lines, sum = o.ev("function() return sbo.routePlanLines(1, 30) end")()
+    eq(list(lines.values()), ["60 steps on foot to Main Street", "through Sigil → Alyria → enter mirror → Vospire"], "on foot")
 
 
 @test
@@ -949,6 +956,14 @@ def quest_panel_scrolls():
     o.lua("""sbo.cfg.questFolded = {} for id in pairs(sbo.cfg.questPins) do sbo.cfg.questFolded[id] = true end sbo.drawQuestTracker()""")
     eq(shown(), list(range(1, 13)), "folded, all twelve fit")
     assert not o.ev("sbo.ScrollDown.shown")
+    # lines spaced by Qt's measure of one line (13px here), not the font-size estimate (16 × 1.35)
+    o.lua("""local old = Geyser.Label.new
+      Geyser.Label.new = function(self, c, p) local t = old(self, c, p)
+        if c.name == 'ovenQuestProbe' then t.getSizeHint = function() return 30, 13 end end return t end
+      sbo.questProbe = nil; sbo.cfg.questFolded = {}; sbo.drawQuestTracker()""")
+    eq(o.ev("sbo.questLineH"), 13, "measured")
+    y1, y2 = o.ev("WIDGETS.ovenQuestLine1_2.y"), o.ev("WIDGETS.ovenQuestLine1_3.y")
+    eq(y2 - y1, 13, "lines one measured line apart")
     # the number: bright, not grey
     h = o.ev("select(1, sbo.questCardHtml('101', sbo.quests['101']))[1]")
     assert "<b>" in h and "#101" in h, h

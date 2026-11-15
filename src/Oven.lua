@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.25.0"
+M.version = "1.25.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3133,7 +3133,20 @@ function M.drawQuestTracker()
   local size = math.max(8, (M.cfg.fontSize or 10) - 1)
   local okF, cw, ch = pcall(calcFontSize, size, font)
   if not okF or not cw then cw, ch = 7, 14 end
+  -- a line's real height: Qt's measure of one line in this font (the estimate from the font size was
+  -- too tall - lines drawn apart); the estimate only if it can't be measured
   local lineH = ch * 1.35
+  if not M.questProbe then
+    M.questProbe = Geyser.Label:new({ name = "ovenQuestProbe", x = -1000, y = -1000, width = 400, height = 40 })
+    pcall(function() M.questProbe:hide() end)
+  end
+  local okH, _, hintH = pcall(function()
+    M.questProbe:setStyleSheet("padding: 0px; margin: 0px;")
+    M.questProbe:rawEcho(string.format("<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt;\">Ag</div>", font, size))
+    return M.questProbe:getSizeHint()
+  end)
+  hintH = okH and tonumber(hintH)
+  if hintH and hintH >= ch * 0.6 and hintH <= ch * 2 then lineH = hintH end
   M.questLineH = lineH
   local layout, widest, total = {}, 0, 2
   for i, id in ipairs(ids) do
@@ -3164,7 +3177,7 @@ function M.drawQuestTracker()
       local lab = labs[j]
       if not lab then
         lab = Geyser.Label:new({ name = "ovenQuestLine" .. i .. "_" .. j, x = 0, y = 0, width = 100, height = 16 })
-        lab:setStyleSheet("background-color: transparent; padding: 0px 8px; qproperty-alignment: 'AlignVCenter | AlignLeft';")
+        lab:setStyleSheet("background-color: transparent; padding: 0px 8px; margin: 0px; qproperty-alignment: 'AlignVCenter | AlignLeft';")
         labs[j] = lab
       end
       hudCallbacks(lab, id, (acts or {})[j])
@@ -11684,8 +11697,14 @@ function M.mapWalkTo(id, onFoot)
   local ha = getRoomArea(M.mapRoom)
   for _, r in ipairs(path) do if getRoomArea(r) ~= ha then leaves = true; break end end
   if leaves then
-    local okF, f = pcall(M.routeFoot, dirs, path)
-    M.notifyWalk(string.format("%d step%s on foot · %s", #dirs, #dirs == 1 and "" or "s", okF and f or ""))
+    local shown = M.planShown and M.planShown.target == id and os.time() - M.planShown.at < 90
+    M.planShown = nil
+    if not shown then
+      local okF, f = pcall(M.routeFoot, dirs, path)
+      local lines = { string.format("%d step%s on foot to %s", #dirs, #dirs == 1 and "" or "s", getRoomName(id) or ("#" .. id)) }
+      if okF and f ~= "" then lines[2] = "through " .. f end
+      M.sayPlan("walk:", lines)
+    end
   else
     M.notifyWalk(string.format("%d step%s…", #dirs, #dirs == 1 and "" or "s"))
   end
@@ -11980,24 +11999,43 @@ local function footSummary(dirs, path)
 end
 M.routeFoot = footSummary
 
--- the plan for a walk from here to target, in one line: what a run (and its signposts) or a walk will do
-function M.routePlanText(here, target)
+-- the plan for a walk from here to target: numbered steps (to which signpost, the run and where it
+-- ends, the rest on foot), and a short summary
+function M.routePlanLines(here, target)
   if not here or not target or not getPath(here, target) then return nil end
   local dirs, path = {}, {}
   for i, d in ipairs(speedWalkDir) do dirs[i] = d; path[i] = tonumber(speedWalkPath[i]) end
   local okP, plan = pcall(M.runPlan, here, target, dirs, path)
   local name = roomExists(target) and getRoomName(target) or ("#" .. target)
+  local lines = {}
+  local function plural(n) return n == 1 and "" or "s" end
   if okP and plan then
-    local bits = {}
-    if plan.k > 0 then bits[#bits + 1] = string.format("%d step%s → %s", plan.k, plan.k == 1 and "" or "s", signLabel(plan.start))
-    else bits[#bits + 1] = "from " .. signLabel(plan.start) end
+    if plan.k > 0 then lines[#lines + 1] = string.format("%d step%s to the %s", plan.k, plural(plan.k), signLabel(plan.start)) end
     local e = M.runData().ends[plan.name]
-    bits[#bits + 1] = "run " .. plan.name .. (e and (" → " .. signLabel(e)) or " (its end not known yet)")
-    if plan.unknown then bits[#bits + 1] = "walk the rest → " .. name
-    elseif plan.after > 0 then bits[#bits + 1] = string.format("%d step%s → %s", plan.after, plan.after == 1 and "" or "s", name) end
-    return "plan: " .. table.concat(bits, " · ") .. string.format("  (≈%d instead of %d on foot)", plan.cost, #dirs)
+    lines[#lines + 1] = "run " .. plan.name .. (e and (" to the " .. signLabel(e)) or " (where it ends isn't known yet)")
+    if plan.unknown then lines[#lines + 1] = "walk the rest to " .. name
+    elseif plan.after > 0 then lines[#lines + 1] = string.format("%d step%s to %s", plan.after, plural(plan.after), name) end
+    return lines, string.format("about %d steps instead of %d on foot", plan.cost, #dirs)
   end
-  return string.format("plan: %d step%s on foot · %s", #dirs, #dirs == 1 and "" or "s", footSummary(dirs, path))
+  lines[#lines + 1] = string.format("%d step%s on foot to %s", #dirs, plural(#dirs), name)
+  local via = footSummary(dirs, path)
+  if via ~= "" then lines[#lines + 1] = "through " .. via end
+  return lines, nil
+end
+function M.routePlanText(here, target)
+  local lines, sum = M.routePlanLines(here, target)
+  if not lines then return nil end
+  return table.concat(lines, " · ") .. (sum and ("  (" .. sum .. ")") or "")
+end
+
+-- a plan, printed as numbered lines under a heading
+function M.sayPlan(head, lines, sum, tail)
+  say(head)
+  for k, l in ipairs(lines or {}) do M.log(string.format("<dim_grey>   %d.<reset> %s", k, (l:gsub("<", "‹"):gsub(">", "›")))) end
+  local last = {}
+  if sum then last[#last + 1] = sum end
+  if tail then last[#last + 1] = tail end
+  if #last > 0 then M.log("<dim_grey>   " .. table.concat(last, " · ") .. "<reset>") end
 end
 
 function M.runVia(plan, target, dirs)
@@ -12009,7 +12047,13 @@ function M.runVia(plan, target, dirs)
     if plan.unknown then parts[#parts + 1] = "walk the rest"
     elseif plan.after > 0 then parts[#parts + 1] = string.format("%d step%s", plan.after, plan.after == 1 and "" or "s") end
   end
-  M.notifyWalk(table.concat(parts, ", then ") .. (dirs and string.format("  (instead of %d steps)", #dirs) or ""))
+  local shown = M.planShown and M.planShown.target == target and os.time() - M.planShown.at < 90
+  M.planShown = nil
+  if not shown then
+    local lines = {}
+    for _, p in ipairs(parts) do lines[#lines + 1] = p end
+    M.sayPlan("walk:", lines, dirs and string.format("instead of %d steps on foot", #dirs) or nil)
+  end
   if plan.k == 0 then return M.runStart(plan.name, target) end
   if not getPath(M.mapRoom, plan.start) then return say("no route on the map to the signpost #" .. plan.start) end
   local d, p = {}, {}
@@ -12294,10 +12338,14 @@ function M.goTo(id)
   if inWilds then return M.mapWalkTo(id) end
   local function areaName(a) return a and getRoomAreaName(a) or "?" end
   M.goAsk = { id = id, at = os.time() }
-  local okR, plan = pcall(M.routePlanText, here, id)
-  say(string.format("that leaves %s - %s is in %s · %s · y to go, n to stay",
-    areaName(hereArea), getRoomName(id) or ("#" .. id), areaName(getRoomArea(id)),
-    okR and plan or string.format("%d steps on foot", steps)))
+  local okR, lines, sum = pcall(M.routePlanLines, here, id)
+  local head = string.format("that leaves %s - %s is in %s:", areaName(hereArea), getRoomName(id) or ("#" .. id), areaName(getRoomArea(id)))
+  if okR and lines then
+    M.sayPlan(head, lines, sum, "y to go, n to stay")
+    M.planShown = { target = id, at = os.time() }
+  else
+    say(head .. string.format(" %d steps on foot · y to go, n to stay", steps))
+  end
 end
 
 -- your answer to that question: true if it was one (and it isn't sent to the game)
