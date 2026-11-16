@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.36.0"
+M.version = "1.36.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6496,8 +6496,17 @@ function M.classLearnQueue()
   local me = ((M.cfg.char or {}).class or "monk"):lower()
   local q = {}
   for _, c in ipairs(M.classList()) do q[#q + 1] = c .. " " .. c end
+  local other = me == "priest" and "wizard" or "priest"
+  local third = (me == "druid" or other == "druid") and "shaman" or "druid"
   q[#q + 1] = me .. " " .. me .. " " .. me
-  q[#q + 1] = me .. " " .. (me == "priest" and "wizard" or "priest")
+  q[#q + 1] = me .. " " .. other
+  -- how redundancy adds up: a fourth copy, a repeat plus another class, three different classes, the order
+  q[#q + 1] = me .. " " .. me .. " " .. me .. " " .. me
+  q[#q + 1] = me .. " " .. me .. " " .. other
+  q[#q + 1] = me .. " " .. other .. " " .. third
+  q[#q + 1] = other .. " " .. me
+  -- and whether the summary shows the attributes the classes give
+  q[#q + 1] = me .. " " .. me .. " skillsummary"
   local done = savedSet()
   local out = {}
   for _, a in ipairs(q) do if not done[a] then out[#out + 1] = a end end

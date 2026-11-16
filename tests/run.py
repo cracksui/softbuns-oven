@@ -3286,7 +3286,8 @@ def class_learn():
       sbo.cfg.classGroups = { monk = 'mage', mage = 'mage', priest = 'cleric', cleric = 'cleric' }
       local q = sbo.quietly; sbo.quietly = function(c, k, fn) QFN = fn; return q(c, k, fn) end""")
     q, total = o.ev("function() return sbo.classLearnQueue() end")()
-    eq(list(q.values()), ["monk monk", "priest priest", "monk monk monk", "monk priest"], "each class doubled, and the two checks")
+    eq(list(q.values()), ["monk monk", "priest priest", "monk monk monk", "monk priest", "monk monk monk monk",
+        "monk monk priest", "monk priest druid", "priest monk", "monk monk skillsummary"], "each class doubled, and the checks")
     o.lua("sbo.command('class learn')")
     eq(o.ev("SENT[#SENT]"), "skills analyze monk monk", "asked quietly")
     o.lua("QFN({ 'Skills analyzed for: monk/monk', '  kick  ...' }); sbo.quietNext = nil; sbo.cap = nil; runTimers()")
