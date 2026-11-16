@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.41.1"
+M.version = "1.41.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3435,7 +3435,11 @@ function M.raiseQuestHud()
       if c then pcall(function() c:raise() end) end
     end
     for _, labs in pairs(M.questLines or {}) do for _, lab in ipairs(labs) do pcall(function() lab:raise() end) end end
-    for _, b in ipairs({ M.ScrollUp, M.ScrollDown, M.questTitle }) do pcall(function() b:raise() end) end
+    -- (by name: a missing scroll bar mustn't stop the rest - ipairs ends at the first nil)
+    for _, k in ipairs({ "ScrollUp", "ScrollDown", "questTitle" }) do
+      local b = M[k]
+      if b then pcall(function() b:raise() end) end
+    end
   end
 end
 

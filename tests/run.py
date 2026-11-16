@@ -1137,6 +1137,11 @@ def quest_panel_scrolls():
     assert o.ev("WIDGETS.ovenQuestTitle.shown") and "Quests" in (o.ev("WIDGETS.ovenQuestTitle.html") or ""), "the title bar"
     assert o.ev("WIDGETS.ovenQuestTitle.y") < o.ev("WIDGETS.ovenQuestCard1.y"), "above the quests"
     o.lua("sbo.questAct({ drag = true })")
+    # raised above the panel's background, even with no scroll bars
+    o.lua("""RAISED = {}; for _, k in ipairs({ 'questHud', 'questTitle' }) do local w = sbo[k]; w.raise = function() RAISED[#RAISED+1] = k end end
+      sbo.ScrollUp, sbo.ScrollDown = nil, nil; sbo.raiseQuestHud()""")
+    r = list(o.ev("RAISED").values())
+    assert "questTitle" in r and r.index("questTitle") > r.index("questHud"), r
     # the number: bright, not grey
     h = o.ev("select(1, sbo.questCardHtml('101', sbo.quests['101']))[1]")
     assert "<b>" in h and "#101" in h, h
