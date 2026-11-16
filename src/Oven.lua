@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.45.0"
+M.version = "1.45.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7459,11 +7459,21 @@ function M.levelLines(width)
   end
   out[#out + 1] = { { C.dim, "in all: " }, { C.plus, "+" .. th }, { C.dim, " hp · " }, { C.plus, "+" .. ts }, { C.dim, " sp · " },
     { C.plus, "+" .. tst }, { C.dim, " st · " }, { C.plus, "+" .. tp }, { C.dim, " practices" } }
+  -- the rare ones: an attribute raised
+  local gains = {}
+  for i = #rows, 1, -1 do
+    local a = rows[i].attrs
+    if a and a ~= "" then for x in a:gmatch("[^,]+") do gains[#gains + 1] = trim(x):match("^(%a+)") end end
+  end
+  if #gains > 0 then
+    out[#out + 1] = { { C.title, "★ attribute gains: " .. #gains }, { C.dim, "  (" .. table.concat(gains, ", ") .. ")" } }
+  end
   out[#out + 1] = {}
   for _, r in ipairs(rows) do
     local when = os.date("%m-%d %H:%M", tonumber(r.t) or 0)
     local lvl = (r.class or "?") .. " " .. (r.level or "?") .. (r.total and (" (" .. r.total .. ")") or "")
-    local line = { { C.dim, when .. "  " } }
+    local star = r.attrs and r.attrs ~= ""
+    local line = { { star and C.title or C.dim, (star and "★ " or "  ") .. when .. "  " } }
     if r.kind == "class" then line[#line + 1] = { C.title, "now a " .. (r.class or "?") .. "  " } end
     line[#line + 1] = { C.key, pad(lvl, 22) }
     if r.hp then
@@ -7475,7 +7485,7 @@ function M.levelLines(width)
     if r.maxes and r.maxes ~= "" then extra[#extra + 1] = { C.slot, "  max " .. r.maxes } end
     if r.learned and r.learned ~= "" then extra[#extra + 1] = { C.plus, "  learned " .. r.learned } end
     if r.skills and r.skills ~= "" then extra[#extra + 1] = { C.text, "  better at " .. r.skills } end
-    for _, x in ipairs(extra) do out[#out + 1] = { { C.text, string.rep(" ", 13) }, x } end
+    for _, x in ipairs(extra) do out[#out + 1] = { { C.text, string.rep(" ", 15) }, x } end
   end
   return out
 end

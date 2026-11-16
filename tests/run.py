@@ -3342,6 +3342,8 @@ def levelling_log():
     eq((r.kind, r["class"]), ("class", "barbarian"), "now a barbarian")
     text = o.ev("(function() local s = {} for _, row in ipairs(sbo.levelLines(100)) do for _, g in ipairs(row) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end)()")
     assert "+10 hp +5 sp +9 st +12 pr" in text and "better at cure poison 9%" in text and "now a barbarian" in text, text
+    assert "★ attribute gains: 1" in text and "(courage)" in text, text
+    assert any(l.startswith("★ ") and "monk 18" in l for l in text.split("\n")), "the level with it starred"
 
 
 @test
