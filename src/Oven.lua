@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.37.0"
+M.version = "1.37.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7970,6 +7970,12 @@ M.HELP_BATCHES = {
   -- the rest of a monk's attacks (help skills analyze monk), so the attack table is complete
   { name = "the rest of your attacks",
     pages = { "2086", "finality of the ender", "1566", "throwing", "1486", "1517", "2220" } },
+  -- class planning: what each class gives (prime attribute, attribute changes) and how changing class works,
+  -- for the attributes and ratings (SCC, WEA…) of a multi-class path
+  { name = "classes, attributes and ratings",
+    pages = { "class", "multiclass", "archon", "barbarian", "bard", "cavalier", "druid", "knave" } },
+  { name = "classes, attributes and ratings (2)",
+    pages = { "monk", "paladin", "priest", "psionic", "ranger", "rogue", "shaman", "valkyrie", "witch", "wizard" } },
 }
 local WORTH = { "combat", "attack", "defen", "damage", "dodge", "parry", "block", "evasion", "armor", "resist",
   "accuracy", "crit", "skill power", "complexity", "spell", "magic", "cast", "regen", "heal", "strength",
