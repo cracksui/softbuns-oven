@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.51.0"
+M.version = "1.51.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11490,8 +11490,8 @@ function M.buildNotes(page)
     background-color: rgba(24,24,32,255); color: ]] .. M.hex("text") .. [[; border: 1px solid #333;
     qproperty-placeholderText: "a quick note: type it and press Enter ([new note] above for one with several lines)";]]) end)
   M.notesInput:setAction(function(text)
-    -- (while editing, Enter and Shift+Enter are Oven's: this is the quick one-liner)
-    if M.noteEdit then return M.noteEditSave() end
+    -- while editing: Enter a new line, Shift+Enter save
+    if M.noteEdit then return M.noteEditEnter(text) end
     pcall(function() M.notesInput:clear() end)
     M.noteAdd(text)
   end)
@@ -11616,8 +11616,8 @@ function M.noteReplace(n, text)
   M.say("note #" .. n .. " saved")
 end
 
--- editing a note in the tab: the box at the bottom grows, Enter starts a new line, Shift+Enter saves, Esc
--- cancels (Oven's own key bindings, only while you're editing - the rest of the time Enter is Enter)
+-- editing a note in the tab: the box at the bottom grows; Enter starts a new line, Shift+Enter saves (Mudlet
+-- hands the box's Enter to its action either way: Shift is read from the keyboard then); Save / Cancel buttons
 local KEY = { Return = 0x01000004, Enter = 0x01000005, Escape = 0x01000000 }
 local MOD = { None = 0, Shift = 0x02000000, Keypad = 0x20000000 }
 local function key(name) return (mudlet and mudlet.key and mudlet.key[name]) or KEY[name] end
@@ -11635,6 +11635,26 @@ local function stopKeys()
   for _, id in ipairs((M.noteEdit or {}).keys or {}) do pcall(killKey, id) end
 end
 
+-- is Shift held right now? (Mudlet's getKeyboardModifiers: a number of Qt modifier flags, or a table)
+function M.shiftHeld()
+  local ok, m = pcall(getKeyboardModifiers)
+  if not ok or m == nil then return nil end
+  if type(m) == "number" then return math.floor(m / 0x02000000) % 2 == 1 end
+  if type(m) == "table" then
+    if m.shift or m.Shift then return true end
+    for _, v in pairs(m) do if tostring(v):lower():find("shift", 1, true) then return true end end
+    return false
+  end
+  return nil
+end
+
+-- Enter in the box while editing: a new line, or (with Shift) save
+function M.noteEditEnter(text)
+  local shift = M.shiftHeld()
+  if shift then return M.noteEditSave(text) end
+  pcall(printCmdLine, BOX, (text or "") .. "\n")
+end
+
 -- start editing: a note (its number in the file), or a new one (nil)
 function M.noteEditStart(i)
   stopKeys()
@@ -11644,13 +11664,8 @@ function M.noteEditStart(i)
     if not x then return M.say("no note #" .. tostring(i)) end
     text = table.concat(x.lines, "\n")
   end
+  -- (no key bindings: Mudlet's box takes Enter before them - its own Enter is told apart by Shift, see the box's action)
   M.noteEdit = { i = i, keys = {} }
-  local E = M.noteEdit
-  local function bind(m, k, fn) local ok, id = pcall(tempKey, m, k, fn); if ok and id then E.keys[#E.keys + 1] = id end end
-  bind(mod("None"), key("Return"), function() pcall(appendCmdLine, BOX, "\n") end)
-  bind(mod("Keypad"), key("Enter"), function() pcall(appendCmdLine, BOX, "\n") end)
-  bind(mod("Shift"), key("Return"), function() M.noteEditSave() end)
-  bind(mod("None"), key("Escape"), function() M.noteEditCancel() end)
   setBoxHeight(math.max(120, math.floor((M.notesBoxHeight or 26) * 6)))
   pcall(printCmdLine, BOX, text)
   M.notesRender(M.notesFilter)
@@ -11665,11 +11680,12 @@ function M.noteEditCancel()
 end
 
 -- save: the note's text (its heading kept), or a new note with today's date and where you are
-function M.noteEditSave()
+function M.noteEditSave(given)
   local E = M.noteEdit
   if not E then return end
   local ok, text = pcall(getCmdLine, BOX)
-  text = (ok and text or ""):gsub("%s+$", "")
+  text = given or (ok and text) or ""
+  text = text:gsub("%s+$", "")
   stopKeys()
   M.noteEdit = nil
   pcall(clearCmdLine, BOX)
@@ -11700,7 +11716,7 @@ function M.notesBarDraw()
   local font = (pcall(getFont) and getFont()) or "monospace"
   local txt = editing
     and (string.format("<span style=\"color:%s;\">%s</span>", M.hex("title"), M.noteEdit.i and ("editing note #" .. M.noteEdit.i) or "a new note")
-      .. string.format("<span style=\"color:%s;\">  ·  Enter: new line · Shift+Enter: save · Esc: cancel</span>", M.hex("dim")))
+      .. string.format("<span style=\"color:%s;\">  ·  Enter: new line · Shift+Enter: save</span>", M.hex("dim")))
     or string.format("<span style=\"color:%s;\">a note of any length · or a quick one-liner in the box at the bottom</span>", M.hex("dim"))
   M.notesStatus:echo(string.format("<span style=\"font-family:'%s';\">%s</span>", font, txt))
 end

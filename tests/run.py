@@ -2533,8 +2533,12 @@ def notes_tab():
     # the bar at the top says what the keys do, with Save / Cancel; New note is back when you're done
     assert "Enter: new line" in (o.ev("WIDGETS['ovenNotesStatus'].text") or ""), o.ev("WIDGETS['ovenNotesStatus'].text")
     eq((o.ev("WIDGETS['ovenNotesSave'].shown"), o.ev("WIDGETS['ovenNotesNew'].shown")), (True, False), "editing: Save, Cancel")
-    o.lua("PRESS(0, 0x01000004); BOXTEXT = BOXTEXT .. 'ask the abbot'")
-    o.lua("PRESS(0x02000000, 0x01000004)")
+    # the box's own Enter: a new line; with Shift held, saved
+    o.lua("""SHIFT = false; getKeyboardModifiers = function() return SHIFT and 0x02000000 or 0 end
+      function ENTER() WIDGETS['ovenNotesInput'].action(BOXTEXT) end""")
+    o.lua("ENTER(); BOXTEXT = BOXTEXT .. 'ask the abbot'")
+    eq(o.ev("sbo.noteEdit ~= nil"), True, "Enter: still editing")
+    o.lua("SHIFT = true; ENTER(); SHIFT = false")
     text = open(f).read()
     assert "the abbot\nwolf kills me in 2 rounds\ntreant guards the lemon tree\nask the abbot" in text, text
     eq(o.ev("sbo.noteEdit"), None, "done editing")
@@ -2542,10 +2546,10 @@ def notes_tab():
     o.lua("WIDGETS['ovenNotesNew'].click()")
     eq(o.ev("sbo.noteEdit ~= nil"), True, "the button starts a note"); o.lua("sbo.noteEditCancel()")
     # a new note, several lines; Esc cancels
-    o.lua("sbo.noteEditStart(nil); BOXTEXT = 'line one'; PRESS(0, 0x01000004); BOXTEXT = BOXTEXT .. 'line two'; PRESS(0x02000000, 0x01000004)")
+    o.lua("sbo.noteEditStart(nil); BOXTEXT = 'line one'; ENTER(); BOXTEXT = BOXTEXT .. 'line two'; SHIFT = true; ENTER(); SHIFT = false")
     assert open(f).read().rstrip().endswith("#28840\nline one\nline two"), open(f).read()
-    o.lua("sbo.noteEditStart(1); BOXTEXT = 'changed'; PRESS(0, 0x01000000)")
-    assert "changed" not in open(f).read(), "Esc: left as it was"
+    o.lua("sbo.noteEditStart(1); BOXTEXT = 'changed'; WIDGETS['ovenNotesCancel'].click()")
+    assert "changed" not in open(f).read(), "Cancel: left as it was"
     # a link drawn by 1.49 ([new note] = noteAdd("", true)): the editor in the tab, nothing opened outside
     o.lua("OPENED = nil; sbo.noteAdd('', true)")
     eq((o.ev("OPENED"), o.ev("sbo.noteEdit ~= nil")), (None, True), "the tab's editor")
