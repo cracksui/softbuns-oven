@@ -1121,7 +1121,8 @@ def quest_panel_scrolls():
     o.lua("sbo.questWheel({ angleDeltaY = 120 })")
     eq(shown()[0], 1, "and back")
     # folding cards makes room: all fit, no bars
-    o.lua("""sbo.cfg.questFolded = {} for id in pairs(sbo.cfg.questPins) do sbo.cfg.questFolded[id] = true end sbo.drawQuestTracker()""")
+    o.lua("""getMainWindowSize = function() return 1600, 480 end
+      sbo.cfg.questFolded = {} for id in pairs(sbo.cfg.questPins) do sbo.cfg.questFolded[id] = true end sbo.drawQuestTracker()""")
     eq(shown(), list(range(1, 13)), "folded, all twelve fit")
     assert not o.ev("sbo.ScrollDown.shown")
     # lines spaced by Qt's measure of one line (13px here), not the font-size estimate (16 × 1.35)
@@ -1132,6 +1133,10 @@ def quest_panel_scrolls():
     eq(o.ev("sbo.questLineH"), 13, "measured")
     y1, y2 = o.ev("WIDGETS.ovenQuestLine1_2.y"), o.ev("WIDGETS.ovenQuestLine1_3.y")
     eq(y2 - y1, 13, "lines one measured line apart")
+    # a title bar to grab it by: an open hand, and a click on it does nothing
+    assert o.ev("WIDGETS.ovenQuestTitle.shown") and "Quests" in (o.ev("WIDGETS.ovenQuestTitle.html") or ""), "the title bar"
+    assert o.ev("WIDGETS.ovenQuestTitle.y") < o.ev("WIDGETS.ovenQuestCard1.y"), "above the quests"
+    o.lua("sbo.questAct({ drag = true })")
     # the number: bright, not grey
     h = o.ev("select(1, sbo.questCardHtml('101', sbo.quests['101']))[1]")
     assert "<b>" in h and "#101" in h, h

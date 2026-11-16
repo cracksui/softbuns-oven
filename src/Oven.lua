@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.40.2"
+M.version = "1.41.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3320,7 +3320,7 @@ local function hudCallbacks(label, id, act)
   pcall(function() label:setWheelCallback(function(ev) M.questWheel(ev) end) end)
   label:setMoveCallback(function(ev) M.hudMove(ev) end)
   label:setReleaseCallback(function(ev) M.hudRelease(ev) end)
-  pcall(function() label:setCursor(act and "PointingHand" or "OpenHand") end)
+  pcall(function() label:setCursor((act and not act.drag) and "PointingHand" or "OpenHand") end)
 end
 M.hudCallbacks = hudCallbacks
 
@@ -3338,6 +3338,7 @@ function M.drawQuestTracker()
     for _, c in ipairs(M.questCards) do c:hide() end
     for _, b in ipairs({ M.ScrollUp, M.ScrollDown }) do pcall(function() b:hide() end) end
     for _, labs in pairs(M.questLines or {}) do for _, lab in ipairs(labs) do lab:hide() end end
+    if M.questTitle then M.questTitle:hide() end
     return
   end
   table.sort(ids, function(a, b2) return tonumber(a) < tonumber(b2) end)
@@ -3434,7 +3435,7 @@ function M.raiseQuestHud()
       if c then pcall(function() c:raise() end) end
     end
     for _, labs in pairs(M.questLines or {}) do for _, lab in ipairs(labs) do pcall(function() lab:raise() end) end end
-    for _, b in ipairs({ M.ScrollUp, M.ScrollDown }) do pcall(function() b:raise() end) end
+    for _, b in ipairs({ M.ScrollUp, M.ScrollDown, M.questTitle }) do pcall(function() b:raise() end) end
   end
 end
 
@@ -3488,7 +3489,7 @@ end
 -- hint to fold), else refreshes it; a click on the frame (between cards) refreshes them all
 -- a link on a card line: fold, a step (done ones too), go ▸, back to the questmaster, turn in
 function M.questAct(a)
-  if not a then return end
+  if not a or a.drag then return end
   do
     if a.fold then
       M.cfg.questFolded = M.cfg.questFolded or {}
@@ -3572,7 +3573,8 @@ function M.layoutQuestHud()
     local okR, r = pcall(getBorderRight); if okR and r then right = r end
     local okT, t = pcall(getBorderTop); if okT and t then top = t end
   end
-  local w, h = M.questHudSize.w, M.questHudSize.h
+  local titleH = math.ceil(M.questLineH or 18) + 6
+  local w, h = M.questHudSize.w, M.questHudSize.h + titleH
   local _, Hwin = getMainWindowSize()
   Hwin = tonumber(Hwin) or 600
   local margin = 10
@@ -3589,7 +3591,7 @@ function M.layoutQuestHud()
   -- "▲ N more" / "▼ N more" bars to click (or the mouse wheel)
   local lay = M.questCardLayout or {}
   local total = M.questHudSize.h
-  local avail = Hwin - margin - y
+  local avail = Hwin - margin - y - titleH
   local scroll = total > avail
   local first = scroll and math.max(1, math.min(M.questHudFirst or 1, #lay)) or 1
   M.questHudFirst = first
@@ -3603,7 +3605,7 @@ function M.layoutQuestHud()
       if i >= first and used < room and (used == 0 or used + math.min(l.h, 3 * barH) <= room) then
         local hh = math.min(l.h, room - used)
         if hh < l.h then clipped = true end
-        local cy = y + 1 + top + used
+        local cy = y + 1 + titleH + top + used
         c:move(x + 1, cy); c:resize(w - 2, hh); c:show()
         local lh = M.questLineH or 18
         for j, lab in ipairs((M.questLines or {})[i] or {}) do
@@ -3634,10 +3636,24 @@ function M.layoutQuestHud()
     b:rawEcho(span(C.slot, text))
     b:move(x + 1, at); b:resize(w - 2, barH); b:show()
   end
-  bar("ScrollUp", scroll and first > 1, y + 1, string.format("▲ %d more", first - 1), -1)
+  bar("ScrollUp", scroll and first > 1, y + 1 + titleH, string.format("▲ %d more", first - 1), -1)
   local downN = below + (clipped and 1 or 0)
-  bar("ScrollDown", scroll and downN > 0, y + 1 + top + used, string.format("▼ %d more", math.max(1, below)), 1)
-  if scroll then h = top + used + ((downN > 0) and barH or 0) + 2 end
+  bar("ScrollDown", scroll and downN > 0, y + 1 + titleH + top + used, string.format("▼ %d more", math.max(1, below)), 1)
+  if scroll then h = titleH + top + used + ((downN > 0) and barH or 0) + 2 end
+  -- the title bar: where to grab it
+  if not M.questTitle then
+    M.questTitle = Geyser.Label:new({ name = "ovenQuestTitle", x = 0, y = 0, width = 100, height = titleH })
+    M.questTitle:setStyleSheet("background-color: rgba(255,255,255,18); border-bottom: 1px solid rgba(255,255,255,40); "
+      .. "border-top-left-radius: 6px; border-top-right-radius: 6px; padding-left: 8px; qproperty-alignment: 'AlignVCenter | AlignLeft';")
+    pcall(function() M.questTitle:setToolTip("drag to move the quest panel") end)
+  end
+  M.hudCallbacks(M.questTitle, nil, { drag = true })
+  local n = 0
+  for _ in pairs(M.cfg.questPins or {}) do n = n + 1 end
+  local font = (pcall(getFont) and getFont()) or "monospace"
+  M.questTitle:rawEcho(string.format("<span style=\"font-family:'%s'; font-size:%dpt;\">%s%s</span>", font,
+    math.max(8, (M.cfg.fontSize or 10) - 1), span(C.dim, "⠿ "), span(C.title, "Quests") .. span(C.dim, "  (" .. n .. ")")))
+  M.questTitle:move(x + 1, y + 1); M.questTitle:resize(w - 2, titleH); M.questTitle:show()
   M.questHud:move(x, y)
   M.questHud:resize(w, h)
 end
