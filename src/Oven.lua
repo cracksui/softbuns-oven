@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.48.0"
+M.version = "1.49.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11471,7 +11471,7 @@ function M.buildNotes(page)
   M.notesInput = Geyser.CommandLine:new({ name = "ovenNotesInput", height = 26, v_policy = Geyser.Fixed }, box)
   pcall(function() M.notesInput:setStyleSheet([[
     background-color: rgba(24,24,32,255); color: ]] .. M.hex("text") .. [[; border: 1px solid #333;
-    qproperty-placeholderText: "write a note and press Enter - it's kept with the room you're in";]]) end)
+    qproperty-placeholderText: "a quick note: type it and press Enter ([new note] above for a longer one, in your text editor)";]]) end)
   M.notesInput:setAction(function(text)
     pcall(function() M.notesInput:clear() end)
     M.noteAdd(text)
@@ -11479,23 +11479,119 @@ function M.buildNotes(page)
   M.notesRender()
 end
 
-function M.noteAdd(text)
-  text = trim(text or "")
-  if text == "" then return end
-  local room = M.mapRoom
-  local name = room and roomExists(room) and getRoomName(room) or nil
-  M.dbx("INSERT INTO notes (t, text, room, room_name, area) VALUES (%s, %s, %s, %s, %s)", os.time(), text, room, name, M.areaNow())
-  local r = M.dbRow("SELECT MAX(id) AS id FROM notes")
-  M.notesRender()
-  M.say("note #" .. tostring(r and r.id) .. " kept" .. (name and (" (at " .. name .. ")") or ""))
+-- (the notes file:)
+-- The Notes tab: your notes, in one text file (oven_notes.md in the profile) that you write and edit in
+-- your own text editor - multi-line, as long as you like ([edit] / [new note] open it). Each note starts
+-- with a heading: "## 2026-11-16 01:53 · Garden of Life · Towne of Rune #10522" (the date and where you
+-- were; the room number makes its [go]). The tab shows the file, and follows it when you save. The box
+-- at the bottom adds a quick one-line note to the same file.
+---------------------------------------------------------------------------
+do
+function M.notesPath() return getMudletHomeDir() .. "/oven_notes.md" end
+
+local function readFile(p) local f = io.open(p, "r"); if not f then return nil end local s = f:read("*a"); f:close(); return s end
+local function writeFile(p, s) local f = io.open(p, "w"); if not f then return false end f:write(s); f:close(); return true end
+
+-- the file, made the first time (with the notes kept before 1.49, from the database)
+function M.notesText()
+  local p = M.notesPath()
+  local s = readFile(p)
+  if s then return s end
+  local out = { "# Notes", "", "Each note starts with a ## line (the date and where you were - a #room number makes its [go]).", "" }
+  for _, r in ipairs(M.dbRows("SELECT t, text, room, room_name, area FROM notes ORDER BY id") or {}) do
+    local where = {}
+    if r.room_name then where[#where + 1] = r.room_name end
+    if r.area and r.area ~= "" then where[#where + 1] = r.area end
+    out[#out + 1] = "## " .. os.date("%Y-%m-%d %H:%M", tonumber(r.t) or 0) .. (#where > 0 and (" · " .. table.concat(where, " · ")) or "")
+      .. (r.room and (" #" .. r.room) or "")
+    out[#out + 1] = tostring(r.text or "")
+    out[#out + 1] = ""
+  end
+  s = table.concat(out, "\n")
+  writeFile(p, s)
+  return s
 end
 
+-- the file as notes: { head, room, lines = {…}, first, last (line numbers) }; text before the first ## is the preamble
+function M.notesParse(s)
+  local notes, cur = {}, nil
+  local n = 0
+  for line in (s .. "\n"):gmatch("(.-)\r?\n") do
+    n = n + 1
+    local head = line:match("^##%s+(.-)%s*$")
+    if head then
+      cur = { head = head, room = tonumber(head:match("#(%d+)%s*$")), lines = {}, first = n, last = n }
+      notes[#notes + 1] = cur
+    elseif cur then
+      cur.lines[#cur.lines + 1] = line
+      cur.last = n
+    end
+  end
+  -- (blank lines at the end of a note aren't part of it)
+  for _, x in ipairs(notes) do while #x.lines > 0 and trim(x.lines[#x.lines]) == "" do table.remove(x.lines) end end
+  return notes
+end
+
+local function here()
+  local room = M.mapRoom
+  local name = room and roomExists(room) and getRoomName(room) or nil
+  local where = {}
+  if name then where[#where + 1] = name end
+  local area = M.areaNow and M.areaNow() or nil
+  if area and area ~= "" then where[#where + 1] = area end
+  return "## " .. os.date("%Y-%m-%d %H:%M") .. (#where > 0 and (" · " .. table.concat(where, " · ")) or "") .. (room and (" #" .. room) or ""), name
+end
+
+-- a new note at the end of the file: a quick one (text), or an empty one to write in the editor
+function M.noteAdd(text, open)
+  text = trim(text or "")
+  if text == "" and not open then return end
+  local s = M.notesText()
+  local head, name = here()
+  s = s:gsub("%s*$", "") .. "\n\n" .. head .. "\n" .. text .. "\n"
+  writeFile(M.notesPath(), s)
+  M.notesSeen = nil
+  M.notesRender(M.notesFilter)
+  if open then return M.notesOpen() end
+  M.say("note kept" .. (name and (" (at " .. name .. ")") or "") .. " - in " .. M.notesPath():match("[^/\\]+$"))
+end
+
+-- the file in your text editor
+function M.notesOpen()
+  M.notesText()
+  local p = M.notesPath():gsub("\\", "/")
+  local url = "file://" .. (p:sub(1, 1) == "/" and "" or "/") .. p:gsub(" ", "%%20")
+  local ok = pcall(openUrl, url)
+  if not ok then return M.say("couldn't open your text editor - the notes are in " .. M.notesPath()) end
+  M.say("notes opened in your text editor - save there and the Notes tab follows")
+  M.notesWatch()
+end
+
+-- a note out of the file
 function M.noteRemove(n)
   n = tonumber(n)
-  if not n or not M.dbRow("SELECT id FROM notes WHERE id = %s", n) then return M.say("no note #" .. tostring(n)) end
-  M.dbx("DELETE FROM notes WHERE id = %s", n)
+  local s = M.notesText()
+  local notes = M.notesParse(s)
+  local x = n and notes[n]
+  if not x then return M.say("no note #" .. tostring(n)) end
+  local lines, i = {}, 0
+  for line in (s .. "\n"):gmatch("(.-)\r?\n") do
+    i = i + 1
+    if i < x.first or i > x.last then lines[#lines + 1] = line end
+  end
+  writeFile(M.notesPath(), table.concat(lines, "\n"))
+  M.notesSeen = nil
   M.notesRender(M.notesFilter)
   M.say("note #" .. n .. " removed")
+end
+
+-- follow the file: when it changes (you saved in the editor), the tab is drawn again
+function M.notesWatch()
+  if M.notesTimer then return end
+  M.notesTimer = tempTimer(2, function()
+    local s = readFile(M.notesPath())
+    if s and s ~= M.notesSeen and M.notesConsole then M.notesRender(M.notesFilter) end
+  end, true)
 end
 
 local function noteLink(text, fn, hint)
@@ -11506,34 +11602,39 @@ end
 function M.notesRender(filter)
   M.notesFilter = (filter and filter ~= "") and filter or nil
   if not M.notesConsole then return end
-  pcall(function() M.notesConsole:clear() end)
-  local q = M.notesFilter and M.notesFilter:lower() or ""
-  local rows = M.dbRows([[SELECT id, t, text, room, room_name, area FROM notes
-    WHERE %s = '' OR instr(lower(text || ' ' || ifnull(room_name, '') || ' ' || ifnull(area, '')), %s) > 0 ORDER BY id]], q, q)
+  local s = M.notesText()
+  M.notesSeen = s
   local con = M.notesConsole
-  if M.notesFilter then
-    pcall(function() con:decho(string.format(M.drgb("title") .. "notes with '%s'  " .. M.drgb("dim") .. "(%d)  ", M.notesFilter, #rows)) end)
-    noteLink(M.drgb("slot") .. "show all", function() M.notesRender() end, "every note")
-    pcall(function() con:decho("\n\n") end)
+  pcall(function() con:clear() end)
+  local q = M.notesFilter and M.notesFilter:lower() or ""
+  local all = M.notesParse(s)
+  local shown = {}
+  for i, x in ipairs(all) do
+    if q == "" or (x.head .. "\n" .. table.concat(x.lines, "\n")):lower():find(q, 1, true) then shown[#shown + 1] = { i = i, x = x } end
   end
-  if #rows == 0 then
+  noteLink(M.drgb("slot") .. "[new note]", function() M.noteAdd("", true) end, "a new note with today's date and where you are, in your text editor")
+  pcall(function() con:decho("  ") end)
+  noteLink(M.drgb("slot") .. "[edit]", function() M.notesOpen() end, "the notes in your text editor")
+  if M.notesFilter then
+    pcall(function() con:decho("   " .. M.drgb("title") .. string.format("notes with '%s'  ", M.notesFilter) .. M.drgb("dim") .. "(" .. #shown .. ")  ") end)
+    noteLink(M.drgb("slot") .. "show all", function() M.notesRender() end, "every note")
+  end
+  pcall(function() con:decho("\n\n") end)
+  if #shown == 0 then
     pcall(function() con:decho(M.drgb("dim") .. (M.notesFilter and "No note has that in it." or
-      "Your notes go here, kept for good. Type one in the box below and press Enter - it remembers the room you're in, so you can walk back to it.") .. "\n") end)
+      "Your notes go here. [new note] writes one in your text editor (any length, any number of lines); the box below keeps a quick one-liner. Each remembers the room you're in, so you can walk back to it.") .. "\n") end)
     return
   end
-  for _, r in ipairs(rows) do
-    local id, room = tonumber(r.id), tonumber(r.room)
-    local where = {}
-    if r.room_name then where[#where + 1] = r.room_name end
-    if r.area and r.area ~= "" then where[#where + 1] = r.area end
-    pcall(function() con:decho(string.format(M.drgb("dim") .. "#%d  %s%s  ", id, os.date("%Y-%m-%d %H:%M", tonumber(r.t) or 0),
-      #where > 0 and ("  ·  " .. table.concat(where, " · ")) or "")) end)
-    if room then
-      noteLink(M.drgb("slot") .. "[go]", function() M.mapWalkTo(room) end, "walk to " .. (r.room_name or ("#" .. room)))
+  for _, e in ipairs(shown) do
+    local x, i = e.x, e.i
+    pcall(function() con:decho(M.drgb("dim") .. "#" .. i .. "  " .. M.drgb("title") .. x.head:gsub("%s*#%d+%s*$", ""):gsub("<", "&lt;") .. "  ") end)
+    if x.room then
+      local room = x.room
+      noteLink(M.drgb("slot") .. "[go]", function() M.mapWalkTo(room) end, "walk to " .. ((roomExists(room) and getRoomName(room)) or ("#" .. room)))
       pcall(function() con:decho(" ") end)
     end
-    noteLink(M.drgb("dim") .. "[delete]", function() M.noteRemove(id) end, "remove note #" .. id)
-    pcall(function() con:decho("\n" .. M.drgb("text") .. tostring(r.text):gsub("<", "&lt;") .. "\n\n") end)
+    noteLink(M.drgb("dim") .. "[delete]", function() M.noteRemove(i) end, "remove note #" .. i)
+    pcall(function() con:decho("\n" .. M.drgb("text") .. table.concat(x.lines, "\n"):gsub("<", "&lt;") .. "\n\n") end)
   end
 end
 
@@ -11541,6 +11642,8 @@ function M.notesShow(filter)
   M.createWindow(); M.tabWindowShow("notes")
   if M.cfg.tabs then M.tabShow("notes") end
   M.notesRender(filter)
+  M.notesWatch()
+end
 end
 
 function M.chatCommand(b)
@@ -15450,9 +15553,11 @@ M.CMDS = {
     run = function(r) return M.itemFind(r) end },
   { name = "notes", desc = "the Notes tab: notes you keep, each with where you were",
     run = function() return M.notesShow() end, subs = {
-    { name = "add", args = "{text}", desc = "keep a note (or type it in the tab's box)", run = function(r)
+    { name = "add", args = "{text}", desc = "keep a quick note (or type it in the tab's box)", run = function(r)
       if trim(r) == "" then return say("sbo notes add {text}") end
       M.noteAdd(r); M.notesShow() end },
+    { name = "edit", desc = "your notes in your text editor (multi-line; the tab follows when you save)", run = function() return M.notesOpen() end },
+    { name = "new", desc = "a new note, with today's date and where you are, in your text editor", run = function() return M.noteAdd("", true) end },
     { name = "find", args = "{text}", desc = "only the notes with it", run = function(r) return M.notesShow(r) end },
     { name = "remove", args = "{n}", desc = "remove note number n", run = function(r) return M.noteRemove(r) end },
   } },

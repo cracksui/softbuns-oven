@@ -2499,28 +2499,36 @@ def notes_tab():
     o.lua('''sbo.cfg.window = true; sbo.cfg.tabs = true; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
       roomExists = function() return true end; getRoomName = function(id) return "Palace Kitchen and Bakery" end
       gmcp.room = { info = { num = "28840", zone = "Palace of Diocletian" } }; sbo.mapRoom = 28840
-      WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end''')
+      WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end
+      OPENED = nil; openUrl = function(u) OPENED = u end''')
+    # notes kept before 1.49 (in the database): copied into the file the first time
+    o.lua('''sbo.dbx("INSERT INTO notes (t, text, room, room_name, area) VALUES (%s, %s, %s, %s, %s)", os.time(), "an old note", 28840, "Palace Kitchen and Bakery", "Palace of Diocletian")''')
     o.lua('sbo.command("notes")')
     eq(o.ev("WIDGETS['ovenTabs3Page_notes'].shown"), True, "sbo notes: the Notes tab")
-    # typed in the box
+    f = o.home + "/oven_notes.md"
+    text = open(f).read()
+    assert "an old note" in text and "Palace Kitchen and Bakery · Palace of Diocletian #28840" in text, text
+    # typed in the box: a quick note, at the end of the file, with where it was written
     o.lua('WIDGETS["ovenNotesInput"].action("cook gives pesto for 250 gold")')
-    eq(o.rows("SELECT text, room, room_name, area FROM notes"),
-       [{"text": "cook gives pesto for 250 gold", "room": 28840, "room_name": "Palace Kitchen and Bakery", "area": "Palace of Diocletian"}], "kept, with where")
-    o.lua('sbo.command("notes add the daily resets at midnight")')
-    text = o.ev("WIDGETS['ovenNotesConsole'].text")
-    assert "cook gives pesto" in text and "daily resets" in text and "Palace Kitchen" in text, text
-    # its links: walk there, delete
+    text = open(f).read()
+    assert text.rstrip().endswith("#28840\ncook gives pesto for 250 gold"), text
+    # written in the editor: several lines - the tab follows the file
+    open(f, "a").write("\n## 2026-11-16 02:00 · the abbot\nwolf kills me in 2 rounds\ntreant guards the lemon tree\n")
+    o.lua("runTimers()")
+    shown = o.ev("WIDGETS['ovenNotesConsole'].text")
+    assert "wolf kills me in 2 rounds\ntreant guards the lemon tree" in shown, shown
+    # its links: walk there, the editor
     links = o.ev("WIDGETS['ovenNotesConsole'].links")
-    go = [l for l in links.values() if "[go]" in l[1]][0]
-    go[2]()
+    [l for l in links.values() if "[go]" in l[1]][0][2]()
     eq(o.ev("WALKED"), 28840, "[go] walks to where it was written")
+    [l for l in links.values() if "[edit]" in l[1]][0][2]()
+    assert o.ev("OPENED").startswith("file://") and o.ev("OPENED").endswith("oven_notes.md"), o.ev("OPENED")
     o.lua('sbo.command("notes find pesto")')
-    text = o.ev("WIDGETS['ovenNotesConsole'].text")
-    assert "pesto" in text and "daily resets" not in text, text
+    shown = o.ev("WIDGETS['ovenNotesConsole'].text")
+    assert "pesto" in shown and "treant" not in shown, shown
     o.lua('sbo.command("notes remove 1")')
-    eq(len(o.rows("SELECT id FROM notes")), 1, "removed")
-    # kept for good: in the database
-    eq(o.rows("SELECT text FROM notes"), [{"text": "the daily resets at midnight"}], "in the database")
+    text = open(f).read()
+    assert "an old note" not in text and "pesto" in text and "treant" in text, text
 
 
 @test
