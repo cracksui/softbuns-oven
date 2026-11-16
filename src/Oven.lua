@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.51.4"
+M.version = "1.51.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11659,7 +11659,20 @@ end
 -- Enter in the box while editing: a new line, or (with Shift) save. Mudlet hands a box holding several lines
 -- to its action once a line, so the calls of one key press are gathered and handled once, a moment later
 -- (and for a moment after saving, stray lines aren't taken for quick notes)
+local function describe(v)
+  if type(v) ~= "table" then return tostring(v) end
+  local t = {}
+  for k, x in pairs(v) do t[#t + 1] = tostring(k) .. "=" .. tostring(x) end
+  return "{" .. table.concat(t, ", ") .. "}"
+end
 function M.noteBoxAction(text)
+  -- sbo debug notes: what the box hands over, and what Oven makes of it
+  if M.noteDebug then
+    local okB, box = pcall(getCmdLine, BOX)
+    local sh = M.shiftHeld()
+    M.say(string.format("notes debug: action(%q) · editing %s · shift %s (raw %s) · box now %s",
+      tostring(text), tostring(M.noteEdit ~= nil), tostring(sh), describe(M.lastModifiers), okB and string.format("%q", tostring(box)) or "?"))
+  end
   if not M.noteEdit then
     if M.noteSwallowUntil and now() < M.noteSwallowUntil then return true end
     return false
@@ -15715,6 +15728,9 @@ M.CMDS = {
     { name = "add", args = "{text}", desc = "keep a quick note (or type it in the tab's box)", run = function(r)
       if trim(r) == "" then return say("sbo notes add {text}") end
       M.noteAdd(r); M.notesShow() end },
+    { name = "debug", desc = "show what the notes box hands Oven when you press Enter (to fix it)", run = function()
+        M.noteDebug = not M.noteDebug
+        return say("notes debug " .. (M.noteDebug and "on: start a note, type a line, press Enter, and copy what appears" or "off")) end },
     { name = "save", desc = "save the note you're writing", run = function()
         if not M.noteEdit then return say("you're not writing a note") end
         return M.noteEditSave() end },
