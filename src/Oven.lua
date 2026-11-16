@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.45.2"
+M.version = "1.46.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -469,7 +469,19 @@ local C = {
   minus  = "tomato",
   dim    = "dim_grey",
   flag   = "orange",
+  rare   = "orchid",       -- the rare things: an attribute gained on levelling
 }
+-- every colour Oven shows comes from this palette, by role: for segments the name, for decho "<r,g,b>",
+-- for Qt style sheets and HTML "#rrggbb" (the same RGB as Mudlet's colour of that name)
+M.palette = C
+function M.roleRGB(role)
+  local name = M.palette[role] or role
+  local t = color_table and color_table[name]
+  if type(t) == "table" then return t[1], t[2], t[3] end
+  return 192, 192, 192
+end
+function M.hex(role) local r, g, b = M.roleRGB(role); return string.format("#%02x%02x%02x", r, g, b) end
+function M.drgb(role) local r, g, b = M.roleRGB(role); return string.format("<%d,%d,%d>", r, g, b) end
 
 -- colour a single word
 local function wordColor(w, base)
@@ -652,7 +664,7 @@ local goodCond = { new = true, fresh = true, perfect = true, excellent = true, p
 local function condSegs(conds)
   local segs = {}
   for _, c in ipairs(conds) do
-    local col = goodCond[c:lower()] and "dark_sea_green" or (c:match("lit") and C.dim or C.flag)
+    local col = goodCond[c:lower()] and C.plus or (c:match("lit") and C.dim or C.flag)
     segs[#segs + 1] = { col, " (" .. c .. ")" }
   end
   return segs
@@ -4154,7 +4166,7 @@ end
 local function runsToDecho(runs)
   local t = {}
   for _, r in ipairs(runs) do
-    t[#t + 1] = (r[1] and string.format("<%d,%d,%d>", r[1][1], r[1][2], r[1][3]) or "<192,192,192>") .. r[2]
+    t[#t + 1] = (r[1] and string.format("<%d,%d,%d>", r[1][1], r[1][2], r[1][3]) or M.drgb("text")) .. r[2]
   end
   return table.concat(t)
 end
@@ -4218,7 +4230,7 @@ function M.pageShow(pg, lines, fmt, links)
     end
   end
   local doc = string.format(
-    "<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;\">%s</div>",
+    "<div style=\"white-space: pre; font-family: '%s', monospace; font-size: %dpt; color: " .. M.hex("text") .. ";\">%s</div>",
     font, size, table.concat(html, "\n"))
   if buildPage(pg) == false then return end
   pg.label:rawEcho(doc)
@@ -4244,9 +4256,9 @@ function M.pageShow(pg, lines, fmt, links)
       pg.links[i] = lab
     end
     lab:setStyleSheet(string.format([[
-      QLabel { background-color: black; color: #87cefa; padding-left: 6px;
+      QLabel { background-color: black; color: ]] .. M.hex("slot") .. [[; padding-left: 6px;
                font-family: '%s', monospace; font-size: %dpt; }
-      QLabel::hover { color: #ffffff; text-decoration: underline; }]], font, size))
+      QLabel::hover { color: ]] .. M.hex("item") .. [[; text-decoration: underline; }]], font, size))
     pcall(function() lab:setCursor("PointingHand") end)
     -- long entries wrap onto extra rows (indented under the text) instead of being cut off
     local hang = math.min(8, #(ln[1]:match("^(%[%s*%d+%s*%]%s*)") or "  "))
@@ -4304,7 +4316,7 @@ function M.createWindow()
       titleText = M.panelTitle("Inspector"),
       x = "-62%", y = "4%", width = "36%", height = "50%",
       adjLabelstyle = M.PANEL_STYLE,
-      titleTxtColor = "#e6c35c",
+      titleTxtColor = M.hex("title"),
     })
     M.panelPlace("ovenViewer", M.container)
   end
@@ -4322,11 +4334,11 @@ M.TABS = { { key = "view", title = "Inspector" }, { key = "help", title = "Help"
            { key = "chat", title = "Chat" }, { key = "notes", title = "Notes" } }
 local TABS_ID = "ovenTabs3"   -- new widget names whenever the set of tabs changes (an update mid-session)
 local tabStyle = [[
-  QLabel { background-color: rgba(24,24,32,255); color: #808080; border: 1px solid #333; border-bottom: none;
+  QLabel { background-color: rgba(24,24,32,255); color: ]] .. M.hex("dim") .. [[; border: 1px solid #333; border-bottom: none;
            border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 10px; margin-right: 2px; }
-  QLabel::hover { color: #e0e0e0; }]]
+  QLabel::hover { color: ]] .. M.hex("text") .. [[; }]]
 local tabOnStyle = [[
-  QLabel { background-color: black; color: #e6c35c; border: 1px solid #555; border-bottom: none;
+  QLabel { background-color: black; color: ]] .. M.hex("title") .. [[; border: 1px solid #555; border-bottom: none;
            border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 10px; margin-right: 2px; }]]
 
 -- what a tab does when clicked, dragged and let go (wired again after an update, which keeps the labels)
@@ -4428,7 +4440,7 @@ function M.tabShow(key, quiet)
     elseif key == "log" and not M.logShown then M.logAdd(M.sessionLines(M.pageCols(M.logPg)), M.logLinks())
     elseif key == "chat" then M.chatSeen()
     elseif key == "help" and not M.helpShown then
-      M.helpPage("Help", { "<128,128,128>Game help pages open here - try help classes, or sbo for Oven's commands." }, "decho")
+      M.helpPage("Help", { M.drgb("dim") .. "Game help pages open here - try help classes, or sbo for Oven's commands." }, "decho")
     end
   end
   if M.raiseQuestHud then M.raiseQuestHud() end
@@ -4552,7 +4564,7 @@ function M.tabUndock1(key, x, y, holdTab)
       name = name, titleText = M.panelTitle(tabTitle(key)),
       x = 0, y = 0, width = math.floor(cw), height = math.floor(ch),
       adjLabelstyle = M.PANEL_STYLE,
-      titleTxtColor = "#e6c35c",
+      titleTxtColor = M.hex("title"),
     })
     pcall(function() win:newCustomItem("dock into the Oven window", function() M.tabDock(key) end) end)
     M.tabWins[key] = win
@@ -4726,7 +4738,7 @@ function M.viewShow()
   if M.cfg.tabs then M.tabWindowShow("view") else M.container:show() end
   local h, pos = M.viewHist, M.viewPos or #M.viewHist
   local e = h[pos]
-  if not e then return M.pageShow(M.viewPg, { "<128,128,128>Nothing baked yet - try eq, i, score or look at an item." }, "decho") end
+  if not e then return M.pageShow(M.viewPg, { M.drgb("dim") .. "Nothing baked yet - try eq, i, score or look at an item." }, "decho") end
   M.viewStale = nil
   if e.make then
     local ok, lines, links = pcall(e.make, math.min(M.pageCols(M.viewPg), 110))
@@ -4762,7 +4774,7 @@ function M.createHelpWindow()
       titleText = M.panelTitle("help"),
       x = "2%", y = "4%", width = "45%", height = "70%",
       adjLabelstyle = M.PANEL_STYLE,
-      titleTxtColor = "#e6c35c",
+      titleTxtColor = M.hex("title"),
     })
     M.panelPlace("ovenHelp", M.helpContainer)
   end
@@ -4778,7 +4790,7 @@ end
 -- cecho text -> decho text (colour names -> r,g,b)
 function M.cechoToDecho(l)
   return (l:gsub("<([%w_]+)>", function(n)
-    if n == "reset" then return "<192,192,192>" end
+    if n == "reset" then return M.drgb("text") end
     local c = color_table and color_table[n]
     return c and string.format("<%d,%d,%d>", c[1], c[2], c[3]) or nil
   end))
@@ -7466,14 +7478,14 @@ function M.levelLines(width)
     if a and a ~= "" then for x in a:gmatch("[^,]+") do gains[#gains + 1] = trim(x):match("^(%a+)") end end
   end
   if #gains > 0 then
-    out[#out + 1] = { { "orchid", "★ attribute gains: " .. #gains }, { C.dim, "  (" .. table.concat(gains, ", ") .. ")" } }
+    out[#out + 1] = { { C.rare, "★ attribute gains: " .. #gains }, { C.dim, "  (" .. table.concat(gains, ", ") .. ")" } }
   end
   out[#out + 1] = {}
   for _, r in ipairs(rows) do
     local when = os.date("%m-%d %H:%M", tonumber(r.t) or 0)
     local lvl = (r.class or "?") .. " " .. (r.level or "?") .. (r.total and (" (" .. r.total .. ")") or "")
     local star = r.attrs and r.attrs ~= ""
-    local line = { { star and "orchid" or C.dim, (star and "★ " or "  ") .. when .. "  " } }
+    local line = { { star and C.rare or C.dim, (star and "★ " or "  ") .. when .. "  " } }
     if r.kind == "class" then line[#line + 1] = { C.title, "now a " .. (r.class or "?") .. "  " } end
     line[#line + 1] = { C.key, pad(lvl, 22) }
     if r.hp then
@@ -7482,7 +7494,7 @@ function M.levelLines(width)
     out[#out + 1] = line
     local extra = {}
     -- (a vivid colour of its own: the class and level beside it are khaki)
-    if r.attrs and r.attrs ~= "" then extra[#extra + 1] = { "orchid", "  ★ " .. r.attrs } end
+    if r.attrs and r.attrs ~= "" then extra[#extra + 1] = { C.rare, "  ★ " .. r.attrs } end
     if r.maxes and r.maxes ~= "" then extra[#extra + 1] = { C.slot, "  max " .. r.maxes } end
     if r.learned and r.learned ~= "" then extra[#extra + 1] = { C.plus, "  learned " .. r.learned } end
     if r.skills and r.skills ~= "" then extra[#extra + 1] = { C.text, "  better at " .. r.skills } end
@@ -8898,7 +8910,7 @@ end
 local function barEcho(d, label, right)
   label = label or M.bar
   local font = (pcall(getFont) and getFont()) or "monospace"
-  local style = string.format("white-space: pre; font-family: '%s', monospace; font-size: %dpt; color: #c0c0c0;",
+  local style = string.format("white-space: pre; font-family: '%s', monospace; font-size: %dpt; color: " .. M.hex("text") .. ";",
     font, M.barFontSize())
   if right then
     label:rawEcho(string.format(
@@ -11197,7 +11209,7 @@ function M.chatGrab(l)
     selectCurrentLine()
     copy()
     deselect()
-    M.chatConsole:decho("<90,90,100>" .. os.date("%H:%M") .. " ")
+    M.chatConsole:decho(M.drgb("dim") .. os.date("%H:%M") .. " ")
     appendBuffer(M.chatConsole.name)
   end)
   if ok then
@@ -11207,8 +11219,8 @@ function M.chatGrab(l)
 end
 
 local function chatLine(e)
-  local d = e.decho or ("<192,192,192>" .. e.plain)
-  return "<90,90,100>" .. os.date("%H:%M", e.t) .. " " .. d
+  local d = e.decho or (M.drgb("text") .. e.plain)
+  return M.drgb("dim") .. os.date("%H:%M", e.t) .. " " .. d
 end
 function M.chatEcho(e)
   pcall(function() M.chatConsole:decho(chatLine(e) .. "\n") end)
@@ -11224,18 +11236,18 @@ function M.chatRender()
     if (C.filter == "All" and not muted[e.ch]) or C.filter == e.ch then M.chatEcho(e); any = true end
   end
   if not any then
-    pcall(function() M.chatConsole:decho("<90,90,100>" .. (#C.lines == 0
+    pcall(function() M.chatConsole:decho(M.drgb("dim") .. (#C.lines == 0
       and "Channel talk, tells and says collect here as they happen - each channel gets its own chip above."
       or "Nothing on " .. C.filter .. " yet.") .. "\n") end)
   end
 end
 
 local chipStyle = [[QLabel { color: %s; background-color: %s; border: 1px solid %s; border-radius: 9px;
-  padding: 0 8px; margin: 2px 2px; %s } QLabel::hover { color: #ffffff; }]]
+  padding: 0 8px; margin: 2px 2px; %s } QLabel::hover { color: ]] .. M.hex("item") .. [[; }]]
 local function chipCss(on, muted, hot)
   if muted then return string.format(chipStyle, "#555555", "rgba(0,0,0,0)", "#2a2a2a", "text-decoration: line-through;") end
-  if on then return string.format(chipStyle, "#e6c35c", "rgba(40,36,20,255)", "#8a7430", "") end
-  return string.format(chipStyle, hot and "#e0e0e0" or "#909090", "rgba(24,24,32,255)", "#333333", "")
+  if on then return string.format(chipStyle, M.hex("title"), "rgba(40,36,20,255)", "#8a7430", "") end
+  return string.format(chipStyle, hot and M.hex("text") or M.hex("dim"), "rgba(24,24,32,255)", "#333333", "")
 end
 
 -- chips: All, then each channel in the order it first spoke; counts are unread lines
@@ -11381,7 +11393,7 @@ function M.buildNotes(page)
   pcall(function() M.notesConsole:enableScrollBar() end)
   M.notesInput = Geyser.CommandLine:new({ name = "ovenNotesInput", height = 26, v_policy = Geyser.Fixed }, box)
   pcall(function() M.notesInput:setStyleSheet([[
-    background-color: rgba(24,24,32,255); color: #d0d0d0; border: 1px solid #333;
+    background-color: rgba(24,24,32,255); color: ]] .. M.hex("text") .. [[; border: 1px solid #333;
     qproperty-placeholderText: "write a note and press Enter - it's kept with the room you're in";]]) end)
   M.notesInput:setAction(function(text)
     pcall(function() M.notesInput:clear() end)
@@ -11423,12 +11435,12 @@ function M.notesRender(filter)
     WHERE %s = '' OR instr(lower(text || ' ' || ifnull(room_name, '') || ' ' || ifnull(area, '')), %s) > 0 ORDER BY id]], q, q)
   local con = M.notesConsole
   if M.notesFilter then
-    pcall(function() con:decho(string.format("<230,195,92>notes with '%s'  <90,90,100>(%d)  ", M.notesFilter, #rows)) end)
-    noteLink("<135,206,250>show all", function() M.notesRender() end, "every note")
+    pcall(function() con:decho(string.format(M.drgb("title") .. "notes with '%s'  " .. M.drgb("dim") .. "(%d)  ", M.notesFilter, #rows)) end)
+    noteLink(M.drgb("slot") .. "show all", function() M.notesRender() end, "every note")
     pcall(function() con:decho("\n\n") end)
   end
   if #rows == 0 then
-    pcall(function() con:decho("<90,90,100>" .. (M.notesFilter and "No note has that in it." or
+    pcall(function() con:decho(M.drgb("dim") .. (M.notesFilter and "No note has that in it." or
       "Your notes go here, kept for good. Type one in the box below and press Enter - it remembers the room you're in, so you can walk back to it.") .. "\n") end)
     return
   end
@@ -11437,14 +11449,14 @@ function M.notesRender(filter)
     local where = {}
     if r.room_name then where[#where + 1] = r.room_name end
     if r.area and r.area ~= "" then where[#where + 1] = r.area end
-    pcall(function() con:decho(string.format("<90,90,100>#%d  %s%s  ", id, os.date("%Y-%m-%d %H:%M", tonumber(r.t) or 0),
+    pcall(function() con:decho(string.format(M.drgb("dim") .. "#%d  %s%s  ", id, os.date("%Y-%m-%d %H:%M", tonumber(r.t) or 0),
       #where > 0 and ("  ·  " .. table.concat(where, " · ")) or "")) end)
     if room then
-      noteLink("<135,206,250>[go]", function() M.mapWalkTo(room) end, "walk to " .. (r.room_name or ("#" .. room)))
+      noteLink(M.drgb("slot") .. "[go]", function() M.mapWalkTo(room) end, "walk to " .. (r.room_name or ("#" .. room)))
       pcall(function() con:decho(" ") end)
     end
-    noteLink("<120,120,130>[delete]", function() M.noteRemove(id) end, "remove note #" .. id)
-    pcall(function() con:decho("\n<215,215,215>" .. tostring(r.text):gsub("<", "&lt;") .. "\n\n") end)
+    noteLink(M.drgb("dim") .. "[delete]", function() M.noteRemove(id) end, "remove note #" .. id)
+    pcall(function() con:decho("\n" .. M.drgb("text") .. tostring(r.text):gsub("<", "&lt;") .. "\n\n") end)
   end
 end
 
@@ -12433,7 +12445,7 @@ end
 ---------------------------------------------------------------------------
 local mapHeaderStyle = "background-color: rgba(18,18,26,255); padding-left: 6px; qproperty-alignment: 'AlignVCenter | AlignLeft';"
 local mapButtonStyle = [[
-  QLabel { background-color: rgba(30,30,42,255); color: #c0c0c0; border-left: 1px solid #333;
+  QLabel { background-color: rgba(30,30,42,255); color: ]] .. M.hex("text") .. [[; border-left: 1px solid #333;
            qproperty-alignment: 'AlignCenter'; }
   QLabel::hover { background-color: rgba(64,224,208,60); color: white; }]]
 
@@ -12453,7 +12465,7 @@ function M.createMapPanel()
     titleText = M.panelTitle("Map"),
     x = "-36%", y = "4%", width = "34%", height = "50%",
     adjLabelstyle = M.PANEL_STYLE,
-    titleTxtColor = "#e6c35c",
+    titleTxtColor = M.hex("title"),
   })
   M.panelPlace("ovenMapPanel", M.mapPanel)
   local box = Geyser.VBox:new({ name = "ovenMapBox", x = 0, y = 0, width = "100%", height = "100%" }, M.mapPanel)
@@ -12497,18 +12509,18 @@ function M.createMapPanel()
   -- search, along the bottom: matches in the area on show light up, the list goes to the Inspector
   local footer = Geyser.HBox:new({ name = "ovenMapFooter", height = 24, v_policy = Geyser.Fixed }, box)
   local findLabel = Geyser.Label:new({ name = "ovenMapFindLabel", width = 36, h_policy = Geyser.Fixed }, footer)
-  findLabel:setStyleSheet("background-color: rgba(18,18,26,255); color: #808080; qproperty-alignment: 'AlignVCenter | AlignRight'; padding-right: 4px;")
+  findLabel:setStyleSheet("background-color: rgba(18,18,26,255); color: " .. M.hex("dim") .. "; qproperty-alignment: 'AlignVCenter | AlignRight'; padding-right: 4px;")
   findLabel:echo("find")
   M.mapSearchBox = Geyser.CommandLine:new({ name = "ovenMapSearch" }, footer)
   pcall(function() M.mapSearchBox:setStyleSheet([[
-    background-color: rgba(30,30,42,255); color: #c0c0c0; border: 1px solid #333;
+    background-color: rgba(30,30,42,255); color: ]] .. M.hex("text") .. [[; border: 1px solid #333;
     qproperty-placeholderText: "a room, an NPC, a [tag], an item a shop sells…";]]) end)
   M.mapSearchBox:setAction(function(text)
     M.mapSearchBox:clear()
     M.mapSearch(text)
   end)
   M.mapSearchStatus = Geyser.Label:new({ name = "ovenMapFindStatus", width = 190, h_policy = Geyser.Fixed }, footer)
-  M.mapSearchStatus:setStyleSheet("background-color: rgba(18,18,26,255); color: #808080; qproperty-alignment: 'AlignVCenter | AlignRight'; padding-right: 6px;")
+  M.mapSearchStatus:setStyleSheet("background-color: rgba(18,18,26,255); color: " .. M.hex("dim") .. "; qproperty-alignment: 'AlignVCenter | AlignRight'; padding-right: 6px;")
   local clear = Geyser.Label:new({ name = "ovenMapFindClear", width = 28, h_policy = Geyser.Fixed }, footer)
   clear:setStyleSheet(mapButtonStyle)
   clear:echo("×")
@@ -12856,7 +12868,7 @@ function M.worldDrawNow()
   local here = M.worldHere
   local mapName = v.map or (here and here.map) or "Alyria"
   local img, why = M.worldImage(mapName)
-  if not img then lab:setStyleSheet("background-color: rgba(10,10,14,255); color: #808080; qproperty-alignment: 'AlignCenter';"); lab:echo(why or "") return end
+  if not img then lab:setStyleSheet("background-color: rgba(10,10,14,255); color: " .. M.hex("dim") .. "; qproperty-alignment: 'AlignCenter';"); lab:echo(why or "") return end
   local okW, lw = pcall(function() return lab:get_width() end)
   local okH, lh = pcall(function() return lab:get_height() end)
   local outW = math.max(40, math.floor(((okW and tonumber(lw)) or 400) / 4) * 4)
@@ -12936,7 +12948,7 @@ end
 function M.worldDrawStatus()
   if not M.mapSearchStatus or M.mapMode ~= "world" or M.mapSearchQuery then return end
   local v = V()
-  M.mapSearchStatus:echo(string.format("<span style=\"color:#808080;\">%s %d,%d · ×%s%s</span>", v.map or "", v.cx or 0, v.cy or 0,
+  M.mapSearchStatus:echo(string.format("<span style=\"color:" .. M.hex("dim") .. ";\">%s %d,%d · ×%s%s</span>", v.map or "", v.cx or 0, v.cy or 0,
     tostring(M.WORLD_ZOOMS[v.zoomI]), v.follow and "" or " · ◎ to follow"))
 end
 
@@ -13007,7 +13019,7 @@ function M.worldRelease()
     terrain = r and W().terrain[string.format("%02x%02x%02x", r, g, b)]
   end
   if M.mapSearchStatus then
-    M.mapSearchStatus:echo(string.format("<span style=\"color:#c0c0c0;\">%d,%d%s</span>", sx, sy, terrain and (" · " .. terrain) or ""))
+    M.mapSearchStatus:echo(string.format("<span style=\"color:" .. M.hex("text") .. ";\">%d,%d%s</span>", sx, sy, terrain and (" · " .. terrain) or ""))
   end
 end
 
@@ -13145,9 +13157,9 @@ function M.mapSearchDraw()
   local esc = function(x) return (tostring(x):gsub("&", "&amp;"):gsub("<", "&lt;")) end
   local text = ""
   if q and n then
-    local col = n.here > 0 and "#78c8ff" or "#808080"
+    local col = n.here > 0 and M.hex("slot") or M.hex("dim")
     text = string.format("<span style=\"font-family:'%s'; color:%s;\">'%s': %d here</span>"
-      .. "<span style=\"font-family:'%s'; color:#808080;\"> · %d in all</span>", font, col, esc(q), n.here, font, n.all)
+      .. "<span style=\"font-family:'%s'; color:" .. M.hex("dim") .. ";\"> · %d in all</span>", font, col, esc(q), n.here, font, n.all)
   end
   M.mapSearchStatus:echo(text)
 end
@@ -13192,8 +13204,8 @@ function M.drawMapHeader()
   local font = (pcall(getFont) and getFont()) or "monospace"
   local esc = function(x) return (tostring(x):gsub("&", "&amp;"):gsub("<", "&lt;")) end
   M.mapRoomLabel:echo(string.format(
-    "<span style=\"font-family:'%s'; color:#ffffff;\">%s</span>"
-    .. "<span style=\"font-family:'%s'; color:#808080;\">%s%s</span>",
+    "<span style=\"font-family:'%s'; color:" .. M.hex("item") .. ";\">%s</span>"
+    .. "<span style=\"font-family:'%s'; color:" .. M.hex("dim") .. ";\">%s%s</span>",
     font, esc(name), font, area ~= "" and ("  ·  " .. esc(area)) or "", id and ("  ·  #" .. id) or ""))
 end
 

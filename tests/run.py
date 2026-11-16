@@ -480,7 +480,7 @@ def inspector_tabs():
     o.lua('sbo.command("kills")'); eq(o.ev("FRONT()"), "log", "kills: Log tab")
     o.lua('WIDGETS.ovenTabs3_view.click()'); eq(o.ev("FRONT()"), "view", "clicking a tab")
     o.lua('sbo.command("tab help")'); eq(o.ev("FRONT()"), "help", "sbo tab help")
-    eq(o.ev("WIDGETS.ovenTabs3_help.css").count("e6c35c"), 1, "the front tab is highlighted")
+    eq(o.ev("WIDGETS.ovenTabs3_help.css").count(o.ev("sbo.hex('title')")), 1, "the front tab is highlighted (the palette's title colour)")
     o.lua('sbo.command("tabs off")')
     eq(o.ev("WIDGETS.ovenTabs3Box.shown"), False, "tabs off hides the bar")
     o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES" })')
@@ -3344,6 +3344,20 @@ def levelling_log():
     assert "+10 hp +5 sp +9 st +12 pr" in text and "better at cure poison 9%" in text and "now a barbarian" in text, text
     assert "★ attribute gains: 1" in text and "(courage)" in text, text
     assert any(l.startswith("★ ") and "monk 18" in l for l in text.split("\n")), "the level with it starred"
+
+
+@test
+def one_palette():
+    # no colour outside the palette: hex codes and "<r,g,b>" only in the helpers and the panels' frames
+    import re as _re
+    src = open(os.path.join(ROOT, "src", "Oven.lua"), encoding="utf-8").read()
+    frame = {"#333", "#333333", "#555", "#555555", "#2a2a2a", "#8a7430"}
+    # (a colour code sits in a string or a style: after a quote, a space or a colon - not Lua's #list)
+    hexes = [h for h in _re.findall(r"(?<=[\"':])\s*#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b", src) if h.strip().lower() not in frame and h.strip().lower() != "#c0c0c0"]
+    rgbs = _re.findall(r'"<\d{1,3},\d{1,3},\d{1,3}>', src)
+    eq((hexes, rgbs), ([], []), "every colour from the palette")
+    o = Oven()
+    eq((o.ev("sbo.hex('title')"), o.ev("sbo.drgb('title')")), ("#ffd700", "<255,215,0>"), "a role's RGB")
 
 
 @test
