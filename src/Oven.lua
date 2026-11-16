@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.52.1"
+M.version = "1.52.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11766,9 +11766,19 @@ end
 -- follow the file: when it changes (you saved in the editor), the tab is drawn again
 function M.notesWatch()
   if M.notesTimer then return end
-  M.notesTimer = tempTimer(2, function()
-    local s = readFile(M.notesPath())
-    if s and s ~= M.notesSeen and M.notesConsole then M.notesRender(M.notesFilter) end
+  local ticks = 3   -- (the first tick looks at the file too)
+  M.notesTimer = tempTimer(0.5, function()
+    -- the box: Save / Cancel shown once there's text in it
+    if M.notesSaveBtn then
+      local has = (M.noteBoxText and M.noteBoxText() ~= "") or M.noteEdit ~= nil
+      if has ~= (M.notesHadText or false) then pcall(M.notesBarDraw) end
+    end
+    -- the file, every couple of seconds: changed elsewhere, drawn again
+    ticks = ticks + 1
+    if ticks % 4 == 0 then
+      local s = readFile(M.notesPath())
+      if s and s ~= M.notesSeen and M.notesConsole then M.notesRender(M.notesFilter) end
+    end
   end, true)
 end
 
@@ -11779,8 +11789,12 @@ end
 
 function M.notesBarDraw()
   if not M.notesSaveBtn then return end
+  -- Save / Cancel only while there's something to save: text in the box, or a note being edited
+  local hasText = M.noteBoxText and M.noteBoxText() ~= ""
   local editing = M.noteEdit ~= nil
-  M.notesSaveBtn:show(); M.notesCancelBtn:show()
+  M.notesHadText = hasText or editing
+  if hasText or editing then M.notesSaveBtn:show(); M.notesCancelBtn:show()
+  else M.notesSaveBtn:hide(); M.notesCancelBtn:hide() end
   local font = (pcall(getFont) and getFont()) or "monospace"
   local txt = editing
     and (string.format("<span style=\"color:%s;\">%s</span>", M.hex("title"), M.noteEdit.i and ("editing note #" .. M.noteEdit.i) or "a new note")

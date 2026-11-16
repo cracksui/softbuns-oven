@@ -2518,11 +2518,12 @@ def notes_tab():
     o.lua("TYPE('cook gives pesto'); ENTER(); TYPE('for 250 gold'); ENTER()")
     assert "pesto" not in open(f).read(), "Enter never saves"
     eq(o.ev("BOXTEXT"), "cook gives pesto\nfor 250 gold\n", "the lines in the box")
-    eq((o.ev("WIDGETS['ovenNotesSave'].shown"), o.ev("WIDGETS['ovenNotesCancel'].shown")), (True, True), "Save, Cancel: always there")
+    eq((o.ev("WIDGETS['ovenNotesSave'].shown"), o.ev("WIDGETS['ovenNotesCancel'].shown")), (True, True), "Save, Cancel: with text in the box")
     o.lua("WIDGETS['ovenNotesSave'].click()")
     text = open(f).read()
     assert text.rstrip().endswith("#28840\ncook gives pesto\nfor 250 gold"), text
     eq((o.ev("sbo.noteEdit"), o.ev("BOXTEXT")), (None, ""), "saved, the box empty")
+    eq((o.ev("WIDGETS['ovenNotesSave'].shown"), o.ev("WIDGETS['ovenNotesCancel'].shown")), (False, False), "nothing to save: no buttons")
     # written straight into the file: several lines - the tab follows the file
     open(f, "a").write("\n## 2026-11-16 02:00 · the abbot\nwolf kills me in 2 rounds\ntreant guards the lemon tree\n")
     o.lua("sbo.notesTimer = nil; sbo.notesWatch(); runTimers()")   # (the test's timers don't repeat)
