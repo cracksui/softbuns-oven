@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.43.0"
+M.version = "1.44.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -199,6 +199,8 @@ local SCHEMA = {
   "CREATE TABLE IF NOT EXISTS players (name TEXT PRIMARY KEY, last INTEGER)",
   -- where a room is on the world map (GMCP's coord when you were there): the world map places town rooms by it
   "CREATE TABLE IF NOT EXISTS room_xy (room INTEGER PRIMARY KEY, map TEXT, x INTEGER, y INTEGER)",
+  -- each level gained (and class change): what it gave, attributes raised, skills improved / learned
+  "CREATE TABLE IF NOT EXISTS levels (id INTEGER PRIMARY KEY, t INTEGER, kind TEXT, class TEXT, level INTEGER, total INTEGER, hp INTEGER, sp INTEGER, st INTEGER, pracs INTEGER, attrs TEXT, skills TEXT, learned TEXT, maxes TEXT)",
 }
 
 local SCHEMA_ADD = {
@@ -7297,6 +7299,111 @@ end
 end
 
 ---------------------------------------------------------------------------
+-- The levelling log: every level you gain - what it gave (hp, sp, stamina, practices), an attribute it
+-- raised, the skills that improved or were learned, maximums that changed - and class changes. Read from
+-- the game's lines ("You gain 10 hit points, 5 spell points, 9 stamina, and 12 practices!" and what follows
+-- in the next few seconds); the level from GMCP's char.status. sbo log levels shows it.
+---------------------------------------------------------------------------
+do
+local function ev()
+  local E = M.levelEvent
+  if E and now() - E.at > 4 then M.levelFinish(); E = nil end
+  return E
+end
+local function start(kind)
+  local E = ev()
+  if E then return E end
+  E = { at = now(), t = os.time(), kind = kind, attrs = {}, skills = {}, learned = {}, maxes = {} }
+  M.levelEvent = E
+  tempTimer(4, function() if M.levelEvent == E then M.levelFinish() end end)
+  return E
+end
+
+function M.levelNoteLine(l)
+  local t = trim(l)
+  local hp, sp, st, pr = t:match("^You gain (%d+) hit points?, (%d+) spell points?, (%d+) stamina, and (%d+) practices?!$")
+  if hp then
+    local E = start("level")
+    E.kind = E.kind == "class" and "class" or "level"
+    E.hp, E.sp, E.st, E.pr = tonumber(hp), tonumber(sp), tonumber(st), tonumber(pr)
+    return
+  end
+  local who, cls = t:match("^'(%a+), you are now an? (%a+)!'")
+  if cls then local E = start("class"); E.kind = "class"; E.newClass = cls:lower(); return end
+  -- the rest only while a level (or class change) is being read
+  local E = ev()
+  if not E then return end
+  local n, attr = t:match("^Due to your experiences, you have earned a (%d+) point increase in (%a+)%.?$")
+  if attr then E.attrs[#E.attrs + 1] = { attr, tonumber(n) }; return end
+  local sk, pct = t:match("^You have become more learned at '(.-)' %((%d+)%%%)%.?$")
+  if sk then E.skills[#E.skills + 1] = { sk, tonumber(pct) }; return end
+  local cnt, what, list = t:match("^You have gained (%d+) new (%a+): (.+)$")
+  if what then for x in list:gmatch("[^,]+") do E.learned[#E.learned + 1] = trim(x:gsub("^and ", "")) end return end
+  local m, from, to = t:match("^Your maximum '(%a+)' has been adjusted from (%d+) to (%d+)%.?$")
+  if m then E.maxes[#E.maxes + 1] = { m, tonumber(from), tonumber(to) }; return end
+end
+
+local function join(list, fmt)
+  local out = {}
+  for _, x in ipairs(list) do out[#out + 1] = fmt(x) end
+  return table.concat(out, ", ")
+end
+
+function M.levelFinish()
+  local E = M.levelEvent
+  M.levelEvent = nil
+  if not E then return end
+  local s = M.gmcpGet and M.gmcpGet("char.status") or {}
+  local c = M.cfg.char or {}
+  local cls = E.newClass or (c.class and c.class:lower())
+  if E.newClass then c.class = E.newClass end
+  M.dbx([[INSERT INTO levels (t, kind, class, level, total, hp, sp, st, pracs, attrs, skills, learned, maxes)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)]],
+    E.t, E.kind, cls, tonumber(s.level), tonumber(s.totallevel), E.hp, E.sp, E.st, E.pr,
+    join(E.attrs, function(a) return a[1] .. " +" .. a[2] end),
+    join(E.skills, function(x) return x[1] .. " " .. x[2] .. "%" end),
+    table.concat(E.learned, ", "),
+    join(E.maxes, function(x) return x[1] .. " " .. x[2] .. "→" .. x[3] end))
+  pcall(M.dataChanged)
+end
+
+-- sbo log levels: newest first, one line each, totals at the top
+function M.levelLines(width)
+  local rows = M.dbRows("SELECT * FROM levels ORDER BY id DESC LIMIT 200")
+  local out = { header("log", "", width, string.format("Levelling  (%d)", #rows)) }
+  if #rows == 0 then
+    out[#out + 1] = { { C.dim, "nothing yet - every level you gain from now on is kept here: what it gave, attributes, skills" } }
+    return out
+  end
+  local th, ts, tst, tp = 0, 0, 0, 0
+  for _, r in ipairs(rows) do
+    th, ts, tst, tp = th + (tonumber(r.hp) or 0), ts + (tonumber(r.sp) or 0), tst + (tonumber(r.st) or 0), tp + (tonumber(r.pracs) or 0)
+  end
+  out[#out + 1] = { { C.dim, "in all: " }, { C.plus, "+" .. th }, { C.dim, " hp · " }, { C.plus, "+" .. ts }, { C.dim, " sp · " },
+    { C.plus, "+" .. tst }, { C.dim, " st · " }, { C.plus, "+" .. tp }, { C.dim, " practices" } }
+  out[#out + 1] = {}
+  for _, r in ipairs(rows) do
+    local when = os.date("%m-%d %H:%M", tonumber(r.t) or 0)
+    local lvl = (r.class or "?") .. " " .. (r.level or "?") .. (r.total and (" (" .. r.total .. ")") or "")
+    local line = { { C.dim, when .. "  " } }
+    if r.kind == "class" then line[#line + 1] = { C.title, "now a " .. (r.class or "?") .. "  " } end
+    line[#line + 1] = { C.key, pad(lvl, 18) }
+    if r.hp then
+      line[#line + 1] = { C.plus, string.format("+%s hp +%s sp +%s st +%s pr", r.hp, r.sp, r.st, r.pracs) }
+    end
+    out[#out + 1] = line
+    local extra = {}
+    if r.attrs and r.attrs ~= "" then extra[#extra + 1] = { C.title, "  " .. r.attrs } end
+    if r.maxes and r.maxes ~= "" then extra[#extra + 1] = { C.slot, "  max " .. r.maxes } end
+    if r.learned and r.learned ~= "" then extra[#extra + 1] = { C.plus, "  learned " .. r.learned } end
+    if r.skills and r.skills ~= "" then extra[#extra + 1] = { C.text, "  better at " .. r.skills } end
+    for _, x in ipairs(extra) do out[#out + 1] = { { C.text, string.rep(" ", 13) }, x } end
+  end
+  return out
+end
+end
+
+---------------------------------------------------------------------------
 -- The practice dummy: real damage numbers for your attacks. It says its health every round and
 -- is whole again by the next, so 10000 minus what it says is exactly that round's damage.
 -- A round can hold several landings (two kicks sent quickly, two casts, "You cast spark one
@@ -11550,6 +11657,7 @@ end
 function M.onLineWork()
   local cap = M.cap
   pcall(M.dummyNoteLine, line)
+  if M.levelEvent or line:find("You gain ", 1, true) or line:find(", you are now a", 1, true) then pcall(M.levelNoteLine, line) end
   if M.tempMap then pcall(M.tempNoteLine, line) end
   if line:find("takes your payment and hands you", 1, true) then pcall(M.noteBought, line) end
   if M.eqdbAt and not cap then
@@ -14877,6 +14985,9 @@ function M.legacyCommand(args)
   elseif a == "deaths" then
     M.logOut(M.deathLines)
     return
+  elseif a == "levels" or a == "level" then
+    M.logOut(M.levelLines)
+    return
   elseif a == "shops" or a == "shop" then
     return M.viewOut(M.shopLines(M.cfg.window and M.viewCols() or columns("main"), b))
   elseif a == "loot" then
@@ -15141,6 +15252,7 @@ M.CMDS = {
     { name = "loot", args = "[{text}]", desc = "what was picked up and where; text searches it",
       run = function(r) return legacy("loot all " .. r) end },
     { name = "deaths", desc = "your last deaths, with what led up to them", run = L("deaths") },
+    { name = "levels", desc = "every level you've gained: what it gave, attributes, skills improved and learned", run = L("levels") },
     { name = "session", desc = "exp per hour, time and kills to the next level", run = L("session") },
     { name = "reset", desc = "start a fresh session (kills, exp per hour, gold)", run = L("session reset") },
     { name = "clear", args = "{kills|loot}", desc = "wipe all-time history (asks first)", run = function(r) return M.logClear(r) end },

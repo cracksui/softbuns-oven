@@ -3303,6 +3303,30 @@ def bar_from_gmcp():
 
 
 @test
+def levelling_log():
+    o = Oven()
+    o.lua("""sbo.cfg.char = { class = 'monk' }
+      gmcp.char = { status = { level = 18, totallevel = 78 } }""")
+    o.feed("You gain 10 hit points, 5 spell points, 9 stamina, and 12 practices!",
+           "Due to your experiences, you have earned a 1 point increase in courage.",
+           "You have become more learned at 'cure poison' (9%).",
+           "You have gained 1 new proficiency: second attack",
+           "Your maximum 'strength' has been adjusted from 20 to 22.",
+           "A gnome barbarian has been slain!")
+    o.lua("runTimers()")
+    r = o.ev("sbo.dbRow('SELECT * FROM levels ORDER BY id DESC LIMIT 1')")
+    eq((r.kind, r["class"], r.level, r.total, r.hp, r.sp, r.st, r.pracs), ("level", "monk", 18, 78, 10, 5, 9, 12), "the level and what it gave")
+    eq((r.attrs, r.skills, r.learned, r.maxes), ("courage +1", "cure poison 9%", "second attack", "strength 20→22"), "and what came with it")
+    # a class change
+    o.feed("'Softbuns, you are now a Barbarian!' Lord Vashir exclaims.")
+    o.lua("runTimers()")
+    r = o.ev("sbo.dbRow('SELECT * FROM levels ORDER BY id DESC LIMIT 1')")
+    eq((r.kind, r["class"]), ("class", "barbarian"), "now a barbarian")
+    text = o.ev("(function() local s = {} for _, row in ipairs(sbo.levelLines(100)) do for _, g in ipairs(row) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end)()")
+    assert "+10 hp +5 sp +9 st +12 pr" in text and "better at cure poison 9%" in text and "now a barbarian" in text, text
+
+
+@test
 def tabs_stay_put():
     o = Oven()
     o.lua("""sbo.cfg.window = true; sbo.cfg.tabs = true; sbo.createWindow(); sbo.tabShow('chat')
