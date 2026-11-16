@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.38.0"
+M.version = "1.38.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7137,12 +7137,13 @@ function M.classPlan(arg)
   end
   table.sort(rows, function(a, b) if a.ok ~= b.ok then return a.ok end if a.add ~= b.add then return a.add > b.add end return a.c < b.c end)
   local out = { header("class", "", width, "Your next class: " .. table.concat(mine, " → ") .. " → ?") }
-  out[#out + 1] = { { C.dim, "  " .. pad("class", 12) .. pad("skill power", 13) .. pad("boosted", 9) .. pad("new spells", 12) .. pad("new profs", 11) .. pad("SCC", 6) .. "race · token" } }
+  out[#out + 1] = { { C.dim, "  " .. pad("class", 12) .. pad("skill power", 13) .. pad("boosted", 9) .. pad("new spells", 12) .. pad("new profs", 11) .. pad("SCC", 6) .. pad("primary", 13) .. "race · token" } }
   local links = {}
   for _, r in ipairs(rows) do
     out[#out + 1] = { { r.ok and C.key or C.dim, "  " .. pad(r.c, 12) }, { r.ok and C.plus or C.dim, pad("+" .. r.add, 13) },
       { C.num, pad(tostring(r.boosted), 9) }, { C.num, pad(tostring(r.newS), 12) }, { C.num, pad(tostring(r.newP), 11) },
       { C.num, pad(r.scc and tostring(math.floor(r.scc)) or "?", 6) },
+      { C.text, pad(M.CLASS_PRIME[r.c] or "?", 13) },
       { r.ok and C.dim or C.minus, r.ok and "ok" or ("not " .. race) }, { C.flag, r.token and " · token" or "" } }
     local p = table.concat(r.path, " ")
     links[#links + 1] = { "sbo class plan " .. p, function() M.classPlan(p) end }
@@ -8048,7 +8049,7 @@ M.HELP_BATCHES = {
   { name = "classes, attributes and ratings (2)",
     pages = { "monk", "paladin", "priest", "psionic", "ranger", "rogue", "shaman", "valkyrie", "witch", "wizard" } },
   { name = "classes, attributes and ratings (3)",
-    pages = { "2035", "1393", "1065", "2367", "2337" } },
+    pages = { "2035", "1393", "1065", "2367", "2337", "1101", "experience" } },
 }
 local WORTH = { "combat", "attack", "defen", "damage", "dodge", "parry", "block", "evasion", "armor", "resist",
   "accuracy", "crit", "skill power", "complexity", "spell", "magic", "cast", "regen", "heal", "strength",
