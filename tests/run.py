@@ -2535,7 +2535,8 @@ def notes_tab():
     eq((o.ev("WIDGETS['ovenNotesSave'].shown"), o.ev("WIDGETS['ovenNotesNew'].shown")), (True, False), "editing: Save, Cancel")
     # the box's own Enter: a new line; with Shift held, saved
     o.lua("""SHIFT = false; getKeyboardModifiers = function() return SHIFT and 0x02000000 or 0 end
-      function ENTER() WIDGETS['ovenNotesInput'].action(BOXTEXT) end""")
+      -- (like Mudlet: a box with several lines reaches the action once a line)
+      function ENTER() for l in (BOXTEXT .. '\\n'):gmatch('(.-)\\n') do WIDGETS['ovenNotesInput'].action(l) end runTimers() end""")
     o.lua("ENTER(); BOXTEXT = BOXTEXT .. 'ask the abbot'")
     eq(o.ev("sbo.noteEdit ~= nil"), True, "Enter: still editing")
     o.lua("SHIFT = true; ENTER(); SHIFT = false")
@@ -2548,6 +2549,8 @@ def notes_tab():
     # a new note, several lines; Esc cancels
     o.lua("sbo.noteEditStart(nil); BOXTEXT = 'line one'; ENTER(); BOXTEXT = BOXTEXT .. 'line two'; SHIFT = true; ENTER(); SHIFT = false")
     assert open(f).read().rstrip().endswith("#28840\nline one\nline two"), open(f).read()
+    t = open(f).read()
+    eq((t.count("line one"), t.count("line two")), (1, 1), "saved once - its lines not again as notes of their own")
     o.lua("sbo.noteEditStart(1); BOXTEXT = 'changed'; WIDGETS['ovenNotesCancel'].click()")
     assert "changed" not in open(f).read(), "Cancel: left as it was"
     # a link drawn by 1.49 ([new note] = noteAdd("", true)): the editor in the tab, nothing opened outside

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.51.1"
+M.version = "1.51.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11490,8 +11490,8 @@ function M.buildNotes(page)
     background-color: rgba(24,24,32,255); color: ]] .. M.hex("text") .. [[; border: 1px solid #333;
     qproperty-placeholderText: "a quick note: type it and press Enter ([new note] above for one with several lines)";]]) end)
   M.notesInput:setAction(function(text)
-    -- while editing: Enter a new line, Shift+Enter save
-    if M.noteEdit then return M.noteEditEnter(text) end
+    -- while editing: Enter a new line, Shift+Enter save (one key press's lines gathered)
+    if M.noteBoxAction(text) then return end
     pcall(function() M.notesInput:clear() end)
     M.noteAdd(text)
   end)
@@ -11648,11 +11648,32 @@ function M.shiftHeld()
   return nil
 end
 
--- Enter in the box while editing: a new line, or (with Shift) save
-function M.noteEditEnter(text)
-  local shift = M.shiftHeld()
-  if shift then return M.noteEditSave(text) end
-  pcall(printCmdLine, BOX, (text or "") .. "\n")
+-- Enter in the box while editing: a new line, or (with Shift) save. Mudlet hands a box holding several lines
+-- to its action once a line, so the calls of one key press are gathered and handled once, a moment later
+-- (and for a moment after saving, stray lines aren't taken for quick notes)
+function M.noteBoxAction(text)
+  if not M.noteEdit then
+    if M.noteSwallowUntil and now() < M.noteSwallowUntil then return true end
+    return false
+  end
+  local G = M.noteEnterGather
+  if not G then
+    G = { parts = {}, shift = M.shiftHeld() }
+    M.noteEnterGather = G
+    tempTimer(0, function()
+      M.noteEnterGather = nil
+      local ok, full = pcall(getCmdLine, BOX)
+      full = (ok and type(full) == "string" and full ~= "") and full or table.concat(G.parts, "\n")
+      if G.shift then
+        M.noteSwallowUntil = now() + 1
+        M.noteEditSave(full)
+      else
+        pcall(printCmdLine, BOX, full .. "\n")
+      end
+    end)
+  end
+  G.parts[#G.parts + 1] = text or ""
+  return true
 end
 
 -- start editing: a note (its number in the file), or a new one (nil)
