@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.42.1"
+M.version = "1.42.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3658,7 +3658,7 @@ function M.layoutQuestHud()
   local font = (pcall(getFont) and getFont()) or "monospace"
   local fs = math.max(8, (M.cfg.fontSize or 10) - 1)
   M.questTitle:rawEcho(string.format("<span style=\"font-family:'%s'; font-size:%dpt;\">%s%s</span>",
-    font, fs, span(C.slot, "⠿⠿ "), span(C.title, "Quests") .. span(C.text, "  (" .. n .. ")")))
+    font, fs, span(C.title, "⠿⠿ "), span(C.title, "Quests") .. span(C.text, "  (" .. n .. ")")))
   M.questTitle:move(x + 1, y + 1); M.questTitle:resize(w - 2, titleH); M.questTitle:show()
   M.questHud:move(x, y)
   M.questHud:resize(w, h)
