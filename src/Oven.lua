@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.45.1"
+M.version = "1.45.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7466,14 +7466,14 @@ function M.levelLines(width)
     if a and a ~= "" then for x in a:gmatch("[^,]+") do gains[#gains + 1] = trim(x):match("^(%a+)") end end
   end
   if #gains > 0 then
-    out[#out + 1] = { { C.title, "★ attribute gains: " .. #gains }, { C.dim, "  (" .. table.concat(gains, ", ") .. ")" } }
+    out[#out + 1] = { { "orchid", "★ attribute gains: " .. #gains }, { C.dim, "  (" .. table.concat(gains, ", ") .. ")" } }
   end
   out[#out + 1] = {}
   for _, r in ipairs(rows) do
     local when = os.date("%m-%d %H:%M", tonumber(r.t) or 0)
     local lvl = (r.class or "?") .. " " .. (r.level or "?") .. (r.total and (" (" .. r.total .. ")") or "")
     local star = r.attrs and r.attrs ~= ""
-    local line = { { star and C.title or C.dim, (star and "★ " or "  ") .. when .. "  " } }
+    local line = { { star and "orchid" or C.dim, (star and "★ " or "  ") .. when .. "  " } }
     if r.kind == "class" then line[#line + 1] = { C.title, "now a " .. (r.class or "?") .. "  " } end
     line[#line + 1] = { C.key, pad(lvl, 22) }
     if r.hp then
@@ -7481,7 +7481,8 @@ function M.levelLines(width)
     end
     out[#out + 1] = line
     local extra = {}
-    if r.attrs and r.attrs ~= "" then extra[#extra + 1] = { C.title, "  " .. r.attrs } end
+    -- (a vivid colour of its own: the class and level beside it are khaki)
+    if r.attrs and r.attrs ~= "" then extra[#extra + 1] = { "orchid", "  ★ " .. r.attrs } end
     if r.maxes and r.maxes ~= "" then extra[#extra + 1] = { C.slot, "  max " .. r.maxes } end
     if r.learned and r.learned ~= "" then extra[#extra + 1] = { C.plus, "  learned " .. r.learned } end
     if r.skills and r.skills ~= "" then extra[#extra + 1] = { C.text, "  better at " .. r.skills } end
