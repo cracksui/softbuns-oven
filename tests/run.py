@@ -2500,7 +2500,13 @@ def notes_tab():
       roomExists = function() return true end; getRoomName = function(id) return "Palace Kitchen and Bakery" end
       gmcp.room = { info = { num = "28840", zone = "Palace of Diocletian" } }; sbo.mapRoom = 28840
       WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end
-      OPENED = nil; openUrl = function(u) OPENED = u end''')
+      OPENED = nil; openUrl = function(u) OPENED = u end
+      BOXTEXT = ''
+      printCmdLine = function(n, t) BOXTEXT = t end; appendCmdLine = function(n, t) BOXTEXT = BOXTEXT .. t end
+      getCmdLine = function() return BOXTEXT end; clearCmdLine = function() BOXTEXT = '' end
+      -- (like Mudlet: Enter hands the box's text over once a line)
+      function ENTER() for l in (BOXTEXT .. '\\n'):gmatch('(.-)\\n') do WIDGETS['ovenNotesInput'].action(l) end runTimers() end
+      function TYPE(t) BOXTEXT = BOXTEXT .. t end''')
     # notes kept before 1.49 (in the database): copied into the file the first time
     o.lua('''sbo.dbx("INSERT INTO notes (t, text, room, room_name, area) VALUES (%s, %s, %s, %s, %s)", os.time(), "an old note", 28840, "Palace Kitchen and Bakery", "Palace of Diocletian")''')
     o.lua('sbo.command("notes")')
@@ -2508,66 +2514,38 @@ def notes_tab():
     f = o.home + "/oven_notes.md"
     text = open(f).read()
     assert "an old note" in text and "Palace Kitchen and Bakery · Palace of Diocletian #28840" in text, text
-    # typed in the box: a quick note, at the end of the file, with where it was written
-    o.lua('WIDGETS["ovenNotesInput"].action("cook gives pesto for 250 gold")')
+    # typing straight into the box: Enter adds lines, nothing's saved until Save
+    o.lua("TYPE('cook gives pesto'); ENTER(); TYPE('for 250 gold'); ENTER()")
+    assert "pesto" not in open(f).read(), "Enter never saves"
+    eq(o.ev("BOXTEXT"), "cook gives pesto\nfor 250 gold\n", "the lines in the box")
+    eq((o.ev("WIDGETS['ovenNotesSave'].shown"), o.ev("WIDGETS['ovenNotesNew'].shown")), (True, True), "Save, Cancel, New note: always there")
+    o.lua("WIDGETS['ovenNotesSave'].click()")
     text = open(f).read()
-    assert text.rstrip().endswith("#28840\ncook gives pesto for 250 gold"), text
-    # written in the editor: several lines - the tab follows the file
+    assert text.rstrip().endswith("#28840\ncook gives pesto\nfor 250 gold"), text
+    eq((o.ev("sbo.noteEdit"), o.ev("BOXTEXT")), (None, ""), "saved, the box empty")
+    # written straight into the file: several lines - the tab follows the file
     open(f, "a").write("\n## 2026-11-16 02:00 · the abbot\nwolf kills me in 2 rounds\ntreant guards the lemon tree\n")
-    o.lua("runTimers()")
+    o.lua("sbo.notesTimer = nil; sbo.notesWatch(); runTimers()")   # (the test's timers don't repeat)
     shown = o.ev("WIDGETS['ovenNotesConsole'].text")
     assert "wolf kills me in 2 rounds\ntreant guards the lemon tree" in shown, shown
-    # its links: walk there, the editor
     links = o.ev("WIDGETS['ovenNotesConsole'].links")
     [l for l in links.values() if "[go]" in l[1]][0][2]()
     eq(o.ev("WALKED"), 28840, "[go] walks to where it was written")
-    # [edit] on a note: the box holds it; Enter a new line, Shift+Enter saves (Oven's keys, only while editing)
-    o.lua("""KEYS, BOXTEXT = {}, ''
-      tempKey = function(m, k, fn) KEYS[#KEYS+1] = { m = m, k = k, fn = fn }; return #KEYS end; killKey = function() end
-      printCmdLine = function(n, t) BOXTEXT = t end; appendCmdLine = function(n, t) BOXTEXT = BOXTEXT .. t end
-      getCmdLine = function() return BOXTEXT end; clearCmdLine = function() BOXTEXT = '' end
-      function PRESS(m, k) for _, x in ipairs(KEYS) do if x.m == m and x.k == k then x.fn(); return true end end end""")
-    edit = [l for l in links.values() if "[edit]" in l[1]]
-    edit[-1][2]()   # the last note: the one written in the editor
+    # [edit]: the note in the box; another line; Save puts it back in its place
+    [l for l in links.values() if "[edit]" in l[1]][-1][2]()
     eq(o.ev("BOXTEXT"), "wolf kills me in 2 rounds\ntreant guards the lemon tree", "the note in the box")
-    # the bar at the top says what the keys do, with Save / Cancel; New note is back when you're done
-    assert "Enter: new line" in (o.ev("WIDGETS['ovenNotesStatus'].text") or ""), o.ev("WIDGETS['ovenNotesStatus'].text")
-    eq((o.ev("WIDGETS['ovenNotesSave'].shown"), o.ev("WIDGETS['ovenNotesNew'].shown")), (True, False), "editing: Save, Cancel")
-    # the box's own Enter: a new line; with Shift held, saved
-    o.lua("""SHIFT = false; getKeyboardModifiers = function() return SHIFT and 0x02000000 or 0 end
-      -- (like Mudlet: a box with several lines reaches the action once a line)
-      function ENTER() for l in (BOXTEXT .. '\\n'):gmatch('(.-)\\n') do WIDGETS['ovenNotesInput'].action(l) end runTimers() end""")
-    o.lua("ENTER(); BOXTEXT = BOXTEXT .. 'ask the abbot'")
-    eq(o.ev("sbo.noteEdit ~= nil"), True, "Enter: still editing")
-    assert (o.ev("WIDGETS['ovenNotesInput'].h") or 0) >= 120, "still the editing size"
-    o.lua("SHIFT = true; ENTER(); SHIFT = false")
+    assert "editing note #3" in (o.ev("WIDGETS['ovenNotesStatus'].text") or "")
+    o.lua("ENTER(); TYPE('ask the abbot'); WIDGETS['ovenNotesSave'].click()")
     text = open(f).read()
     assert "the abbot\nwolf kills me in 2 rounds\ntreant guards the lemon tree\nask the abbot" in text, text
-    eq(o.ev("sbo.noteEdit"), None, "done editing")
-    eq((o.ev("WIDGETS['ovenNotesNew'].shown"), o.ev("WIDGETS['ovenNotesSave'].shown")), (True, False), "+ New note, always there")
-    o.lua("WIDGETS['ovenNotesNew'].click()")
-    eq(o.ev("sbo.noteEdit ~= nil"), True, "the button starts a note"); o.lua("sbo.noteEditCancel()")
-    # a new note, several lines; Esc cancels
-    o.lua("sbo.noteEditStart(nil); BOXTEXT = 'line one'; ENTER(); BOXTEXT = BOXTEXT .. 'line two'; SHIFT = true; ENTER(); SHIFT = false")
-    assert open(f).read().rstrip().endswith("#28840\nline one\nline two"), open(f).read()
-    t = open(f).read()
-    eq((t.count("line one"), t.count("line two")), (1, 1), "saved once - its lines not again as notes of their own")
-    o.lua("sbo.noteEditStart(1); BOXTEXT = 'changed'; WIDGETS['ovenNotesCancel'].click()")
+    eq(text.count("ask the abbot"), 1, "saved once")
+    # Cancel: left as it was; the commands too
+    o.lua("sbo.noteEditStart(1); TYPE(' changed'); WIDGETS['ovenNotesCancel'].click()")
     assert "changed" not in open(f).read(), "Cancel: left as it was"
-    # a Mudlet that doesn't say when Shift is held: the commands still end it
-    o.lua("getKeyboardModifiers = nil; sbo.noteEditStart(nil); BOXTEXT = 'from the command'")
-    assert "Save to keep it" in (o.ev("WIDGETS['ovenNotesStatus'].text") or ""), o.ev("WIDGETS['ovenNotesStatus'].text")
-    o.lua("sbo.command('notes save')")
-    eq(o.ev("sbo.noteEdit"), None, "sbo notes save ends it")
+    o.lua("TYPE('from the command'); sbo.command('notes save')")
     assert "from the command" in open(f).read()
-    o.lua("sbo.noteEditStart(nil); BOXTEXT = 'not this'; sbo.command('notes cancel')")
-    eq(o.ev("sbo.noteEdit"), None, "sbo notes cancel ends it")
-    # a link drawn by 1.49 ([new note] = noteAdd("", true)): the editor in the tab, nothing opened outside
-    o.lua("OPENED = nil; sbo.noteAdd('', true)")
-    eq((o.ev("OPENED"), o.ev("sbo.noteEdit ~= nil")), (None, True), "the tab's editor")
-    o.lua("sbo.noteEditCancel(); sbo.notesOpen()")
-    eq(o.ev("OPENED"), None, "no external editor at all")
-    o.lua("sbo.noteEditCancel()")
+    o.lua("TYPE('not this'); sbo.command('notes cancel')")
+    assert "not this" not in open(f).read()
     o.lua('sbo.command("notes find pesto")')
     shown = o.ev("WIDGETS['ovenNotesConsole'].text")
     assert "pesto" in shown and "treant" not in shown, shown

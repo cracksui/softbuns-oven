@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.51.5"
+M.version = "1.52.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11462,7 +11462,7 @@ end
 ---------------------------------------------------------------------------
 function M.buildNotes(page)
   local box = Geyser.VBox:new({ name = "ovenNotesBox", x = 0, y = 0, width = "100%", height = "100%" }, page)
-  M.notesBox, M.notesBoxHeight = box, 26
+  M.notesBox, M.notesBoxHeight = box, 120
   -- a bar that stays put at the top: + New note (and, while editing, Save / Cancel and what the keys do)
   local bar = Geyser.HBox:new({ name = "ovenNotesBar", height = 28, v_policy = Geyser.Fixed }, box)
   local btnStyle = "QLabel { background-color: rgba(30,30,42,255); color: " .. M.hex("slot") .. "; border: 1px solid #333;"
@@ -11475,6 +11475,7 @@ function M.buildNotes(page)
     return b
   end
   M.notesNewBtn = button("ovenNotesNew", "＋ New note", 110, function() M.noteEditStart(nil) end)
+  M.notesInput = nil   -- (made below, under the list)
   M.notesSaveBtn = button("ovenNotesSave", "Save", 70, function() M.noteEditSave() end)
   M.notesCancelBtn = button("ovenNotesCancel", "Cancel", 70, function() M.noteEditCancel() end)
   M.notesStatus = Geyser.Label:new({ name = "ovenNotesStatus" }, bar)
@@ -11485,15 +11486,13 @@ function M.buildNotes(page)
   pcall(function() M.notesConsole:setFontSize(size) end)
   pcall(function() M.notesConsole:enableAutoWrap() end)
   pcall(function() M.notesConsole:enableScrollBar() end)
-  M.notesInput = Geyser.CommandLine:new({ name = "ovenNotesInput", height = 26, v_policy = Geyser.Fixed }, box)
+  M.notesInput = Geyser.CommandLine:new({ name = "ovenNotesInput", height = 120, v_policy = Geyser.Fixed }, box)
   pcall(function() M.notesInput:setStyleSheet([[
     background-color: rgba(24,24,32,255); color: ]] .. M.hex("text") .. [[; border: 1px solid #333;
-    qproperty-placeholderText: "a quick note: type it and press Enter ([new note] above for one with several lines)";]]) end)
+    qproperty-placeholderText: "write a note here - Enter adds a line, Save keeps it";]]) end)
   M.notesInput:setAction(function(text)
-    -- while editing: Enter a new line, Shift+Enter save (one key press's lines gathered)
-    if M.noteBoxAction(text) then return end
-    pcall(function() M.notesInput:clear() end)
-    M.noteAdd(text)
+    -- Enter adds a line (one key press's lines gathered); Save keeps the note
+    M.noteBoxAction(text)
   end)
   M.notesRender()
 end
@@ -11633,7 +11632,7 @@ end
 -- the editing size, and again a moment later: Mudlet fits the box to what's in it after its text changes,
 -- which would shrink it back to one line
 local function editSize()
-  local h = math.max(120, math.floor((M.notesBoxHeight or 26) * 6))
+  local h = M.notesBoxHeight or 120
   setBoxHeight(h)
   tempTimer(0.05, function() if M.noteEdit then setBoxHeight(h) end end)
   tempTimer(0.3, function() if M.noteEdit then setBoxHeight(h) end end)
@@ -11666,6 +11665,8 @@ local function describe(v)
   return "{" .. table.concat(t, ", ") .. "}"
 end
 function M.noteBoxAction(text)
+  -- the box is always the editor: whatever you type is a note in the making (a new one, unless [edit])
+  M.noteEdit = M.noteEdit or { i = nil, keys = {} }
   -- sbo debug notes: what the box hands over, and what Oven makes of it
   if M.noteDebug then
     local okB, box = pcall(getCmdLine, BOX)
@@ -11673,25 +11674,17 @@ function M.noteBoxAction(text)
     M.say(string.format("notes debug: action(%q) · editing %s · shift %s (raw %s) · box now %s",
       tostring(text), tostring(M.noteEdit ~= nil), tostring(sh), describe(M.lastModifiers), okB and string.format("%q", tostring(box)) or "?"))
   end
-  if not M.noteEdit then
-    if M.noteSwallowUntil and now() < M.noteSwallowUntil then return true end
-    return false
-  end
   local G = M.noteEnterGather
   if not G then
-    G = { parts = {}, shift = M.shiftHeld() }
+    G = { parts = {}, shift = false }   -- (Enter only ever adds a line: Mudlet can't say when Shift is held)
     M.noteEnterGather = G
     tempTimer(0, function()
       M.noteEnterGather = nil
       local ok, full = pcall(getCmdLine, BOX)
       full = (ok and type(full) == "string" and full ~= "") and full or table.concat(G.parts, "\n")
-      if G.shift then
-        M.noteSwallowUntil = now() + 1
-        M.noteEditSave(full)
-      else
-        pcall(printCmdLine, BOX, full .. "\n")
-        editSize()
-      end
+      pcall(printCmdLine, BOX, full .. "\n")
+      editSize()
+      pcall(M.notesBarDraw)
     end)
   end
   G.parts[#G.parts + 1] = text or ""
@@ -11711,10 +11704,7 @@ function M.noteEditStart(i)
   M.noteEdit = { i = i, keys = {} }
   pcall(printCmdLine, BOX, text)
   editSize()
-  if not M.notesNewBtn or M.shiftHeld() == nil then
-    M.say("writing a note: Enter adds a line · sbo notes save keeps it, sbo notes cancel leaves it"
-      .. (M.notesNewBtn and " (or the Save / Cancel buttons)" or " - restart Mudlet once for Save / Cancel buttons in the tab"))
-  end
+  if not M.notesNewBtn then M.say("writing a note: Enter adds a line · sbo notes save keeps it, sbo notes cancel leaves it") end
   M.notesRender(M.notesFilter)
 end
 
@@ -11728,8 +11718,7 @@ end
 
 -- save: the note's text (its heading kept), or a new note with today's date and where you are
 function M.noteEditSave(given)
-  local E = M.noteEdit
-  if not E then return end
+  local E = M.noteEdit or { i = nil, keys = {} }
   local ok, text = pcall(getCmdLine, BOX)
   text = given or (ok and text) or ""
   text = text:gsub("%s+$", "")
@@ -11758,15 +11747,12 @@ end
 function M.notesBarDraw()
   if not M.notesNewBtn then return end
   local editing = M.noteEdit ~= nil
-  if editing then M.notesNewBtn:hide(); M.notesSaveBtn:show(); M.notesCancelBtn:show()
-  else M.notesNewBtn:show(); M.notesSaveBtn:hide(); M.notesCancelBtn:hide() end
+  M.notesNewBtn:show(); M.notesSaveBtn:show(); M.notesCancelBtn:show()
   local font = (pcall(getFont) and getFont()) or "monospace"
   local txt = editing
     and (string.format("<span style=\"color:%s;\">%s</span>", M.hex("title"), M.noteEdit.i and ("editing note #" .. M.noteEdit.i) or "a new note")
-      .. string.format("<span style=\"color:%s;\">  ·  %s</span>", M.hex("dim"),
-        M.shiftHeld() == nil and "Enter: new line · Save to keep it (your Mudlet doesn't say when Shift is held)"
-        or "Enter: new line · Shift+Enter: save"))
-    or string.format("<span style=\"color:%s;\">a note of any length · or a quick one-liner in the box at the bottom</span>", M.hex("dim"))
+      .. string.format("<span style=\"color:%s;\">  ·  Enter: new line · Save keeps it</span>", M.hex("dim")))
+    or string.format("<span style=\"color:%s;\">write in the box at the bottom - Enter adds a line, Save keeps it</span>", M.hex("dim"))
   M.notesStatus:echo(string.format("<span style=\"font-family:'%s';\">%s</span>", font, txt))
 end
 
@@ -15731,12 +15717,8 @@ M.CMDS = {
     { name = "debug", desc = "show what the notes box hands Oven when you press Enter (to fix it)", run = function()
         M.noteDebug = not M.noteDebug
         return say("notes debug " .. (M.noteDebug and "on: start a note, type a line, press Enter, and copy what appears" or "off")) end },
-    { name = "save", desc = "save the note you're writing", run = function()
-        if not M.noteEdit then return say("you're not writing a note") end
-        return M.noteEditSave() end },
-    { name = "cancel", desc = "stop writing the note, leaving it as it was", run = function()
-        if not M.noteEdit then return say("you're not writing a note") end
-        return M.noteEditCancel() end },
+    { name = "save", desc = "keep what's in the Notes tab's box as a note (Save)", run = function() return M.noteEditSave() end },
+    { name = "cancel", desc = "clear the box, leaving the notes as they were (Cancel)", run = function() return M.noteEditCancel() end },
     { name = "edit", args = "{n}", desc = "change note n, in the Notes tab (Enter: new line, Shift+Enter: save)", run = function(r) M.notesShow(); return M.noteEditStart(tonumber(r)) end },
     { name = "new", desc = "write a note with several lines, in the Notes tab", run = function() M.notesShow(); return M.noteEditStart(nil) end },
     { name = "find", args = "{text}", desc = "only the notes with it", run = function(r) return M.notesShow(r) end },
@@ -16957,4 +16939,5 @@ end
 M.init()
 
 -- after an update: the Notes tab drawn again, so its links are this version's
+if M.notesConsole and not M.notesNewBtn and M.tabPages and M.tabPages.notes then pcall(M.buildNotes, M.tabPages.notes) end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
