@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.36.1"
+M.version = "1.36.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10973,7 +10973,9 @@ function M.onLineWork()
   if cap.gag then deleteLine() end
   if cap.idleTimer then killTimer(cap.idleTimer) end
   cap.idleTimer = tempTimer(M.cfg.idle, function() M.finish("idle") end)
-  if #cap.plain >= (cap.kind == "help" and 2000 or M.cfg.maxLines) then M.finish("maxlines") end
+  -- (help pages and the class analyses Oven reads for itself run long: they get room)
+  local long = cap.kind == "help" or (cap.kind == "skills" and cap.quiet)
+  if #cap.plain >= (long and 2000 or M.cfg.maxLines) then M.finish("maxlines") end
 end
 
 local function writeSample(cap)
