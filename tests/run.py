@@ -3276,6 +3276,28 @@ def bar_from_gmcp():
 
 
 @test
+def class_plan():
+    o = Oven()
+    # the redundancy rule, against the game's own analyses
+    for counts, units in [("{ monk = 1, priest = 1 }", 1), ("{ monk = 2 }", 2), ("{ monk = 3 }", 5), ("{ monk = 4 }", 9),
+                          ("{ monk = 2, priest = 1 }", 3), ("{ monk = 1, priest = 1, druid = 1 }", 2)]:
+        eq(o.ev("sbo.classUnits(%s)" % counts), units, counts)
+    sk = o.ev("sbo.classPathSkills({ 'monk', 'monk', 'priest' })")
+    eq((sk["cure light"].skp, sk["mace"].skp, sk["kick"].skp, sk["hand to hand"].skp), (45, 36, 24, 0), "spells 15 a unit, proficiencies 12, hand to hand none")
+    assert "sahuagin" not in list(o.ev("sbo.classPathRaces({ 'monk', 'priest' })").values()), "a sahuagin can't be monk then priest"
+    o.lua("""sbo.cfg.char = { class = 'monk', race = 'sahuagin', path = { 'monk' } }
+      sbo.viewOut = function(out, links) OUT, LINKS = out, links end
+      sbo.classPlan('')""")
+    text = o.ev("(function() local s = {} for _, r in ipairs(OUT) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end)()")
+    lines = [l for l in text.split("\n") if l.startswith("  ") and not l.strip().startswith("class")]
+    assert lines[0].split()[0] == "monk" and "+1410" in lines[0], lines[0]
+    assert "not sahuagin" in next(l for l in lines if l.split()[0] == "priest"), "priest last, marked"
+    o.lua("sbo.classPlan('mo pri')")
+    text = o.ev("(function() local s = {} for _, r in ipairs(OUT) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end)()")
+    assert "Class path: monk → priest" in text and "not sahuagin" in text and "Only from priest" in text, text
+
+
+@test
 def class_learn():
     o = Oven()
     o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end

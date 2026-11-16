@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.36.2"
+M.version = "1.37.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6529,6 +6529,559 @@ function M.classLearn(arg)
   M.classLearnNext()
 end
 
+-- the game's class analyses (skills analyze <class> <class>, read by sbo class learn): every class's skills and
+-- spells, the races that can take it, and what redundancy does for each skill (the text at +2 units: +30 a spell,
+-- +24 a proficiency). Generated from oven_classes.txt - refresh with sbo class learn when the game changes.
+M.CLASS_SKILLS = {
+  barbarian = "axe,bandage,bash,battle dive,battle rage,blood in my mouth,dagger,desperation,enhanced damage,fast healing,frothing rage,hand to hand,headbutt,lay out,parry,physical reinforcement,polearm,rites of bloodshed,second attack,shield block,spear,strike down,summon soldier,sweep,sword,third attack,throwing spear,two-handed axe,word of recall",
+  bard = "acrobatics,backstab,bandage,dagger,dart,dodge,exotic,hand to hand,hide,hook,lock picking,music,nunchaku,peek,perception,raise bar,second attack,sneaking,sword,throwing knife,word of recall,yo-yo",
+  cavalier = "animal husbandry,bandage,bash,beast of burden,charge,dual wield,enhanced damage,fast healing,hand to hand,home on the range,lance,mace,parry,perception,pike,polearm,raise hackles,raise white flag,renegade and steer clear,riding,second attack,shield block,spear,strike blow,sword,third attack,throwing knife,throwing spear,word of recall",
+  druid = "air evocation,air invocation,ash evocation,ash invocation,bandage,dagger,dust evocation,dust invocation,earth evocation,earth invocation,ether evocation,ether invocation,fire evocation,fire invocation,flail,friendship invocation,grilling invocation,hand to hand,hook,ice evocation,ice invocation,lightning evocation,lightning invocation,mace,magical items,magma evocation,magma invocation,minerals evocation,minerals invocation,nunchaku,ooze evocation,ooze invocation,radiance evocation,radiance invocation,salt evocation,salt invocation,smoke evocation,smoke invocation,staff,steam evocation,steam invocation,sun evocation,vacuum evocation,vacuum invocation,water evocation,water invocation,word of recall",
+  knave = "bandage,boomerang,create bandage,dagger,deadeye,detect traps,dodge,exotic,feign death,feign illness,feign knowledge,feign love,feign presence,hand to hand,hide,hook,lay cover,marksmanship,peek,raise bar,raise black flag,raise dukes,raise hell,raise stakes,second attack,slit armor,slit purse,slit tendon,slit throat,strike a match,strike at the heart,strike blow,strike down,strike of death,strike of pain,summon soldier,tagging,throwing,word of recall,yo-yo",
+  monk = "acrobatics,bandage,bash,blind fighting,blindness,blink,calm,cause light,combat blink,counterspell,cure blindness,cure disease,cure light,cure poison,dispel magic,enhanced damage,faerie fire,finality of the ender,glacierskin,goliath,hand to hand,hands of wind,herbalism,inoculate ignorance,keen insight,kick,lift malison,lightning pursuit,mace,martial arts,meditation,mental clarity,nunchaku,phalanx,premonitions,pressure points,protection from evil,protection from good,remote sensing,remove curse,repulsion,resurrect,sense life,slow,spark,spell shield,staff,strike of death,throwing,transcendent gaze,traumatize,word of recall,yo-yo",
+  paladin = "aegis,bandage,battlefield medic,calm,consecrate armor,consecrate weapon,counterspell,create bandage,cure blindness,cure critical,cure disease,cure light,cure poison,detect alignment,enhanced damage,equality,fearless,halberd,hand to hand,lay hands,liberation,mace,parry,pike,polearm,protection from evil,remove curse,resurrect,riding,sanctify,searing touch,second attack,shield block,smiting blows,spear,spell shield,sword,third attack,throwing knife,throwing spear,word of recall",
+  priest = "abjure,augment aura,aura cleansing,bandage,bless,bubble cluster,call lightning,calm,cause critical,cause light,channel faith,condemn,conjure celestial,consecrate armor,counterspell,create bandage,cure blindness,cure critical,cure disease,cure light,cure poison,demigod visage,enlighten,excommunicate,flail,gate travel,hand to hand,harm,heal,holy strike,mace,magical items,meditation,plague,poison,protection from evil,protection from good,read aura,refresh,remove curse,requiem,sanctuary,sense life,shield block,whip,word of recall",
+  psionic = "bandage,bar,cancellation,create bandage,dagger,disequilibriate,disrupt sight,float,force field,forget,geisteblitz,hand to hand,induce aggression,irk,irritation,knock,mace,meditation,mental disruption,mesmerize,mimic,mind shield,nullification field,ominous,pense,scythe,self adjustment,sensory enhancement,spook,subvocal focus,telekinesis,telekinetic bash,telekinetic explosion,telekinetic punch,telekinetic shield,telesmatic force,teleview,transference,whip,word of recall",
+  ranger = "archery,bandage,blind fighting,blink,camouflage,circle of thorns,color spray,concealment,conjure familiar,control winds,counterspell,dagger,dart,detect traps,dodge,electrogenic growth,endurance of the rhinoceros,enhanced endurance,enhanced strength,flintstrike,foraging,frost,fungal growth,glare of the crocodile,guise of nature,hand to hand,hands of wind,harden exoskeleton,herbalism,ice wind,iceball,levitation,magic lock,magic unlock,magical items,otolithic growth,parry,room shield,second attack,sense life,snare,spear,staff,stone skin,summon mount,sword,throwing,throwing knife,tinnitus,tracking,web,whirlwind,wind walk,wizard eye,word of recall",
+  rogue = "acrobatics,backstab,bandage,commit betrayal,commit embezzlement,cover of darkness,dagger,dart,decipher,detect traps,disarm traps,dodge,evasion,exotic,forgery,grapple,hand to hand,hide,hook,kick,lock picking,peek,perception,raise bar,second attack,snare,sneaking,tagging,throwing,throwing knife,throwing star,tracking,word of recall,yo-yo",
+  shaman = "abjure,bandage,bash,battlefield medic,beacon,bless,call lightning,calm,cause critical,channel faith,conjure spirit,create bandage,cure blindness,cure critical,cure disease,cure light,cure poison,curse,desecrate armor,detect illusion,detect invisibility,elemental shield,faerie fire,flail,gate travel,hand to hand,harm,harrow,heal,inoculate ignorance,mace,magical items,maul,meditation,nunchaku,plague,poison,protection from evil,protection from good,radiant prayer,read aura,refresh,remove curse,resurrect,revert catastrophe,rites of solemnity,sanctuary,sense life,shield block,staff,summon shaman,totem,tremor,word of recall",
+  valkyrie = "acrobatics,ascendance,bandage,blind fighting,blood in your mouth,enhanced damage,hand to hand,herald bloodthirst,herald death,kick,parry,polearm,second attack,second defense,shield block,spear,sword,throwing axe,throwing spear,whip,word of recall",
+  witch = "bandage,blindness,calm,chill touch,confusion,convocation,curse,dagger,detect invisibility,eldritch blast,evil eye,extinction,famine,fatigue,flail,hand to hand,harm,hex,immobilize,impede movement,insanity,jinx,leech,magical items,magical wand,malediction,malignancy,negation,occult eyes,pentacle,plague,poison,protection from evil,protection from good,remove curse,scythe,shadow armor,shadow door,shadow imp,shadow light,word of recall,yo-yo",
+  wizard = "abjure,arcane blast,bandage,blindness,blink,circle of fire,concentration,conjure elemental,control winds,counterspell,create bandage,curse,daggerportal,detect illusion,dispel area,dispel magic,energy drain,energy orb,enervation,gravity well,hand to hand,hands of wind,haste,hook,hyperfocus,ice wind,invisibility,kill,latent charge,levitation,magic dart,magic lock,magic unlock,magical items,meditation,memory palace,nexus,pass door,plague,plane travel,poison,portal to the laser dimension,replay impact,room shield,scythe,sense life,shield,silence,slow,staff,summon wizard,sword,teleport,underwater breathing,unnatural strength,weaken,web,wizard eye,word of recall,xorn blood",
+}
+M.CLASS_RACES = {
+  barbarian = "sahuagin,halfling,ogre,fey,dracon,human,dwarf,drow,half-elf,minotaur,sporefolk",
+  bard = "elf,halfling,ogre,human,dwarf,half-elf,sporefolk,sidhe",
+  cavalier = "elf,halfling,human,dwarf,drow,half-elf,minotaur,sporefolk,sidhe",
+  druid = "sahuagin,elf,halfling,human,dwarf,half-elf,gnome,sporefolk,sidhe",
+  knave = "sahuagin,elf,halfling,ogre,fey,dracon,human,drow,half-elf,gnome,minotaur,sporefolk",
+  monk = "sahuagin,elf,halfling,human,dwarf,drow,half-elf,gnome,sidhe",
+  paladin = "sahuagin,elf,halfling,human,dwarf,half-elf,gnome,sidhe",
+  priest = "elf,halfling,human,dwarf,drow,half-elf,sidhe",
+  psionic = "sahuagin,elf,halfling,fey,dracon,human,dwarf,drow,half-elf,gnome,minotaur,sporefolk",
+  ranger = "elf,halfling,ogre,fey,human,dwarf,drow,half-elf,gnome,minotaur,sporefolk,sidhe",
+  rogue = "sahuagin,halfling,ogre,fey,dracon,human,dwarf,drow,half-elf,gnome,minotaur,sporefolk",
+  shaman = "sahuagin,ogre,fey,dracon,human,gnome,minotaur",
+  valkyrie = "sahuagin,elf,ogre,fey,human,drow,half-elf,gnome,sporefolk,sidhe",
+  witch = "sahuagin,ogre,fey,dracon,human,drow,sporefolk",
+  wizard = "elf,halfling,ogre,fey,dracon,human,dwarf,drow,half-elf,gnome,minotaur,sporefolk,sidhe",
+}
+-- skill → { s(pell) / p(roficiency), no redundancy bonus, what the bonus does at +2 units }
+M.SKILL_REDUNDANCY = {
+  ["abjure"] = { "s", false, "When casting abjure, increases damage by 30.00%" },
+  ["acrobatics"] = { "p", false, "When defending with acrobatics, has a 4% chance of not counting as a used defense" },
+  ["aegis"] = { "s", false, "Whenever you are dealt damage from a Sharp special weapon attribute and are affected by aegis, grants a 30.00% chance of dealing (your level) holy damage in response" },
+  ["air evocation"] = { "s", false, "When evoking air evocation, grants a 150.00% chance to deal quadruple damage to NPCs formed with Adventurers" },
+  ["air invocation"] = { "s", false, "" },
+  ["animal husbandry"] = { "p", false, "" },
+  ["arcane blast"] = { "s", false, "" },
+  ["archery"] = { "p", false, "When wielding a weapon that uses archery, increases damage by 8%" },
+  ["ascendance"] = { "s", false, "" },
+  ["ash evocation"] = { "s", false, "" },
+  ["ash invocation"] = { "s", false, "" },
+  ["augment aura"] = { "s", false, "When casting augment aura, increases damage by 20%" },
+  ["aura cleansing"] = { "s", false, "" },
+  ["axe"] = { "p", false, "When wielding an axe, increases damage by 8%" },
+  ["backstab"] = { "p", false, "When backstabbing, grants a 70.59% chance to cause an additional bleeding effect" },
+  ["bandage"] = { "p", false, "" },
+  ["bar"] = { "s", false, "" },
+  ["bash"] = { "p", false, "When bashing, grants a 12% chance to deal an extra (current stamina^.65) damage while bashing" },
+  ["battle dive"] = { "s", false, "" },
+  ["battle rage"] = { "p", false, "When battle rage triggers, your attack has a 96.00% chance to deal +(your height in inches)dam" },
+  ["battlefield medic"] = { "s", false, "" },
+  ["beacon"] = { "s", false, "" },
+  ["beast of burden"] = { "s", false, "When affected by beast of burden, gives 75.00% chance not to slip in icy rooms" },
+  ["bless"] = { "s", false, "When affected by bless, grants 120.00 max-hp-regen in safe rooms" },
+  ["blind fighting"] = { "p", false, "When blind fighting activates, your accuracy will be improved by  12% above the maximum of 75% effectiveness" },
+  ["blindness"] = { "s", false, "When casting blindness, increases the cast level by 30.00" },
+  ["blink"] = { "s", false, "When casting blink directionally, moves you 30.00 additional room further" },
+  ["blood in my mouth"] = { "s", false, "" },
+  ["blood in your mouth"] = { "s", false, "" },
+  ["boomerang"] = { "p", false, "When wielding a boomerang, increases damage by 8%" },
+  ["bubble cluster"] = { "s", false, "" },
+  ["call lightning"] = { "s", false, "When casting call lightning, has a 30.00% chance to increase damage by 3% for every metallic item the victim is wearing" },
+  ["calm"] = { "s", false, "When casting calm, each other fighter has a 30.00% chance of also being subdued" },
+  ["camouflage"] = { "s", false, "" },
+  ["cancellation"] = { "s", false, "When others attempt to cast through cancellation, grants a 89.82% chance to block a spell that would otherwise succeed due to high complexity" },
+  ["cause critical"] = { "s", false, "When casting cause critical within 24 Alyrian seconds of bashing, deals 30.00 pure damage to its target" },
+  ["cause light"] = { "s", false, "When casting cause light on an aggressive NPC, increases the damage dealt by 88.24%" },
+  ["channel faith"] = { "s", false, "" },
+  ["charge"] = { "p", false, "" },
+  ["chill touch"] = { "s", false, "" },
+  ["circle of fire"] = { "s", false, "When others walk through your circle of fire, increases damage by 60.00%" },
+  ["circle of thorns"] = { "s", false, "" },
+  ["color spray"] = { "s", false, "When casting color spray, has a 30.00% chance to increase damage by [number of color codes present in the victim's restrung equipment]% damage" },
+  ["combat blink"] = { "s", false, "" },
+  ["commit betrayal"] = { "p", false, "" },
+  ["commit embezzlement"] = { "p", false, "" },
+  ["concealment"] = { "s", false, "" },
+  ["concentration"] = { "s", false, "When using concentration to boost a spell, has a 30.00% chance of instantly casting that spell" },
+  ["condemn"] = { "s", false, "When casting condemn, there is a 30.00% chance of its duration being tripled" },
+  ["confusion"] = { "s", false, "" },
+  ["conjure celestial"] = { "s", false, "" },
+  ["conjure elemental"] = { "s", false, "" },
+  ["conjure familiar"] = { "s", false, "" },
+  ["conjure spirit"] = { "s", false, "" },
+  ["consecrate armor"] = { "s", false, "When casting consecrate armor, grants a 150.00% chance for hand armor to be consecrated with +fistfighting" },
+  ["consecrate weapon"] = { "s", false, "When casting consecrate weapon, grants 12 additional accuracy" },
+  ["control winds"] = { "s", false, "" },
+  ["convocation"] = { "s", false, "When casting convocation, grants a 30.00% chance of the bonus multiplier per convoking formation members doubling, per formation member" },
+  ["counterspell"] = { "s", false, "When casting counterspell, increases the chance of causing a spell backfire on a targeted spell by 30.00%" },
+  ["cover of darkness"] = { "s", false, "" },
+  ["create bandage"] = { "s", false, "" },
+  ["cure blindness"] = { "s", false, "When casting cure blindness, removes 4 additional minutes of blindness" },
+  ["cure critical"] = { "s", false, "When casting cure critical, grants a 120.00% chance of healing 1 additional hp for every 4% of hp missing" },
+  ["cure disease"] = { "s", false, "When casting cure disease, removes 7 additional minutes of the plague" },
+  ["cure light"] = { "s", false, "When casting cure light, grants a 120.00% chance of healing 1 additional hp for every 4% of hp remaining" },
+  ["cure poison"] = { "s", false, "When casting cure poison, removes 7 additional minutes of poison" },
+  ["curse"] = { "s", false, "When casting curse, grants a 88.24% chance of the curse having infinite duration" },
+  ["dagger"] = { "p", false, "When wielding a dagger, increases the damage by 8%" },
+  ["daggerportal"] = { "s", false, "When daggerportaling, grants a 30.00% chance to gain a temporary +(modifier) damage-backstab buff immediately before stabbing" },
+  ["dart"] = { "p", false, "When wielding a dart, increases the damage by 8%" },
+  ["deadeye"] = { "p", false, "When throwing a weapon, deadeye has a 24.00% chance to double the damage dealt" },
+  ["decipher"] = { "p", false, "" },
+  ["demigod visage"] = { "s", false, "When casting demigod visage, increases duration by 1 minutes" },
+  ["desecrate armor"] = { "s", false, "When casting desecrate armor, decreases regen by 30.00" },
+  ["desperation"] = { "p", false, "" },
+  ["detect alignment"] = { "s", false, "" },
+  ["detect illusion"] = { "s", false, "When casting detect illusion, grants a 60.00% chance of tripling the duration" },
+  ["detect invisibility"] = { "s", false, "" },
+  ["detect traps"] = { "p", false, "" },
+  ["disarm traps"] = { "p", false, "" },
+  ["disequilibriate"] = { "s", false, "When casting disequilibriate, reduces opponent's 'shield block' by 30.00%" },
+  ["dispel area"] = { "s", false, "When casting dispel area, increases the level of the dispel by 30.00" },
+  ["dispel magic"] = { "s", false, "When casting dispel magic, 2 additional affects can be dispelled off of another target" },
+  ["disrupt sight"] = { "s", false, "When casting disrupt sight, reduces the chance of failure by 30.00%" },
+  ["dodge"] = { "p", false, "When defending with dodge, grants a 24.00% chance of throwing a throwing knife from your inventory at your attacker" },
+  ["dual wield"] = { "p", false, "" },
+  ["dust evocation"] = { "s", false, "" },
+  ["dust invocation"] = { "s", false, "When dust invocation provides a defense, grants 15hp" },
+  ["earth evocation"] = { "s", false, "When evoking earth evocation, grants a 30.00% chance to apply an additional -wood-res affect" },
+  ["earth invocation"] = { "s", false, "When invoking earth invocation, increases the chance of combat not halving the amount healed by 30.00%" },
+  ["eldritch blast"] = { "s", false, "" },
+  ["electrogenic growth"] = { "s", false, "When casting electrogenic growth, increases damage by 30.00% and the lightning-res applied" },
+  ["elemental shield"] = { "s", false, "" },
+  ["endurance of the rhinoceros"] = { "s", false, "When casting endurance of the rhinoceros, has a 30.00% chance to double the hp gained" },
+  ["energy drain"] = { "s", false, "When casting energy drain, increases sp/st drain by 15" },
+  ["energy orb"] = { "s", false, "When casting energy orb, increases the duration by 4" },
+  ["enervation"] = { "s", false, "When casting enervation, increases damage and sp drain by 30.00%" },
+  ["enhanced damage"] = { "p", false, "" },
+  ["enhanced endurance"] = { "p", false, "When regenerating with enhanced endurance, grants 120.00 st-regen-max" },
+  ["enhanced strength"] = { "s", false, "When casting enhanced strength, increases fistfighting by 30.00" },
+  ["enlighten"] = { "s", false, "" },
+  ["equality"] = { "s", false, "" },
+  ["ether evocation"] = { "s", true, "" },
+  ["ether invocation"] = { "s", false, "When casting ether invocation, has a 3% chance of granting its invoker hp-regen-max" },
+  ["evasion"] = { "p", false, "When successfully utilizing evasion, has a 24.00% chance to gain 50 defense-speed for the remainder of the minute" },
+  ["evil eye"] = { "s", false, "When looking at someone affected by evil eye, there is a 15% chance of being able to 'read aura' 5 bits of information about them" },
+  ["excommunicate"] = { "s", false, "When casting excommunicate, grants -7 negative-damage and necromantic-damage" },
+  ["exotic"] = { "p", false, "When wielding an exotic weapon, increases damage by 8%" },
+  ["extinction"] = { "s", false, "" },
+  ["faerie fire"] = { "s", false, "When casting faerie fire on the Faerie Plane, increases AR reduction by 4" },
+  ["famine"] = { "s", false, "When casting famine, has a 60.00% chance to turn the victim's stomach, reversing their food bonus" },
+  ["fast healing"] = { "p", false, "When regenerating with fast healing, grants 36.36 hp-regen-max" },
+  ["fatigue"] = { "s", false, "" },
+  ["fearless"] = { "s", false, "When you fearlessly resist fear in combat, intimidate your opponent 120.00% of the time" },
+  ["feign death"] = { "p", false, "When using feign death, has a 160.00% chance that no blood will be required" },
+  ["feign illness"] = { "p", false, "When using feign illness, has a 96.00% chance of nobody else noticing when you start feigning illness" },
+  ["feign knowledge"] = { "p", false, "" },
+  ["feign love"] = { "p", false, "When using feign love, reduces the victim's damage by an additional 24.00" },
+  ["feign presence"] = { "p", false, "When using feign presence, provides a 24.00% chance per check to be feigning presence in a consistent, random location, instead of '???'" },
+  ["finality of the ender"] = { "s", false, "" },
+  ["fire evocation"] = { "s", false, "When evoking fire evocation, has a 30.00% chance to increase the number of fireballs by 1" },
+  ["fire invocation"] = { "s", false, "" },
+  ["flail"] = { "p", false, "When wielding a flail, increases damage by 8%" },
+  ["flintstrike"] = { "s", false, "When casting flintstrike, has a 30.00% chance of doubling the modifier" },
+  ["float"] = { "s", false, "When casting float, grants 6 air-res" },
+  ["foraging"] = { "p", false, "foraging has a 24.00% chance of finding missing reagents on demand" },
+  ["force field"] = { "s", false, "" },
+  ["forgery"] = { "p", false, "" },
+  ["forget"] = { "s", false, "When casting forget, increases the cast level by 30.00" },
+  ["friendship invocation"] = { "s", false, "" },
+  ["frost"] = { "s", false, "When casting frost, has a 12% chance to transform into an icebolt" },
+  ["frothing rage"] = { "s", false, "" },
+  ["fungal growth"] = { "s", false, "When casting fungal growth, has a 30.00% chance to also make the victim more suspectible to disease with a doubled modifier" },
+  ["gate travel"] = { "s", false, "" },
+  ["geisteblitz"] = { "s", false, "" },
+  ["glacierskin"] = { "s", false, "" },
+  ["glare of the crocodile"] = { "s", false, "Increases glare of the crocodile skillpower by 30." },
+  ["goliath"] = { "s", false, "" },
+  ["grapple"] = { "p", false, "When your opponent flees, there is a 24.00% chance that you automatically Strike Of Death them as you grapple" },
+  ["gravity well"] = { "s", false, "" },
+  ["grilling invocation"] = { "s", false, "" },
+  ["guise of nature"] = { "s", false, "When under the guise of nature, grants a 60.00% chance of dealing (your level) earth damage whenever you are dealt damage from a Vampiric special weapon attribute" },
+  ["halberd"] = { "p", false, "When wielding a halberd, increases damage by 8%" },
+  ["hand to hand"] = { "p", true, "" },
+  ["hands of wind"] = { "s", false, "When casting hands of wind, will debuff all victims with -15 air-dam for 30.00 minutes" },
+  ["harden exoskeleton"] = { "s", false, "" },
+  ["harm"] = { "s", false, "When casting harm against a victim above 75% hp, increases damage by 60.00%" },
+  ["harrow"] = { "s", false, "When casting harrow, increases damage by 30.00%" },
+  ["haste"] = { "s", false, "HP and/or ST regen have a 30.00% chance of not being halved while hasted" },
+  ["headbutt"] = { "s", false, "" },
+  ["heal"] = { "s", false, "When casting heal, grants a temporary buff of +30.00 hp-regen-max" },
+  ["herald bloodthirst"] = { "p", false, "" },
+  ["herald death"] = { "p", false, "When you herald death, increases hp gained by 200.00" },
+  ["herbalism"] = { "p", false, "" },
+  ["hex"] = { "s", false, "When casting hex, reduces the failure rate by 30.00%" },
+  ["hide"] = { "p", false, "You gain 342.86 additional backstab-damage as long as you hide" },
+  ["holy strike"] = { "s", false, "" },
+  ["home on the range"] = { "s", false, "" },
+  ["hook"] = { "p", false, "When wielding a hook, increases damage by 8%" },
+  ["hyperfocus"] = { "s", false, "" },
+  ["ice evocation"] = { "s", false, "" },
+  ["ice invocation"] = { "s", false, "" },
+  ["ice wind"] = { "s", false, "When casting ice wind, has a 120.00% chance to deal double damage in snowy, icy and glacial rooms" },
+  ["iceball"] = { "s", false, "When casting iceball, increases damage by 30.00%" },
+  ["immobilize"] = { "s", false, "When casting immobilize, grants a 30.00% chance for the victim to also have their stamina reduced by (modifier * 50)" },
+  ["impede movement"] = { "s", false, "When successfully landing impede movement, refreshes 375.00st to its caster" },
+  ["induce aggression"] = { "s", false, "Increases induce aggression skillpower by 30." },
+  ["inoculate ignorance"] = { "s", false, "" },
+  ["insanity"] = { "s", false, "" },
+  ["invisibility"] = { "s", false, "" },
+  ["irk"] = { "s", false, "Increases irk skillpower by 30." },
+  ["irritation"] = { "s", false, "Increases irritation skillpower by 30." },
+  ["jinx"] = { "s", false, "When casting jinx, has a 30.00% chance to also reduce agility" },
+  ["keen insight"] = { "s", false, "" },
+  ["kick"] = { "p", false, "" },
+  ["kill"] = { "s", false, "When casting kill against a target below 25% hp, increases damage by 120.00%" },
+  ["knock"] = { "s", false, "" },
+  ["lance"] = { "p", false, "When wielding a lance, increases damage by 8%" },
+  ["latent charge"] = { "s", false, "" },
+  ["lay cover"] = { "p", false, "" },
+  ["lay hands"] = { "p", false, "When casting lay hands, reduces the duration of the negative affect by a coefficient of 24.00" },
+  ["lay out"] = { "p", false, "When using lay out, grants a 240.00% chance to also throw a throwing axe from your inventory" },
+  ["leech"] = { "s", false, "When casting leech, increases the damage its victim takes from scythes by 30.00 for 1 minute" },
+  ["levitation"] = { "s", false, "" },
+  ["liberation"] = { "s", false, "" },
+  ["lift malison"] = { "s", false, "" },
+  ["lightning evocation"] = { "s", false, "When evoking lightning evocation, increases damage by 30.00%" },
+  ["lightning invocation"] = { "s", false, "" },
+  ["lightning pursuit"] = { "s", false, "" },
+  ["lock picking"] = { "p", false, "When lock picking, grants a 48.00% chance to pick a door that is magically locked" },
+  ["mace"] = { "p", false, "When wielding a mace, increases damage by 8%" },
+  ["magic dart"] = { "s", false, "When you cast magic dart into a target's head, increases damage by 30.00%" },
+  ["magic lock"] = { "s", false, "" },
+  ["magic unlock"] = { "s", false, "" },
+  ["magical items"] = { "p", false, "When using magical items, increases the effective level of the cast spell by 24.00" },
+  ["magical wand"] = { "p", false, "When wielding a magical wand, increases damage by 8%" },
+  ["magma evocation"] = { "s", false, "When evoking magma evocation, has a 30.00% chance of tripling the effective level and damage of the magma" },
+  ["magma invocation"] = { "s", false, "When magma invocation activates on an opponent that is unarmed or wearing a short-ranged weapon, there is a 90.91% chance it will deal quintuple damage" },
+  ["malediction"] = { "s", false, "When casting malediction, has a 30.00% chance to ignore its target's ability to save" },
+  ["malignancy"] = { "s", false, "When casting malignancy, reduces damage by 7" },
+  ["marksmanship"] = { "p", false, "When wielding a weapon that utilizes marksmanship, increases damage by 8%" },
+  ["martial arts"] = { "p", false, "" },
+  ["maul"] = { "p", false, "When wielding a maul, increases damage by 8%" },
+  ["meditation"] = { "p", false, "When regenerating with meditation, increases sp-regen-max by 48.00" },
+  ["memory palace"] = { "s", false, "" },
+  ["mental clarity"] = { "s", false, "" },
+  ["mental disruption"] = { "s", false, "" },
+  ["mesmerize"] = { "s", false, "When casting mesmerize, increases duration by 6 minutes" },
+  ["mimic"] = { "s", false, "" },
+  ["mind shield"] = { "s", false, "When casting mind shield, has a 30.00% chance of taking control of any incoming teleview and gaining vision of the caster" },
+  ["minerals evocation"] = { "s", false, "" },
+  ["minerals invocation"] = { "s", false, "When casting minerals invocation and affected by 'weaken', has a 30.00% chance of dispelling it" },
+  ["music"] = { "p", false, "When playing music, increases the effective skillpower of the resultant magic by 3" },
+  ["negation"] = { "s", false, "" },
+  ["nexus"] = { "s", false, "When casting nexus, has a 90.91% chance of it being undispellable, and a 30.00% chance to increase duration by 2 minutes" },
+  ["nullification field"] = { "s", false, "When casting nullification field, increases the number of spells nullified by 2" },
+  ["nunchaku"] = { "p", false, "When wielding a nunchaku, increases damage by 8%" },
+  ["occult eyes"] = { "s", false, "Increases occult eyes skillpower by 30." },
+  ["ominous"] = { "s", false, "" },
+  ["ooze evocation"] = { "s", false, "When casting ooze evocation, has a 30.00% chance of reaching a levitating opponent" },
+  ["ooze invocation"] = { "s", false, "" },
+  ["otolithic growth"] = { "s", false, "When casting otolithic growth, there is a 30.00% chance that every fish in your formation will gain 2 extra attacks for 7 minutes" },
+  ["parry"] = { "p", false, "When defending with parry, grants a 12% chance of riposting and damaging the opponent with their own failed attack" },
+  ["pass door"] = { "s", false, "" },
+  ["peek"] = { "p", false, "" },
+  ["pense"] = { "s", false, "When casting pense, grants 30.00 search-prcnt" },
+  ["pentacle"] = { "s", false, "When dying and affected by pentacle, deals 30.000 dam and 1/10 that chance to curse the killer forever" },
+  ["perception"] = { "p", false, "" },
+  ["phalanx"] = { "s", false, "" },
+  ["physical reinforcement"] = { "s", false, "When casting physical reinforcement, increases hp gained by 37.50" },
+  ["pike"] = { "p", false, "When wielding a pike, increases damage by 8%" },
+  ["plague"] = { "s", false, "When casting plague, increases duration by 15" },
+  ["plane travel"] = { "s", false, "" },
+  ["poison"] = { "s", false, "When casting poison, increases duration by 10" },
+  ["polearm"] = { "p", false, "When wielding a polearm, increases damage by 8%" },
+  ["portal to the laser dimension"] = { "s", false, "" },
+  ["premonitions"] = { "s", false, "" },
+  ["pressure points"] = { "s", false, "" },
+  ["protection from evil"] = { "s", false, "When casting protection from evil, reduces incoming damage by 5, after all other reductions" },
+  ["protection from good"] = { "s", false, "When casting protection from good, reduces incoming damage by 5, after all other reductions" },
+  ["radiance evocation"] = { "s", false, "" },
+  ["radiance invocation"] = { "s", false, "When invoking radiance invocation, refreshes an additional 30.00st" },
+  ["radiant prayer"] = { "s", false, "" },
+  ["raise bar"] = { "p", false, "" },
+  ["raise black flag"] = { "p", false, "" },
+  ["raise dukes"] = { "p", false, "When used, raise dukes will grant +24.00 skillpower to the short-range weapon wielded or to fistfighting if unarmed" },
+  ["raise hackles"] = { "p", false, "When you raise hackles, the duration is increased by 1" },
+  ["raise hell"] = { "p", false, "" },
+  ["raise stakes"] = { "p", false, "" },
+  ["raise white flag"] = { "p", false, "When casting raise white flag, has a 24.00% chance to not cost stamina" },
+  ["read aura"] = { "s", false, "When casting read aura, increases the number of tidbits gleaned by 30.00" },
+  ["refresh"] = { "s", false, "When casting refresh, refreshes 150.00 additional stamina" },
+  ["remote sensing"] = { "s", false, "" },
+  ["remove curse"] = { "s", false, "When casting remove curse, increases the chance of removing multiple curses by 30.00%" },
+  ["renegade and steer clear"] = { "s", false, "" },
+  ["replay impact"] = { "s", false, "" },
+  ["repulsion"] = { "s", false, "" },
+  ["requiem"] = { "s", false, "When casting requiem, grants a 150.00% chance to receive +5 holy-/negative-res for each Adventurer resurrected, up to 35%" },
+  ["resurrect"] = { "s", false, "When casting resurrect, has a 30.00% chance to fully heal yourself and the resurrected" },
+  ["revert catastrophe"] = { "s", false, "" },
+  ["riding"] = { "p", false, "" },
+  ["rites of bloodshed"] = { "s", false, "When affected by rites of bloodshed, increases hp-regen-max by 30.00" },
+  ["rites of solemnity"] = { "s", false, "" },
+  ["room shield"] = { "s", false, "When casting room shield, the resultant shield has a 30.00% chance per tick of spooking anyone in the shielded room" },
+  ["salt evocation"] = { "s", false, "" },
+  ["salt invocation"] = { "s", false, "Casting salt invocation grants +30.00 resistance to plague" },
+  ["sanctify"] = { "s", false, "When casting sanctify, the sanctification has a a 6% chance per tick of removing confusion" },
+  ["sanctuary"] = { "s", false, "When affects are being dispelled, sanctuary has a 6% to be undispellable" },
+  ["scythe"] = { "p", false, "When wielding a scythe, increases damage by 8%" },
+  ["searing touch"] = { "s", false, "When casting searing touch, increases damage by 30.00%" },
+  ["second attack"] = { "p", true, "" },
+  ["second defense"] = { "p", false, "" },
+  ["self adjustment"] = { "s", false, "" },
+  ["sense life"] = { "s", false, "" },
+  ["sensory enhancement"] = { "s", false, "When affected by sensory enhancement, increases the chance of hearing yells and shouts at any range by 30.00%" },
+  ["shadow armor"] = { "s", false, "" },
+  ["shadow door"] = { "s", false, "" },
+  ["shadow imp"] = { "s", false, "" },
+  ["shadow light"] = { "s", false, "When casting shadow light against a victim wearing a light of infinite duration, has a 75.00% chance to deal 1.5X damage" },
+  ["shield"] = { "s", false, "" },
+  ["shield block"] = { "p", false, "When defending with shield block, has a 24.00% chance of reflecting magical projectiles" },
+  ["silence"] = { "s", false, "When casting silence, increases the chance to silence the formation member behind the target by 30.00%" },
+  ["slit armor"] = { "p", false, "When casting slit armor, increases the AR reduction by 4" },
+  ["slit purse"] = { "p", false, "" },
+  ["slit tendon"] = { "p", false, "When you slit tendon, all adjacent members of their formation have a 48.00% chance to either flee or become nauseated" },
+  ["slit throat"] = { "p", false, "When casting slit throat, increases the standard 9% threshold at which a throat may be slit by 1%" },
+  ["slow"] = { "s", true, "" },
+  ["smiting blows"] = { "s", false, "" },
+  ["smoke evocation"] = { "s", false, "When evoking smoke evocation, has a 30.00% chance of the agility penalty being increased by 150%" },
+  ["smoke invocation"] = { "s", false, "" },
+  ["snare"] = { "p", false, "When snare activates, the chance yourself or a trusted player gets snared is reduced by 24.00%" },
+  ["sneaking"] = { "p", false, "When starting sneaking, has a 48.00% chance that nobody else in the room will notice" },
+  ["spark"] = { "s", false, "When wielding a spark, increases damage by 30.00%" },
+  ["spear"] = { "p", false, "When wielding a spear, increases damage by 8%" },
+  ["spell shield"] = { "s", false, "When absorbing a spell with spell shield, has a 30.00% chance to fully absorb it regardless of complexity" },
+  ["spook"] = { "s", false, "When casting spook, will spook an additional 4 members of the victim's formation" },
+  ["staff"] = { "p", false, "When wielding a staff, increases damage by 8%" },
+  ["steam evocation"] = { "s", false, "" },
+  ["steam invocation"] = { "s", false, "" },
+  ["stone skin"] = { "s", false, "When casting stone skin, has a 30.00% chance to apply twice as much ar to a random bodypart" },
+  ["strike a match"] = { "p", false, "When utilizing strike a match, increases damage by 24.00%" },
+  ["strike at the heart"] = { "p", false, "When utilizing strike at the heart, increases damage by 24.00%" },
+  ["strike blow"] = { "p", false, "When utilizing strike blow, increases damage by 24.00%" },
+  ["strike down"] = { "p", false, "When utilizing strike down, has a 24.00% chance to deal double damage and daze an opponent beyond the normal 20% chance if a maul is not worn" },
+  ["strike of death"] = { "p", false, "When strike of deathing, reduces its victims damage by 24.00% of their +damage" },
+  ["strike of pain"] = { "p", false, "When successfully increasing your opponent's cast time while utilizing strike of pain, deal 48.00% more damage" },
+  ["subvocal focus"] = { "s", false, "" },
+  ["summon mount"] = { "s", false, "When casting summon mount, has a 90.91% chance of the mount being hasted and levitating" },
+  ["summon shaman"] = { "s", false, "" },
+  ["summon soldier"] = { "s", false, "" },
+  ["summon wizard"] = { "s", false, "" },
+  ["sun evocation"] = { "s", false, "" },
+  ["sweep"] = { "p", false, "When activating 'combat focus' via sweep, increases accuracy by 6" },
+  ["sword"] = { "p", false, "When wielding a sword, increases damage by 8%" },
+  ["tagging"] = { "p", false, "" },
+  ["telekinesis"] = { "s", false, "When affected by telekinesis, has a 30.00% chance of being to pick up an item that is too heavy, up to a maximum of 1 stone" },
+  ["telekinetic bash"] = { "s", false, "When casting telekinetic bash, increases the chance of interrupting spellcasting by 60.00%" },
+  ["telekinetic explosion"] = { "s", false, "" },
+  ["telekinetic punch"] = { "s", false, "Increases telekinetic punch skillpower by 30." },
+  ["telekinetic shield"] = { "s", false, "When casting telekinetic shield, increases ar by 3" },
+  ["teleport"] = { "s", false, "When casting teleport, has a 15% chance to teleport anywhere on the same plane" },
+  ["telesmatic force"] = { "s", false, "When casting telesmatic force, has a 30.00% chance of the victim not being notified of being disarmed" },
+  ["teleview"] = { "s", false, "When televiewing someone, grants a 88.24% chance for them to not realize they're spied upon" },
+  ["third attack"] = { "p", false, "" },
+  ["throwing"] = { "p", false, "" },
+  ["throwing axe"] = { "p", false, "When wielding a throwing axe, increases damage by 8%" },
+  ["throwing knife"] = { "p", false, "When wielding a throwing knife, increases damage by 8%" },
+  ["throwing spear"] = { "p", false, "When wielding a throwing spear, increases damage by 8%" },
+  ["throwing star"] = { "p", false, "When wielding a throwing star, increases damage by 8%" },
+  ["tinnitus"] = { "s", false, "" },
+  ["totem"] = { "s", false, "When summoning a totem, increses its hp by 1500.00" },
+  ["tracking"] = { "p", false, "When tracking, has a 24.00% to see the trackee's room's name every track step" },
+  ["transcendent gaze"] = { "s", false, "" },
+  ["transference"] = { "s", false, "When casting transference, increases the sp transferred by 150.00" },
+  ["traumatize"] = { "s", false, "When casting traumatize, increases duration by 6 minutes" },
+  ["tremor"] = { "s", false, "When casting tremor, there is a 30.00% chance of each victim's spellcasting being interrupted, at an additional sp cost of the average of the caster and victim's levels" },
+  ["two-handed axe"] = { "p", false, "When wielding a two-handed axe, increases damage by 8%" },
+  ["underwater breathing"] = { "s", false, "" },
+  ["unnatural strength"] = { "s", false, "When affected by unnatural strength, reduces incoming damage by 2" },
+  ["vacuum evocation"] = { "s", false, "When evoking vacuum evocation, grants a 300.00% chance to deal heavy damage to every attackable thing in the room that is more vulnerable to air than resistant" },
+  ["vacuum invocation"] = { "s", false, "" },
+  ["water evocation"] = { "s", false, "When evoking water evocation, has a 6% chance to flood the room" },
+  ["water invocation"] = { "s", false, "" },
+  ["weaken"] = { "s", false, "Increases weaken skillpower by 30." },
+  ["web"] = { "s", false, "" },
+  ["whip"] = { "p", false, "When wielding a whip, increases damage by 8%" },
+  ["whirlwind"] = { "s", false, "" },
+  ["wind walk"] = { "s", false, "When casting wind walk, has a 15% chance that it will not reduce strength at all" },
+  ["wizard eye"] = { "s", false, "" },
+  ["word of recall"] = { "s", true, "" },
+  ["xorn blood"] = { "s", false, "Increases xorn blood skillpower by 30." },
+  ["yo-yo"] = { "p", false, "When wielding a yo-yo, increases damage by 8%" },
+}
+
+-- redundancy, worked out from the game's analyses: a class you take again adds 2 units for its 2nd copy,
+-- 3 for its 3rd, 4 for its 4th; each other class that gives the skill too adds 1. A unit is +15 skill power
+-- for a spell, +12 for a proficiency (monk monk 30/24, ×3 75/60, ×4 135/108, monk monk priest 45/36,
+-- monk priest druid 30/24 - every one fits)
+function M.classUnits(counts)
+  local u, distinct = 0, 0
+  for _, n in pairs(counts) do distinct = distinct + 1; u = u + n * (n + 1) / 2 - 1 end
+  return u + distinct - 1
+end
+
+local function split(s) local t = {} for x in tostring(s or ""):gmatch("[^,]+") do t[#t + 1] = x end return t end
+
+-- a class path's skills: name → { counts = {class = copies}, units, skp, kind, nobonus, text }
+function M.classPathSkills(path)
+  local copies = {}
+  for _, c in ipairs(path) do copies[c] = (copies[c] or 0) + 1 end
+  local out = {}
+  for c, n in pairs(copies) do
+    for _, sk in ipairs(split(M.CLASS_SKILLS[c])) do
+      out[sk] = out[sk] or { counts = {} }
+      out[sk].counts[c] = n
+    end
+  end
+  for sk, e in pairs(out) do
+    local info = M.SKILL_REDUNDANCY[sk] or { "p", false, "" }
+    e.kind, e.nobonus, e.text = info[1], info[2], info[3]
+    e.units = M.classUnits(e.counts)
+    e.skp = e.nobonus and 0 or e.units * (e.kind == "s" and 15 or 12)
+  end
+  return out
+end
+
+-- the races that can take a path: every class's races
+function M.classPathRaces(path)
+  local ok
+  for _, c in ipairs(path) do
+    local set = {}
+    for _, r in ipairs(split(M.CLASS_RACES[c])) do set[r] = true end
+    if not ok then ok = set else for r in pairs(ok) do if not set[r] then ok[r] = nil end end end
+  end
+  local out = {}
+  for r in pairs(ok or {}) do out[#out + 1] = r end
+  table.sort(out)
+  return out
+end
+
+local function totals(sk)
+  local t = { n = 0, spells = 0, profs = 0, boosted = 0, skp = 0 }
+  for _, e in pairs(sk) do
+    t.n = t.n + 1
+    if e.kind == "s" then t.spells = t.spells + 1 else t.profs = t.profs + 1 end
+    if e.skp > 0 then t.boosted = t.boosted + 1; t.skp = t.skp + e.skp end
+  end
+  return t
+end
+
+-- your path so far: score's Class Path, else your class
+function M.myClassPath()
+  local c = M.cfg.char or {}
+  if type(c.path) == "table" and #c.path > 0 then
+    local p = {}
+    for _, x in ipairs(c.path) do p[#p + 1] = x:lower() end
+    return p
+  end
+  return c.class and { c.class:lower() } or {}
+end
+
+function M.classPlan(arg)
+  arg = trim(arg or ""):lower()
+  local width = M.cfg.window and M.viewCols() or 100
+  local race = ((M.cfg.char or {}).race or ""):lower()
+  local function raceOk(path)
+    if race == "" then return true end
+    for _, r in ipairs(M.classPathRaces(path)) do if r == race then return true end end
+    return false
+  end
+  -- a path given: everything about it
+  if arg ~= "" then
+    local path = {}
+    for w in arg:gmatch("%a+") do
+      local c
+      for name in pairs(M.CLASS_SKILLS) do if name:sub(1, #w) == w then c = c and (c == name and c or false) or name end end
+      if not c then return M.say("no class '" .. w .. "' (" .. table.concat((function() local t = {} for n in pairs(M.CLASS_SKILLS) do t[#t + 1] = n end table.sort(t) return t end)(), ", ") .. ")") end
+      path[#path + 1] = c
+    end
+    if #path > 4 then return M.say("four classes at most") end
+    local sk = M.classPathSkills(path)
+    local t = totals(sk)
+    local out = { header("class", "", width, "Class path: " .. table.concat(path, " → ")) }
+    local races = M.classPathRaces(path)
+    out[#out + 1] = { { C.num, tostring(t.n) }, { C.dim, " skills and spells (" }, { C.num, tostring(t.spells) }, { C.dim, " spells, " },
+      { C.num, tostring(t.profs) }, { C.dim, " proficiencies) · " }, { C.num, tostring(t.boosted) }, { C.dim, " boosted by redundancy, " },
+      { C.plus, "+" .. t.skp }, { C.dim, " skill power in all" } }
+    out[#out + 1] = { { C.dim, "races: " }, { raceOk(path) and C.text or C.minus, table.concat(races, ", ") },
+      { C.minus, (race ~= "" and not raceOk(path)) and ("  - not " .. race) or "" } }
+    -- the boosted ones, most first
+    local list = {}
+    for name, e in pairs(sk) do if e.skp > 0 then list[#list + 1] = { name = name, e = e } end end
+    table.sort(list, function(a, b) if a.e.skp ~= b.e.skp then return a.e.skp > b.e.skp end return a.name < b.name end)
+    if #list > 0 then
+      out[#out + 1] = {}
+      out[#out + 1] = { { C.title, "Boosted by redundancy" }, { C.dim, "   skill power · from · what it does (the game's words, at +2 units)" } }
+      for _, x in ipairs(list) do
+        local from = {}
+        for c, n in pairs(x.e.counts) do from[#from + 1] = c .. (n > 1 and (" ×" .. n) or "") end
+        table.sort(from)
+        out[#out + 1] = { { C.key, "  " .. pad(x.name, 24) }, { C.plus, pad("+" .. x.e.skp, 6) },
+          { C.dim, pad(table.concat(from, ", "), 22) }, { C.text, x.e.text ~= "" and x.e.text or "" } }
+      end
+    end
+    -- the rest, by the class that gives them
+    local single = {}
+    for name, e in pairs(sk) do
+      if e.skp == 0 then
+        local c = next(e.counts)
+        single[c] = single[c] or {}
+        table.insert(single[c], name .. (e.nobonus and "*" or ""))
+      end
+    end
+    for c, names in pairs(single) do
+      table.sort(names)
+      out[#out + 1] = {}
+      out[#out + 1] = { { C.title, "Only from " .. c }, { C.dim, "  (" .. #names .. ")" } }
+      addAll(out, wrapWords(table.concat(names, ", "), width, 2, C.text, { { C.text, "  " } }, 2))
+    end
+    out[#out + 1] = {}
+    out[#out + 1] = { { C.dim, "* no bonus from redundancy (hand to hand, slow, word of recall) · attributes and ratings (SCC, WEA…) aren't in the game's analyses yet" } }
+    return M.viewOut(out, {})
+  end
+  -- no path: every class you could take next, with what it adds
+  local mine = M.myClassPath()
+  if #mine == 0 then return M.say("Oven doesn't know your class yet - type score once (or sbo class plan monk priest …)") end
+  if #mine >= 4 then return M.say("your path already has four classes - sbo class plan " .. table.concat(mine, " ") .. " for it in full") end
+  local base = totals(M.classPathSkills(mine))
+  local rows = {}
+  for c in pairs(M.CLASS_SKILLS) do
+    local path = { unpack(mine) }; path[#path + 1] = c
+    local sk = M.classPathSkills(path)
+    local t = totals(sk)
+    local newS, newP = 0, 0
+    local had = M.classPathSkills(mine)
+    for name, e in pairs(sk) do if not had[name] then if e.kind == "s" then newS = newS + 1 else newP = newP + 1 end end end
+    rows[#rows + 1] = { c = c, path = path, ok = raceOk(path), add = t.skp - base.skp, boosted = t.boosted - base.boosted, newS = newS, newP = newP }
+  end
+  table.sort(rows, function(a, b) if a.ok ~= b.ok then return a.ok end if a.add ~= b.add then return a.add > b.add end return a.c < b.c end)
+  local out = { header("class", "", width, "Your next class: " .. table.concat(mine, " → ") .. " → ?") }
+  out[#out + 1] = { { C.dim, "  " .. pad("class", 12) .. pad("skill power", 13) .. pad("boosted", 9) .. pad("new spells", 12) .. pad("new profs", 11) .. "race" } }
+  local links = {}
+  for _, r in ipairs(rows) do
+    out[#out + 1] = { { r.ok and C.key or C.dim, "  " .. pad(r.c, 12) }, { r.ok and C.plus or C.dim, pad("+" .. r.add, 13) },
+      { C.num, pad(tostring(r.boosted), 9) }, { C.num, pad(tostring(r.newS), 12) }, { C.num, pad(tostring(r.newP), 11) },
+      { r.ok and C.dim or C.minus, r.ok and "ok" or ("not " .. race) } }
+    local p = table.concat(r.path, " ")
+    links[#links + 1] = { "sbo class plan " .. p, function() M.classPlan(p) end }
+  end
+  out[#out + 1] = {}
+  out[#out + 1] = { { C.dim, "skill power: what redundancy adds over your path now · sbo class plan " .. table.concat(mine, " ") .. " <class> … for a path in full" } }
+  M.viewOut(out, links)
+end
+
 function M.classLearnNext()
   local C = M.classFetch
   if not C then return end
@@ -7892,6 +8445,7 @@ function M.updateMaxes(raw)
     if sc.info["Total Level"] then c.total = tonumber(sc.info["Total Level"]) end
     if sc.info["Class"] then c.class = sc.info["Class"] end
     if sc.info["Race"] then c.race = sc.info["Race"] end
+    if sc.path and #sc.path > 0 then c.path = sc.path end
     local _, known = M.classBuild(c.class)
     if c.class and not known and not M.cfg.build and not M.classWarned then
       M.classWarned = true
@@ -14320,6 +14874,8 @@ M.CMDS = {
       run = function(r) return legacy("build " .. r) end },
   } },
   { name = "class", min = 2, desc = "multi-class planning from the game's own class analyses", subs = {
+    { name = "plan", args = "[{class} …]", desc = "what each next class adds to your path; or a path (up to four) in full",
+      run = function(r) return M.classPlan(r) end },
     { name = "learn", args = "[stop]", desc = "read skills analyze for every class (quietly, while you're idle) into oven_classes.txt",
       run = function(r) return M.classLearn(r) end },
   } },
