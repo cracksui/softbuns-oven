@@ -1291,7 +1291,7 @@ def practice_dummy():
         kick = { name = 'kick', kind = 'skill', base = 1.3, types = 'bash/bash' }, bash = { name = 'bash', kind = 'skill', base = 2.2, types = 'bash/bash' } }""")
     # a plain swing that hits: your melee
     o.lua("ROUND(1)"); o.feed("A practice dummy says 'I have [9956/10000hp 10000/10000sp 9993/10000st and -250 align]'")
-    eq(o.ev("sbo.cfg.dummy.melee.sum"), 44, "a swing: 44")
+    eq(o.ev("sbo.dummyLog().melee.sum"), 44, "a swing: 44")
     # bash, your swing missing that round: all bash; 109 stamina
     o.lua("send('bash dummy'); gmcp.char.vitals.st = 381; ROUND(0)")
     o.feed("You bash a practice dummy over the head with a scorpion shield.", "A practice dummy says 'I have [9641/10000hp 10000/10000sp 9993/10000st and -250 align]'")
@@ -1307,7 +1307,7 @@ def practice_dummy():
     k = o.ev("sbo.dummyStats('kick')")
     eq((k.n, k.tries, k.misses, round(k.per, 1)), (1, 2, 1, round((357 - 44) / 2, 1)), "kick: 1 of 2 landed")
     # two landings in one round (two kicks sent quickly): the round's damage shared
-    o.lua("sbo.cfg.dummy.kick = nil; gmcp.char.vitals.st = 487; send('kick dummy'); send('kick dummy'); gmcp.char.vitals.st = 460; ROUND(0)")
+    o.lua("sbo.dummyLog().kick = nil; gmcp.char.vitals.st = 487; send('kick dummy'); send('kick dummy'); gmcp.char.vitals.st = 460; ROUND(0)")
     o.feed("You deliver a roundhouse kick to a practice dummy, connecting solidly.",
            "You deliver a roundhouse kick to a practice dummy, connecting solidly.",
            "A practice dummy says 'I have [9507/10000hp 10000/10000sp 9993/10000st and -250 align]'")
@@ -1322,12 +1322,12 @@ def practice_dummy():
     sp = o.ev("sbo.dummyStats('spark')")
     eq((sp.avg, sp.tries, sp.fails, sp.cost), (294, 3, 2, 49), "spark: 294, 2 of 3 fizzled, 49 sp")
     # "You cast spark one additional time": two landings in the round
-    o.lua("sbo.cfg.dummy.spark = nil; send('cast spark dummy'); ROUND(0)")
+    o.lua("sbo.dummyLog().spark = nil; send('cast spark dummy'); ROUND(0)")
     o.feed("You cast spark one additional time.", "You have completed your casting.", "A brilliant spark arcs from your fingertips to a practice dummy.",
            "A practice dummy says 'I have [9532/10000hp 10000/10000sp 9993/10000st and -250 align]'")
     eq(o.ev("sbo.dummyStats('spark').avg"), 234, "468 between two sparks")
     # faerie fire (a debuff) finishing in the same round as a bash: the bash keeps the round
-    o.lua("sbo.cfg.dummy.bash = nil; send(\"cast 'faerie fire' dummy\"); gmcp.char.vitals.st = 490; send('bash dummy'); gmcp.char.vitals.st = 381; ROUND(0)")
+    o.lua("sbo.dummyLog().bash = nil; send(\"cast 'faerie fire' dummy\"); gmcp.char.vitals.st = 490; send('bash dummy'); gmcp.char.vitals.st = 381; ROUND(0)")
     o.feed("You have completed your casting.", "A practice dummy is outlined by a faint pink glow.",
            "You bash a practice dummy over the head with a scorpion shield.", "A practice dummy says 'I have [9641/10000hp 10000/10000sp 9993/10000st and -250 align]'")
     eq(o.ev("sbo.dummyStats('bash').avg"), 359, "faerie fire doesn't take a share")
@@ -1335,6 +1335,14 @@ def practice_dummy():
     o.feed("You attempt to bite into a practice dummy but can't manage to catch it.", "A practice dummy says 'I have [10000/10000hp 10000/10000sp 9993/10000st and -250 align]'")
     f_ = o.ev("sbo.dummyStats('feeding')")
     eq((f_.n, f_.misses), (0, 1), "a feed that didn't catch it: a miss")
+    # another build (a new class, other gear): its own results, the old ones kept as history
+    first = o.ev("sbo.dummyBuild()")
+    o.lua("sbo.cfg.char = sbo.cfg.char or {}; sbo.cfg.char.class = 'barbarian'; sbo.cfg.char.level = 45")
+    assert o.ev("sbo.dummyBuild()") != first and o.ev("sbo.dummyStats('kick')") is None, "a new build starts fresh"
+    assert o.ev("sbo.cfg.dummy.builds[%r] ~= nil" % first), "the old build's results kept"
+    o.lua("sbo.cfg.char.class = nil; sbo.cfg.char.level = nil")
+    eq(o.ev("sbo.dummyBuild()"), first, "back")
+    assert o.ev("sbo.dummyStats('kick').age") is not None, "each result has an age"
     # in the attack table
     o.lua("""sbo.cfg.abilitiesRead = 2; sbo.cfg.skills = { spark = { lrnd = 27 }, kick = { lrnd = 78 }, bash = { lrnd = 75 } }
       sbo.cfg.abilities = { spark = { name = 'spark', kind = 'spell', sp = 49, base = 2.2, types = 'flames/lightning' },
@@ -1343,6 +1351,10 @@ def practice_dummy():
     text = f()
     assert "359/use" in text and "~109st" in text, text
     assert "most per stamina: kick" in text, f"kick: 156 a use for ~27 st beats bash 359 for 109: {text}"
+    o.lua("SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end; sbo.command('eq dummy')")
+    assert any("▶" in x for x in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    o.lua("sbo.command('eq dummy reset')")
+    eq(o.ev("sbo.dummyStats('kick')"), None, "this build's results cleared")
 
 
 @test

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.47.1"
+M.version = "1.48.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7543,22 +7543,43 @@ local function vit(k)
   local v = M.gmcpGet and M.gmcpGet("char.vitals")
   return type(v) == "table" and tonumber(v[k]) or nil
 end
-local function log()
-  -- numbers from before 1.12.0 counted a round's damage against one landing: started afresh
+-- the build the tests are for: your class, your level (in tens) and what you fight with - results from
+-- another build (an old class, other gear) are kept as history, not mixed in
+function M.dummyBuild()
+  local c = M.cfg.char or {}
+  local lvl = tonumber(c.level) or 0
+  local lo = math.floor(math.max(0, lvl - 1) / 10) * 10 + 1
+  local cls = (c.class or "?"):lower()
+  local wpn = (c.combat or {}).weapon or "?"
+  return string.format("%s %d-%d · %s", cls, lo, lo + 9, wpn)
+end
+local function store()
   local d = M.cfg.dummy
-  if d and d.v == 2 then
-    -- 1.12.0/1.12.1 counted a debuff cast (faerie fire) and an unrecognised miss as landings
-    for k, r in pairs(d) do
-      if type(r) == "table" and k ~= "melee" and not (M.cfg.abilities or {})[k] then d[k] = nil end
-    end
-    d.bash, d.feeding, d.v = nil, nil, 3
-  elseif d and d.v ~= 3 then M.cfg.dummy = nil end
-  M.cfg.dummy = M.cfg.dummy or { v = 3 }
+  -- before 1.48 all tests were one running total: kept, as the history of the build they were made with
+  if d and d.v ~= 4 then
+    local old = {}
+    if d.v == 3 then for k, r in pairs(d) do if k ~= "v" then old[k] = r end end end
+    M.cfg.dummy = { v = 4, builds = {} }
+    if next(old) then old.label = "earlier tests (monk, before 1.48)"; old.first = 0; M.cfg.dummy.builds.earlier = old end
+  end
+  M.cfg.dummy = M.cfg.dummy or { v = 4, builds = {} }
+  M.cfg.dummy.builds = M.cfg.dummy.builds or {}
   return M.cfg.dummy
 end
+-- this build's results (made when written to; nil to a reader when there are none)
+local function log(create)
+  local d = store()
+  local key = M.dummyBuild()
+  if not d.builds[key] and create ~= false then d.builds[key] = { label = key, first = os.time() } end
+  local b = d.builds[key]
+  if b and create ~= false then b.last = os.time() end
+  return b
+end
+M.dummyLog = log
 local function rec(name)
   local d = log()
   d[name] = d[name] or { n = 0, sum = 0, tries = 0, fails = 0, costN = 0, costSum = 0 }
+  d[name].last = os.time()
   return d[name]
 end
 local function fightingDummy()
@@ -7649,6 +7670,7 @@ function M.dummyNoteLine(l)
     if meleeHit and dmg > 0 then
       d.melee = d.melee or { n = 0, sum = 0 }
       d.melee.n, d.melee.sum = d.melee.n + 1, d.melee.sum + dmg
+      d.melee.last = os.time()
       M.saveSettings(); M.dataChanged()
     end
     return
@@ -7680,14 +7702,41 @@ function M.dummyNoteLine(l)
   M.saveSettings(); M.dataChanged()
 end
 
+-- sbo eq dummy: the builds you've tested on the dummy (and how many results, how long ago); reset: this
+-- build's results start afresh
+function M.dummyCommand(arg)
+  arg = trim(arg or ""):lower()
+  local d = store()
+  local key = M.dummyBuild()
+  if arg == "reset" then
+    d.builds[key] = nil
+    M.saveSettings(); M.dataChanged()
+    return M.say("practice dummy: results for " .. key .. " cleared - your next tests start afresh")
+  end
+  local list = {}
+  for k, b in pairs(d.builds) do
+    local n = 0
+    for name, r in pairs(b) do if type(r) == "table" and name ~= "melee" then n = n + (r.tries or 0) end end
+    list[#list + 1] = { k = k, b = b, n = n }
+  end
+  table.sort(list, function(x, y) return (x.b.last or 0) > (y.b.last or 0) end)
+  if #list == 0 then return M.say("no practice dummy results yet - attack a practice dummy and they're kept here") end
+  M.say("practice dummy results, by build (the attack table shows " .. key .. "):")
+  for _, x in ipairs(list) do
+    M.log(string.format("%s   %s%s  %s  %d tries%s", M.drgb("dim"), x.k == key and "▶ " or "  ", x.b.label or x.k,
+      x.b.last and ("· " .. M.shortDur(os.time() - x.b.last) .. " ago") or "", x.n, "<reset>"))
+  end
+  M.log(M.drgb("dim") .. "   sbo eq dummy reset: clear this build's results<reset>")
+end
+
 -- what the dummy says about one attack: average damage when it lands (clean rounds first),
 -- how often it lands, its range, cost
 function M.dummyStats(name)
-  if M.cfg.dummy and M.cfg.dummy.v ~= 3 then log() end
-  local r = (M.cfg.dummy or {})[name]
-  if not r or (r.tries or 0) == 0 then return nil end
+  local b = log(false)
+  local r = b and b[name]
+  if type(r) ~= "table" or (r.tries or 0) == 0 then return nil end
   -- mixed rounds from before a plain swing was seen: sorted out now, if one has been
-  local m = (M.cfg.dummy or {}).melee
+  local m = b.melee
   if r.mixed and m and m.n > 0 then
     local swing = m.sum / m.n
     for _, x in ipairs(r.mixed) do
@@ -7704,7 +7753,8 @@ function M.dummyStats(name)
   local landedN = r.n + (r.mixed and #r.mixed or 0)
   local per = avg and avg * landedN / r.tries or nil
   return { avg = avg, n = landedN, tries = r.tries, fails = r.fails or 0, misses = r.misses or 0, min = r.min, max = r.max,
-           per = per, clean = r.cleanN or 0, cost = r.costN > 0 and r.costSum / r.costN or nil, res = r.res }
+           per = per, clean = r.cleanN or 0, cost = r.costN > 0 and r.costSum / r.costN or nil, res = r.res,
+           age = r.last and (os.time() - r.last) or nil }
 end
 end
 
@@ -7847,14 +7897,16 @@ function M.abilitySection(out, width)
     out[#out + 1] = { { C.title, "Attacks" }, { C.dim, "   none yet - learned from their help pages (sbo debug help next)" } }
     return
   end
-  out[#out + 1] = { { C.title, "Attacks" }, { C.dim, "   dummy = expected damage a use on the practice dummy · power = help factor × your %" } }
+  out[#out + 1] = { { C.title, "Attacks" }, { C.dim, "   dummy = expected damage a use on the practice dummy, as " }, { C.key, M.dummyBuild() },
+    { C.dim, " · power = help factor × your %" } }
   out[#out + 1] = { { C.dim, "  " .. pad("", 17) .. pad("you", 5) .. pad("cost", 7) .. pad("time", 7) .. pad("dummy", 14) .. pad("power", 7) .. "per 100" } }
   for _, ab in ipairs(list) do
     local a = ab.a
     local ds = M.dummyStats(ab.name)
-    local cost = a.sp and (a.sp .. "sp") or (a.st and (a.st .. "st"))
-    -- no cost in the help: what the dummy tests measured
-    if not cost and ds and ds.cost then cost = string.format("~%d%s", ds.cost + 0.5, ds.res or "") end
+    -- what it really cost on the dummy (this build), else what its help page says
+    local cost
+    if ds and ds.cost then cost = string.format("~%d%s", ds.cost + 0.5, ds.res or "")
+    else cost = a.sp and (a.sp .. "sp") or (a.st and (a.st .. "st")) end
     cost = cost or (a.kind == "skill" and "?st" or "-")
     local time = (a.time and (a.time .. "s") or "") .. (a.cooldown and ("/" .. a.cooldown) or "")
     local dtxt = "-"
@@ -7873,7 +7925,7 @@ function M.abilitySection(out, width)
   local function perCost(ab)
     local d = M.dummyStats(ab.name)
     local dmg = anyReal and real(ab) or ab.per
-    local cost = ab.a.sp or ab.a.st or (d and d.cost)
+    local cost = (d and d.cost) or ab.a.sp or ab.a.st
     if not dmg or not cost or cost <= 0 then return nil end
     -- fizzles cost too (a failed spell still spends some)
     local ok = d and d.tries > 0 and (d.tries - d.fails) / d.tries or 1
@@ -7899,10 +7951,11 @@ function M.abilitySection(out, width)
       local bits = { string.format("landed %d of %d", d.n, d.tries) }
       if d.fails > 0 then bits[#bits + 1] = d.fails .. " fizzled" end
       if d.avg then bits[#bits + 1] = string.format("%d–%d, avg %d when it lands", d.min or d.avg, d.max or d.avg, d.avg + 0.5) end
+      if d.age then bits[#bits + 1] = (d.age < 3600 and "just now" or (M.shortDur(d.age) .. " ago")) end
       out[#out + 1] = { { C.dim, "  " .. pad(ab.name, 17) .. table.concat(bits, " · ") } }
     end
   end
-  local mel = (M.cfg.dummy or {}).melee
+  local mel = (M.dummyLog(false) or {}).melee
   if mel and mel.n > 0 then out[#out + 1] = { { C.dim, string.format("  your melee hit on the dummy: %d (%d hits)", mel.sum / mel.n + 0.5, mel.n) } } end
   -- what boosts them: one short line each
   for _, ab in ipairs(list) do
@@ -15332,6 +15385,8 @@ M.CMDS = {
         return M.learn("")
       end },
     { name = "items", desc = "the items Oven remembers", run = L("items") },
+    { name = "dummy", args = "[reset]", desc = "practice dummy results by build (class, level, weapon); reset: this build's afresh",
+      run = function(r) return M.dummyCommand(r) end },
     { name = "build", args = "[{name}|set|reset|auto]", desc = "gear-score weights (set: a stat and its weight)",
       run = function(r) return legacy("build " .. r) end },
   } },
