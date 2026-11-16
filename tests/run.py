@@ -3345,6 +3345,31 @@ def levelling_log():
 
 
 @test
+def levelling_import():
+    o = Oven()
+    rec = """===== 2026-11-15 20:58:10 | cmd= | room=1
+@gmcp char.status = {["level"]=9,["totallevel"]=69}
+You gain 10 hit points, 5 spell points, 9 stamina, and 12 practices!
+You have become more learned at 'parry' (2%).
+===== 2026-11-15 20:58:11 | cmd= | room=1
+@gmcp char.status = {["level"]=10,["totallevel"]=70}
+===== 2026-11-15 21:08:00 | cmd= | room=1
+You gain 10 hit points, 5 spell points, 9 stamina, and 12 practices!
+You have gained 1 new proficiency: second attack
+===== 2026-11-15 21:08:01 | cmd= | room=1
+@gmcp char.status = {["level"]=11,["totallevel"]=71}
+"""
+    open(o.home + "/oven_record.txt", "w").write(rec)
+    o.lua("SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end; sbo.cfg.char = { class = 'barbarian' }; sbo.command('log levels import')")
+    assert "2 level-ups found in your recordings, 2 added" in o.ev("SAYS[#SAYS]"), o.ev("SAYS[#SAYS]")
+    rows = o.ev("sbo.dbRows('SELECT level, total, skills, learned FROM levels ORDER BY t')")
+    got = [(r.level, r.total, r.skills, r.learned) for r in rows.values()]
+    eq(got, [(10, 70, "parry 2%", ""), (11, 71, "", "second attack")], "the level GMCP said next, and what came with it")
+    o.lua("sbo.command('log levels import')")
+    assert "0 added" in o.ev("SAYS[#SAYS]"), "not twice"
+
+
+@test
 def tabs_stay_put():
     o = Oven()
     o.lua("""sbo.cfg.window = true; sbo.cfg.tabs = true; sbo.createWindow(); sbo.tabShow('chat')

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.44.1"
+M.version = "1.45.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7373,6 +7373,78 @@ function M.levelFinish()
   pcall(M.dataChanged)
 end
 
+-- sbo log levels import: the level-ups in your recordings (oven_record.old.txt, oven_record.txt), from before
+-- the log was kept - each with its time, the level GMCP said next, and what came with it; ones already kept
+-- (same time) are skipped
+function M.levelImport()
+  local home = getMudletHomeDir()
+  local have = {}
+  for _, r in ipairs(M.dbRows("SELECT t FROM levels")) do have[tonumber(r.t)] = true end
+  local c = M.cfg.char or {}
+  local cls = (type(c.path) == "table" and c.path[1]) or c.class
+  cls = cls and cls:lower() or nil
+  local added, seen = 0, 0
+  for _, name in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
+    local f = io.open(home .. "/" .. name, "r")
+    if f then
+      local t, level, total, E
+      local function finish()
+        if not E then return end
+        seen = seen + 1
+        if not have[E.t] then
+          have[E.t] = true
+          local function join(list, fmt) local o = {} for _, x in ipairs(list) do o[#o + 1] = fmt(x) end return table.concat(o, ", ") end
+          M.dbx([[INSERT INTO levels (t, kind, class, level, total, hp, sp, st, pracs, attrs, skills, learned, maxes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)]],
+            E.t, E.kind, E.cls, E.level, E.total, E.hp, E.sp, E.st, E.pr,
+            join(E.attrs, function(a) return a[1] .. " +" .. a[2] end), join(E.skills, function(x) return x[1] .. " " .. x[2] .. "%" end),
+            table.concat(E.learned, ", "), join(E.maxes, function(x) return x[1] .. " " .. x[2] .. "→" .. x[3] end))
+          added = added + 1
+        end
+        E = nil
+      end
+      for l in f:lines() do
+        local y, mo, d, h, mi, se = l:match("^===== (%d+)%-(%d+)%-(%d+) (%d+):(%d+):(%d+) |")
+        if y then
+          t = os.time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d), hour = tonumber(h), min = tonumber(mi), sec = tonumber(se) })
+          -- a few blocks on, the event is done
+          if E and t - E.t > 6 then finish() end
+        elseif l:match("^@gmcp char%.status ") then
+          local lv, tl = tonumber(l:match('%["level"%]=(%d+)')), tonumber(l:match('%["totallevel"%]=(%d+)'))
+          if lv then
+            -- the status after a level-up says which level it was
+            if E and t and t - E.t <= 6 and (not E.level or lv ~= level) then E.level, E.total = lv, tl end
+            level, total = lv, tl
+          end
+        elseif not l:match("^@") and t then
+          local s2 = trim(l)
+          local hp, sp, st, pr = s2:match("^You gain (%d+) hit points?, (%d+) spell points?, (%d+) stamina, and (%d+) practices?!$")
+          local newCls = s2:match("^'%a+, you are now an? (%a+)!'")
+          if hp or newCls then
+            if E and t - E.t > 6 then finish() end
+            if not E then E = { t = t, kind = "level", cls = cls, attrs = {}, skills = {}, learned = {}, maxes = {}, level = level and level + 1, total = total and total + 1 } end
+            if hp then E.hp, E.sp, E.st, E.pr = tonumber(hp), tonumber(sp), tonumber(st), tonumber(pr) end
+            if newCls then cls = newCls:lower(); E.kind, E.cls, E.level = "class", cls, 1 end
+          elseif E then
+            local n, attr = s2:match("^Due to your experiences, you have earned a (%d+) point increase in (%a+)%.?$")
+            local sk, pct = s2:match("^You have become more learned at '(.-)' %((%d+)%%%)%.?$")
+            local _, _, list = s2:match("^You have gained (%d+) new (%a+): (.+)$")
+            local m, from, to = s2:match("^Your maximum '(%a+)' has been adjusted from (%d+) to (%d+)%.?$")
+            if attr then E.attrs[#E.attrs + 1] = { attr, tonumber(n) }
+            elseif sk then E.skills[#E.skills + 1] = { sk, tonumber(pct) }
+            elseif list then for x in list:gmatch("[^,]+") do E.learned[#E.learned + 1] = trim(x:gsub("^and ", "")) end
+            elseif m then E.maxes[#E.maxes + 1] = { m, tonumber(from), tonumber(to) } end
+          end
+        end
+      end
+      finish()
+      f:close()
+    end
+  end
+  M.say(string.format("levelling log: %d level-up%s found in your recordings, %d added (sbo log levels)", seen, seen == 1 and "" or "s", added))
+  pcall(M.dataChanged)
+end
+
 -- sbo log levels: newest first, one line each, totals at the top
 function M.levelLines(width)
   local rows = M.dbRows("SELECT * FROM levels ORDER BY id DESC LIMIT 200")
@@ -7393,7 +7465,7 @@ function M.levelLines(width)
     local lvl = (r.class or "?") .. " " .. (r.level or "?") .. (r.total and (" (" .. r.total .. ")") or "")
     local line = { { C.dim, when .. "  " } }
     if r.kind == "class" then line[#line + 1] = { C.title, "now a " .. (r.class or "?") .. "  " } end
-    line[#line + 1] = { C.key, pad(lvl, 18) }
+    line[#line + 1] = { C.key, pad(lvl, 22) }
     if r.hp then
       line[#line + 1] = { C.plus, string.format("+%s hp +%s sp +%s st +%s pr", r.hp, r.sp, r.st, r.pracs) }
     end
@@ -14992,6 +15064,7 @@ function M.legacyCommand(args)
     M.logOut(M.deathLines)
     return
   elseif a == "levels" or a == "level" then
+    if b:lower():match("^import") then return M.levelImport() end
     M.logOut(M.levelLines)
     return
   elseif a == "shops" or a == "shop" then
@@ -15258,7 +15331,8 @@ M.CMDS = {
     { name = "loot", args = "[{text}]", desc = "what was picked up and where; text searches it",
       run = function(r) return legacy("loot all " .. r) end },
     { name = "deaths", desc = "your last deaths, with what led up to them", run = L("deaths") },
-    { name = "levels", desc = "every level you've gained: what it gave, attributes, skills improved and learned", run = L("levels") },
+    { name = "levels", args = "[import]", desc = "every level you've gained: what it gave, attributes, skills improved and learned (import: from your recordings)",
+      run = function(r) return legacy("levels " .. r) end },
     { name = "session", desc = "exp per hour, time and kills to the next level", run = L("session") },
     { name = "reset", desc = "start a fresh session (kills, exp per hour, gold)", run = L("session reset") },
     { name = "clear", args = "{kills|loot}", desc = "wipe all-time history (asks first)", run = function(r) return M.logClear(r) end },
