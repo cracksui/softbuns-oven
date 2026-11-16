@@ -2119,7 +2119,7 @@ def shop_listed_on_arrival():
     assert o.ev("GAGGED") >= len([l for l in sushi if l.strip()]), "quietly: off the main screen"
     o.lua('getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end; getRoomExits = function() return {} end')
     col = o.lua('for _, r in ipairs(sbo.roomCardLines(10515)) do for _, g in ipairs(r) do if tostring(g[2]):find("^%$ ") then return g[1] .. "|" .. g[2] end end end')
-    eq(col, "light_sky_blue|$ the Sushi Bar", "a shop with its stock: the usual $ line")
+    eq(col, "oven_slot|$ the Sushi Bar", "a shop with its stock: the usual $ line")
     # not again within the hour; not in a room without a shop
     o.lua("SENT = {}; ARRIVE(1); ARRIVE(10515)")
     eq(len(o.ev("SENT")), 0, "once; none elsewhere")
@@ -2243,7 +2243,7 @@ def shop_refuses_you():
     card = o.lua('local t = {} for _, r in ipairs(sbo.roomCardLines(111125)) do for _, g in ipairs(r) do t[#t+1] = tostring(g[2] or "") end end return table.concat(t)')
     assert "won't sell to you" in card, card
     col = o.lua('for _, r in ipairs(sbo.roomCardLines(111125)) do for _, g in ipairs(r) do if tostring(g[2]):find("^%$ ") then return g[1] end end end')
-    eq(col, "tomato", "the shop's $ line in red: won't sell to you")
+    eq(col, "oven_minus", "the shop's $ line in red: won't sell to you")
     o.lua('sbo.command("map shops")')
     # the same words from another shopkeeper (the wedding cleric at #10426)
     eq(o.ev("sbo.shopRefusal(\"The wedding cleric tells you 'Sorry, but I cannot sell my wares to someone of your level of experience.'\")") is not None, True, "the cleric too")
@@ -3268,8 +3268,9 @@ def quest_target_colours():
       color_table.pale_green = { 152, 251, 152 }; color_table.orange = { 255, 165, 0 }''')
     exact = "\n".join(o.ev('sbo.questCardHtml("52", sbo.quests["52"])')[0].values())
     guess = "\n".join(o.ev('sbo.questCardHtml("1547", sbo.quests["1547"])')[0].values())
-    assert "rgb(152,251,152)\">The Entrance to Rune Prison" in exact, exact
-    assert "rgb(255,165,0)\">The Edible Loaf" in guess, guess
+    # (the palette's gain colour for the game's own room, its warning colour for a guess)
+    assert "rgb(40,255,80)\">The Entrance to Rune Prison" in exact, exact
+    assert "rgb(255,145,0)\">The Edible Loaf" in guess, guess
 
 
 @test
@@ -3357,7 +3358,7 @@ def one_palette():
     rgbs = _re.findall(r'"<\d{1,3},\d{1,3},\d{1,3}>', src)
     eq((hexes, rgbs), ([], []), "every colour from the palette")
     o = Oven()
-    eq((o.ev("sbo.hex('title')"), o.ev("sbo.drgb('title')")), ("#ffd700", "<255,215,0>"), "a role's RGB")
+    eq((o.ev("sbo.hex('title')"), o.ev("sbo.drgb('title')")), ("#ffc800", "<255,200,0>"), "a role's RGB")
 
 
 @test

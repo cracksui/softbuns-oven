@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.46.0"
+M.version = "1.47.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -216,7 +216,7 @@ function M.dbOpen()
   if not luasql or not luasql.sqlite3 then return nil end
   M.dbEnv = M.dbEnv or luasql.sqlite3()
   local conn, err = M.dbEnv:connect(M.dbFile)
-  if not conn then M.log("<red>[sbo] can't open " .. M.dbFile .. ": " .. tostring(err) .. "<reset>"); return nil end
+  if not conn then M.log("<oven_minus>[sbo] can't open " .. M.dbFile .. ": " .. tostring(err) .. "<reset>"); return nil end
   M.dbConn = conn
   conn:execute("PRAGMA journal_mode=WAL")
   conn:execute("PRAGMA synchronous=NORMAL")
@@ -238,7 +238,7 @@ function M.dbx(fmt, ...)
   local q = sql(fmt, ...)
   local res, err = conn:execute(q)
   if not res then
-    if M.cfg and M.cfg.samples then M.log("<dim_grey>[sbo] db: " .. tostring(err) .. "<reset>") end
+    if M.cfg and M.cfg.samples then M.log("<oven_dim>[sbo] db: " .. tostring(err) .. "<reset>") end
     return nil, err
   end
   if type(res) == "userdata" or type(res) == "table" then pcall(function() res:close() end) end
@@ -457,22 +457,31 @@ local function ulen(s) return (utf8 and utf8.len(s)) or #s end
 local function pad(s, n) return s .. string.rep(" ", math.max(0, n - ulen(s))) end
 local unpack = table.unpack or unpack
 
-local C = {
-  title  = "gold",
-  rule   = "dim_grey",
-  key    = "khaki",
-  slot   = "light_sky_blue",
-  text   = "light_grey",
-  item   = "white",
-  num    = "cyan",
-  plus   = "pale_green",
-  minus  = "tomato",
-  dim    = "dim_grey",
-  flag   = "orange",
-  rare   = "orchid",       -- the rare things: an attribute gained on levelling
+-- Oven's palette: bright, saturated colours in the game's own style (its text is bright ANSI colour - pastels
+-- looked washed out beside it). Each role means the same thing everywhere; the colours are registered in
+-- Mudlet's colour table as oven_<role>, so every way Oven draws (segments, decho, cecho, HTML, style
+-- sheets) gets the same RGB
+M.PALETTE_RGB = {
+  title = { 255, 200, 0 },    -- headings, panel titles, the front tab
+  rule  = { 120, 120, 130 },  -- dividers
+  key   = { 0, 225, 225 },    -- labels: stats, slots in tables, classes
+  slot  = { 90, 160, 255 },   -- links and anything clickable
+  text  = { 215, 215, 215 },  -- ordinary text
+  item  = { 255, 255, 255 },  -- names of things
+  num   = { 255, 255, 255 },  -- values
+  plus  = { 40, 255, 80 },    -- gains, good
+  minus = { 255, 70, 70 },    -- losses, bad
+  dim   = { 140, 140, 150 },  -- secondary notes, timestamps
+  flag  = { 255, 145, 0 },    -- warnings and flags
+  rare  = { 255, 70, 255 },   -- the rare things: an attribute gained on levelling
 }
+local C = {}
+for role, rgb in pairs(M.PALETTE_RGB) do
+  C[role] = "oven_" .. role
+  if color_table then color_table["oven_" .. role] = { rgb[1], rgb[2], rgb[3] } end
+end
 -- every colour Oven shows comes from this palette, by role: for segments the name, for decho "<r,g,b>",
--- for Qt style sheets and HTML "#rrggbb" (the same RGB as Mudlet's colour of that name)
+-- for Qt style sheets and HTML "#rrggbb"
 M.palette = C
 function M.roleRGB(role)
   local name = M.palette[role] or role
@@ -2864,7 +2873,7 @@ function M.notifyQuest(msg)
     pcall(M.drawQuestTracker)
     tempTimer(10, function() if M.hudNote == msg then M.hudNote = nil; pcall(M.drawQuestTracker) end end)
   else
-    M.log("<dim_grey>[sbo] " .. msg .. "<reset>")
+    M.log("<oven_dim>[sbo] " .. msg .. "<reset>")
   end
 end
 
@@ -8304,15 +8313,15 @@ end
 
 function M.pin(name)
   local it = M.findItem(name or M.recent[#M.recent])
-  if not it then return M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches that") end
+  if not it then return M.log("<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> no remembered item matches that") end
   M.pinned = it.name; M.saveItems()
-  M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> pinned: " .. it.name .. " - items you look at next are compared against it (sbo eq compare against to stop)")
+  M.log("<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> pinned: " .. it.name .. " - items you look at next are compared against it (sbo eq compare against to stop)")
 end
 
 function M.compareNames(qa, qb)
   local a, b = M.findItem(qa), M.findItem(qb)
-  if not a then return M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches: " .. tostring(qa)) end
-  if not b then return M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> no remembered item matches: " .. tostring(qb)) end
+  if not a then return M.log("<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> no remembered item matches: " .. tostring(qa)) end
+  if not b then return M.log("<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> no remembered item matches: " .. tostring(qb)) end
   M.compare(a, b)
 end
 
@@ -10282,7 +10291,7 @@ function M.onBlock(b)
     local seg = r.kind == "*" and b.kinds or b.kinds[r.kind]
     if seg then
       local ok, err = pcall(r.read, b, seg)
-      if not ok and M.cfg.samples then M.log("<dim_grey>[sbo] " .. r.name .. ": " .. tostring(err) .. "<reset>") end
+      if not ok and M.cfg.samples then M.log("<oven_dim>[sbo] " .. r.name .. ": " .. tostring(err) .. "<reset>") end
     end
   end
   return b.kinds
@@ -12103,7 +12112,7 @@ function M.finish(reason)
           if M.cfg.mirror.help then
             for _, d in ipairs(cap.decho) do decho("main", d .. "\n") end
           else
-            cecho("main", "<dim_grey>[sbo] help" .. (cap.target ~= "" and (" " .. cap.target) or "") ..
+            cecho("main", "<oven_dim>[sbo] help" .. (cap.target ~= "" and (" " .. cap.target) or "") ..
               " → help window<reset>\n")
           end
         else
@@ -12176,7 +12185,7 @@ end
 -- (Mudlet reads <word> as a colour, so placeholders like <id> are shown as ‹id›)
 local function say(msg)
   msg = tostring(msg):gsub("<", "‹"):gsub(">", "›")
-  M.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg)
+  M.log("<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> " .. msg)
 end
 M.say = say
 
@@ -14137,11 +14146,11 @@ end
 -- a plan, printed as numbered lines under a heading
 function M.sayPlan(head, lines, sum, tail)
   say(head)
-  for k, l in ipairs(lines or {}) do M.log(string.format("<dim_grey>   %d.<reset> %s", k, (l:gsub("<", "‹"):gsub(">", "›")))) end
+  for k, l in ipairs(lines or {}) do M.log(string.format("<oven_dim>   %d.<reset> %s", k, (l:gsub("<", "‹"):gsub(">", "›")))) end
   local last = {}
   if sum then last[#last + 1] = sum end
   if tail then last[#last + 1] = tail end
-  if #last > 0 then M.log("<dim_grey>   " .. table.concat(last, " · ") .. "<reset>") end
+  if #last > 0 then M.log("<oven_dim>   " .. table.concat(last, " · ") .. "<reset>") end
 end
 
 function M.runVia(plan, target, dirs)
@@ -15190,7 +15199,7 @@ function M.legacyCommand(args)
     say(#M.recent .. " remembered items (most recent last):")
     for _, n in ipairs(M.recent) do
       local it = M.items[n]
-      cecho(string.format("  <white>%s<reset>  <dim_grey>%s%s<reset>\n", n, it and it.type or "?",
+      cecho(string.format("  <white>%s<reset>  <oven_dim>%s%s<reset>\n", n, it and it.type or "?",
         (it and it.worn) and (", " .. it.worn) or ""))
     end
     return
@@ -15214,7 +15223,7 @@ function M.legacyCommand(args)
       local r, g, b = val:match("^(%d+)[%s,]+(%d+)[%s,]+(%d+)$")
       if val == "" then M.cfg.barBg = { unpack(M.defaults.barBg) }
       elseif r then M.cfg.barBg = { math.min(255, tonumber(r)), math.min(255, tonumber(g)), math.min(255, tonumber(b)) }
-      else return say("usage: sbo bar bg <red> <green> <blue>  (0-255; nothing = default)") end
+      else return say("usage: sbo bar bg <oven_minus> <green> <blue>  (0-255; nothing = default)") end
       M.applyBarBg(); M.drawBar()
       say(string.format("prompt bar background %d %d %d%s", M.cfg.barBg[1], M.cfg.barBg[2], M.cfg.barBg[3], val == "" and " (default)" or ""))
     elseif sub == "blanks" and (val == "on" or val == "off") then
@@ -16078,14 +16087,14 @@ end
 ---------------------------------------------------------------------------
 -- sbo (the menu), sbo {group} and sbo help
 ---------------------------------------------------------------------------
--- "gear" with its shortest start bright: <khaki>ge<dim>ar
+-- "gear" with its shortest start bright: <oven_key>ge<dim>ar
 local function marked(list, e)
   local n = shortest(list, e)
-  return "<khaki>" .. e.name:sub(1, n) .. "<light_slate_grey>" .. e.name:sub(n + 1) .. "<reset>"
+  return "<oven_key>" .. e.name:sub(1, n) .. "<oven_dim>" .. e.name:sub(n + 1) .. "<reset>"
 end
 local function argsText(a)
   if not a or a == "" then return "" end
-  return " <light_slate_grey>" .. a:gsub("[{}]", "") .. "<reset>"
+  return " <oven_dim>" .. a:gsub("[{}]", "") .. "<reset>"
 end
 
 local function helpOut(title, lines)
@@ -16098,9 +16107,9 @@ local function helpOut(title, lines)
 end
 
 function M.menu()
-  local lines = { "", "<orange>Soft Bun's Oven<reset> <dim_grey>v" .. M.version .. "  ·  `oven` works as well as `sbo`<reset>", "" }
+  local lines = { "", "<oven_flag>Soft Bun's Oven<reset> <oven_dim>v" .. M.version .. "  ·  `oven` works as well as `sbo`<reset>", "" }
   if not M.cfg.enabled then
-    lines[#lines + 1] = "<tomato>formatting is off<reset> <dim_grey>- the game's text is left as it is (sbo config formatting on, or sbo on)<reset>"
+    lines[#lines + 1] = "<tomato>formatting is off<reset> <oven_dim>- the game's text is left as it is (sbo config formatting on, or sbo on)<reset>"
     lines[#lines + 1] = ""
   end
   local w = 0
@@ -16110,37 +16119,37 @@ function M.menu()
     if not e.alias and not e.shortcut then
       local shown = shownOf(e)
       lines[#lines + 1] = "  sbo " .. marked(M.CMDS, e) .. (e.subs and "" or argsText(e.args))
-        .. string.rep(" ", w - ulen(shown) + 3) .. "<dim_grey>" .. (e.desc or "") .. "<reset>"
+        .. string.rep(" ", w - ulen(shown) + 3) .. "<oven_dim>" .. (e.desc or "") .. "<reset>"
     end
   end
   lines[#lines + 1] = ""
-  lines[#lines + 1] = "<dim_grey>sbo help {group}: its commands  ·  sbo help all: everything  ·  shortcuts: sbo compare, sbo upgrades<reset>"
-  lines[#lines + 1] = "<dim_grey>any start of a word works: the bright part is enough (sbo e up = sbo eq upgrades)<reset>"
+  lines[#lines + 1] = "<oven_dim>sbo help {group}: its commands  ·  sbo help all: everything  ·  shortcuts: sbo compare, sbo upgrades<reset>"
+  lines[#lines + 1] = "<oven_dim>any start of a word works: the bright part is enough (sbo e up = sbo eq upgrades)<reset>"
   helpOut("Soft Bun's Oven", lines)
 end
 
 local function groupLines(e, lines)
-  lines[#lines + 1] = "<turquoise>▸ sbo " .. e.name .. "<reset>  <dim_grey>" .. (e.desc or "") .. "<reset>"
+  lines[#lines + 1] = "<oven_slot>▸ sbo " .. e.name .. "<reset>  <oven_dim>" .. (e.desc or "") .. "<reset>"
   if e.run then
-    lines[#lines + 1] = "  sbo " .. marked(M.CMDS, e) .. argsText(e.args) .. "   <dim_grey>on its own: "
+    lines[#lines + 1] = "  sbo " .. marked(M.CMDS, e) .. argsText(e.args) .. "   <oven_dim>on its own: "
       .. ((e.desc or ""):match("^(the [%a ]-):") or "this") .. "<reset>"
   end
   local w = 0
   for _, s in ipairs(e.subs) do w = math.max(w, ulen(s.name .. (s.args and (" " .. s.args:gsub("[{}]", "")) or ""))) end
   for _, s in ipairs(e.subs) do
     local shown = s.name .. (s.args and (" " .. s.args:gsub("[{}]", "")) or "")
-    local nm = s.listOnly and ("<khaki>" .. s.name .. "<reset>") or marked(e.subs, s)
+    local nm = s.listOnly and ("<oven_key>" .. s.name .. "<reset>") or marked(e.subs, s)
     lines[#lines + 1] = "  sbo " .. e.name .. " " .. nm .. argsText(s.args) .. string.rep(" ", w - ulen(shown) + 3)
-      .. "<dim_grey>" .. (s.desc or "") .. "<reset>"
+      .. "<oven_dim>" .. (s.desc or "") .. "<reset>"
   end
 end
 
 function M.groupHelp(e, note)
   local lines = { "" }
-  if note then lines[#lines + 1] = "<dim_grey>" .. note .. "<reset>"; lines[#lines + 1] = "" end
+  if note then lines[#lines + 1] = "<oven_dim>" .. note .. "<reset>"; lines[#lines + 1] = "" end
   groupLines(e, lines)
   lines[#lines + 1] = ""
-  lines[#lines + 1] = "<dim_grey>grey words: fill in your own  ·  [brackets]: optional  ·  a|b: one of them  ·  the bright part is enough<reset>"
+  lines[#lines + 1] = "<oven_dim>grey words: fill in your own  ·  [brackets]: optional  ·  a|b: one of them  ·  the bright part is enough<reset>"
   helpOut("sbo " .. e.name, lines)
 end
 
@@ -16152,7 +16161,7 @@ function M.help(section)
     for _, e in ipairs(M.CMDS) do
       if e.subs then groupLines(e, lines); lines[#lines + 1] = ""
       elseif not e.alias and not e.shortcut then
-        lines[#lines + 1] = "<turquoise>▸ sbo " .. e.name .. "<reset>" .. argsText(e.args) .. "  <dim_grey>" .. (e.desc or "") .. "<reset>"
+        lines[#lines + 1] = "<oven_slot>▸ sbo " .. e.name .. "<reset>" .. argsText(e.args) .. "  <oven_dim>" .. (e.desc or "") .. "<reset>"
         lines[#lines + 1] = ""
       end
     end
@@ -16224,7 +16233,7 @@ function M.notify(msg, secs)
   if M.cfg.bar and M.bar and M.bar.rawEcho then
     pcall(M.drawBar)
   elseif long then
-    M.log("<dim_grey>[sbo] " .. long .. "<reset>")
+    M.log("<oven_dim>[sbo] " .. long .. "<reset>")
   end
 end
 
@@ -16284,8 +16293,8 @@ function M.installFrom(path)
       if sbo and sbo.version then
         local msg = "updated: v" .. old .. " -> v" .. sbo.version
         if sbo.notify then sbo.notify(msg, 10)
-        elseif sbo and sbo.log then sbo.log("<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg)
-        else cecho("\n<dim_grey>[<orange>sbo<dim_grey>]<reset> " .. msg .. "\n") end
+        elseif sbo and sbo.log then sbo.log("<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> " .. msg)
+        else cecho("\n<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> " .. msg .. "\n") end
       end
     end)
   end)
@@ -16519,10 +16528,10 @@ function M.init()
   M.dropPages()
   M.loadSettings()
   if not M.dbOpen() then
-    M.log("<red>[sbo] couldn't open the database (oven.db) - items, loot and kills won't be saved this session<reset>")
+    M.log("<oven_minus>[sbo] couldn't open the database (oven.db) - items, loot and kills won't be saved this session<reset>")
   end
   local okI, errI = pcall(M.importOld)
-  if not okI then M.log("<red>[sbo] moving your saved data into the database failed: " .. tostring(errI) .. "<reset>") end
+  if not okI then M.log("<oven_minus>[sbo] moving your saved data into the database failed: " .. tostring(errI) .. "<reset>") end
   pcall(M.rotateSamples)
   -- 0.20.5 and older saved help-page tag legends ("[Guide] - The character is...") as NPCs
   pcall(M.dbx, "DELETE FROM room_npcs WHERE substr(text, 1, 1) NOT GLOB '[A-Za-z0-9\"'']'")
@@ -16584,8 +16593,8 @@ function M.init()
   if not M.booted then
     M.booted = true
     tempTimer(8, function() M.checkForUpdate() end)
-    M.log("<dim_grey>[<orange>Soft Bun's Oven<dim_grey>] v" .. M.version ..
-      " by softbuns :: preheated :: raw stream in, baked output out :: type <khaki>sbo<dim_grey> for commands<reset>")
+    M.log("<oven_dim>[<oven_flag>Soft Bun's Oven<oven_dim>] v" .. M.version ..
+      " by softbuns :: preheated :: raw stream in, baked output out :: type <oven_key>sbo<oven_dim> for commands<reset>")
   end
 end
 
