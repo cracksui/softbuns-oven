@@ -3276,6 +3276,30 @@ def bar_from_gmcp():
 
 
 @test
+def class_learn():
+    o = Oven()
+    o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end
+      SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      gmcp.char = { status = { state = 'playing' } }; sbo.lastStatusPrompt = '<281hp 696sp 457st>'
+      sbo.userIdle = function() return true end
+      sbo.cfg.char = { class = 'monk' }
+      sbo.cfg.classGroups = { monk = 'mage', mage = 'mage', priest = 'cleric', cleric = 'cleric' }
+      local q = sbo.quietly; sbo.quietly = function(c, k, fn) QFN = fn; return q(c, k, fn) end""")
+    q, total = o.ev("function() return sbo.classLearnQueue() end")()
+    eq(list(q.values()), ["monk monk", "priest priest", "monk monk monk", "monk priest"], "each class doubled, and the two checks")
+    o.lua("sbo.command('class learn')")
+    eq(o.ev("SENT[#SENT]"), "skills analyze monk monk", "asked quietly")
+    o.lua("QFN({ 'Skills analyzed for: monk/monk', '  kick  ...' }); sbo.quietNext = nil; sbo.cap = nil; runTimers()")
+    text = open(o.home + "/oven_classes.txt").read()
+    assert "===== analyze monk monk |" in text and "Skills analyzed for" in text, text
+    # typing stops it; running it again skips what's saved
+    o.lua("sbo.onSend(nil, 'look')")
+    eq(o.ev("sbo.classFetch"), None, "stopped when you typed")
+    q, total = o.ev("function() return sbo.classLearnQueue() end")()
+    eq(list(q.values())[0], "priest priest", "carries on where it stopped")
+
+
+@test
 def score_tail_tidy():
     o = Oven()
     o.lua("sbo.quests['3390'] = { name = 'Cooking Adventurers' }")

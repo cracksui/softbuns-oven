@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.35.0"
+M.version = "1.36.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6460,6 +6460,99 @@ end
 end
 
 ---------------------------------------------------------------------------
+-- sbo class learn: the game's own class analysis (skills analyze), read quietly for every class, so Oven
+-- can plan multi-class paths: each class doubled (its full list, and what redundancy adds to every skill),
+-- plus two checks - your class three times (does a third copy add as much again?) and your class with
+-- another (do different classes' shared skills get the same?). One every 6 seconds while you're idle in
+-- the game; typing stops it, running it again carries on. Saved to oven_classes.txt.
+---------------------------------------------------------------------------
+do
+M.CLASS_LIST = { "barbarian", "bard", "cavalier", "druid", "knave", "monk", "paladin", "priest", "psionic",
+  "ranger", "rogue", "shaman", "valkyrie", "witch", "wizard" }
+
+function M.classList()
+  local out, seen = {}, {}
+  -- from help classes: the classes, not their groups (fighter, cleric, mage, thief)
+  for cls, group in pairs(M.cfg.classGroups or {}) do
+    if cls ~= group and not seen[cls] then seen[cls] = true; out[#out + 1] = cls end
+  end
+  if #out == 0 then for _, c in ipairs(M.CLASS_LIST) do out[#out + 1] = c end end
+  table.sort(out)
+  return out
+end
+
+local function file() return getMudletHomeDir() .. "/oven_classes.txt" end
+local function savedSet()
+  local set = {}
+  local f = io.open(file(), "r")
+  if f then
+    for l in f:lines() do local a = l:match("^===== analyze (.-) |") if a then set[a] = true end end
+    f:close()
+  end
+  return set
+end
+
+function M.classLearnQueue()
+  local me = ((M.cfg.char or {}).class or "monk"):lower()
+  local q = {}
+  for _, c in ipairs(M.classList()) do q[#q + 1] = c .. " " .. c end
+  q[#q + 1] = me .. " " .. me .. " " .. me
+  q[#q + 1] = me .. " " .. (me == "priest" and "wizard" or "priest")
+  local done = savedSet()
+  local out = {}
+  for _, a in ipairs(q) do if not done[a] then out[#out + 1] = a end end
+  return out, #q
+end
+
+function M.classLearn(arg)
+  arg = trim(arg or ""):lower()
+  if arg == "stop" then
+    local C = M.classFetch
+    M.classFetch = nil
+    pcall(M.drawBar)
+    return M.say(C and string.format("class analyses stopped - %d saved (sbo class learn carries on)", C.saved) or "not reading class analyses")
+  end
+  local q, all = M.classLearnQueue()
+  if #q == 0 then return M.say(string.format("all %d class analyses are saved (oven_classes.txt)", all)) end
+  M.classFetch = { queue = q, total = #q, done = 0, saved = 0 }
+  M.say(string.format("reading %d class analyses (skills analyze), one every few seconds while you're idle - %d already saved; typing stops it, sbo class learn carries on",
+    #q, all - #q))
+  M.classLearnNext()
+end
+
+function M.classLearnNext()
+  local C = M.classFetch
+  if not C then return end
+  if C.timer then killTimer(C.timer); C.timer = nil end
+  local function later(s) C.timer = tempTimer(s, function() C.timer = nil; M.classLearnNext() end) end
+  if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return later(5) end
+  if M.cap or M.quietNext or M.helpFetch or M.fighting() or M.walk or M.running or not M.userIdle(2) then return later(1.5) end
+  local a = table.remove(C.queue, 1)
+  if not a then
+    M.classFetch = nil
+    pcall(M.drawBar)
+    return M.say(string.format("class analyses done: %d saved to oven_classes.txt", C.saved))
+  end
+  M.quietly("skills analyze " .. a, "skills", function(plain)
+    if M.classFetch ~= C then return end
+    C.done = C.done + 1
+    pcall(M.drawBar)
+    if plain and #plain > 0 then
+      local f = io.open(file(), "a")
+      if f then
+        f:write("===== analyze " .. a .. " | " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n")
+        for _, l in ipairs(plain) do if not l:match("^%s*%[C%]ontinue") then f:write(l, "\n") end end
+        f:write("===== end\n\n")
+        f:close()
+        C.saved = C.saved + 1
+      end
+    end
+    later(6)
+  end)
+end
+end
+
+---------------------------------------------------------------------------
 -- The practice dummy: real damage numbers for your attacks. It says its health every round and
 -- is whole again by the next, so 10000 minus what it says is exactly that round's damage.
 -- A round can hold several landings (two kicks sent quickly, two casts, "You cast spark one
@@ -8796,6 +8889,18 @@ function M.onSend(_, cmd)
     end
     -- reading help pages in the background: you come first - it stops, and the page it was on
     -- isn't swallowing your command's output
+    if M.classFetch then
+      local C = M.classFetch
+      M.classFetch = nil
+      if C.timer then killTimer(C.timer) end
+      if M.cap and M.cap.quiet and M.cap.kind == "skills" then
+        M.cap.gag, M.cap.quiet, M.cap.quietKind, M.cap.quietFn = false, false, nil, nil
+        M.cap = nil
+      end
+      M.quietNext = nil
+      pcall(M.drawBar)
+      tempTimer(0, function() M.say(string.format("class analyses paused (you typed) - %d saved; sbo class learn carries on", C.saved)) end)
+    end
     if M.helpFetch then
       local H = M.helpFetch
       M.helpFetch = nil
@@ -10784,7 +10889,7 @@ function M.onLineWork()
       tempTimer(0, function() M.finish("pager") end)
       return
     end
-    if cap and cap.kind == "help" and (cap.pages or 1) < 30 then
+    if cap and ((cap.kind == "help" and (cap.pages or 1) < 30) or (cap.kind == "skills" and cap.quiet and (cap.pages or 1) < 20)) then
       -- keep reading the help page into the window: answer the pager ourselves
       cap.pages = (cap.pages or 1) + 1
       if cap.gag then deleteLine() end
@@ -14203,6 +14308,10 @@ M.CMDS = {
     { name = "build", args = "[{name}|set|reset|auto]", desc = "gear-score weights (set: a stat and its weight)",
       run = function(r) return legacy("build " .. r) end },
   } },
+  { name = "class", min = 2, desc = "multi-class planning from the game's own class analyses", subs = {
+    { name = "learn", args = "[stop]", desc = "read skills analyze for every class (quietly, while you're idle) into oven_classes.txt",
+      run = function(r) return M.classLearn(r) end },
+  } },
   { name = "quest", desc = "the quest panel: pin quests, go to the next step", run = function() return M.questShow() end, subs = {
     { name = "pin", args = "{id|all}", desc = "put quests on the quest HUD", run = function(r) return legacy("quest pin " .. r) end },
     { name = "unpin", args = "{id|all}", desc = "take them off", run = function(r) return legacy("quest unpin " .. r) end },
@@ -15132,7 +15241,7 @@ end
 M.FILL = { "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" }
 function M.helpProgressMark()
   local FILL = M.FILL
-  local HF = M.helpFetch
+  local HF = M.helpFetch or M.classFetch
   if not HF or (HF.total or 0) <= 0 then return nil end
   local f = math.min(1, (HF.done or 0) / HF.total)
   return FILL[math.max(1, math.ceil(f * #FILL))]
