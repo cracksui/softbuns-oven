@@ -3303,6 +3303,20 @@ def bar_from_gmcp():
 
 
 @test
+def tabs_stay_put():
+    o = Oven()
+    o.lua("""sbo.cfg.window = true; sbo.cfg.tabs = true; sbo.createWindow(); sbo.tabShow('chat')
+      sbo.lastUserCmdAt = -1000""")
+    # something Oven shows by itself: the Inspector gets it, the Chat tab stays in front, the Inspector marked
+    o.lua("sbo.viewOut({ { { 'white', 'a looked-at item' } } }, {})")
+    eq(o.ev("sbo.tabOn"), "chat", "not taken away from Chat")
+    assert o.ev("sbo.tabNew.view"), "the Inspector marked as new"
+    # something you just asked for: it comes to the front
+    o.lua("sbo.lastUserCmdAt = os.clock and (getEpoch and getEpoch() or os.clock()) or 0; sbo.viewOut({ { { 'white', 'your eq' } } }, {})")
+    eq(o.ev("sbo.tabOn"), "view", "what you asked for comes forward")
+
+
+@test
 def formation_chat():
     o = Oven()
     for line, want in [("Roarke tells the formation 'like... wtf lol'", ("Formation", "Roarke", "like... wtf lol")),

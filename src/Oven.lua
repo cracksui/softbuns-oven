@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.42.2"
+M.version = "1.43.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4252,7 +4252,7 @@ function M.pageShow(pg, lines, fmt, links)
     end
     lab:echo(table.concat(htmlRows, "<br>"))
     local fn = ln[2]
-    lab:setClickCallback(function() fn() end)
+    lab:setClickCallback(function() M.lastUserCmdAt = now(); fn() end)
     lab:move(0, linkY)
     lab:resize("100%", rowH * #rowsOf)
     linkY = linkY + rowH * #rowsOf
@@ -4429,8 +4429,15 @@ end
 -- putting something in a tab: draw it with the tab in front, then leave it there - or, with
 -- sbo config tabs.auto off, go back to the tab you were on and mark this one
 local function tabBegin(key) local prev = M.tabOn; M.tabShow(key, true); return prev end
+-- you asked for it: a command you typed (the game's or Oven's) or a click, in the last few seconds
+function M.userAsked()
+  return M.typing or (now() - (M.lastUserCmdAt or 0)) <= 5
+end
 local function tabEnd(key, prev, asked)
-  if asked or M.cfg.tabAuto ~= false or not prev or prev == key then return M.tabShow(key) end
+  -- (tabs.auto on: what you asked for comes to the front; what Oven brings by itself - an item it looked at
+  -- for you, a page redrawn - stays put and marks its tab, so the tab you're reading isn't taken away)
+  if asked == nil then asked = M.cfg.tabAuto ~= false and M.userAsked() end
+  if asked or not prev or prev == key then return M.tabShow(key) end
   M.tabNew[key] = true
   M.tabShow(prev, true)
 end
@@ -12262,7 +12269,7 @@ function M.createMapPanel()
     b:echo(text)
     pcall(function() b:setToolTip(tip) end)
     pcall(function() b:setCursor("PointingHand") end)
-    b:setClickCallback(function() fn() end)
+    b:setClickCallback(function() M.lastUserCmdAt = now(); fn() end)
     return b
   end
   -- world / local: the game's world map, or Mudlet's map of rooms
@@ -15295,6 +15302,7 @@ end
 
 function M.typedCommand(args)
   M.typing = true
+  M.lastUserCmdAt = now()
   local ok, err = pcall(M.command, args)
   M.typing = false
   if not ok then say("that command failed: " .. tostring(err)) end
