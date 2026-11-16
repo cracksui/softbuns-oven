@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.38.1"
+M.version = "1.39.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6931,7 +6931,27 @@ M.CLASS_GROUP = { barbarian = "fighter", cavalier = "fighter", valkyrie = "fight
 M.CLASS_TOURMALINES = { 250, 1250, 3000 }
 -- the class pages (help monk…): each class's primary attribute
 M.CLASS_PRIME = { monk = "knowledge", bard = "luck", cavalier = "vitality", druid = "knowledge", paladin = "courage",
-  priest = "wisdom", witch = "wisdom", valkyrie = "courage", barbarian = "strength" }
+  priest = "wisdom", witch = "wisdom", valkyrie = "courage", barbarian = "strength", shaman = "wisdom",
+  wizard = "knowledge", psionic = "sanity", rogue = "agility" }
+-- help 1101 (experience): what a level gives - from your maximum attributes, by class group, less one for each
+-- class you have (±1), at least 5 hp / sp / st and 4 practices. Practices for mages +2-3 (+1 in a first class),
+-- clerics +1-2 (+1-2 in a first class): the middle is used. Practiced skills also rise when you level a later
+-- class, the more the higher its primary attribute (steps at 10, 15, 21, 24, 25)
+M.PRIME_STEPS = { 10, 15, 21, 24, 25 }
+function M.classLevelGains(cls, nClasses, first)
+  local stats = (M.cfg.char or {}).stats or {}
+  local function mx(k) local s2 = stats[k]; return s2 and tonumber(s2.max) end
+  local vit, kno, wis = mx("vitality"), mx("knowledge"), mx("wisdom")
+  if not (vit and kno and wis) then return nil end
+  local hp, sp, st, pr = 4 * vit / 13, 4 * kno / 12, 4 * vit / 11, 4 * wis / 5
+  local g = M.CLASS_GROUP[cls]
+  if g == "fighter" then hp, sp, st = hp * 2, sp * 0.8, st * 1.5
+  elseif g == "mage" then sp = sp * 2; pr = pr + 2.5 + (first and 1 or 0)
+  elseif g == "cleric" then sp = sp * 1.5; pr = pr + 1.5 + (first and 1.5 or 0)
+  elseif g == "thief" then hp = hp * 1.5 end
+  local n = nClasses or 1
+  return math.max(5, hp - n), math.max(5, sp - n), math.max(5, st - n), math.max(4, pr - n)
+end
 -- help 1613: SCC - each class's baseline, the average of two attributes, so much a level; a path's SCC is
 -- the average over its classes (+ the number of classes while SP is above 90%), at most 65 + 7 a class
 M.CLASS_SCC = {
@@ -7085,6 +7105,26 @@ function M.classPlan(arg)
         { C.dim, string.format(" (at level 60 in each, your attributes now; %.1f before the cap of %d)", raw, cap) } }
       out[#out + 1] = { { C.dim, "primary attributes: " }, { C.text, table.concat(prime, " · ") } }
     end
+    -- what levelling each class gives (help experience), and where your primary attribute stands
+    local stats = (M.cfg.char or {}).stats or {}
+    local lv = {}
+    for i, c in ipairs(path) do
+      local hp, sp, st, pr = M.classLevelGains(c, i, i == 1)
+      if hp then
+        local pa = M.CLASS_PRIME[c]
+        local cur = pa and stats[pa] and tonumber(stats[pa].cur)
+        local nextStep
+        for _, x in ipairs(M.PRIME_STEPS) do if cur and cur < x then nextStep = x; break end end
+        lv[#lv + 1] = { { C.key, "  " .. pad(i .. ". " .. c, 14) }, { C.text, string.format("a level %d hp · %d sp · %d st · %d practices", hp, sp, st, pr) },
+          { C.dim, string.format("   60 levels: %d hp · %d sp · %d st · %d practices", hp * 60, sp * 60, st * 60, pr * 60) },
+          { C.dim, (pa and cur) and string.format("   %s %d%s", pa, cur, nextStep and (" (next step at " .. nextStep .. ")") or " (top step)") or "" } }
+      end
+    end
+    if #lv > 0 then
+      out[#out + 1] = {}
+      out[#out + 1] = { { C.title, "Levelling" }, { C.dim, "   help experience: from your maximum attributes, less one a class you have" } }
+      for _, l in ipairs(lv) do out[#out + 1] = l end
+    end
     -- the boosted ones, most first
     local list = {}
     for name, e in pairs(sk) do if e.skp > 0 then list[#list + 1] = { name = name, e = e } end end
@@ -7132,24 +7172,28 @@ function M.classPlan(arg)
     local newS, newP = 0, 0
     local had = M.classPathSkills(mine)
     for name, e in pairs(sk) do if not had[name] then if e.kind == "s" then newS = newS + 1 else newP = newP + 1 end end end
+    local hp, sp, st, pr = M.classLevelGains(c, #path, false)
     rows[#rows + 1] = { c = c, path = path, ok = raceOk(path), add = t.skp - base.skp, boosted = t.boosted - base.boosted, newS = newS, newP = newP,
-      scc = M.classPathScc(path), token = M.classPathToken(path) }
+      scc = M.classPathScc(path), token = M.classPathToken(path), gains = hp and string.format("%d/%d/%d/%d", hp, sp, st, pr) or "?" }
   end
   table.sort(rows, function(a, b) if a.ok ~= b.ok then return a.ok end if a.add ~= b.add then return a.add > b.add end return a.c < b.c end)
   local out = { header("class", "", width, "Your next class: " .. table.concat(mine, " → ") .. " → ?") }
-  out[#out + 1] = { { C.dim, "  " .. pad("class", 12) .. pad("skill power", 13) .. pad("boosted", 9) .. pad("new spells", 12) .. pad("new profs", 11) .. pad("SCC", 6) .. pad("primary", 13) .. "race · token" } }
+  out[#out + 1] = { { C.dim, "  " .. pad("class", 11) .. pad("skill pwr", 10) .. pad("boosted", 8) .. pad("new sp/pr", 10) .. pad("SCC", 5)
+    .. pad("a level", 12) .. pad("primary", 12) .. "race · token" } }
   local links = {}
   for _, r in ipairs(rows) do
-    out[#out + 1] = { { r.ok and C.key or C.dim, "  " .. pad(r.c, 12) }, { r.ok and C.plus or C.dim, pad("+" .. r.add, 13) },
-      { C.num, pad(tostring(r.boosted), 9) }, { C.num, pad(tostring(r.newS), 12) }, { C.num, pad(tostring(r.newP), 11) },
-      { C.num, pad(r.scc and tostring(math.floor(r.scc)) or "?", 6) },
-      { C.text, pad(M.CLASS_PRIME[r.c] or "?", 13) },
+    out[#out + 1] = { { r.ok and C.key or C.dim, "  " .. pad(r.c, 11) }, { r.ok and C.plus or C.dim, pad("+" .. r.add, 10) },
+      { C.num, pad(tostring(r.boosted), 8) }, { C.num, pad(r.newS .. "/" .. r.newP, 10) },
+      { C.num, pad(r.scc and tostring(math.floor(r.scc)) or "?", 5) },
+      { C.text, pad(r.gains, 12) },
+      { C.text, pad(M.CLASS_PRIME[r.c] or "?", 12) },
       { r.ok and C.dim or C.minus, r.ok and "ok" or ("not " .. race) }, { C.flag, r.token and " · token" or "" } }
     local p = table.concat(r.path, " ")
     links[#links + 1] = { "sbo class plan " .. p, function() M.classPlan(p) end }
   end
   out[#out + 1] = {}
-  out[#out + 1] = { { C.dim, "skill power: what redundancy adds over your path now · SCC at level 60 in each class, your attributes now" } }
+  out[#out + 1] = { { C.dim, "skill pwr: what redundancy adds over your path now · SCC at level 60 in each class, your attributes now" } }
+  out[#out + 1] = { { C.dim, "a level: hp/sp/st/practices each level of that class (help experience: your maximum attributes, its group, your number of classes)" } }
   out[#out + 1] = { { C.dim, "token: a group twice (or a class again) needs a greater token of multiclassing · sbo class plan " .. table.concat(mine, " ") .. " <class> … for a path in full" } }
   M.viewOut(out, links)
 end

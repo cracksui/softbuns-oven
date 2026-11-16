@@ -3306,6 +3306,13 @@ def class_plan():
     o.lua("sbo.classPlan('monk wizard')")
     text = o.ev("(function() local s = {} for _, r in ipairs(OUT) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end)()")
     assert "needs a greater token" in text and "250 black tourmalines" in text and "SCC:" in text, text
+    # what a level gives (help experience): a monk with max vitality 19, knowledge 21, wisdom 16, as a first class:
+    # hp 4*19/13 = 5.8 - 1, sp 4*21/12*2 = 14 - 1, st 4*19/11 = 6.9 - 1, practices 4*16/5 + 2.5 + 1 = 16.3 - 1
+    o.lua("sbo.cfg.char.stats = { knowledge = { cur = 22, max = 21 }, vitality = { cur = 17, max = 19 }, wisdom = { cur = 14, max = 16 }, courage = { cur = 14, max = 16 }, personality = { cur = 9, max = 14 } }")
+    hp, sp, st, pr = o.ev("function() return sbo.classLevelGains('monk', 1, true) end")()
+    eq((round(hp, 2), round(sp, 2), round(st, 2), round(pr, 2)), (5.0, 13.0, 5.91, 15.3), "monk, a first class (hp at its minimum 5)")
+    hp, sp, st, pr = o.ev("function() return sbo.classLevelGains('paladin', 2, false) end")()
+    eq((round(hp, 2), round(sp, 2)), (9.69, 5.0), "paladin second: fighter hp ×2, sp ×0.8 (at the minimum)")
 
 
 @test
