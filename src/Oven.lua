@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.41.0"
+M.version = "1.41.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3643,16 +3643,21 @@ function M.layoutQuestHud()
   -- the title bar: where to grab it
   if not M.questTitle then
     M.questTitle = Geyser.Label:new({ name = "ovenQuestTitle", x = 0, y = 0, width = 100, height = titleH })
-    M.questTitle:setStyleSheet("background-color: rgba(255,255,255,18); border-bottom: 1px solid rgba(255,255,255,40); "
-      .. "border-top-left-radius: 6px; border-top-right-radius: 6px; padding-left: 8px; qproperty-alignment: 'AlignVCenter | AlignLeft';")
+    -- solid and lighter than the cards, so it reads as the handle
+    M.questTitle:setStyleSheet("background-color: rgb(58,62,88); border: 1px solid rgba(160,170,220,140); "
+      .. "border-top-left-radius: 6px; border-top-right-radius: 6px; padding-left: 8px; padding-right: 8px;")
     pcall(function() M.questTitle:setToolTip("drag to move the quest panel") end)
   end
   M.hudCallbacks(M.questTitle, nil, { drag = true })
   local n = 0
   for _ in pairs(M.cfg.questPins or {}) do n = n + 1 end
   local font = (pcall(getFont) and getFont()) or "monospace"
-  M.questTitle:rawEcho(string.format("<span style=\"font-family:'%s'; font-size:%dpt;\">%s%s</span>", font,
-    math.max(8, (M.cfg.fontSize or 10) - 1), span(C.dim, "⠿ "), span(C.title, "Quests") .. span(C.dim, "  (" .. n .. ")")))
+  local fs = math.max(8, (M.cfg.fontSize or 10) - 1)
+  M.questTitle:rawEcho(string.format("<table width=\"100%%\" cellspacing=\"0\" cellpadding=\"0\"><tr>"
+    .. "<td style=\"font-family:'%s'; font-size:%dpt;\">%s%s</td>"
+    .. "<td align=\"right\" style=\"font-family:'%s'; font-size:%dpt;\">%s</td></tr></table>",
+    font, fs, span(C.slot, "⠿⠿ "), span(C.title, "Quests") .. span(C.text, "  (" .. n .. ")"),
+    font, fs, span(C.text, "drag to move")))
   M.questTitle:move(x + 1, y + 1); M.questTitle:resize(w - 2, titleH); M.questTitle:show()
   M.questHud:move(x, y)
   M.questHud:resize(w, h)
