@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.40.1"
+M.version = "1.40.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3119,7 +3119,9 @@ local function questCardHtml(id, Q)
     local done = finished and Q.total or (Q.done or 0)
     local k = math.floor(n * math.min(done, Q.total) / math.max(1, Q.total) + 0.5)
     local col = finished and C.plus or (M.REC or C.slot)
-    bar = span(col, string.rep("█", k)) .. span(C.dim, string.rep("░", n - k)) .. span(C.num, string.format(" %d/%d", done, Q.total))
+    -- (the count padded, so titles start in the same place)
+    local cnt = string.format(" %d/%d", done, Q.total)
+    bar = span(col, string.rep("█", k)) .. span(C.dim, string.rep("░", n - k)) .. span(C.num, cnt) .. string.rep("&nbsp;", math.max(0, 6 - ulen(cnt)))
   end
   local titleW = ulen(name) + ulen(id) + 4 + (Q.total and 13 or 0) + (finished and 2 or 0)
   local timeHtml, timeW
@@ -3128,14 +3130,26 @@ local function questCardHtml(id, Q)
     local txt = M.timeLeftText(left)
     timeHtml, timeW = span(M.timeLeftColor(left), txt), ulen(txt)
   end
-  local together = timeHtml and titleW + 3 + timeW <= HUD_WRAP + 3
   local folded = (M.cfg.questFolded or {})[tostring(id)]
-  titleW = titleW + 2
-  add(span(C.slot, folded and "▸ " or "▾ ") .. (finished and span(C.plus, "✓ ") or "") .. "<b>" .. span(C.num, "#" .. id) .. "</b> "
-    .. span(finished and C.dim or C.item, name) .. "&nbsp;&nbsp;" .. bar
-    .. (together and ("&nbsp;&nbsp;&nbsp;" .. timeHtml) or ""), titleW + (together and (3 + timeW) or 0))
-  acts[#html] = { id = id, fold = true }
-  if timeHtml and not together then add("   " .. timeHtml, timeW + 3) end
+  -- the same order on every quest: fold mark, number (padded, so the bars line up), progress, then the title
+  -- (wrapped under itself when it's long), and the time left after it when there's room
+  local idTxt = "#" .. id
+  local head = span(C.slot, folded and "▸ " or "▾ ") .. "<b>" .. span(C.num, idTxt) .. "</b>"
+    .. string.rep("&nbsp;", math.max(1, 6 - ulen(idTxt)))
+  local headW = 2 + math.max(ulen(idTxt) + 1, 6)
+  if Q.total then head = head .. bar .. "&nbsp;&nbsp;"; headW = headW + 8 + math.max(6, ulen(string.format(" %d/%d", finished and Q.total or (Q.done or 0), Q.total))) + 2 end
+  if finished then head = head .. span(C.plus, "✓ "); headW = headW + 2 end
+  local nameLines = hudWrap(name, HUD_WRAP - headW, 0)
+  local lastW = headW + ulen(nameLines[#nameLines] or "")
+  local together = timeHtml and lastW + 3 + timeW <= HUD_WRAP
+  for i, nl in ipairs(nameLines) do
+    local h = (i == 1) and head or string.rep("&nbsp;", headW)
+    h = h .. span(finished and C.dim or C.item, nl)
+    if i == #nameLines and together then h = h .. "&nbsp;&nbsp;&nbsp;" .. timeHtml end
+    add(h, headW + ulen(nl) + ((i == #nameLines and together) and (3 + timeW) or 0))
+    acts[#html] = { id = id, fold = true }
+  end
+  if timeHtml and not together then add(string.rep("&nbsp;", headW) .. timeHtml, timeW + headW) end
   -- folded: the title (with its progress and time) is all
   if folded then return html, widest, acts end
   if finished then
@@ -3404,7 +3418,8 @@ function M.drawQuestTracker()
   end
   M.questCardLayout = layout
   -- a fixed width (wider only for a line that doesn't wrap, like a long quest name)
-  M.questHudSize = { w = math.min(600, math.max(HUD_COLS, widest + 3) * cw + 24), h = total }
+  -- one width always (long lines wrap): it doesn't grow with whatever line is longest
+  M.questHudSize = { w = HUD_COLS * cw + 24, h = total }
   M.questHud:show()
   M.layoutQuestHud()   -- shows the cards that fit
   M.raiseQuestHud()
