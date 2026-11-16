@@ -3348,6 +3348,16 @@ def levelling_log():
 
 
 @test
+def scc_multiclass():
+    o = Oven()
+    # a monk 60, now a barbarian 45 (knowledge 22, vitality 18): score says SCC 79 - the parts added, capped
+    o.lua("""sbo.cfg.char = { class = 'barbarian', level = 45, path = { 'monk', 'barbarian' },
+      stats = { knowledge = { cur = 22, max = 22 }, vitality = { cur = 18, max = 19 } } }""")
+    scc, cap, raw = o.ev("function() local a, b, c = sbo.sccFor() return a, b, c end")()
+    eq((round(raw, 1), cap, scc), (96.7, 79, 79), "78.2 + 18.5, capped at 65 + 7 × 2")
+
+
+@test
 def one_palette():
     # no colour outside the palette: hex codes and "<r,g,b>" only in the helpers and the panels' frames
     import re as _re
@@ -3434,7 +3444,7 @@ def class_plan():
     scc, cap, raw = o.ev("function() return sbo.classPathScc({ 'monk' }) end")()
     eq((round(raw, 1), cap, scc), (77.7, 72, 72), "monk alone")
     scc, cap, raw = o.ev("function() return sbo.classPathScc({ 'monk', 'priest' }) end")()
-    eq((round(raw, 2), cap), (69.35, 79), "monk, priest: the average of the two")
+    eq((round(raw, 2), cap, scc), (138.7, 79, 79), "monk, priest: the two added (what the game does), capped")
     eq((o.ev("sbo.classPathToken({ 'monk', 'priest' })"), o.ev("sbo.classPathToken({ 'monk', 'wizard' })"), o.ev("sbo.classPathToken({ 'monk', 'monk' })")),
        (False, True, True), "two mages, or monk again: a token")
     o.lua("sbo.classPlan('monk wizard')")

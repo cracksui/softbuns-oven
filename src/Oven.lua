@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.47.0"
+M.version = "1.47.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5644,16 +5644,30 @@ M.SCC_CLASS = {
   druid = { 8, "wisdom", "personality", 0.65 }, shaman = { 8, "wisdom", "luck", 0.65 },
   paladin = { 5, "courage", "vitality", 0.5 }, bard = { 5, "personality", "luck", 0.53 },
 }
--- your SCC (single-class: the formula as written), what it would be with `extra` attribute points, and the cap
+-- your SCC (help 1613), what it would be with `extra` attribute points, and the cap. A multi-class path: each
+-- class's baseline + the average of its two attributes + so much a level (a finished class at 60, the one
+-- you're in at your level now), ADDED (help 1613 says divided by the number of classes, but the game adds them:
+-- a monk 60 / barbarian 45 with knowledge 22, vitality 18 has 78.2 + 18.5 - score shows the cap, 79, not the
+-- 48 an average would give); at most 65 + 7 a class. Fighters and thieves have a baseline of 5, .3 a level
 function M.sccFor(extra)
   local c = M.cfg.char or {}
-  local k = M.SCC_CLASS[(c.class or ""):lower()]
-  if not k then return nil end
+  local path = M.myClassPath and M.myClassPath() or {}
+  if #path == 0 and c.class then path = { c.class:lower() } end
+  if #path == 0 then return nil end
   local st = c.stats or {}
   local function v(a) return math.min((st[a] or {}).max or 99, ((st[a] or {}).cur or 0) + ((extra or {})[a] or 0)) end
-  local raw = k[1] + (v(k[2]) + v(k[3])) / 2 + k[4] * (tonumber(c.level) or 0)
-  local cap = 65 + 7
-  return math.min(cap, raw), cap, raw, k
+  local sum, kMain = 0, nil
+  for i, cls in ipairs(path) do
+    local k = M.SCC_CLASS[cls] or (M.CLASS_SCC and M.CLASS_SCC[cls] and { M.CLASS_SCC[cls][1], M.CLASS_SCC[cls][2], M.CLASS_SCC[cls][3], M.CLASS_SCC[cls][4] })
+    if not k then return nil end
+    local lvl = (i == #path) and (tonumber(c.level) or 0) or 60
+    local part = k[1] + k[4] * lvl
+    if k[2] and k[3] then part = part + (v(k[2]) + v(k[3])) / 2; kMain = kMain or k end
+    sum = sum + part
+  end
+  local raw = sum
+  local cap = 65 + 7 * #path
+  return math.min(cap, raw), cap, raw, kMain or { 0, nil, nil, 0 }
 end
 
 -- help 2258: attacks per round from your extra-attack skills and your attack speed
@@ -7048,7 +7062,7 @@ function M.classLevelGains(cls, nClasses, first)
   return math.max(5, hp - n), math.max(5, sp - n), math.max(5, st - n), math.max(4, pr - n)
 end
 -- help 1613: SCC - each class's baseline, the average of two attributes, so much a level; a path's SCC is
--- the average over its classes (+ the number of classes while SP is above 90%), at most 65 + 7 a class
+-- the classes' parts ADDED (help 1613 says averaged; the game adds - see M.sccFor), at most 65 + 7 a class
 M.CLASS_SCC = {
   ranger = { 20, "knowledge", "courage", .71 }, wizard = { 17, "knowledge", "personality", .72 },
   psionic = { 17, "knowledge", "sanity", .72 }, monk = { 15, "knowledge", "vitality", .72 },
@@ -7074,7 +7088,8 @@ function M.classPathScc(path, level)
     end
     sum = sum + v
   end
-  local scc = sum / #path
+  -- (added, not averaged: what the game does, whatever help 1613 says - see M.sccFor)
+  local scc = sum
   return math.min(scc, 65 + 7 * #path), 65 + 7 * #path, scc
 end
 -- does a path keep to one class from each group (or does it take a greater token of multiclassing)?
