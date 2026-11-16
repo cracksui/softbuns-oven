@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.39.0"
+M.version = "1.39.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6932,7 +6932,7 @@ M.CLASS_TOURMALINES = { 250, 1250, 3000 }
 -- the class pages (help monk…): each class's primary attribute
 M.CLASS_PRIME = { monk = "knowledge", bard = "luck", cavalier = "vitality", druid = "knowledge", paladin = "courage",
   priest = "wisdom", witch = "wisdom", valkyrie = "courage", barbarian = "strength", shaman = "wisdom",
-  wizard = "knowledge", psionic = "sanity", rogue = "agility" }
+  wizard = "knowledge", psionic = "sanity", rogue = "agility", knave = "personality" }
 -- help 1101 (experience): what a level gives - from your maximum attributes, by class group, less one for each
 -- class you have (±1), at least 5 hp / sp / st and 4 practices. Practices for mages +2-3 (+1 in a first class),
 -- clerics +1-2 (+1-2 in a first class): the middle is used. Practiced skills also rise when you level a later
