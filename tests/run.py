@@ -3303,6 +3303,24 @@ def bar_from_gmcp():
 
 
 @test
+def shop_and_quest_id_like_look():
+    o = Oven()
+    for cmd, kind in [("sh id 9", "item"), ("shop identify 3", "item"), ("quest id 2", "item"), ("que ident 12", "item"),
+                      ("sh li", "shop"), ("shop list", "shop"), ("quest info", "quest"), ("quest request", "quest")]:
+        eq(o.ev("function(c) return (sbo.classify(c)) end")(cmd), kind, cmd)
+    # the reply: the shopkeeper's two lines, then the item - laid out like a look, its name the title
+    lines = ["You ask the trainer of neophytes for a description of one of her wares.", "The trainer of neophytes tells you:",
+      "Item 'a pair of cleric's leggings' is type armor, alignment 0, made of bronze (in (new) condition),[EQDB]",
+      "has keywords 'pair clerics leggings', equipped on the legs.",
+      "This item weighs 0 stones and 25 pebbles, and is valued at 29,800 gold. {Cat. 5}",
+      "Armor resistance is 23.", "Affects sp-regen by 10."]
+    o.L.globals().IL = o.L.table_from(lines)
+    text = o.ev("""(function() local raw = {} for _, l in ipairs(IL) do raw[#raw+1] = l end local l = sbo.format('item', '9', raw, 100)
+      local s = {} for _, r in ipairs(l) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end)()""")
+    assert "a pair of cleric's leggings" in text.split("\n")[0] and "Armor" in text and "sp-regen" in text, text
+
+
+@test
 def levelling_log():
     o = Oven()
     o.lua("""sbo.cfg.char = { class = 'monk' }

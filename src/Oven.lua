@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.44.0"
+M.version = "1.44.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -375,6 +375,11 @@ M.commands = {
   { word = "identify",  min = 2, kind = "item",     needsArgs = true },
   { word = "lore",      min = 3, kind = "item",     needsArgs = true },
   { word = "read",      min = 3, kind = "item",     needsArgs = true },  -- "read sign": the same reply as look
+  -- "shop id 9" / "quest id 3": the shopkeeper's (or questmaster's) description of an item - laid out like a look
+  { word = "shop",      min = 2, kind = "item",
+    argsOk = function(r) local w = r:match("^(%S+)%s+%S") return w ~= nil and #w >= 2 and ("identify"):sub(1, #w) == w end },
+  { word = "quest",     min = 3, kind = "item",
+    argsOk = function(r) local w = r:match("^(%S+)%s+%S") return w ~= nil and #w >= 2 and ("identify"):sub(1, #w) == w end },
   { word = "score",     min = 2, kind = "score" },    -- "sc" is score in Materia Magica
   { word = "affects",   min = 2, kind = "affects" },
   { word = "help",      min = 3, kind = "help" },     -- shown as-is in the help window
@@ -408,10 +413,11 @@ function M.classify(cmd)
   if not verb or verb == "" then return nil end
   if verb == "?" then return "help", rest end
   for _, def in ipairs(M.commands) do
-    if #verb >= def.min and def.word:sub(1, #verb) == verb and not (def.except and def.except[verb]) then
+    -- (a word can have several entries, told apart by what follows it: shop list / shop id)
+    if #verb >= def.min and def.word:sub(1, #verb) == verb and not (def.except and def.except[verb])
+       and (not def.argsOk or def.argsOk(rest)) then
       if def.needsArgs and rest == "" then return nil end
       if def.needsNoArgs and rest ~= "" then return nil end
-      if def.argsOk and not def.argsOk(rest) then return nil end
       if def.word == "look" or def.word == "examine" then
         if directions[rest] then return nil end
         local inside = rest:match("^in%s+(.+)$")
