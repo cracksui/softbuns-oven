@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.40.0"
+M.version = "1.40.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10846,6 +10846,13 @@ M.addChatPattern("tell", function(l)
   end
   who, msg = l:match("^You tell (%u[%w%-']*),? '(.*)'%s*$")
   if who then return "Tells", "you → " .. who, msg end
+end)
+-- formation chat: "Roarke tells the formation 'like... wtf lol'" / "You tell the formation 'yoy yoy'"
+M.addChatPattern("formation", function(l)
+  local who, msg = l:match("^(%u[%w%-']*) tells the formation,? '(.*)'%s*$")
+  if who then return "Formation", who, msg end
+  msg = l:match("^You tell the formation,? '(.*)'%s*$")
+  if msg then return "Formation", "you", msg end
 end)
 -- says, from players (one-word names) and you
 M.addChatPattern("say", function(l)

@@ -3293,6 +3293,15 @@ def bar_from_gmcp():
 
 
 @test
+def formation_chat():
+    o = Oven()
+    for line, want in [("Roarke tells the formation 'like... wtf lol'", ("Formation", "Roarke", "like... wtf lol")),
+                       ("You tell the formation 'yoy yoy'", ("Formation", "you", "yoy yoy"))]:
+        got = o.ev("function(l) return sbo.chatFind(l) end")(line)
+        eq(tuple(got) if isinstance(got, tuple) else got, want, line)
+
+
+@test
 def class_plan():
     o = Oven()
     # the redundancy rule, against the game's own analyses
