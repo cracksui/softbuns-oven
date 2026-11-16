@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.51.3"
+M.version = "1.51.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11646,13 +11646,13 @@ end
 -- is Shift held right now? (Mudlet's getKeyboardModifiers: a number of Qt modifier flags, or a table)
 function M.shiftHeld()
   local ok, m = pcall(getKeyboardModifiers)
+  M.lastModifiers = ok and m or nil
   if not ok or m == nil then return nil end
+  -- only a clear "Shift is held" counts (a misread made every Enter save): Qt's flags as a number, or a
+  -- table with shift = true; anything else is "not known"
   if type(m) == "number" then return math.floor(m / 0x02000000) % 2 == 1 end
-  if type(m) == "table" then
-    if m.shift or m.Shift then return true end
-    for _, v in pairs(m) do if tostring(v):lower():find("shift", 1, true) then return true end end
-    return false
-  end
+  if type(m) == "table" and (m.shift == true or m.Shift == true) then return true end
+  if type(m) == "table" and (m.shift == false or m.Shift == false) then return false end
   return nil
 end
 
