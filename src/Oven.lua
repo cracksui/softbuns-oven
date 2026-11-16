@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.50.1"
+M.version = "1.51.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11463,6 +11463,22 @@ end
 function M.buildNotes(page)
   local box = Geyser.VBox:new({ name = "ovenNotesBox", x = 0, y = 0, width = "100%", height = "100%" }, page)
   M.notesBox, M.notesBoxHeight = box, 26
+  -- a bar that stays put at the top: + New note (and, while editing, Save / Cancel and what the keys do)
+  local bar = Geyser.HBox:new({ name = "ovenNotesBar", height = 28, v_policy = Geyser.Fixed }, box)
+  local btnStyle = "QLabel { background-color: rgba(30,30,42,255); color: " .. M.hex("slot") .. "; border: 1px solid #333;"
+    .. " qproperty-alignment: 'AlignCenter'; } QLabel::hover { background-color: rgba(64,64,90,255); color: " .. M.hex("item") .. "; }"
+  local function button(name, text, w, fn)
+    local b = Geyser.Label:new({ name = name, width = w, h_policy = Geyser.Fixed }, bar)
+    b:setStyleSheet(btnStyle); b:echo(text)
+    pcall(function() b:setCursor("PointingHand") end)
+    b:setClickCallback(function() M.lastUserCmdAt = now(); fn() end)
+    return b
+  end
+  M.notesNewBtn = button("ovenNotesNew", "＋ New note", 110, function() M.noteEditStart(nil) end)
+  M.notesSaveBtn = button("ovenNotesSave", "Save", 70, function() M.noteEditSave() end)
+  M.notesCancelBtn = button("ovenNotesCancel", "Cancel", 70, function() M.noteEditCancel() end)
+  M.notesStatus = Geyser.Label:new({ name = "ovenNotesStatus" }, bar)
+  M.notesStatus:setStyleSheet("background-color: rgba(18,18,26,255); padding-left: 8px; qproperty-alignment: 'AlignVCenter | AlignLeft';")
   M.notesConsole = Geyser.MiniConsole:new({ name = "ovenNotesConsole", color = "black" }, box)
   local font, size = pageFont()
   pcall(function() M.notesConsole:setFont(font) end)
@@ -11676,6 +11692,19 @@ local function noteLink(text, fn, hint)
   if not ok then pcall(function() M.notesConsole:decho(text) end) end
 end
 
+function M.notesBarDraw()
+  if not M.notesNewBtn then return end
+  local editing = M.noteEdit ~= nil
+  if editing then M.notesNewBtn:hide(); M.notesSaveBtn:show(); M.notesCancelBtn:show()
+  else M.notesNewBtn:show(); M.notesSaveBtn:hide(); M.notesCancelBtn:hide() end
+  local font = (pcall(getFont) and getFont()) or "monospace"
+  local txt = editing
+    and (string.format("<span style=\"color:%s;\">%s</span>", M.hex("title"), M.noteEdit.i and ("editing note #" .. M.noteEdit.i) or "a new note")
+      .. string.format("<span style=\"color:%s;\">  ·  Enter: new line · Shift+Enter: save · Esc: cancel</span>", M.hex("dim")))
+    or string.format("<span style=\"color:%s;\">a note of any length · or a quick one-liner in the box at the bottom</span>", M.hex("dim"))
+  M.notesStatus:echo(string.format("<span style=\"font-family:'%s';\">%s</span>", font, txt))
+end
+
 function M.notesRender(filter)
   M.notesFilter = (filter and filter ~= "") and filter or nil
   if not M.notesConsole then return end
@@ -11689,21 +11718,13 @@ function M.notesRender(filter)
   for i, x in ipairs(all) do
     if q == "" or (x.head .. "\n" .. table.concat(x.lines, "\n")):lower():find(q, 1, true) then shown[#shown + 1] = { i = i, x = x } end
   end
-  -- editing: what the keys do, else the way to start a note
-  if M.noteEdit then
-    pcall(function() con:decho(M.drgb("title") .. (M.noteEdit.i and ("editing note #" .. M.noteEdit.i) or "a new note")
-      .. M.drgb("dim") .. " in the box below - Enter: new line · Shift+Enter: save · Esc: cancel  ") end)
-    noteLink(M.drgb("slot") .. "[save]", function() M.noteEditSave() end, "save it")
-    pcall(function() con:decho(" ") end)
-    noteLink(M.drgb("dim") .. "[cancel]", function() M.noteEditCancel() end, "leave it as it was")
-  else
-    noteLink(M.drgb("slot") .. "[new note]", function() M.noteEditStart(nil) end, "write a note here - any number of lines")
-  end
+  -- the bar at the top: New note, or (editing) Save / Cancel and what the keys do
+  pcall(M.notesBarDraw)
   if M.notesFilter then
-    pcall(function() con:decho("   " .. M.drgb("title") .. string.format("notes with '%s'  ", M.notesFilter) .. M.drgb("dim") .. "(" .. #shown .. ")  ") end)
+    pcall(function() con:decho(M.drgb("title") .. string.format("notes with '%s'  ", M.notesFilter) .. M.drgb("dim") .. "(" .. #shown .. ")  ") end)
     noteLink(M.drgb("slot") .. "show all", function() M.notesRender() end, "every note")
+    pcall(function() con:decho("\n\n") end)
   end
-  pcall(function() con:decho("\n\n") end)
   if #shown == 0 then
     pcall(function() con:decho(M.drgb("dim") .. (M.notesFilter and "No note has that in it." or
       "Your notes go here. [new note] writes one in the box below - any number of lines (Enter: new line, Shift+Enter: save); for a quick one-liner just type in the box and press Enter. Each remembers the room you're in, so you can walk back to it.") .. "\n") end)

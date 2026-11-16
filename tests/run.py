@@ -2530,12 +2530,17 @@ def notes_tab():
     edit = [l for l in links.values() if "[edit]" in l[1]]
     edit[-1][2]()   # the last note: the one written in the editor
     eq(o.ev("BOXTEXT"), "wolf kills me in 2 rounds\ntreant guards the lemon tree", "the note in the box")
-    assert "Enter: new line" in o.ev("WIDGETS['ovenNotesConsole'].text")
+    # the bar at the top says what the keys do, with Save / Cancel; New note is back when you're done
+    assert "Enter: new line" in (o.ev("WIDGETS['ovenNotesStatus'].text") or ""), o.ev("WIDGETS['ovenNotesStatus'].text")
+    eq((o.ev("WIDGETS['ovenNotesSave'].shown"), o.ev("WIDGETS['ovenNotesNew'].shown")), (True, False), "editing: Save, Cancel")
     o.lua("PRESS(0, 0x01000004); BOXTEXT = BOXTEXT .. 'ask the abbot'")
     o.lua("PRESS(0x02000000, 0x01000004)")
     text = open(f).read()
     assert "the abbot\nwolf kills me in 2 rounds\ntreant guards the lemon tree\nask the abbot" in text, text
     eq(o.ev("sbo.noteEdit"), None, "done editing")
+    eq((o.ev("WIDGETS['ovenNotesNew'].shown"), o.ev("WIDGETS['ovenNotesSave'].shown")), (True, False), "+ New note, always there")
+    o.lua("WIDGETS['ovenNotesNew'].click()")
+    eq(o.ev("sbo.noteEdit ~= nil"), True, "the button starts a note"); o.lua("sbo.noteEditCancel()")
     # a new note, several lines; Esc cancels
     o.lua("sbo.noteEditStart(nil); BOXTEXT = 'line one'; PRESS(0, 0x01000004); BOXTEXT = BOXTEXT .. 'line two'; PRESS(0x02000000, 0x01000004)")
     assert open(f).read().rstrip().endswith("#28840\nline one\nline two"), open(f).read()
