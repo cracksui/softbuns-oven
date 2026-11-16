@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.39.2"
+M.version = "1.40.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -12169,7 +12169,7 @@ local mapButtonStyle = [[
 
 -- bump when the panel's contents change, so a panel built by an older version (in the same
 -- Mudlet session) is rebuilt after an update instead of keeping its old layout
-local MAP_PANEL_LAYOUT = 5
+local MAP_PANEL_LAYOUT = 6
 
 function M.createMapPanel()
   if M.mapPanel and M.mapPanelLayout == MAP_PANEL_LAYOUT then return end
@@ -12206,6 +12206,10 @@ function M.createMapPanel()
   button("ovenMapZoomOut", "−", "zoom out", function() if M.mapMode == "world" then M.worldZoom(-1) else M.mapZoom(1.25) end end)
   button("ovenMapZoomIn", "+", "zoom in", function() if M.mapMode == "world" then M.worldZoom(1) else M.mapZoom(0.8) end end)
   button("ovenMapCentre", "◎", "centre on you", function() if M.mapMode == "world" then M.worldFollow() else M.centerOn(M.mapRoom) end end)
+  button("ovenMapLayer", "⇅", "world map: the layer below / above (Alyria ⇄ the underworld), same place", function()
+    if M.mapMode ~= "world" then M.mapSetMode("world") end
+    M.worldLayer()
+  end)
   -- the room map and the world map share one place; one is shown
   local stack = Geyser.Container:new({ name = "ovenMapStack", v_policy = Geyser.Dynamic }, box)
   M.mapWidget = Geyser.Mapper:new({ name = "ovenMapper", x = 0, y = 0, width = "100%", height = "100%" }, stack)
@@ -12266,6 +12270,14 @@ M.WORLD_FILES = {
   { match = "ien", file = "ien.bmp" },
 }
 M.WORLD_ZOOMS = { 0.25, 0.5, 1, 2, 3, 4, 6, 8 }
+-- maps one above another, same coordinates: Alyria, the underworld beneath it, Sigil's underground. A walk
+-- that goes under (the underwater paths) is drawn on the one you're looking at, the other layer's part in blue
+M.WORLD_STACK = { "alyria", "underworld", "sigil" }
+function M.worldStacked(a, b)
+  local function key(n) n = tostring(n or ""):lower() for _, k in ipairs(M.WORLD_STACK) do if n:find(k, 1, true) then return k end end end
+  local ka, kb = key(a), key(b)
+  return ka ~= nil and kb ~= nil
+end
 
 local function W() M.cfg.world = M.cfg.world or { offsets = {}, terrain = {} } return M.cfg.world end
 local function le(s, i, n) local v = 0 for k = n - 1, 0, -1 do v = v * 256 + s:byte(i + k) end return v end
@@ -12456,6 +12468,7 @@ local RGB = { black = "\0\0\0" }
 RGB.you, RGB.youIn = bgr(255, 255, 255), bgr(230, 40, 40)
 RGB.friend, RGB.route, RGB.run = bgr(60, 230, 240), bgr(255, 230, 30), bgr(255, 160, 30)
 RGB.found, RGB.sign = bgr(255, 60, 200), bgr(250, 250, 250)
+RGB.under = bgr(60, 150, 255)   -- a route's part on the layer below (or above)
 
 -- muted: mostly grey and darker, a hint of the colour left - so highlights stand out. The maps have only a few
 -- hundred colours, so each is worked out once
@@ -12586,9 +12599,12 @@ function M.worldDrawNow()
   local mute = (M.worldFound and #M.worldFound > 0) or #route > 0
   local rows = M.worldCut(img, v.cx, v.cy, zoom, outW, outH, mute)
   local dot = math.max(zoom, 3)
+  -- a room on this map, or on a map above / below it (the same place, drawn in another colour)
   local function at(room)
     local p = M.worldPos(room)
-    if p and p.map == mapName then return p end
+    if not p then return nil end
+    if p.map == mapName then return p end
+    if M.worldStacked(p.map, mapName) then return { x = p.x, y = p.y, map = p.map, other = true } end
   end
   -- signposts you've read
   for _, sp in ipairs(M.signposts()) do
@@ -12598,14 +12614,14 @@ function M.worldDrawNow()
   -- search matches
   for _, id in ipairs(M.worldFound or {}) do
     local p = at(id)
-    if p then M.worldPaint(rows, outW, p.x, p.y, dot + 9, RGB.black); M.worldPaint(rows, outW, p.x, p.y, dot + 6, RGB.found) end
+    if p then M.worldPaint(rows, outW, p.x, p.y, dot + 9, p.other and RGB.under or RGB.black); M.worldPaint(rows, outW, p.x, p.y, dot + 6, RGB.found) end
   end
   -- the route
   for _, seg in ipairs(route) do
     if seg.walk then
       for _, r in ipairs(seg.walk) do
         local p = at(r)
-        if p then M.worldPaint(rows, outW, p.x, p.y, math.max(zoom, 2), RGB.route) end
+        if p then M.worldPaint(rows, outW, p.x, p.y, math.max(zoom, 2), p.other and RGB.under or RGB.route) end
       end
     elseif seg.run then
       local a, b = at(seg.run[1]), at(seg.run[2])
@@ -12624,7 +12640,7 @@ function M.worldDrawNow()
   for _, f in pairs(M.friendSeen or {}) do
     if os.time() - (f.at or 0) < 3600 then
       local p = at(f.room)
-      if p then M.worldPaint(rows, outW, p.x, p.y, dot + 9, RGB.black); M.worldPaint(rows, outW, p.x, p.y, dot + 5, RGB.friend) end
+      if p then M.worldPaint(rows, outW, p.x, p.y, dot + 9, p.other and RGB.under or RGB.black); M.worldPaint(rows, outW, p.x, p.y, dot + 5, RGB.friend) end
     end
   end
   -- you
@@ -12662,6 +12678,18 @@ function M.worldZoom(dir)
 end
 function M.worldFollow()
   V().follow = true
+  M.worldDraw()
+end
+-- the map above / below this one, at the same place (Alyria ⇄ the underworld)
+function M.worldLayer()
+  local v = V()
+  local cur = (v.map or (M.worldHere and M.worldHere.map) or "Alyria"):lower()
+  local names = { alyria = "Alyria", underworld = "Underworld" }
+  -- a learned name for the underworld (GMCP's) when there is one
+  for name in pairs(W().offsets) do if name:lower():find("underworld", 1, true) then names.underworld = name end end
+  local nextName = cur:find("underworld", 1, true) and names.alyria or names.underworld
+  v.map, v.follow = nextName, false
+  M.say("world map: " .. nextName .. " (◎ to follow you again)")
   M.worldDraw()
 end
 function M.worldWheel(ev)

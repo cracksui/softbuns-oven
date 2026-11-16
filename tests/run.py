@@ -996,6 +996,23 @@ def world_map():
       sbo.worldSearch('x')""")
     eq((o.ev("sbo.worldV.cx"), o.ev("sbo.worldV.cy"), o.ev("sbo.worldV.follow")), (5, 3, False), "centred on the matches")
     eq(o.ev("sbo.WORLD_ZOOMS[sbo.worldV.zoomI]"), 4, "as close as fits")
+    # a walk that goes under: the underworld's part drawn on Alyria, in blue (the underworld learned from a room there)
+    o.lua("""sbo.worldFound = nil; sbo.worldNote({ num = tostring(90000 + 2300 + 5), wilds = 'true', coord = { name = 'Underworld', x = 5, y = 1 } })
+      sbo.worldNote({ num = '1027', wilds = 'true', coord = { name = 'Alyria', x = 7, y = 2 } })
+      sbo.goAsk = nil; sbo.walk = { path = { 1000 + 2 * 10 + 6, 90000 + 1 * 2300 + 5 }, step = 1 }
+      sbo.worldV = { zoomI = 4, follow = false, cx = 5, cy = 2, map = 'Alyria' }
+      sbo.worldLabel.get_width = function() return 40 end; sbo.worldLabel.get_height = function() return 24 end
+      local here = sbo.worldHere; sbo.worldHere = nil   -- (your marker would cover these few pixels)
+      sbo.worldDrawNow(); sbo.worldHere = here""")
+    eq(o.ev("sbo.cfg.world.offsets.Underworld"), 90000, "the underworld's numbering, from a room there")
+    assert o.ev("sbo.worldStacked('Alyria', 'Underworld')") and not o.ev("sbo.worldStacked('Alyria', 'Faerie Plane')")
+    blue = o.ev("""function() local f = io.open(sbo.worldLastFile, 'rb') local d = f:read('*a') f:close()
+      return d:find(string.char(255, 150, 60), 55, true) ~= nil, d:find(string.char(30, 230, 255), 55, true) ~= nil end""")()
+    assert blue == (True, True), f"the overland part yellow, the underworld part blue: {blue}"
+    o.lua("sbo.worldLayer()")
+    eq(o.ev("sbo.worldV.map"), "Underworld", "⇅: the layer below, same place")
+    o.lua("sbo.worldLayer()")
+    eq(o.ev("sbo.worldV.map"), "Alyria", "and back up")
     muted = o.ev("""function() local img = sbo.worldImage('Alyria') local r = sbo.worldCut(img, 7, 2, 1, 4, 4, true)
       local b, g, rr = r[3]:byte(7, 9) return rr + g + b end""")()
     assert muted < 200 * 0.6, f"the blue pixel, muted: {muted}"
