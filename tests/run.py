@@ -2539,6 +2539,7 @@ def notes_tab():
       function ENTER() for l in (BOXTEXT .. '\\n'):gmatch('(.-)\\n') do WIDGETS['ovenNotesInput'].action(l) end runTimers() end""")
     o.lua("ENTER(); BOXTEXT = BOXTEXT .. 'ask the abbot'")
     eq(o.ev("sbo.noteEdit ~= nil"), True, "Enter: still editing")
+    assert (o.ev("WIDGETS['ovenNotesInput'].h") or 0) >= 120, "still the editing size"
     o.lua("SHIFT = true; ENTER(); SHIFT = false")
     text = open(f).read()
     assert "the abbot\nwolf kills me in 2 rounds\ntreant guards the lemon tree\nask the abbot" in text, text
@@ -2553,6 +2554,14 @@ def notes_tab():
     eq((t.count("line one"), t.count("line two")), (1, 1), "saved once - its lines not again as notes of their own")
     o.lua("sbo.noteEditStart(1); BOXTEXT = 'changed'; WIDGETS['ovenNotesCancel'].click()")
     assert "changed" not in open(f).read(), "Cancel: left as it was"
+    # a Mudlet that doesn't say when Shift is held: the commands still end it
+    o.lua("getKeyboardModifiers = nil; sbo.noteEditStart(nil); BOXTEXT = 'from the command'")
+    assert "Save to keep it" in (o.ev("WIDGETS['ovenNotesStatus'].text") or ""), o.ev("WIDGETS['ovenNotesStatus'].text")
+    o.lua("sbo.command('notes save')")
+    eq(o.ev("sbo.noteEdit"), None, "sbo notes save ends it")
+    assert "from the command" in open(f).read()
+    o.lua("sbo.noteEditStart(nil); BOXTEXT = 'not this'; sbo.command('notes cancel')")
+    eq(o.ev("sbo.noteEdit"), None, "sbo notes cancel ends it")
     # a link drawn by 1.49 ([new note] = noteAdd("", true)): the editor in the tab, nothing opened outside
     o.lua("OPENED = nil; sbo.noteAdd('', true)")
     eq((o.ev("OPENED"), o.ev("sbo.noteEdit ~= nil")), (None, True), "the tab's editor")

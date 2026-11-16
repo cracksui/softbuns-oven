@@ -165,6 +165,7 @@ Geyser.CommandLine = { new = function(self, o, parent)
   local t = { name = o.name, shown = true }
   function t:setAction(f) t.action = f end
   function t:clear() end function t:setStyleSheet() end function t:show() end function t:hide() end
+  function t:resize(w, h) t.h = h end
   WIDGETS = WIDGETS or {}; WIDGETS[o.name] = t
   return t
 end }

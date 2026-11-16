@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.51.2"
+M.version = "1.51.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11630,6 +11630,14 @@ local function setBoxHeight(h)
   pcall(function() M.notesInput:resize(nil, h) end)
   if M.notesBox then pcall(function() M.notesBox:organize() end) end
 end
+-- the editing size, and again a moment later: Mudlet fits the box to what's in it after its text changes,
+-- which would shrink it back to one line
+local function editSize()
+  local h = math.max(120, math.floor((M.notesBoxHeight or 26) * 6))
+  setBoxHeight(h)
+  tempTimer(0.05, function() if M.noteEdit then setBoxHeight(h) end end)
+  tempTimer(0.3, function() if M.noteEdit then setBoxHeight(h) end end)
+end
 
 local function stopKeys()
   for _, id in ipairs((M.noteEdit or {}).keys or {}) do pcall(killKey, id) end
@@ -11669,6 +11677,7 @@ function M.noteBoxAction(text)
         M.noteEditSave(full)
       else
         pcall(printCmdLine, BOX, full .. "\n")
+        editSize()
       end
     end)
   end
@@ -11687,8 +11696,12 @@ function M.noteEditStart(i)
   end
   -- (no key bindings: Mudlet's box takes Enter before them - its own Enter is told apart by Shift, see the box's action)
   M.noteEdit = { i = i, keys = {} }
-  setBoxHeight(math.max(120, math.floor((M.notesBoxHeight or 26) * 6)))
   pcall(printCmdLine, BOX, text)
+  editSize()
+  if not M.notesNewBtn or M.shiftHeld() == nil then
+    M.say("writing a note: Enter adds a line · sbo notes save keeps it, sbo notes cancel leaves it"
+      .. (M.notesNewBtn and " (or the Save / Cancel buttons)" or " - restart Mudlet once for Save / Cancel buttons in the tab"))
+  end
   M.notesRender(M.notesFilter)
 end
 
@@ -11737,7 +11750,9 @@ function M.notesBarDraw()
   local font = (pcall(getFont) and getFont()) or "monospace"
   local txt = editing
     and (string.format("<span style=\"color:%s;\">%s</span>", M.hex("title"), M.noteEdit.i and ("editing note #" .. M.noteEdit.i) or "a new note")
-      .. string.format("<span style=\"color:%s;\">  ·  Enter: new line · Shift+Enter: save</span>", M.hex("dim")))
+      .. string.format("<span style=\"color:%s;\">  ·  %s</span>", M.hex("dim"),
+        M.shiftHeld() == nil and "Enter: new line · Save to keep it (your Mudlet doesn't say when Shift is held)"
+        or "Enter: new line · Shift+Enter: save"))
     or string.format("<span style=\"color:%s;\">a note of any length · or a quick one-liner in the box at the bottom</span>", M.hex("dim"))
   M.notesStatus:echo(string.format("<span style=\"font-family:'%s';\">%s</span>", font, txt))
 end
@@ -15700,6 +15715,12 @@ M.CMDS = {
     { name = "add", args = "{text}", desc = "keep a quick note (or type it in the tab's box)", run = function(r)
       if trim(r) == "" then return say("sbo notes add {text}") end
       M.noteAdd(r); M.notesShow() end },
+    { name = "save", desc = "save the note you're writing", run = function()
+        if not M.noteEdit then return say("you're not writing a note") end
+        return M.noteEditSave() end },
+    { name = "cancel", desc = "stop writing the note, leaving it as it was", run = function()
+        if not M.noteEdit then return say("you're not writing a note") end
+        return M.noteEditCancel() end },
     { name = "edit", args = "{n}", desc = "change note n, in the Notes tab (Enter: new line, Shift+Enter: save)", run = function(r) M.notesShow(); return M.noteEditStart(tonumber(r)) end },
     { name = "new", desc = "write a note with several lines, in the Notes tab", run = function() M.notesShow(); return M.noteEditStart(nil) end },
     { name = "find", args = "{text}", desc = "only the notes with it", run = function(r) return M.notesShow(r) end },
