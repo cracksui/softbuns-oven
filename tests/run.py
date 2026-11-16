@@ -2521,8 +2521,26 @@ def notes_tab():
     links = o.ev("WIDGETS['ovenNotesConsole'].links")
     [l for l in links.values() if "[go]" in l[1]][0][2]()
     eq(o.ev("WALKED"), 28840, "[go] walks to where it was written")
-    [l for l in links.values() if "[edit]" in l[1]][0][2]()
-    assert o.ev("OPENED").startswith("file://") and o.ev("OPENED").endswith("oven_notes.md"), o.ev("OPENED")
+    # [edit] on a note: the box holds it; Enter a new line, Shift+Enter saves (Oven's keys, only while editing)
+    o.lua("""KEYS, BOXTEXT = {}, ''
+      tempKey = function(m, k, fn) KEYS[#KEYS+1] = { m = m, k = k, fn = fn }; return #KEYS end; killKey = function() end
+      printCmdLine = function(n, t) BOXTEXT = t end; appendCmdLine = function(n, t) BOXTEXT = BOXTEXT .. t end
+      getCmdLine = function() return BOXTEXT end; clearCmdLine = function() BOXTEXT = '' end
+      function PRESS(m, k) for _, x in ipairs(KEYS) do if x.m == m and x.k == k then x.fn(); return true end end end""")
+    edit = [l for l in links.values() if "[edit]" in l[1]]
+    edit[-1][2]()   # the last note: the one written in the editor
+    eq(o.ev("BOXTEXT"), "wolf kills me in 2 rounds\ntreant guards the lemon tree", "the note in the box")
+    assert "Enter: new line" in o.ev("WIDGETS['ovenNotesConsole'].text")
+    o.lua("PRESS(0, 0x01000004); BOXTEXT = BOXTEXT .. 'ask the abbot'")
+    o.lua("PRESS(0x02000000, 0x01000004)")
+    text = open(f).read()
+    assert "the abbot\nwolf kills me in 2 rounds\ntreant guards the lemon tree\nask the abbot" in text, text
+    eq(o.ev("sbo.noteEdit"), None, "done editing")
+    # a new note, several lines; Esc cancels
+    o.lua("sbo.noteEditStart(nil); BOXTEXT = 'line one'; PRESS(0, 0x01000004); BOXTEXT = BOXTEXT .. 'line two'; PRESS(0x02000000, 0x01000004)")
+    assert open(f).read().rstrip().endswith("#28840\nline one\nline two"), open(f).read()
+    o.lua("sbo.noteEditStart(1); BOXTEXT = 'changed'; PRESS(0, 0x01000000)")
+    assert "changed" not in open(f).read(), "Esc: left as it was"
     o.lua('sbo.command("notes find pesto")')
     shown = o.ev("WIDGETS['ovenNotesConsole'].text")
     assert "pesto" in shown and "treant" not in shown, shown

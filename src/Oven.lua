@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.49.0"
+M.version = "1.50.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11462,6 +11462,7 @@ end
 ---------------------------------------------------------------------------
 function M.buildNotes(page)
   local box = Geyser.VBox:new({ name = "ovenNotesBox", x = 0, y = 0, width = "100%", height = "100%" }, page)
+  M.notesBox, M.notesBoxHeight = box, 26
   M.notesConsole = Geyser.MiniConsole:new({ name = "ovenNotesConsole", color = "black" }, box)
   local font, size = pageFont()
   pcall(function() M.notesConsole:setFont(font) end)
@@ -11471,8 +11472,10 @@ function M.buildNotes(page)
   M.notesInput = Geyser.CommandLine:new({ name = "ovenNotesInput", height = 26, v_policy = Geyser.Fixed }, box)
   pcall(function() M.notesInput:setStyleSheet([[
     background-color: rgba(24,24,32,255); color: ]] .. M.hex("text") .. [[; border: 1px solid #333;
-    qproperty-placeholderText: "a quick note: type it and press Enter ([new note] above for a longer one, in your text editor)";]]) end)
+    qproperty-placeholderText: "a quick note: type it and press Enter ([new note] above for one with several lines)";]]) end)
   M.notesInput:setAction(function(text)
+    -- (while editing, Enter and Shift+Enter are Oven's: this is the quick one-liner)
+    if M.noteEdit then return M.noteEditSave() end
     pcall(function() M.notesInput:clear() end)
     M.noteAdd(text)
   end)
@@ -11585,6 +11588,87 @@ function M.noteRemove(n)
   M.say("note #" .. n .. " removed")
 end
 
+-- a note's text replaced (its heading kept)
+function M.noteReplace(n, text)
+  local s = M.notesText()
+  local x = M.notesParse(s)[n]
+  if not x then return M.say("no note #" .. tostring(n)) end
+  local lines, i = {}, 0
+  for line in (s .. "\n"):gmatch("(.-)\r?\n") do
+    i = i + 1
+    if i == x.first then
+      lines[#lines + 1] = line
+      for t in (text .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = t end
+      lines[#lines + 1] = ""
+    elseif i < x.first or i > x.last then lines[#lines + 1] = line end
+  end
+  writeFile(M.notesPath(), table.concat(lines, "\n"))
+  M.notesSeen = nil
+  M.say("note #" .. n .. " saved")
+end
+
+-- editing a note in the tab: the box at the bottom grows, Enter starts a new line, Shift+Enter saves, Esc
+-- cancels (Oven's own key bindings, only while you're editing - the rest of the time Enter is Enter)
+local KEY = { Return = 0x01000004, Enter = 0x01000005, Escape = 0x01000000 }
+local MOD = { None = 0, Shift = 0x02000000, Keypad = 0x20000000 }
+local function key(name) return (mudlet and mudlet.key and mudlet.key[name]) or KEY[name] end
+local function mod(name) return (mudlet and mudlet.keymodifier and mudlet.keymodifier[name]) or MOD[name] end
+local BOX = "ovenNotesInput"
+
+local function setBoxHeight(h)
+  if not M.notesInput then return end
+  M.notesInput.height = h
+  pcall(function() M.notesInput:resize(nil, h) end)
+  if M.notesBox then pcall(function() M.notesBox:organize() end) end
+end
+
+local function stopKeys()
+  for _, id in ipairs((M.noteEdit or {}).keys or {}) do pcall(killKey, id) end
+end
+
+-- start editing: a note (its number in the file), or a new one (nil)
+function M.noteEditStart(i)
+  stopKeys()
+  local text = ""
+  if i then
+    local x = M.notesParse(M.notesText())[i]
+    if not x then return M.say("no note #" .. tostring(i)) end
+    text = table.concat(x.lines, "\n")
+  end
+  M.noteEdit = { i = i, keys = {} }
+  local E = M.noteEdit
+  local function bind(m, k, fn) local ok, id = pcall(tempKey, m, k, fn); if ok and id then E.keys[#E.keys + 1] = id end end
+  bind(mod("None"), key("Return"), function() pcall(appendCmdLine, BOX, "\n") end)
+  bind(mod("Keypad"), key("Enter"), function() pcall(appendCmdLine, BOX, "\n") end)
+  bind(mod("Shift"), key("Return"), function() M.noteEditSave() end)
+  bind(mod("None"), key("Escape"), function() M.noteEditCancel() end)
+  setBoxHeight(math.max(120, math.floor((M.notesBoxHeight or 26) * 6)))
+  pcall(printCmdLine, BOX, text)
+  M.notesRender(M.notesFilter)
+end
+
+function M.noteEditCancel()
+  stopKeys()
+  M.noteEdit = nil
+  pcall(clearCmdLine, BOX)
+  setBoxHeight(M.notesBoxHeight or 26)
+  M.notesRender(M.notesFilter)
+end
+
+-- save: the note's text (its heading kept), or a new note with today's date and where you are
+function M.noteEditSave()
+  local E = M.noteEdit
+  if not E then return end
+  local ok, text = pcall(getCmdLine, BOX)
+  text = (ok and text or ""):gsub("%s+$", "")
+  stopKeys()
+  M.noteEdit = nil
+  pcall(clearCmdLine, BOX)
+  setBoxHeight(M.notesBoxHeight or 26)
+  if E.i then M.noteReplace(E.i, text) elseif text ~= "" then M.noteAdd(text) end
+  M.notesRender(M.notesFilter)
+end
+
 -- follow the file: when it changes (you saved in the editor), the tab is drawn again
 function M.notesWatch()
   if M.notesTimer then return end
@@ -11612,9 +11696,16 @@ function M.notesRender(filter)
   for i, x in ipairs(all) do
     if q == "" or (x.head .. "\n" .. table.concat(x.lines, "\n")):lower():find(q, 1, true) then shown[#shown + 1] = { i = i, x = x } end
   end
-  noteLink(M.drgb("slot") .. "[new note]", function() M.noteAdd("", true) end, "a new note with today's date and where you are, in your text editor")
-  pcall(function() con:decho("  ") end)
-  noteLink(M.drgb("slot") .. "[edit]", function() M.notesOpen() end, "the notes in your text editor")
+  -- editing: what the keys do, else the way to start a note
+  if M.noteEdit then
+    pcall(function() con:decho(M.drgb("title") .. (M.noteEdit.i and ("editing note #" .. M.noteEdit.i) or "a new note")
+      .. M.drgb("dim") .. " in the box below - Enter: new line · Shift+Enter: save · Esc: cancel  ") end)
+    noteLink(M.drgb("slot") .. "[save]", function() M.noteEditSave() end, "save it")
+    pcall(function() con:decho(" ") end)
+    noteLink(M.drgb("dim") .. "[cancel]", function() M.noteEditCancel() end, "leave it as it was")
+  else
+    noteLink(M.drgb("slot") .. "[new note]", function() M.noteEditStart(nil) end, "write a note here - any number of lines")
+  end
   if M.notesFilter then
     pcall(function() con:decho("   " .. M.drgb("title") .. string.format("notes with '%s'  ", M.notesFilter) .. M.drgb("dim") .. "(" .. #shown .. ")  ") end)
     noteLink(M.drgb("slot") .. "show all", function() M.notesRender() end, "every note")
@@ -11622,7 +11713,7 @@ function M.notesRender(filter)
   pcall(function() con:decho("\n\n") end)
   if #shown == 0 then
     pcall(function() con:decho(M.drgb("dim") .. (M.notesFilter and "No note has that in it." or
-      "Your notes go here. [new note] writes one in your text editor (any length, any number of lines); the box below keeps a quick one-liner. Each remembers the room you're in, so you can walk back to it.") .. "\n") end)
+      "Your notes go here. [new note] writes one in the box below - any number of lines (Enter: new line, Shift+Enter: save); for a quick one-liner just type in the box and press Enter. Each remembers the room you're in, so you can walk back to it.") .. "\n") end)
     return
   end
   for _, e in ipairs(shown) do
@@ -11633,6 +11724,8 @@ function M.notesRender(filter)
       noteLink(M.drgb("slot") .. "[go]", function() M.mapWalkTo(room) end, "walk to " .. ((roomExists(room) and getRoomName(room)) or ("#" .. room)))
       pcall(function() con:decho(" ") end)
     end
+    noteLink(M.drgb("slot") .. "[edit]", function() M.noteEditStart(i) end, "change note #" .. i .. " here")
+    pcall(function() con:decho(" ") end)
     noteLink(M.drgb("dim") .. "[delete]", function() M.noteRemove(i) end, "remove note #" .. i)
     pcall(function() con:decho("\n" .. M.drgb("text") .. table.concat(x.lines, "\n"):gsub("<", "&lt;") .. "\n\n") end)
   end
@@ -15556,8 +15649,8 @@ M.CMDS = {
     { name = "add", args = "{text}", desc = "keep a quick note (or type it in the tab's box)", run = function(r)
       if trim(r) == "" then return say("sbo notes add {text}") end
       M.noteAdd(r); M.notesShow() end },
-    { name = "edit", desc = "your notes in your text editor (multi-line; the tab follows when you save)", run = function() return M.notesOpen() end },
-    { name = "new", desc = "a new note, with today's date and where you are, in your text editor", run = function() return M.noteAdd("", true) end },
+    { name = "edit", args = "{n}", desc = "change note n, in the Notes tab (Enter: new line, Shift+Enter: save)", run = function(r) M.notesShow(); return M.noteEditStart(tonumber(r)) end },
+    { name = "new", desc = "write a note with several lines, in the Notes tab", run = function() M.notesShow(); return M.noteEditStart(nil) end },
     { name = "find", args = "{text}", desc = "only the notes with it", run = function(r) return M.notesShow(r) end },
     { name = "remove", args = "{n}", desc = "remove note number n", run = function(r) return M.noteRemove(r) end },
   } },
