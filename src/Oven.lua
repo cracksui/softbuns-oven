@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.42.0"
+M.version = "1.42.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4270,7 +4270,9 @@ end
 ---------------------------------------------------------------------------
 -- every Oven panel's frame: the quest panel's title look (a solid slate strip, a pale border); what's inside
 -- each keeps its own background, so the slate shows as the title bar and a thin frame
-M.PANEL_STYLE = "background-color: rgb(58,62,88); border: 1px solid rgba(160,170,220,140); border-radius: 6px;"
+M.PANEL_STYLE = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;"
+-- and every title like the quest panel's: "⠿⠿ Map"
+function M.panelTitle(t) return "⠿⠿ " .. tostring(t or "") end
 function M.stylePanels()
   local list = { M.container, M.helpContainer, M.mapPanel }
   for _, w in pairs(M.tabWins or {}) do list[#list + 1] = w end
@@ -4278,6 +4280,10 @@ function M.stylePanels()
     if c and c.adjLabel and c.adjLabelstyle ~= M.PANEL_STYLE then
       c.adjLabelstyle = M.PANEL_STYLE
       pcall(function() c.adjLabel:setStyleSheet(M.PANEL_STYLE) end)
+    end
+    -- titles made before they had the grip
+    if c and c.titleText and not tostring(c.titleText):find("⠿", 1, true) then
+      pcall(function() c:setTitle(M.panelTitle(c.titleText)) end)
     end
   end
 end
@@ -4287,9 +4293,9 @@ function M.createWindow()
   if not M.container then
     M.container = Adjustable.Container:new({
       name = "ovenViewer",
-      titleText = "Inspector",
+      titleText = M.panelTitle("Inspector"),
       x = "-62%", y = "4%", width = "36%", height = "50%",
-      adjLabelstyle = M.PANEL_STYLE, padding = 6,
+      adjLabelstyle = M.PANEL_STYLE,
       titleTxtColor = "#e6c35c",
     })
     M.panelPlace("ovenViewer", M.container)
@@ -4298,6 +4304,7 @@ function M.createWindow()
   M.applyTabs()
   -- with tabs, the tab says what's showing: the window is just Oven's
   local title = M.cfg.tabs and "Oven" or "Inspector"
+  title = M.panelTitle(title)
   if M.container.titleText ~= title then pcall(function() M.container:setTitle(title) end) end
 end
 
@@ -4527,9 +4534,9 @@ function M.tabUndock1(key, x, y, holdTab)
     local okS, cw, ch = pcall(function() return M.container:get_width(), M.container:get_height() end)
     cw = okS and tonumber(cw) or W * 0.36; ch = okS and tonumber(ch) or H * 0.5
     win = Adjustable.Container:new({
-      name = name, titleText = tabTitle(key),
+      name = name, titleText = M.panelTitle(tabTitle(key)),
       x = 0, y = 0, width = math.floor(cw), height = math.floor(ch),
-      adjLabelstyle = M.PANEL_STYLE, padding = 6,
+      adjLabelstyle = M.PANEL_STYLE,
       titleTxtColor = "#e6c35c",
     })
     pcall(function() win:newCustomItem("dock into the Oven window", function() M.tabDock(key) end) end)
@@ -4737,9 +4744,9 @@ function M.createHelpWindow()
   if not M.helpContainer then
     M.helpContainer = Adjustable.Container:new({
       name = "ovenHelp",
-      titleText = "help",
+      titleText = M.panelTitle("help"),
       x = "2%", y = "4%", width = "45%", height = "70%",
-      adjLabelstyle = M.PANEL_STYLE, padding = 6,
+      adjLabelstyle = M.PANEL_STYLE,
       titleTxtColor = "#e6c35c",
     })
     M.panelPlace("ovenHelp", M.helpContainer)
@@ -12239,9 +12246,9 @@ function M.createMapPanel()
   M.mapPanelLayout = MAP_PANEL_LAYOUT
   M.mapPanel = Adjustable.Container:new({
     name = "ovenMapPanel",
-    titleText = "Map",
+    titleText = M.panelTitle("Map"),
     x = "-36%", y = "4%", width = "34%", height = "50%",
-    adjLabelstyle = M.PANEL_STYLE, padding = 6,
+    adjLabelstyle = M.PANEL_STYLE,
     titleTxtColor = "#e6c35c",
   })
   M.panelPlace("ovenMapPanel", M.mapPanel)

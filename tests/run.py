@@ -2516,7 +2516,7 @@ def tab_dragged_out():
     o = Oven()
     o.lua('''sbo.cfg.window = true; sbo.cfg.tabs = true; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end''')
     o.lua('sbo.command("log")')
-    eq(o.ev("WIDGETS['ovenViewer'].titleText"), "Oven", "the window isn't called Inspector too")
+    eq(o.ev("WIDGETS['ovenViewer'].titleText"), "⠿⠿ Oven", "the window isn't called Inspector too (the grip like the quest panel's)")
     # a click is just a click
     o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_log"].click(); MOUSE = {955, 52}; sbo.tabRelease("log")')
     eq(o.ev("sbo.tabIsOut('log')"), False, "clicked, not dragged")
@@ -2526,7 +2526,7 @@ def tab_dragged_out():
     # dragged out
     o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_log"].click(); MOUSE = {300, 300}; sbo.tabRelease("log")')
     eq(o.ev("sbo.tabIsOut('log')"), True, "dropped outside: its own window")
-    eq(o.ev("WIDGETS['ovenTab_log'].titleText"), "Log", "titled by its tab")
+    eq(o.ev("WIDGETS['ovenTab_log'].titleText"), "⠿⠿ Log", "titled by its tab")
     eq(o.ev("WIDGETS['ovenTab_log'].x0"), 260, "where it was dropped")
     eq(o.ev("WIDGETS['ovenTabs3_log'].shown"), False, "its tab leaves the bar")
     eq(o.ev("sbo.tabOn"), "view", "the Oven window shows another tab")
