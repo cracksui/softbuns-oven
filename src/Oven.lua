@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.50.0"
+M.version = "1.50.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11548,27 +11548,20 @@ end
 -- a new note at the end of the file: a quick one (text), or an empty one to write in the editor
 function M.noteAdd(text, open)
   text = trim(text or "")
-  if text == "" and not open then return end
+  -- (a link drawn by 1.49 asks for "a new note, opened": that's the editor in the tab now)
+  if open and text == "" then return M.noteEditStart(nil) end
+  if text == "" then return end
   local s = M.notesText()
   local head, name = here()
   s = s:gsub("%s*$", "") .. "\n\n" .. head .. "\n" .. text .. "\n"
   writeFile(M.notesPath(), s)
   M.notesSeen = nil
   M.notesRender(M.notesFilter)
-  if open then return M.notesOpen() end
   M.say("note kept" .. (name and (" (at " .. name .. ")") or "") .. " - in " .. M.notesPath():match("[^/\\]+$"))
 end
 
--- the file in your text editor
-function M.notesOpen()
-  M.notesText()
-  local p = M.notesPath():gsub("\\", "/")
-  local url = "file://" .. (p:sub(1, 1) == "/" and "" or "/") .. p:gsub(" ", "%%20")
-  local ok = pcall(openUrl, url)
-  if not ok then return M.say("couldn't open your text editor - the notes are in " .. M.notesPath()) end
-  M.say("notes opened in your text editor - save there and the Notes tab follows")
-  M.notesWatch()
-end
+-- (the notes used to open in an external editor; they're edited in the tab now - an old link lands here)
+function M.notesOpen() return M.noteEditStart(nil) end
 
 -- a note out of the file
 function M.noteRemove(n)
@@ -16867,3 +16860,6 @@ function M.init()
 end
 
 M.init()
+
+-- after an update: the Notes tab drawn again, so its links are this version's
+if M.notesConsole then pcall(M.notesRender, M.notesFilter) end

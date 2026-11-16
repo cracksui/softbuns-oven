@@ -2541,6 +2541,12 @@ def notes_tab():
     assert open(f).read().rstrip().endswith("#28840\nline one\nline two"), open(f).read()
     o.lua("sbo.noteEditStart(1); BOXTEXT = 'changed'; PRESS(0, 0x01000000)")
     assert "changed" not in open(f).read(), "Esc: left as it was"
+    # a link drawn by 1.49 ([new note] = noteAdd("", true)): the editor in the tab, nothing opened outside
+    o.lua("OPENED = nil; sbo.noteAdd('', true)")
+    eq((o.ev("OPENED"), o.ev("sbo.noteEdit ~= nil")), (None, True), "the tab's editor")
+    o.lua("sbo.noteEditCancel(); sbo.notesOpen()")
+    eq(o.ev("OPENED"), None, "no external editor at all")
+    o.lua("sbo.noteEditCancel()")
     o.lua('sbo.command("notes find pesto")')
     shown = o.ev("WIDGETS['ovenNotesConsole'].text")
     assert "pesto" in shown and "treant" not in shown, shown
