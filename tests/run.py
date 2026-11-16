@@ -3295,6 +3295,17 @@ def class_plan():
     o.lua("sbo.classPlan('mo pri')")
     text = o.ev("(function() local s = {} for _, r in ipairs(OUT) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end)()")
     assert "Class path: monk → priest" in text and "not sahuagin" in text and "Only from priest" in text, text
+    # SCC (help 1613), at level 60 in each: a monk with knowledge 22 and vitality 17 is 77.7, capped at 72 (what score said)
+    o.lua("sbo.cfg.char.stats = { knowledge = { cur = 22 }, vitality = { cur = 17 }, wisdom = { cur = 14 }, courage = { cur = 14 }, personality = { cur = 9 } }")
+    scc, cap, raw = o.ev("function() return sbo.classPathScc({ 'monk' }) end")()
+    eq((round(raw, 1), cap, scc), (77.7, 72, 72), "monk alone")
+    scc, cap, raw = o.ev("function() return sbo.classPathScc({ 'monk', 'priest' }) end")()
+    eq((round(raw, 2), cap), (69.35, 79), "monk, priest: the average of the two")
+    eq((o.ev("sbo.classPathToken({ 'monk', 'priest' })"), o.ev("sbo.classPathToken({ 'monk', 'wizard' })"), o.ev("sbo.classPathToken({ 'monk', 'monk' })")),
+       (False, True, True), "two mages, or monk again: a token")
+    o.lua("sbo.classPlan('monk wizard')")
+    text = o.ev("(function() local s = {} for _, r in ipairs(OUT) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end)()")
+    assert "needs a greater token" in text and "250 black tourmalines" in text and "SCC:" in text, text
 
 
 @test

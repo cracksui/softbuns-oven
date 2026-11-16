@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.37.1"
+M.version = "1.38.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6922,6 +6922,57 @@ M.SKILL_REDUNDANCY = {
   ["yo-yo"] = { "p", false, "When wielding a yo-yo, increases damage by 8%" },
 }
 
+-- help 1064 (class): the four groups; one from each by default, a second from a group (or a class again)
+-- takes a greater token of multiclassing; black tourmalines for the 2nd, 3rd, 4th class
+M.CLASS_GROUP = { barbarian = "fighter", cavalier = "fighter", valkyrie = "fighter", paladin = "fighter",
+  wizard = "mage", monk = "mage", ranger = "mage", psionic = "mage",
+  priest = "cleric", druid = "cleric", shaman = "cleric", witch = "cleric",
+  rogue = "thief", bard = "thief", knave = "thief" }
+M.CLASS_TOURMALINES = { 250, 1250, 3000 }
+-- the class pages (help monk…): each class's primary attribute
+M.CLASS_PRIME = { monk = "knowledge", bard = "luck", cavalier = "vitality", druid = "knowledge", paladin = "courage",
+  priest = "wisdom", witch = "wisdom", valkyrie = "courage", barbarian = "strength" }
+-- help 1613: SCC - each class's baseline, the average of two attributes, so much a level; a path's SCC is
+-- the average over its classes (+ the number of classes while SP is above 90%), at most 65 + 7 a class
+M.CLASS_SCC = {
+  ranger = { 20, "knowledge", "courage", .71 }, wizard = { 17, "knowledge", "personality", .72 },
+  psionic = { 17, "knowledge", "sanity", .72 }, monk = { 15, "knowledge", "vitality", .72 },
+  priest = { 8, "wisdom", "courage", .65 }, witch = { 8, "wisdom", "strength", .65 },
+  druid = { 8, "wisdom", "personality", .65 }, shaman = { 8, "wisdom", "luck", .65 },
+  paladin = { 5, "courage", "vitality", .5 }, bard = { 5, "personality", "luck", .53 },
+  barbarian = { 5, nil, nil, .3 }, cavalier = { 5, nil, nil, .3 }, valkyrie = { 5, nil, nil, .3 },
+  rogue = { 5, nil, nil, .3 }, knave = { 5, nil, nil, .3 },
+}
+-- a path's SCC at level 60 in each class, with your attributes now (nil: Oven doesn't know them yet)
+function M.classPathScc(path, level)
+  local stats = (M.cfg.char or {}).stats or {}
+  local function stat(k) local s = stats[k]; return s and tonumber(s.cur) end
+  local sum = 0
+  for _, c in ipairs(path) do
+    local t = M.CLASS_SCC[c]
+    if not t then return nil end
+    local v = t[1] + t[4] * (level or 60)
+    if t[2] then
+      local a, b = stat(t[2]), stat(t[3])
+      if not (a and b) then return nil end
+      v = v + (a + b) / 2
+    end
+    sum = sum + v
+  end
+  local scc = sum / #path
+  return math.min(scc, 65 + 7 * #path), 65 + 7 * #path, scc
+end
+-- does a path keep to one class from each group (or does it take a greater token of multiclassing)?
+function M.classPathToken(path)
+  local seen = {}
+  for _, c in ipairs(path) do
+    local g = M.CLASS_GROUP[c] or c
+    if seen[g] then return true end
+    seen[g] = true
+  end
+  return false
+end
+
 -- redundancy, worked out from the game's analyses: a class you take again adds 2 units for its 2nd copy,
 -- 3 for its 3rd, 4 for its 4th; each other class that gives the skill too adds 1. A unit is +15 skill power
 -- for a spell, +12 for a proficiency (monk monk 30/24, ×3 75/60, ×4 135/108, monk monk priest 45/36,
@@ -7017,6 +7068,23 @@ function M.classPlan(arg)
       { C.plus, "+" .. t.skp }, { C.dim, " skill power in all" } }
     out[#out + 1] = { { C.dim, "races: " }, { raceOk(path) and C.text or C.minus, table.concat(races, ", ") },
       { C.minus, (race ~= "" and not raceOk(path)) and ("  - not " .. race) or "" } }
+    -- the rules for changing class, and what it costs
+    local cost = {}
+    for i = 2, #path do cost[#cost + 1] = (M.CLASS_TOURMALINES[i - 1] or 0) end
+    local sumCost = 0
+    for _, n in ipairs(cost) do sumCost = sumCost + n end
+    out[#out + 1] = { { C.dim, "groups: " }, { C.text, (function() local g = {} for _, c in ipairs(path) do g[#g + 1] = M.CLASS_GROUP[c] or "?" end return table.concat(g, ", ") end)() },
+      { M.classPathToken(path) and C.flag or C.plus, M.classPathToken(path) and "  - needs a greater token of multiclassing (a group twice)" or "  - one from each group: no token" },
+      { C.dim, #cost > 0 and string.format("  ·  %s black tourmalines", (tostring(sumCost):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))) or "" } }
+    -- spell comprehension (help 1613), at level 60 in each class
+    local scc, cap, raw = M.classPathScc(path)
+    if scc then
+      local prime = {}
+      for _, c in ipairs(path) do prime[#prime + 1] = c .. " " .. (M.CLASS_PRIME[c] or "?") end
+      out[#out + 1] = { { C.dim, "SCC: " }, { C.num, string.format("%d", math.floor(scc)) },
+        { C.dim, string.format(" (at level 60 in each, your attributes now; %.1f before the cap of %d)", raw, cap) } }
+      out[#out + 1] = { { C.dim, "primary attributes: " }, { C.text, table.concat(prime, " · ") } }
+    end
     -- the boosted ones, most first
     local list = {}
     for name, e in pairs(sk) do if e.skp > 0 then list[#list + 1] = { name = name, e = e } end end
@@ -7048,7 +7116,7 @@ function M.classPlan(arg)
       addAll(out, wrapWords(table.concat(names, ", "), width, 2, C.text, { { C.text, "  " } }, 2))
     end
     out[#out + 1] = {}
-    out[#out + 1] = { { C.dim, "* no bonus from redundancy (hand to hand, slow, word of recall) · attributes and ratings (SCC, WEA…) aren't in the game's analyses yet" } }
+    out[#out + 1] = { { C.dim, "* no bonus from redundancy (hand to hand, slow, word of recall) · WEA, DEF, COM, TEK, MYS: the game only says they rise with agility or knowledge and level" } }
     return M.viewOut(out, {})
   end
   -- no path: every class you could take next, with what it adds
@@ -7064,21 +7132,24 @@ function M.classPlan(arg)
     local newS, newP = 0, 0
     local had = M.classPathSkills(mine)
     for name, e in pairs(sk) do if not had[name] then if e.kind == "s" then newS = newS + 1 else newP = newP + 1 end end end
-    rows[#rows + 1] = { c = c, path = path, ok = raceOk(path), add = t.skp - base.skp, boosted = t.boosted - base.boosted, newS = newS, newP = newP }
+    rows[#rows + 1] = { c = c, path = path, ok = raceOk(path), add = t.skp - base.skp, boosted = t.boosted - base.boosted, newS = newS, newP = newP,
+      scc = M.classPathScc(path), token = M.classPathToken(path) }
   end
   table.sort(rows, function(a, b) if a.ok ~= b.ok then return a.ok end if a.add ~= b.add then return a.add > b.add end return a.c < b.c end)
   local out = { header("class", "", width, "Your next class: " .. table.concat(mine, " → ") .. " → ?") }
-  out[#out + 1] = { { C.dim, "  " .. pad("class", 12) .. pad("skill power", 13) .. pad("boosted", 9) .. pad("new spells", 12) .. pad("new profs", 11) .. "race" } }
+  out[#out + 1] = { { C.dim, "  " .. pad("class", 12) .. pad("skill power", 13) .. pad("boosted", 9) .. pad("new spells", 12) .. pad("new profs", 11) .. pad("SCC", 6) .. "race · token" } }
   local links = {}
   for _, r in ipairs(rows) do
     out[#out + 1] = { { r.ok and C.key or C.dim, "  " .. pad(r.c, 12) }, { r.ok and C.plus or C.dim, pad("+" .. r.add, 13) },
       { C.num, pad(tostring(r.boosted), 9) }, { C.num, pad(tostring(r.newS), 12) }, { C.num, pad(tostring(r.newP), 11) },
-      { r.ok and C.dim or C.minus, r.ok and "ok" or ("not " .. race) } }
+      { C.num, pad(r.scc and tostring(math.floor(r.scc)) or "?", 6) },
+      { r.ok and C.dim or C.minus, r.ok and "ok" or ("not " .. race) }, { C.flag, r.token and " · token" or "" } }
     local p = table.concat(r.path, " ")
     links[#links + 1] = { "sbo class plan " .. p, function() M.classPlan(p) end }
   end
   out[#out + 1] = {}
-  out[#out + 1] = { { C.dim, "skill power: what redundancy adds over your path now · sbo class plan " .. table.concat(mine, " ") .. " <class> … for a path in full" } }
+  out[#out + 1] = { { C.dim, "skill power: what redundancy adds over your path now · SCC at level 60 in each class, your attributes now" } }
+  out[#out + 1] = { { C.dim, "token: a group twice (or a class again) needs a greater token of multiclassing · sbo class plan " .. table.concat(mine, " ") .. " <class> … for a path in full" } }
   M.viewOut(out, links)
 end
 
@@ -7976,6 +8047,8 @@ M.HELP_BATCHES = {
     pages = { "class", "multiclass", "archon", "barbarian", "bard", "cavalier", "druid", "knave" } },
   { name = "classes, attributes and ratings (2)",
     pages = { "monk", "paladin", "priest", "psionic", "ranger", "rogue", "shaman", "valkyrie", "witch", "wizard" } },
+  { name = "classes, attributes and ratings (3)",
+    pages = { "2035", "1393", "1065", "2367", "2337" } },
 }
 local WORTH = { "combat", "attack", "defen", "damage", "dodge", "parry", "block", "evasion", "armor", "resist",
   "accuracy", "crit", "skill power", "complexity", "spell", "magic", "cast", "regen", "heal", "strength",
