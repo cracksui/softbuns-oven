@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.41.2"
+M.version = "1.42.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3648,8 +3648,8 @@ function M.layoutQuestHud()
   if not M.questTitle then
     M.questTitle = Geyser.Label:new({ name = "ovenQuestTitle", x = 0, y = 0, width = 100, height = titleH })
     -- solid and lighter than the cards, so it reads as the handle
-    M.questTitle:setStyleSheet("background-color: rgb(58,62,88); border: 1px solid rgba(160,170,220,140); "
-      .. "border-top-left-radius: 6px; border-top-right-radius: 6px; padding-left: 8px; padding-right: 8px;")
+    M.questTitle:setStyleSheet(M.PANEL_STYLE:gsub("border%-radius: 6px;", "border-top-left-radius: 6px; border-top-right-radius: 6px;")
+      .. " padding-left: 8px; padding-right: 8px;")
     pcall(function() M.questTitle:setToolTip("drag to move the quest panel") end)
   end
   M.hudCallbacks(M.questTitle, nil, { drag = true })
@@ -3657,11 +3657,8 @@ function M.layoutQuestHud()
   for _ in pairs(M.cfg.questPins or {}) do n = n + 1 end
   local font = (pcall(getFont) and getFont()) or "monospace"
   local fs = math.max(8, (M.cfg.fontSize or 10) - 1)
-  M.questTitle:rawEcho(string.format("<table width=\"100%%\" cellspacing=\"0\" cellpadding=\"0\"><tr>"
-    .. "<td style=\"font-family:'%s'; font-size:%dpt;\">%s%s</td>"
-    .. "<td align=\"right\" style=\"font-family:'%s'; font-size:%dpt;\">%s</td></tr></table>",
-    font, fs, span(C.slot, "⠿⠿ "), span(C.title, "Quests") .. span(C.text, "  (" .. n .. ")"),
-    font, fs, span(C.text, "drag to move")))
+  M.questTitle:rawEcho(string.format("<span style=\"font-family:'%s'; font-size:%dpt;\">%s%s</span>",
+    font, fs, span(C.slot, "⠿⠿ "), span(C.title, "Quests") .. span(C.text, "  (" .. n .. ")")))
   M.questTitle:move(x + 1, y + 1); M.questTitle:resize(w - 2, titleH); M.questTitle:show()
   M.questHud:move(x, y)
   M.questHud:resize(w, h)
@@ -4271,13 +4268,28 @@ end
 ---------------------------------------------------------------------------
 -- Inspector window: one result at a time (eq, item, score, compare…), with ◀ older / newer ▶
 ---------------------------------------------------------------------------
+-- every Oven panel's frame: the quest panel's title look (a solid slate strip, a pale border); what's inside
+-- each keeps its own background, so the slate shows as the title bar and a thin frame
+M.PANEL_STYLE = "background-color: rgb(58,62,88); border: 1px solid rgba(160,170,220,140); border-radius: 6px;"
+function M.stylePanels()
+  local list = { M.container, M.helpContainer, M.mapPanel }
+  for _, w in pairs(M.tabWins or {}) do list[#list + 1] = w end
+  for _, c in pairs(list) do
+    if c and c.adjLabel and c.adjLabelstyle ~= M.PANEL_STYLE then
+      c.adjLabelstyle = M.PANEL_STYLE
+      pcall(function() c.adjLabel:setStyleSheet(M.PANEL_STYLE) end)
+    end
+  end
+end
+
 function M.createWindow()
+  pcall(M.stylePanels)   -- (panels made by an older version, this session)
   if not M.container then
     M.container = Adjustable.Container:new({
       name = "ovenViewer",
       titleText = "Inspector",
       x = "-62%", y = "4%", width = "36%", height = "50%",
-      adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+      adjLabelstyle = M.PANEL_STYLE, padding = 6,
       titleTxtColor = "#e6c35c",
     })
     M.panelPlace("ovenViewer", M.container)
@@ -4517,7 +4529,7 @@ function M.tabUndock1(key, x, y, holdTab)
     win = Adjustable.Container:new({
       name = name, titleText = tabTitle(key),
       x = 0, y = 0, width = math.floor(cw), height = math.floor(ch),
-      adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+      adjLabelstyle = M.PANEL_STYLE, padding = 6,
       titleTxtColor = "#e6c35c",
     })
     pcall(function() win:newCustomItem("dock into the Oven window", function() M.tabDock(key) end) end)
@@ -4727,7 +4739,7 @@ function M.createHelpWindow()
       name = "ovenHelp",
       titleText = "help",
       x = "2%", y = "4%", width = "45%", height = "70%",
-      adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+      adjLabelstyle = M.PANEL_STYLE, padding = 6,
       titleTxtColor = "#e6c35c",
     })
     M.panelPlace("ovenHelp", M.helpContainer)
@@ -12229,7 +12241,7 @@ function M.createMapPanel()
     name = "ovenMapPanel",
     titleText = "Map",
     x = "-36%", y = "4%", width = "34%", height = "50%",
-    adjLabelstyle = "background-color: rgba(20,20,28,235); border: 1px solid #555; border-radius: 4px;",
+    adjLabelstyle = M.PANEL_STYLE, padding = 6,
     titleTxtColor = "#e6c35c",
   })
   M.panelPlace("ovenMapPanel", M.mapPanel)
