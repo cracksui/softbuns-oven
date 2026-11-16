@@ -164,7 +164,9 @@ Geyser.Label.new = function(self, o, parent) local t = labelNew(self, o, parent)
 Geyser.CommandLine = { new = function(self, o, parent)
   local t = { name = o.name, shown = true }
   function t:setAction(f) t.action = f end
-  function t:clear() end function t:setStyleSheet() end function t:show() end function t:hide() end
+  function t:clear() if clearCmdLine then clearCmdLine(t.name) end end
+  function t:print(x) if printCmdLine then printCmdLine(t.name, x) end end
+  function t:setStyleSheet() end function t:show() end function t:hide() end
   function t:resize(w, h) t.h = h end
   WIDGETS = WIDGETS or {}; WIDGETS[o.name] = t
   return t

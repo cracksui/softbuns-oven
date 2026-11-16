@@ -2518,7 +2518,7 @@ def notes_tab():
     o.lua("TYPE('cook gives pesto'); ENTER(); TYPE('for 250 gold'); ENTER()")
     assert "pesto" not in open(f).read(), "Enter never saves"
     eq(o.ev("BOXTEXT"), "cook gives pesto\nfor 250 gold\n", "the lines in the box")
-    eq((o.ev("WIDGETS['ovenNotesSave'].shown"), o.ev("WIDGETS['ovenNotesNew'].shown")), (True, True), "Save, Cancel, New note: always there")
+    eq((o.ev("WIDGETS['ovenNotesSave'].shown"), o.ev("WIDGETS['ovenNotesCancel'].shown")), (True, True), "Save, Cancel: always there")
     o.lua("WIDGETS['ovenNotesSave'].click()")
     text = open(f).read()
     assert text.rstrip().endswith("#28840\ncook gives pesto\nfor 250 gold"), text
@@ -2546,6 +2546,14 @@ def notes_tab():
     assert "from the command" in open(f).read()
     o.lua("TYPE('not this'); sbo.command('notes cancel')")
     assert "not this" not in open(f).read()
+    # a Mudlet whose box can't be refilled: the box empties on Enter - the lines are kept, shown above, saved
+    o.lua("""sbo.noteBoxWorks = nil; printCmdLine = function() end
+      TYPE('first line'); ENTER(); BOXTEXT = ''; TYPE('second line'); ENTER(); BOXTEXT = ''""")
+    shown = o.ev("WIDGETS['ovenNotesConsole'].text")
+    assert "writing a new note" in shown and "first line\nsecond line" in shown, shown
+    o.lua("TYPE('third'); WIDGETS['ovenNotesSave'].click()")
+    assert open(f).read().rstrip().endswith("first line\nsecond line\nthird"), open(f).read()
+    o.lua("sbo.noteBoxWorks = nil; printCmdLine = function(n, t) BOXTEXT = t end")
     o.lua('sbo.command("notes find pesto")')
     shown = o.ev("WIDGETS['ovenNotesConsole'].text")
     assert "pesto" in shown and "treant" not in shown, shown

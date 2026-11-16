@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.52.0"
+M.version = "1.52.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11474,8 +11474,8 @@ function M.buildNotes(page)
     b:setClickCallback(function() M.lastUserCmdAt = now(); fn() end)
     return b
   end
-  M.notesNewBtn = button("ovenNotesNew", "＋ New note", 110, function() M.noteEditStart(nil) end)
   M.notesInput = nil   -- (made below, under the list)
+  M.notesLayout = 3
   M.notesSaveBtn = button("ovenNotesSave", "Save", 70, function() M.noteEditSave() end)
   M.notesCancelBtn = button("ovenNotesCancel", "Cancel", 70, function() M.noteEditCancel() end)
   M.notesStatus = Geyser.Label:new({ name = "ovenNotesStatus" }, bar)
@@ -11664,27 +11664,52 @@ local function describe(v)
   for k, x in pairs(v) do t[#t + 1] = tostring(k) .. "=" .. tostring(x) end
   return "{" .. table.concat(t, ", ") .. "}"
 end
+-- put text in the box: Geyser's own way first (it knows this Mudlet's), the plain function as a fallback
+local function boxPrint(t)
+  local ok = M.notesInput and pcall(function() M.notesInput:print(t) end)
+  if not ok then pcall(printCmdLine, BOX, t) end
+end
+local function boxText() local ok, t = pcall(getCmdLine, BOX); return (ok and type(t) == "string") and t or "" end
+local function boxClear()
+  local ok = M.notesInput and pcall(function() M.notesInput:clear() end)
+  if not ok then pcall(clearCmdLine, BOX) end
+end
+M.noteBoxPrint, M.noteBoxText, M.noteBoxClear = boxPrint, boxText, boxClear
+
+-- Enter in the box: a new line - never a save. Mudlet empties the box on Enter (and hands its lines over
+-- one by one), so Oven keeps the note in progress itself: the lines go back into the box when this Mudlet
+-- lets them (the box then holds the whole note), else they're kept and shown above the box
 function M.noteBoxAction(text)
-  -- the box is always the editor: whatever you type is a note in the making (a new one, unless [edit])
-  M.noteEdit = M.noteEdit or { i = nil, keys = {} }
-  -- sbo debug notes: what the box hands over, and what Oven makes of it
-  if M.noteDebug then
-    local okB, box = pcall(getCmdLine, BOX)
-    local sh = M.shiftHeld()
-    M.say(string.format("notes debug: action(%q) · editing %s · shift %s (raw %s) · box now %s",
-      tostring(text), tostring(M.noteEdit ~= nil), tostring(sh), describe(M.lastModifiers), okB and string.format("%q", tostring(box)) or "?"))
-  end
+  local E = M.noteEdit or { i = nil, lines = {} }
+  E.lines = E.lines or {}
+  M.noteEdit = E
   local G = M.noteEnterGather
   if not G then
-    G = { parts = {}, shift = false }   -- (Enter only ever adds a line: Mudlet can't say when Shift is held)
+    G = { parts = {}, atPress = boxText() }
     M.noteEnterGather = G
     tempTimer(0, function()
       M.noteEnterGather = nil
-      local ok, full = pcall(getCmdLine, BOX)
-      full = (ok and type(full) == "string" and full ~= "") and full or table.concat(G.parts, "\n")
-      pcall(printCmdLine, BOX, full .. "\n")
+      local typed = (G.atPress ~= "" and G.atPress) or table.concat(G.parts, "\n")
+      if M.noteBoxWorks ~= false then
+        -- the whole note back in the box, with a new line
+        local want = table.concat(E.lines, "\n") .. (#E.lines > 0 and "\n" or "") .. typed .. "\n"
+        boxPrint(want)
+        if boxText() == want then
+          M.noteBoxWorks, E.lines = true, {}
+        else
+          M.noteBoxWorks = false
+          boxClear()
+          for l in (typed .. "\n"):gmatch("(.-)\n") do E.lines[#E.lines + 1] = l end
+        end
+      else
+        for l in (typed .. "\n"):gmatch("(.-)\n") do E.lines[#E.lines + 1] = l end
+      end
+      if M.noteDebug then
+        M.say(string.format("notes debug: Enter · typed %q · the box %s · kept %d line(s) · box now %q",
+          typed, M.noteBoxWorks and "holds the note" or "can't be refilled", #E.lines, boxText()))
+      end
       editSize()
-      pcall(M.notesBarDraw)
+      M.notesRender(M.notesFilter)
     end)
   end
   G.parts[#G.parts + 1] = text or ""
@@ -11700,31 +11725,39 @@ function M.noteEditStart(i)
     if not x then return M.say("no note #" .. tostring(i)) end
     text = table.concat(x.lines, "\n")
   end
-  -- (no key bindings: Mudlet's box takes Enter before them - its own Enter is told apart by Shift, see the box's action)
-  M.noteEdit = { i = i, keys = {} }
-  pcall(printCmdLine, BOX, text)
+  M.noteEdit = { i = i, lines = {} }
+  boxClear()
+  if M.noteBoxWorks == false then
+    for l in (text .. "\n"):gmatch("(.-)\n") do M.noteEdit.lines[#M.noteEdit.lines + 1] = l end
+  elseif text ~= "" then
+    boxPrint(text)
+    if boxText() ~= text then
+      M.noteBoxWorks = false; boxClear()
+      for l in (text .. "\n"):gmatch("(.-)\n") do M.noteEdit.lines[#M.noteEdit.lines + 1] = l end
+    end
+  end
   editSize()
-  if not M.notesNewBtn then M.say("writing a note: Enter adds a line · sbo notes save keeps it, sbo notes cancel leaves it") end
   M.notesRender(M.notesFilter)
 end
 
 function M.noteEditCancel()
-  stopKeys()
   M.noteEdit = nil
-  pcall(clearCmdLine, BOX)
+  boxClear()
   setBoxHeight(M.notesBoxHeight or 26)
   M.notesRender(M.notesFilter)
 end
 
 -- save: the note's text (its heading kept), or a new note with today's date and where you are
 function M.noteEditSave(given)
-  local E = M.noteEdit or { i = nil, keys = {} }
-  local ok, text = pcall(getCmdLine, BOX)
-  text = given or (ok and text) or ""
-  text = text:gsub("%s+$", "")
-  stopKeys()
+  local E = M.noteEdit or { i = nil, lines = {} }
+  -- the lines kept so far, and what's in the box now
+  local parts = {}
+  for _, l in ipairs(E.lines or {}) do parts[#parts + 1] = l end
+  local box = given or boxText()
+  if box ~= "" then parts[#parts + 1] = box end
+  local text = table.concat(parts, "\n"):gsub("%s+$", "")
   M.noteEdit = nil
-  pcall(clearCmdLine, BOX)
+  boxClear()
   setBoxHeight(M.notesBoxHeight or 26)
   if E.i then M.noteReplace(E.i, text) elseif text ~= "" then M.noteAdd(text) end
   M.notesRender(M.notesFilter)
@@ -11745,9 +11778,9 @@ local function noteLink(text, fn, hint)
 end
 
 function M.notesBarDraw()
-  if not M.notesNewBtn then return end
+  if not M.notesSaveBtn then return end
   local editing = M.noteEdit ~= nil
-  M.notesNewBtn:show(); M.notesSaveBtn:show(); M.notesCancelBtn:show()
+  M.notesSaveBtn:show(); M.notesCancelBtn:show()
   local font = (pcall(getFont) and getFont()) or "monospace"
   local txt = editing
     and (string.format("<span style=\"color:%s;\">%s</span>", M.hex("title"), M.noteEdit.i and ("editing note #" .. M.noteEdit.i) or "a new note")
@@ -11769,8 +11802,14 @@ function M.notesRender(filter)
   for i, x in ipairs(all) do
     if q == "" or (x.head .. "\n" .. table.concat(x.lines, "\n")):lower():find(q, 1, true) then shown[#shown + 1] = { i = i, x = x } end
   end
-  -- the bar at the top: New note, or (editing) Save / Cancel and what the keys do
+  -- the bar at the top: Save / Cancel and what's being written
   pcall(M.notesBarDraw)
+  -- the note in progress, when the box can't hold it all: its lines so far
+  local E = M.noteEdit
+  if E and E.lines and #E.lines > 0 then
+    pcall(function() con:decho(M.drgb("title") .. (E.i and ("editing note #" .. E.i) or "writing a new note") .. M.drgb("dim")
+      .. " - so far (the line you're on is in the box):\n" .. M.drgb("item") .. table.concat(E.lines, "\n"):gsub("<", "&lt;") .. "\n\n") end)
+  end
   if M.notesFilter then
     pcall(function() con:decho(M.drgb("title") .. string.format("notes with '%s'  ", M.notesFilter) .. M.drgb("dim") .. "(" .. #shown .. ")  ") end)
     noteLink(M.drgb("slot") .. "show all", function() M.notesRender() end, "every note")
@@ -16939,5 +16978,9 @@ end
 M.init()
 
 -- after an update: the Notes tab drawn again, so its links are this version's
-if M.notesConsole and not M.notesNewBtn and M.tabPages and M.tabPages.notes then pcall(M.buildNotes, M.tabPages.notes) end
+-- (and built again when its layout has changed: the bar, the taller box)
+if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes then
+  if M.notesNewBtn then pcall(function() M.notesNewBtn:hide() end); M.notesNewBtn = nil end
+  pcall(M.buildNotes, M.tabPages.notes)
+end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
