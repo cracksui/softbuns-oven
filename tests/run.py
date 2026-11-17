@@ -1184,6 +1184,27 @@ def travel_by_ganuk():
     o.lua("WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; sbo.running.started = true; sbo.mapRoom = 3200; sbo.runStopped(true); runTimers()")
     eq((o.ev("WALKED"), o.ev("sbo.trip")), (3201, None), "and the last step")
     o.lua("sbo.mapWalkTo = REALWALK")
+    # a long walk through the wilds: the wild rooms made dearer and looked again - a run wins where there is one;
+    # none: the plan says so (rooms 1,000,000 and up are the wilds)
+    o.lua("""getRoomWeight = function(r) return RW and RW[r] or 1 end; setRoomWeight = function(r, w) RW = RW or {}; RW[r] = w end
+      local function wild(a, b, n) local c = { a } for i = 1, n do c[#c + 1] = 1100000 + a * 1000 + i end c[#c + 1] = b; CHAIN(3, c, 'n') end
+      CHAIN(7, { 7000 }, 'x'); CHAIN(5, { 7100 }, 'x'); AREA[7000], AREA[7100] = 7, 5
+      wild(7000, 7100, 90); AREA[7000], AREA[7100] = 7, 5
+      sbo.signposts = function() return {} end; sbo.cfg.runs = { names = {}, ends = {}, endsFixed = 1 }
+      sbo.mapRoom = 7000; LOGS = {}; SENT = {}""")
+    o.lua("sbo.goTo(7100)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "about 90 rooms of the wilds on foot" in text and "y to go" in text, text
+    eq(o.ev("(function() local n, bad = 0, 0 for _, w in pairs(RW or {}) do n = n + 1; if w ~= 1 then bad = bad + 1 end end return n > 50 and bad == 0 end)()"), True, "the wild rooms made dearer for the search - and put back")
+    # with a signpost run beside that walk: the search takes the run
+    o.lua("""CHAIN(3, { 7000, 7050 }, 'e'); CHAIN(3, { 7060, 7100 }, 'e'); AREA[7050], AREA[7060] = 3, 3
+      EX[7000] = { { 'e', 7050 }, { 'n', 8100001 } }; AREA[7000], AREA[7100] = 7, 5
+      sbo.signposts = function() return { { room = 7050, dests = { townb = 'north' } } } end
+      sbo.cfg.runs = { names = { townb = {} }, ends = { townb = 7060 }, endsFixed = 1 }
+      LOGS = {}""")
+    o.lua("sbo.goTo(7100)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "run townb" in text and "rooms of the wilds" not in text, text
     # chained: the Worm to Lowangen, Gerry's balloon on to New Rigel (it takes off once bought)
     o.lua("""CHAIN(4, { 700, 701, 702, 703, 16091 }, 'w'); CHAIN(5, { 62000, 62001, 62100 }, 's')
       sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last) VALUES (10636, 1, 'A token for Lowangen passage', 25, 'No limit', 3625, 0)")

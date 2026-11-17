@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.59.1"
+M.version = "1.59.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14912,7 +14912,12 @@ end
 -- a plan, printed as numbered lines under a heading
 function M.sayPlan(head, lines, sum, tail)
   say(head)
-  for k, l in ipairs(lines or {}) do M.log(string.format("<oven_dim>   %d.<reset> %s", k, (l:gsub("<", "‹"):gsub(">", "›")))) end
+  local k = 0
+  for _, l in ipairs(lines or {}) do
+    local safe = l:gsub("<", "‹"):gsub(">", "›")
+    if l:sub(1, #"⚠") == "⚠" then M.log("<oven_minus>   " .. safe .. "<reset>")   -- a warning: not a step
+    else k = k + 1; M.log(string.format("<oven_dim>   %d.<reset> %s", k, safe)) end
+  end
   local last = {}
   if sum then last[#last + 1] = sum end
   if tail then last[#last + 1] = tail end
@@ -15256,7 +15261,7 @@ function M.goToNow(id)
   if here and roomExists(here) and roomExists(id) and not (okA and sameArea) then
     local onFoot = getPath(here, id) and #(speedWalkDir or {}) or nil
     local okT, plan = pcall(M.tripPlan, here, id, {})
-    if okT and plan and (plan.rides > 0 or plan.runs > 0) then
+    if okT and plan and (plan.rides > 0 or plan.runs > 0 or (plan.wild or 0) > M.TRIP_WILD_WARN) then
       local lines, tail = M.tripPlanLines(plan, id)
       M.goAsk = { id = id, at = os.time(), trip = true }
       M.sayPlan(string.format("%s is in %s - the fastest way:", getRoomName(id) or ("#" .. id), getRoomAreaName(getRoomArea(id)) or "?"),
@@ -15502,6 +15507,10 @@ local TRIP = "oven-trip:"
 M.TRIP_PAID_EXTRA = 60   -- a ride that costs gold: used only when it saves at least this many steps
 M.TRIP_FREE_EXTRA = 20   -- a free one (the clan hall, recall)
 M.TRIP_RUN_EXTRA = 10
+M.TRIP_WILD_LIMIT = 40   -- rooms of the wilds on foot before the search looks again (those rooms made dearer)
+M.TRIP_WILD_WARN = 40    -- and a plan that still walks more of them than this says so
+-- the wilds' rooms: numbered from a million up (Alyria's start at 1,060,834; the Faerie Plane's at 6,000,000)
+function M.isWildRoom(id) return (tonumber(id) or 0) >= 1000000 end
 
 function M.tripEdges(here, target, used)
   local edges = {}
@@ -15558,7 +15567,7 @@ function M.tripPlan(here, target, used)
   if not here or not target or not roomExists(here) or not roomExists(target) then return nil end
   local find = M.pathReal or getPath
   local edges = M.tripEdges(here, target, used)
-  local byCmd, added = {}, {}
+  local byCmd, added, weighted = {}, {}, {}
   local ok, res = pcall(function()
     for _, e in ipairs(edges) do
       if not byCmd[e.cmd .. ">" .. e.from] and pcall(addSpecialExit, e.from, e.to, e.cmd) then
@@ -15567,11 +15576,33 @@ function M.tripPlan(here, target, used)
         pcall(setExitWeight, e.from, e.cmd, e.weight)
       end
     end
-    if not find(here, target) then return nil end
-    local d, p = {}, {}
-    for i, x in ipairs(speedWalkDir or {}) do d[i] = x; p[i] = tonumber((speedWalkPath or {})[i]) end
-    return { dirs = d, path = p }
+    local function search()
+      if not find(here, target) then return nil end
+      local d, p = {}, {}
+      for i, x in ipairs(speedWalkDir or {}) do d[i] = x; p[i] = tonumber((speedWalkPath or {})[i]) end
+      local wild = {}
+      for i, x in ipairs(d) do if not byCmd[x .. ">" .. (i == 1 and here or p[i - 1])] and M.isWildRoom(p[i]) then wild[#wild + 1] = p[i] end end
+      return { dirs = d, path = p, wild = wild }
+    end
+    local best = search()
+    -- a long walk through the wilds: those rooms made dearer for a moment, and looked again - a run or a ride
+    -- is taken wherever there's one
+    for _ = 1, 3 do
+      if not best or #best.wild <= M.TRIP_WILD_LIMIT or not setRoomWeight then break end
+      for _, r in ipairs(best.wild) do
+        if weighted[r] == nil then
+          local okW, w = pcall(getRoomWeight, r)
+          weighted[r] = (okW and tonumber(w)) or 1
+          pcall(setRoomWeight, r, weighted[r] * 4)
+        end
+      end
+      local again = search()
+      if not again or #again.wild >= #best.wild then break end
+      best = again
+    end
+    return best
   end)
+  for r, w in pairs(weighted) do pcall(setRoomWeight, r, w) end
   for _, e in ipairs(added) do pcall(removeSpecialExit, e.from, e.cmd) end
   if not ok or not res then return nil end
   local plan = { segs = {}, gold = 0, rides = 0, runs = 0, walked = 0 }
@@ -15595,6 +15626,7 @@ function M.tripPlan(here, target, used)
     at = res.path[i] or at
   end
   if n > 0 then plan.segs[#plan.segs + 1] = { kind = "walk", n = n, to = target } end
+  plan.wild = #(res.wild or {})
   return plan
 end
 
@@ -15633,6 +15665,9 @@ function M.tripPlanLines(plan, target)
       elseif L.anywhere then lines[#lines + 1] = L.board[1] .. " to " .. L.dest
       else lines[#lines + 1] = string.format("%s to %s - %s gold", L.kind, L.dest, commas(L.cost)) end
     end
+  end
+  if (plan.wild or 0) > M.TRIP_WILD_WARN then
+    lines[#lines + 1] = string.format("⚠ that's about %d rooms of the wilds on foot - no run or ride Oven knows does better", plan.wild)
   end
   local gold, bank = M.goldOnHand()
   local tail = (plan.gold or 0) == 0 and "the trip is free" or string.format("the trip costs %s gold in all", commas(plan.gold or 0))
