@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.54.3"
+M.version = "1.55.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -12408,6 +12408,7 @@ function M.onLineWork()
   if M.levelEvent or line:find("You gain ", 1, true) or line:find(", you are now a", 1, true) then pcall(M.levelNoteLine, line) end
   if M.tempMap then pcall(M.tempNoteLine, line) end
   if line:find("takes your payment and hands you", 1, true) then pcall(M.noteBought, line) end
+  if M.travel then pcall(M.travelLine, line) end
   if M.eqdbAt and not cap then
     local okE, done = pcall(M.eqdbLine, line)
     if okE and done then pcall(M.recordLine, line, false); return end
@@ -13049,6 +13050,7 @@ function M.onRoom()
       if w.step > #w.dirs then
         M.walk = nil
         if w.thenRun then M.runStart(w.thenRun, w.target)
+        elseif w.thenDo then tempTimer(0.3, w.thenDo)
         elseif M.whereAfterWalk then local q = M.whereAfterWalk; M.whereAfterWalk = nil; tempTimer(0.5, function() pcall(M.whereGo, q) end)
         else M.notifyWalk("arrived") end
       else
@@ -13060,6 +13062,7 @@ function M.onRoom()
     end
   end
   pcall(M.shopOnArrive, id)
+  if M.travel then pcall(M.travelOnRoom, id) end
 end
 
 -- walk notes: a line in the game text (the prompt bar has no room to spare)
@@ -15039,6 +15042,11 @@ function M.mapRun(arg)
     elseif getPath(here, t.id) then t.steps = #speedWalkDir; reach[#reach + 1] = t end
   end
   if #reach == 0 then
+    for i, t in ipairs(targets) do
+      if i > 10 then break end
+      local okT, trip = pcall(M.travelPlan, here, t.id, nil)
+      if okT and trip then return M.goTo(t.id) end
+    end
     -- say what was found, so it's clear whether it's the place you meant
     local names = {}
     for i, t in ipairs(targets) do
@@ -15092,6 +15100,25 @@ end
 -- ("y" goes, "n" stays - answered to Oven, not the game). Already in the wilds: no question.
 function M.goTo(id)
   local here = M.mapRoom or M.currentRoom()
+  -- a paid trip (Ganuk, a balloon…) when it beats walking by enough, or when there's no way on foot
+  if here and roomExists(here) and roomExists(id) then
+    local onFoot = getPath(here, id) and #(speedWalkDir or {}) or nil
+    local runCost
+    if onFoot then
+      local d, p = {}, {}
+      for i, x in ipairs(speedWalkDir or {}) do d[i] = x; p[i] = tonumber((speedWalkPath or {})[i]) end
+      local okR, rp = pcall(M.runPlan, here, id, d, p)
+      runCost = okR and rp and rp.cost or nil
+    end
+    local okT, trip = pcall(M.travelPlan, here, id, math.min(onFoot or math.huge, runCost or math.huge) < math.huge and math.min(onFoot or math.huge, runCost or math.huge) or nil)
+    if okT and trip then
+      local lines, tail = M.travelPlanLines(trip, id)
+      M.goAsk = { id = id, at = os.time(), travel = trip }
+      M.sayPlan(string.format("%s is in %s - the fastest way:", getRoomName(id) or ("#" .. id), getRoomAreaName(getRoomArea(id)) or "?"),
+        lines, onFoot and string.format("about %d steps instead of %d", trip.cost, runCost or onFoot) or "no way there on foot", tail .. " · y to go, n to stay")
+      return
+    end
+  end
   if not here or not roomExists(id) or not getPath(here, id) then return M.mapWalkTo(id) end
   local hereArea = getRoomArea(here)
   local leaves = getRoomArea(id) ~= hereArea
@@ -15120,6 +15147,206 @@ function M.goTo(id)
   end
 end
 
+---------------------------------------------------------------------------
+-- Travel: the paid ways between towns, from the shop lists Oven has read - Ganuk's Iron Worm tokens
+-- ("A token for Sigil passage", 3,625 gold), the balloons' tickets ("A ticket to New Rigel"), passage
+-- shops ("Passage to Verity Isle"). sbo go weighs them against walking and signpost runs; a trip that
+-- costs gold says what it costs in all and asks first. Ganuk is done for you: buy the token, go down,
+-- give it to him, then walk on from wherever the Worm lands. A kind whose boarding Oven doesn't know
+-- yet is listed (sbo travel) but not used.
+---------------------------------------------------------------------------
+do
+M.TRAVEL_COST = 20     -- a trip counted as this many steps (the ride, the buying)
+M.TRAVEL_SAVES = 60    -- and only used when it saves at least this many more (it costs gold)
+
+-- the kinds: which shop, which item names a destination, and how to board once it's bought
+M.TRAVEL_KINDS = {
+  { kind = "Iron Worm", shop = "ganuk", item = { "^a token for passage to (.+)$", "^a token for (.-) passage$" },
+    board = { "down", "give token ganuk" } },
+  { kind = "balloon", shop = "balloon", item = { "^a ticket to (.+)$" } },
+  { kind = "balloon", shop = "air travel", item = { "^a ticket to (.+)$" } },
+  { kind = "passage", shop = "passage", item = { "^passage to (.+)$" } },
+}
+
+-- a place name → the area it is ("New Rigel" → "The Towne of New Rigel"), or nil
+local function areaFor(dest)
+  local d = tostring(dest or ""):lower():gsub("^the ", "")
+  if d == "" then return nil end
+  local best
+  for name, id in pairs(getAreaTable and getAreaTable() or {}) do
+    local n = tostring(name):lower()
+    local bare = n:gsub("^the towne of ", ""):gsub("^towne of ", ""):gsub("^the ", "")
+    if bare == d then return name, id end
+    if not best and (bare:find(d, 1, true) == 1 or d:find(bare, 1, true) == 1) and #bare >= 4 then best = { name, id } end
+  end
+  if best then return best[1], best[2] end
+end
+M.travelAreaFor = areaFor
+
+-- every link Oven knows: { kind, shop (room), shopName, no, dest, area, areaId, cost, board }
+function M.travelLinks()
+  local out = {}
+  local rows = M.dbRows("SELECT s.room AS room, s.name AS name, i.no AS no, i.item AS item, i.cost AS cost "
+    .. "FROM shop_items i JOIN shops s ON s.room = i.room ORDER BY s.room, i.no")
+  for _, r in ipairs(rows) do
+    local sname, item = tostring(r.name or ""):lower(), tostring(r.item or ""):lower()
+    for _, K in ipairs(M.TRAVEL_KINDS) do
+      if sname:find(K.shop, 1, true) then
+        for _, pat in ipairs(K.item) do
+          local dest = item:match(pat)
+          if dest then
+            local area, areaId = areaFor(dest)
+            out[#out + 1] = { kind = K.kind, shop = tonumber(r.room), shopName = r.name, no = tonumber(r.no),
+              dest = dest:gsub("(%a)([%w']*)", function(a, b) return a:upper() .. b end), area = area, areaId = areaId,
+              cost = tonumber(r.cost) or 0, board = K.board }
+            break
+          end
+        end
+      end
+    end
+  end
+  return out
+end
+
+-- a room of an area to measure the rest of the walk from (its exit, as where is found it; else any)
+local function areaRoom(areaName, areaId)
+  local row = areaName and M.dbRow("SELECT room FROM where_rooms WHERE area = %s AND feature = 'exit' AND room IS NOT NULL", areaName)
+  local r = row and tonumber(row.room)
+  if r and roomExists(r) then return r end
+  local rooms = areaId and getAreaRooms and getAreaRooms(areaId)
+  if type(rooms) == "table" then for _, id in pairs(rooms) do return id end end
+end
+
+local function steps(a, b)
+  if not a or not b or not roomExists(a) or not roomExists(b) then return nil end
+  if a == b then return 0 end
+  if getPath(a, b) then return #speedWalkDir end
+end
+
+-- the best trip from here to target (when it beats walking by enough): { link, toShop, after, cost }
+function M.travelPlan(here, target, onFoot)
+  if not here or not target then return nil end
+  local tArea = getRoomArea(target)
+  local best
+  for _, L in ipairs(M.travelLinks()) do
+    if L.board and L.areaId and L.areaId == tArea and getRoomArea(here) ~= L.areaId then
+      local k = steps(here, L.shop)
+      local rep = k and areaRoom(L.area, L.areaId)
+      local n = rep and steps(rep, target)
+      if k and n then
+        local cost = k + M.TRAVEL_COST + n
+        if (not onFoot or cost + M.TRAVEL_SAVES <= onFoot) and (not best or cost < best.cost) then
+          best = { link = L, toShop = k, after = n, cost = cost }
+        end
+      end
+    end
+  end
+  return best
+end
+
+function M.goldOnHand()
+  local w = M.gmcpGet and M.gmcpGet("char.worth")
+  return type(w) == "table" and tonumber(w.gold) or nil, type(w) == "table" and tonumber(w.bank) or nil
+end
+
+-- the plan in lines, its gold, and a warning when you don't carry enough
+function M.travelPlanLines(plan, target)
+  local L = plan.link
+  local lines = {}
+  local function pl(n) return n == 1 and "" or "s" end
+  if plan.toShop > 0 then lines[#lines + 1] = string.format("%d step%s to %s", plan.toShop, pl(plan.toShop), L.shopName) end
+  lines[#lines + 1] = string.format("%s to %s - %s gold", L.kind, L.dest, commas(L.cost))
+  lines[#lines + 1] = string.format("about %d step%s on to %s", plan.after, pl(plan.after), getRoomName(target) or ("#" .. target))
+  local gold, bank = M.goldOnHand()
+  local tail = string.format("the trip costs %s gold in all", commas(L.cost))
+  if gold and gold < L.cost then
+    tail = tail .. string.format(" - you carry %s%s", commas(gold),
+      bank and string.format(" (%s in the bank)", commas(bank)) or "")
+  end
+  return lines, tail
+end
+
+-- the trip: walk to the shop, buy, board; then walk on from wherever it lands
+function M.travelStart(plan, target)
+  local L = plan.link
+  M.travel = { link = L, target = target, stage = "toShop", at = os.time() }
+  local function atShop()
+    local T = M.travel
+    if not T then return end
+    T.stage = "buying"
+    M.sendOwn("shop buy " .. L.no, true)
+    tempTimer(8, function() if M.travel == T and T.stage == "buying" then M.travel = nil; say("travel: the shop didn't sell the " .. L.kind:lower() .. " ticket - stopped") end end)
+  end
+  if M.mapRoom == L.shop then return atShop() end
+  if not getPath(M.mapRoom, L.shop) then M.travel = nil; return say("no route on the map to " .. L.shopName) end
+  local d, p = {}, {}
+  for i, x in ipairs(speedWalkDir) do d[i] = x; p[i] = tonumber(speedWalkPath[i]) end
+  M.walk = { dirs = d, path = p, step = 1, thenDo = atShop }
+  M.walkStep()
+end
+
+-- the game's lines while travelling: bought → board; refused → stop
+function M.travelLine(l)
+  local T = M.travel
+  if not T then return end
+  local t = trim(l)
+  if T.stage == "buying" then
+    if t:find("takes your payment and hands you", 1, true) then
+      T.stage, T.boardStep = "boarding", 1
+      tempTimer(0.3, function() M.travelBoard() end)
+    elseif t:match("^You can't afford") or t:match("^You don't have enough") or t:match("can't afford") then
+      M.travel = nil; say("travel: not enough gold on hand for the " .. T.link.kind .. " - stopped")
+    end
+  end
+end
+
+function M.travelBoard()
+  local T = M.travel
+  if not T or T.stage ~= "boarding" then return end
+  local cmd = T.link.board[T.boardStep]
+  if not cmd then T.stage = "riding"; T.rideFrom = getRoomArea(M.mapRoom or 0); return end
+  T.boardStep = T.boardStep + 1
+  M.sendOwn(cmd, true)
+  -- a move (down): the next step once you've arrived; anything else: a moment later
+  if M.TEMP_DIRS and M.TEMP_DIRS[cmd] then T.waitRoom = M.mapRoom
+  else tempTimer(0.8, function() M.travelBoard() end) end
+end
+
+-- a room change while travelling: down to Ganuk → give the token; landed elsewhere → walk on
+function M.travelOnRoom(id)
+  local T = M.travel
+  if not T then return end
+  if T.stage == "boarding" and T.waitRoom and id ~= T.waitRoom then
+    T.waitRoom = nil
+    tempTimer(0.5, function() M.travelBoard() end)
+  elseif T.stage == "riding" and getRoomArea(id) ~= T.rideFrom then
+    M.travel = nil
+    say("travel: landed - on to " .. (getRoomName(T.target) or ("#" .. T.target)))
+    tempTimer(1, function() M.mapWalkTo(T.target) end)
+  end
+end
+
+-- sbo travel: the links Oven knows, by kind
+function M.travelList()
+  local links = M.travelLinks()
+  if #links == 0 then return say("no travel shops read yet - shop list at Ganuk's, a balloon or a passage shop") end
+  local width = M.cfg.window and M.viewCols() or 80
+  local out = { header("travel", "", width, "Travel") }
+  local lastShop
+  for _, L in ipairs(links) do
+    if L.shop ~= lastShop then
+      lastShop = L.shop
+      local an = getRoomArea(L.shop); an = an and getRoomAreaName(an) or ""
+      out[#out + 1] = { { C.slot, L.kind .. "  " }, { C.item, L.shopName }, { C.dim, (an ~= "" and ("  " .. an) or "") .. "  #" .. L.shop
+        .. (L.board and "" or "  (boarding not known yet - not used by sbo go)") } }
+    end
+    out[#out + 1] = { { C.text, "   " .. L.dest }, { C.dim, string.rep(" ", math.max(1, 26 - ulen(L.dest))) },
+      { C.num, (commas(L.cost)) .. " gold" }, { C.dim, L.area and "" or "  (town not on the map)" } }
+  end
+  M.viewOut(out, {})
+end
+end
+
 -- your answer to that question: true if it was one (and it isn't sent to the game)
 function M.goAnswer(cmd)
   local A = M.goAsk
@@ -15127,7 +15354,11 @@ function M.goAnswer(cmd)
   M.goAsk = nil
   if os.time() - A.at > 60 then return false end
   local c = trim(cmd or ""):lower()
-  if c == "y" or c == "yes" then tempTimer(0, function() M.mapWalkTo(A.id) end); return true end
+  if c == "y" or c == "yes" then
+    if A.travel then tempTimer(0, function() M.travelStart(A.travel, A.id) end)
+    else tempTimer(0, function() M.mapWalkTo(A.id) end) end
+    return true
+  end
   if c == "n" or c == "no" then tempTimer(0, function() say("staying put") end); return true end
   return false   -- anything else: the question's dropped, and the command goes as usual
 end
@@ -15920,6 +16151,7 @@ M.CMDS = {
       return M.mapRun(r)
     end },
   { name = "stop", desc = "stop a walk, or anything Oven is doing for you", run = function() return M.stopAll() end },
+  { name = "travel", min = 3, desc = "the paid ways between towns Oven knows (Ganuk, balloons, passage) and their prices", run = function() return M.travelList() end },
   { name = "friend", min = 2, desc = "friends whose Oven can ask yours where you are (and you theirs)",
     run = function() return M.friendList() end, subs = {
     { name = "add", args = "{name}", desc = "let their Oven ask where you are", run = function(r) return M.friendAdd(r) end },
@@ -16461,6 +16693,7 @@ end
 -- sbo stop: whatever Oven is doing for you
 function M.stopAll()
   local what = {}
+  if M.travel then M.travel = nil; what[#what + 1] = "the trip" end
   if M.walk or (M.running and M.running.target) then
     M.walk = nil
     if M.running then M.running.target = nil end

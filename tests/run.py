@@ -1067,6 +1067,50 @@ def route_plan_text():
 
 
 @test
+def travel_by_ganuk():
+    o = Oven()
+    o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end
+      LOGS = {}; sbo.log = function(m) LOGS[#LOGS+1] = m end
+      AREA = { [1] = 1, [10636] = 1, [10637] = 1, [500] = 2, [600] = 2, [3908670] = 3 }
+      roomExists = function(id) return AREA[tonumber(id)] ~= nil end
+      getRoomArea = function(id) return AREA[tonumber(id)] end
+      getRoomAreaName = function(a) return ({ 'Towne of Rune', 'Sigil', 'Alyria' })[a] end
+      getAreaTable = function() return { ['Towne of Rune'] = 1, ['Sigil'] = 2, ['Alyria'] = 3 } end
+      getRoomName = function(id) return 'room ' .. id end
+      LEN = { ['1>10636'] = 5, ['500>600'] = 3 }
+      getPath = function(a, b) local n = LEN[tonumber(a) .. '>' .. tonumber(b)]; if not n then return false end
+        speedWalkDir, speedWalkPath = {}, {}
+        for i = 1, n do speedWalkDir[i] = 'n'; speedWalkPath[i] = tostring(i == n and b or 0) end return true end
+      sbo.signposts = function() return {} end
+      gmcp.char = gmcp.char or {}; gmcp.char.worth = { gold = 2000, bank = 579098 }
+      sbo.mapRoom = 1
+      sbo.dbx("INSERT INTO shops (room, name, last) VALUES (10636, %s, 0)", "Ganuk's Express Travels")
+      sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last) VALUES (10636, 4, 'A token for Sigil passage', 25, 'No limit', 3625, 0)")
+      sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last) VALUES (10636, 12, 'A token for passage to Irda Isle', 25, 'No limit', 50000, 0)")
+      sbo.dbx("INSERT INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('Sigil', 'exit', 500, 0, '', 0)")""")
+    links = o.ev("sbo.travelLinks()")
+    eq((o.ev("#sbo.travelLinks()"), links[1].dest, links[1].area, links[2].dest), (2, "Sigil", "Sigil", "Irda Isle"), "read from the shop list")
+    # no way on foot to Sigil: the Worm, its gold, and what you carry
+    o.lua("sbo.goTo(600)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "Iron Worm to Sigil - 3,625 gold" in text and "costs 3,625 gold in all" in text and "you carry 2,000" in text, text
+    assert "y to go" in text, text
+    # y: walk to the shop, buy, down, give the token, land, walk on
+    eq(o.ev("sbo.goAsk.travel.link.dest"), "Sigil", "y would take the Worm")
+    o.lua("sbo.travelStart(sbo.goAsk.travel, 600); sbo.goAsk = nil")
+    eq((o.ev("sbo.travel.stage"), o.ev("#sbo.walk.dirs")), ("toShop", 5), "walking to the shop")
+    o.lua("sbo.mapRoom = 10636; sbo.walk.thenDo()")
+    eq(o.ev("SENT[#SENT]"), "shop buy 4", "the token")
+    o.feed("Ganuk Jr. takes your payment and hands you a token for Sigil passage.")
+    o.lua("runTimers()")
+    eq(o.ev("SENT[#SENT]"), "down", "down to Ganuk")
+    o.lua("sbo.travelOnRoom(10637); runTimers(); runTimers()")
+    eq(o.ev("SENT[#SENT]"), "give token ganuk", "the token handed over")
+    o.lua("runTimers(); WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; sbo.travelOnRoom(3908670); runTimers()")
+    eq((o.ev("WALKED"), o.ev("sbo.travel")), (600, None), "landed: on to the room asked for")
+
+
+@test
 def quest_shop_in_town_first():
     o = Oven()
     o.lua("""sbo.mapRoom = 1
