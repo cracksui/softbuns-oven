@@ -1133,7 +1133,7 @@ def travel_by_ganuk():
       sbo.cfg.runs = { names = {}, ends = {}, endsFixed = 1 }
       gmcp.char = gmcp.char or {}; gmcp.char.worth = { gold = 2000, bank = 579098 }
       sbo.walkStep = function() WALK = sbo.walk end
-      centerview = function() end; updateMap = function() end
+      centerview = function() end; updateMap = function() end; REALWALK = sbo.mapWalkTo
       local tt = tempTimer; tempTimer = function(d, f, r) if d >= 5 then return 0 end return tt(d, f, r) end   -- (no stall checks)
       -- Rune: you (1) and Ganuk (10636); Sigil: its exit (500) and the target (600) - no road between
       CHAIN(1, { 1, 2, 3, 4, 5, 10636 }, 'e'); CHAIN(1, { 10637 }, 'x')
@@ -1163,6 +1163,27 @@ def travel_by_ganuk():
     eq(o.ev("SENT[#SENT]"), "give token ganuk", "the token handed over")
     o.lua("runTimers(); WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; CHAIN(2, { 499, 500 }, 'n'); sbo.mapRoom = 499; sbo.travelOnRoom(499); runTimers()")
     eq((o.ev("WALKED"), o.ev("sbo.trip"), o.ev("sbo.travel")), (600, None, None), "landed: on to the room asked for")
+    # two runs in a row (no ride): the trip runs both
+    o.lua("""CHAIN(3, { 3000, 3001 }, 'e'); CHAIN(3, { 3100, 3101 }, 'e'); CHAIN(2, { 3200, 3201 }, 'e')
+      for i = 1, 200 do EX[3001][#EX[3001] + 1] = nil end
+      local long = {} for i = 1, 150 do long[i] = 4000 + i end; long[1] = 3001; long[151] = 3100; CHAIN(3, long, 's')
+      local long2 = {} for i = 1, 150 do long2[i] = 5000 + i end; long2[1] = 3101; long2[151] = 3200; CHAIN(3, long2, 's')
+      AREA[3200], AREA[3201] = 2, 2
+      sbo.signposts = function() return { { room = 3001, dests = { mid = 'south' } }, { room = 3101, dests = { far = 'south' } } } end
+      sbo.cfg.runs = { names = { mid = {}, far = {} }, ends = { mid = 3100, far = 3200 }, endsFixed = 1 }
+      sbo.signLabel = function(r) return 'signpost ' .. r end
+      sbo.cfg.clanHall = nil; sbo.dbx("DELETE FROM shop_items")
+      sbo.mapRoom = 3000; LOGS = {}; SENT = {}""")
+    o.lua("sbo.goTo(3201)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "run mid" in text and "run far" in text and "y to go" in text, text
+    o.lua("sbo.goAnswer('y'); runTimers(); sbo.walk = nil; sbo.mapRoom = 3001; sbo.tripOnRoom(3001); runTimers()")
+    eq(o.ev("SENT[#SENT]"), "run mid", "the first run")
+    o.lua("sbo.running.started = true; sbo.mapRoom = 3100; sbo.runStopped(true); runTimers(); sbo.walk = nil; sbo.mapRoom = 3101; sbo.tripOnRoom(3101); runTimers()")
+    eq(o.ev("SENT[#SENT]"), "run far", "then the second")
+    o.lua("WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; sbo.running.started = true; sbo.mapRoom = 3200; sbo.runStopped(true); runTimers()")
+    eq((o.ev("WALKED"), o.ev("sbo.trip")), (3201, None), "and the last step")
+    o.lua("sbo.mapWalkTo = REALWALK")
     # chained: the Worm to Lowangen, Gerry's balloon on to New Rigel (it takes off once bought)
     o.lua("""CHAIN(4, { 700, 701, 702, 703, 16091 }, 'w'); CHAIN(5, { 62000, 62001, 62100 }, 's')
       sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last) VALUES (10636, 1, 'A token for Lowangen passage', 25, 'No limit', 3625, 0)")
@@ -1210,7 +1231,9 @@ def travel_by_ganuk():
     assert 10 < steps < 150, steps
     eq(o.ev("SENT[#SENT]"), "cast 'word of recall'", "recall once it's the nearest")
     o.lua("runTimers(); WALKED = nil; sbo.mapRoom = 1900988; sbo.travelOnRoom(1900988); runTimers()")
-    eq((o.ev("WALKED"), o.ev("sbo.trip")), (10495, None), "recalled: the rest (the run) by the usual walk")
+    eq(o.ev("SENT[#SENT]"), "run rune", "recalled at the signpost: the run")
+    o.lua("sbo.running.started = true; sbo.mapRoom = 10490; sbo.runStopped(true); runTimers()")
+    eq((o.ev("WALKED"), o.ev("sbo.trip")), (10495, None), "the run's over: the last steps on foot")
 
 
 @test

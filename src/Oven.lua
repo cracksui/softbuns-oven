@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.59.0"
+M.version = "1.59.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14691,6 +14691,12 @@ function M.runFailed(why)
   if not R then return end
   if R.timer then pcall(killTimer, R.timer) end
   if R.quiet then pcall(killTimer, R.quiet) end
+  if R.trip and M.trip == R.trip then
+    local T = M.trip
+    M.trip = nil
+    M.notifyWalk("run " .. R.name .. ": " .. why .. " - walking instead")
+    return M.mapWalkTo(T.target, true)
+  end
   if R.target then
     M.notifyWalk("run " .. R.name .. ": " .. why .. " - walking instead")
     M.mapWalkTo(R.target, true)
@@ -14729,6 +14735,14 @@ function M.runStopped(atSign)
           (roomExists(here) and getRoomName(here)) or "this room", here))
       end
     end
+  end
+  -- part of a trip: plan on from here
+  if R.trip and M.trip == R.trip then
+    if not (atSign and R.started) and here ~= R.target then
+      M.trip = nil
+      return M.notifyWalk("stopped: the run was cut short" .. (here and (" at #" .. here) or "") .. " - sbo go again to go on")
+    end
+    return tempTimer(0.5, function() M.tripContinue() end)
   end
   if not R.target then return end
   if here == R.target then return M.notifyWalk("arrived") end
@@ -15107,8 +15121,10 @@ function M.runTargets(q)
   return order, fromNotes
 end
 
-function M.mapRun(arg) return M.withPathMemo(M.mapRunNow, arg) end
-function M.mapRunNow(arg)
+-- planned: from sbo go (a run's name is then a destination, planned like any trip); sbo run <name> and the
+-- run links just run it
+function M.mapRun(arg, planned) return M.withPathMemo(M.mapRunNow, arg, planned) end
+function M.mapRunNow(arg, planned)
   arg = trim(arg or "")
   local all = arg:match("^all%s+(.+)$")
   local q = all or arg
@@ -15117,8 +15133,13 @@ function M.mapRunNow(arg)
   if tonumber(q) then return M.goTo(tonumber(q)) end
   local sign = not all and M.runNames()[q:lower()] and q:lower()
   if sign then
+    -- a signpost run's name (sbo go sigil): where that run ends - planned like any trip (rides, runs, the
+    -- question first), not just walked
     local e = M.runData().ends[sign]
-    if e and M.cfg.map and M.mapRoom and roomExists(e) then return M.mapWalkTo(e) end
+    if e and M.cfg.map and M.mapRoom and roomExists(e) then
+      if planned then return M.goTo(e) end
+      return M.mapWalkTo(e)
+    end
     return M.runFrom(sign)
   end
   if not M.cfg.map then return say("map following is off - sbo config map on first") end
@@ -15235,11 +15256,11 @@ function M.goToNow(id)
   if here and roomExists(here) and roomExists(id) and not (okA and sameArea) then
     local onFoot = getPath(here, id) and #(speedWalkDir or {}) or nil
     local okT, plan = pcall(M.tripPlan, here, id, {})
-    if okT and plan and plan.rides > 0 then
+    if okT and plan and (plan.rides > 0 or plan.runs > 0) then
       local lines, tail = M.tripPlanLines(plan, id)
       M.goAsk = { id = id, at = os.time(), trip = true }
       M.sayPlan(string.format("%s is in %s - the fastest way:", getRoomName(id) or ("#" .. id), getRoomAreaName(getRoomArea(id)) or "?"),
-        lines, onFoot and string.format("instead of %d steps on foot", onFoot) or "no way there on foot", tail .. " · y to go, n to stay")
+        lines, onFoot and string.format("%d steps on foot instead of %d", plan.walked, onFoot) or "no way there on foot", tail .. " · y to go, n to stay")
       return
     end
   end
@@ -15553,14 +15574,16 @@ function M.tripPlan(here, target, used)
   end)
   for _, e in ipairs(added) do pcall(removeSpecialExit, e.from, e.cmd) end
   if not ok or not res then return nil end
-  local plan = { segs = {}, gold = 0, rides = 0, walked = 0 }
+  local plan = { segs = {}, gold = 0, rides = 0, runs = 0, walked = 0 }
   local n, at = 0, here
   for i, dir in ipairs(res.dirs) do
     local e = byCmd[dir .. ">" .. at]
     if e then
       if n > 0 then plan.segs[#plan.segs + 1] = { kind = "walk", n = n, to = at } end
       n = 0
-      if e.run then plan.segs[#plan.segs + 1] = { kind = "run", name = e.run, from = e.from, to = e.to }
+      if e.run then
+        plan.segs[#plan.segs + 1] = { kind = "run", name = e.run, from = e.from, to = e.to }
+        plan.runs = plan.runs + 1
       else
         plan.segs[#plan.segs + 1] = { kind = "ride", link = e.link, from = e.from, to = e.to }
         plan.gold, plan.rides = plan.gold + (e.link.cost or 0), plan.rides + 1
@@ -15631,21 +15654,28 @@ function M.tripContinue()
   local here = M.mapRoom
   local plan = here and M.withPathMemo(M.tripPlan, here, T.target, T.used)
   local first
-  for _, sg in ipairs(plan and plan.segs or {}) do if sg.kind == "ride" then first = sg; break end end
-  if not first or T.legs >= 6 then M.trip = nil; return M.mapWalkTo(T.target) end
+  for _, sg in ipairs(plan and plan.segs or {}) do if sg.kind ~= "walk" then first = sg; break end end
+  if not first or T.legs >= 12 then M.trip = nil; return M.mapWalkTo(T.target, true) end
   T.legs = T.legs + 1
-  T.used[first.link.key or "?"] = true
-  if first.link.kind == "recall" then T.used.recall = true end
+  if first.kind == "ride" then
+    T.used[first.link.key or "?"] = true
+    if first.link.kind == "recall" then T.used.recall = true end
+  end
   T.ride = first
   if here == first.from then return M.tripRide() end
   T.waitAt = first.from
-  M.mapWalkTo(first.from)
+  M.mapWalkTo(first.from, true)
 end
 function M.tripRide()
   local T = M.trip
   if not T or not T.ride then return end
   local sg = T.ride
   T.ride, T.waitAt = nil, nil
+  if sg.kind == "run" then
+    M.runStart(sg.name, sg.to)
+    if M.running then M.running.trip = T end
+    return
+  end
   M.travelStart({ legs = { { link = sg.link, walk = 0 } } }, T.target, 1)
 end
 -- arrived where the next ride starts (on foot or by a run)
@@ -16616,7 +16646,7 @@ M.CMDS = {
       -- a friend (or a player Oven knows): ask their Oven where they are, then walk there
       local who = r:lower():match("^@?(%a+)$")
       if who and (r:sub(1, 1) == "@" or M.isFriend(who)) then return M.friendWhere(who, true) end
-      return M.mapRun(r)
+      return M.mapRun(r, true)
     end },
   { name = "stop", desc = "stop a walk, or anything Oven is doing for you", run = function() return M.stopAll() end },
   { name = "travel", min = 3, desc = "the paid ways between towns Oven knows (Ganuk, balloons, passage) and their prices", run = function() return M.travelList() end },
