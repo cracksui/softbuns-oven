@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.54.0"
+M.version = "1.54.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13504,7 +13504,8 @@ function M.worldDrawNow()
   if not lab or M.mapMode ~= "world" then return end
   local v = V()
   local here = M.worldHere
-  local mapName = v.map or (here and here.map) or "Alyria"
+  -- following you: the map you're on (through a portal to the Faerie Plane, that one); else the one you chose (⇅)
+  local mapName = (v.follow ~= false and here and here.map) or v.map or (here and here.map) or "Alyria"
   local img, why = M.worldImage(mapName)
   if not img then lab:setStyleSheet("background-color: rgba(10,10,14,255); color: " .. M.hex("dim") .. "; qproperty-alignment: 'AlignCenter';"); lab:echo(why or "") return end
   local okW, lw = pcall(function() return lab:get_width() end)
@@ -13598,6 +13599,7 @@ function M.worldZoom(dir)
 end
 function M.worldFollow()
   V().follow = true
+  if M.worldHere then V().map = M.worldHere.map end
   M.worldDraw()
 end
 -- the map above / below this one, at the same place (Alyria ⇄ the underworld)
@@ -13679,6 +13681,13 @@ function M.worldOnRoom()
   local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info
   pcall(M.worldNote, info)
   local wild = M.worldHere and M.worldHere.wild
+  -- onto another map (a portal, a worldgate - not just under it): the map follows you there
+  local onMap = M.worldHere and M.worldHere.map
+  if onMap and M.worldLastMap and onMap ~= M.worldLastMap and not M.worldStacked(onMap, M.worldLastMap) then
+    local v = V()
+    v.map, v.follow = onMap, true
+  end
+  if onMap then M.worldLastMap = onMap end
   if M.cfg.mapWorldAuto ~= false and M.worldWasWild ~= nil and wild ~= M.worldWasWild then
     M.mapSetMode(wild and "world" or "local", true)
   end

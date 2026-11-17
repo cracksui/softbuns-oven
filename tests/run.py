@@ -935,6 +935,19 @@ def hidden_rooms_mapped():
 
 
 @test
+def world_map_follows_through_a_portal():
+    o = Oven()
+    o.lua("""DL = {}; downloadFile = function(path, url) DL[#DL+1] = url end
+      sbo.mapMode = 'world'; sbo.worldLabel = { echo = function() end, setStyleSheet = function() end, show = function() end, hide = function() end }
+      local function at(num, map, x, y, wild) gmcp.room = { info = { num = num, wilds = wild, coord = { name = map, x = x, y = y } } }; sbo.worldOnRoom(); sbo.worldDrawNow() end
+      AT = at""")
+    o.lua("AT('3933989', 'Alyria', 1709, 1710, 'true')")
+    o.lua("AT('6102034', 'Faerie Plane', 200, 200, 'true')")
+    assert any("faerieplane.bmp" in u for u in o.ev("DL").values()), list(o.ev("DL").values())
+    eq(o.ev("sbo.worldV.map"), "Faerie Plane", "the map you are on")
+
+
+@test
 def world_map():
     import struct, os as _os
     o = Oven()
