@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.59.2"
+M.version = "1.59.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -15667,7 +15667,7 @@ function M.tripPlanLines(plan, target)
     end
   end
   if (plan.wild or 0) > M.TRIP_WILD_WARN then
-    lines[#lines + 1] = string.format("⚠ that's about %d rooms of the wilds on foot - no run or ride Oven knows does better", plan.wild)
+    lines[#lines + 1] = string.format("⚠ %d rooms of wilds on foot", plan.wild)
   end
   local gold, bank = M.goldOnHand()
   local tail = (plan.gold or 0) == 0 and "the trip is free" or string.format("the trip costs %s gold in all", commas(plan.gold or 0))
