@@ -1279,6 +1279,28 @@ def eq_reads_eq_first():
 
 
 @test
+def game_sounds():
+    import os
+    o = Oven()
+    o.lua("""PLAYED = {}; playSoundFile = function(t) PLAYED[#PLAYED+1] = t end; STOPPED = 0; stopSounds = function() STOPPED = STOPPED + 1 end
+      GAGGED = 0; local d = deleteLine; deleteLine = function() GAGGED = GAGGED + 1 end""")
+    # no sounds installed: off the screen, a hint once
+    o.feed("!!SOUND(mm_welcome.* V=100 L=1 P=50 T=misc)")
+    eq((o.ev("GAGGED"), o.ev("#PLAYED")), (1, 0), "not installed: gagged, nothing played")
+    # installed: played (the profile's media/mm)
+    d = o.home + "/media/mm"; os.makedirs(d, exist_ok=True); open(d + "/mm_welcome.mp3", "wb").write(b"x")
+    o.feed("!!SOUND(mm_welcome.* V=80 L=2 P=50 T=misc)")
+    eq((o.ev("GAGGED"), o.ev("#PLAYED"), o.ev("PLAYED[1].volume"), o.ev("PLAYED[1].loops")), (2, 1, 80, 2), "played")
+    assert o.ev("PLAYED[1].name").endswith("/media/mm/mm_welcome.mp3")
+    o.feed("!!SOUND(Off)")
+    eq(o.ev("STOPPED"), 1, "Off: stopped")
+    # a line that only mentions it, or sounds off: left alone
+    o.feed("Bob says '!!SOUND(mm_welcome)'")
+    o.lua("sbo.cfg.sound = false"); o.feed("!!SOUND(mm_welcome.* V=100)")
+    eq((o.ev("GAGGED"), o.ev("#PLAYED")), (3, 1), "sounds off: shown as is")
+
+
+@test
 def practice_dummy():
     o = Oven()
     o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end

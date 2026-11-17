@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.52.2"
+M.version = "1.53.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7529,6 +7529,94 @@ end
 end
 
 ---------------------------------------------------------------------------
+-- The game's sounds: Materia Magica sends "!!SOUND(mm_welcome.* V=100 L=1 P=50 T=misc)" lines (MSP, the
+-- MUD Sound Protocol) with the sound on (set sound on). Mudlet only plays those when the game has agreed
+-- MSP with it while connecting, which it doesn't here - so, like the game's own MUSHclient plugin, Oven
+-- plays them: the game's sound packs (sbo sound install: its two MP3 packs, from its download page, into
+-- the profile's media folder), the line itself off the screen. sbo config sound off: left alone.
+---------------------------------------------------------------------------
+do
+M.SOUND_PACKS = {
+  "https://mmweb2-public.s3.us-west-2.amazonaws.com/static/mm_sound_pack1.zip",
+  "https://mmweb2-public.s3.us-west-2.amazonaws.com/static/mm_sound_pack2.zip",
+}
+local function dir() return getMudletHomeDir() .. "/media/mm" end
+local function exists(p) local f = io.open(p, "rb"); if f then f:close(); return true end return false end
+
+-- a sound's file: "mm_welcome.*" or "mm_welcome" → mm_welcome.mp3 (or .wav)
+function M.soundFile(name)
+  local base = tostring(name or ""):gsub("%.%*$", ""):gsub("%.[%a%d]+$", "")
+  base = base:gsub("[/\\]", "")   -- (a name, never a path)
+  for _, ext in ipairs({ ".mp3", ".wav", ".ogg" }) do
+    local p = dir() .. "/" .. base .. ext
+    if exists(p) then return p end
+  end
+end
+
+-- one MSP line: true if it was one (and it's dealt with)
+function M.soundLine(l)
+  local kind, args = trim(l):match("^!!(%u+)%((.-)%)%s*$")
+  if kind ~= "SOUND" and kind ~= "MUSIC" then return false end
+  if M.cfg.sound == false then return false end
+  local name = args:match("^(%S+)")
+  local num = function(k) return tonumber(args:match("%f[%a]" .. k .. "=(%-?%d+)")) end
+  if not name then return true end
+  if name:lower() == "off" then
+    pcall(kind == "MUSIC" and stopMusic or stopSounds)
+    return true
+  end
+  local path = M.soundFile(name)
+  if not path then
+    if not M.soundTold then
+      M.soundTold = true
+      tempTimer(0, function() M.say("the game played a sound (" .. name:gsub("%.%*$", "") .. ") - sbo sound install to hear its sounds") end)
+    end
+    return true
+  end
+  local vol, loops = num("V") or 100, num("L") or 1
+  local opts = { name = path, volume = math.max(0, math.min(100, vol)), loops = (loops == -1) and -1 or math.max(1, loops) }
+  local play = kind == "MUSIC" and playMusicFile or playSoundFile
+  if not pcall(play, opts) then pcall(play, path, opts.volume) end
+  return true
+end
+
+-- sbo sound install: the game's MP3 packs, downloaded and unpacked into media/mm
+function M.soundInstall()
+  pcall(lfs and lfs.mkdir or function() end, getMudletHomeDir() .. "/media")
+  pcall(lfs and lfs.mkdir or function() end, dir())
+  M.soundPending = {}
+  for i, url in ipairs(M.SOUND_PACKS) do
+    local zip = dir() .. "/pack" .. i .. ".zip"
+    M.soundPending[zip] = true
+    downloadFile(zip, url)
+  end
+  if not M.soundHandlers then
+    M.soundHandlers = true
+    registerAnonymousEventHandler("sysDownloadDone", function(_, file)
+      if M.soundPending and M.soundPending[file] then
+        local ok = pcall(unzipAsync, file, dir())
+        if not ok then M.say("couldn't unpack " .. file .. " - unzip it into " .. dir() .. " yourself") end
+      end
+    end)
+    registerAnonymousEventHandler("sysUnzipDone", function(_, zip)
+      if M.soundPending and M.soundPending[zip] then
+        M.soundPending[zip] = nil
+        os.remove(zip)
+        if not next(M.soundPending) then
+          M.soundTold = nil
+          M.say("the game's sounds are installed (" .. dir() .. ") - make sure they're on in the game: set sound on")
+        end
+      end
+    end)
+    registerAnonymousEventHandler("sysDownloadError", function(_, err, file)
+      if M.soundPending and M.soundPending[file] then M.say("couldn't download the sound pack: " .. tostring(err)) end
+    end)
+  end
+  M.say("downloading the game's sound packs (about 6 MB)…")
+end
+end
+
+---------------------------------------------------------------------------
 -- The practice dummy: real damage numbers for your attacks. It says its health every round and
 -- is whole again by the next, so 10000 minus what it says is exactly that round's damage.
 -- A round can hold several landings (two kicks sent quickly, two casts, "You cast spark one
@@ -12149,6 +12237,11 @@ end
 function M.onLineWork()
   local cap = M.cap
   pcall(M.dummyNoteLine, line)
+  -- the game's sounds (MSP lines): played, and off the screen
+  if line:find("!!", 1, true) then
+    local okS, was = pcall(M.soundLine, line)
+    if okS and was then pcall(deleteLine); return end
+  end
   if M.levelEvent or line:find("You gain ", 1, true) or line:find(", you are now a", 1, true) then pcall(M.levelNoteLine, line) end
   if M.tempMap then pcall(M.tempNoteLine, line) end
   if line:find("takes your payment and hands you", 1, true) then pcall(M.noteBought, line) end
@@ -15704,6 +15797,11 @@ M.CMDS = {
     { name = "build", args = "[{name}|set|reset|auto]", desc = "gear-score weights (set: a stat and its weight)",
       run = function(r) return legacy("build " .. r) end },
   } },
+  { name = "sound", min = 2, desc = "the game's sounds (it sends them as !!SOUND lines)", run = function()
+      return say("the game's sounds: " .. (M.cfg.sound == false and "off" or "on") .. (M.soundFile("mm_welcome") and " · installed" or " · not installed - sbo sound install")
+        .. "  (sbo config sound on|off)") end, subs = {
+    { name = "install", desc = "download the game's sound packs (about 6 MB) into your profile", run = function() return M.soundInstall() end },
+  } },
   { name = "class", min = 2, desc = "multi-class planning from the game's own class analyses", subs = {
     { name = "plan", args = "[{class} …]", desc = "what each next class adds to your path; or a path (up to four) in full",
       run = function(r) return M.classPlan(r) end },
@@ -16359,6 +16457,7 @@ M.SETTINGS = {
   { "signposts.look", "Map panel", BOOL, function() return onoff(M.cfg.signLook) end, function(v) legacy("signposts look " .. v) end },
   { "bar", "Prompt bar", BOOL, function() return onoff(M.cfg.bar) end, function(v) legacy("bar " .. v) end },
   { "bar.mode", "Prompt bar", { "gauges", "raw" }, function() return M.cfg.barMode or "gauges" end, function(v) legacy("bar " .. v) end },
+  { "sound", "Display", BOOL, function() return onoff(M.cfg.sound ~= false) end, function(v) M.cfg.sound = (v == "on"); M.saveSettings(); say("the game's sounds " .. v) end },
   { "bar.top", "Prompt bar", BOOL, function() return onoff(M.cfg.barTop ~= false) end, function(v) legacy("bar top " .. v) end },
   { "bar.session", "Prompt bar", BOOL, function() return onoff(M.cfg.barSession) end, function(v) legacy("bar session " .. v) end },
   { "bar.session.style", "Prompt bar", { "full", "short" }, function() return M.cfg.barSessionStyle or "full" end, function(v) legacy("bar session " .. v) end },
