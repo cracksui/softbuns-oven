@@ -1175,6 +1175,31 @@ def travel_by_ganuk():
     eq(o.ev("SENT[#SENT]"), "clan gohall", "from where you stand")
     o.lua("WALKED = nil; sbo.mapRoom = 384334; sbo.travelOnRoom(384334); runTimers()")
     eq(o.ev("WALKED"), 384400, "then on foot")
+    # the clan hall, then ~70 rooms south, recall (Mandrake Woods), then on to Rune - learned from a recording
+    open(o.home + "/oven_record.txt", "w").write(
+        "===== 2026-11-17 01:15:44 | cmd=s | room=1716894\n"
+        '@gmcp room.info = {["num"]="1716894",["coord"]={["y"]=285,["x"]=560,["name"]="Alyria"},["wilds"]="true"}\n'
+        "===== 2026-11-17 01:15:50 | cmd=cast 'word of recall' | room=1716894\n"
+        "===== 2026-11-17 01:15:58 | cmd= | room=9834\n"
+        '@gmcp room.info = {["num"]="9834",["coord"]={["y"]=365,["x"]=654,["name"]="Alyria"},["wilds"]="false"}\n')
+    o.lua("""AREA[1716894] = 3; AREA[9834] = 7; AREA[10490] = 1; AREA[384335] = 6
+      getRoomAreaName = function(a) return ({ 'Towne of Rune', 'Sigil', 'Alyria', 'Lowangen', 'The Towne of New Rigel', 'Megaleios Clan Hall', 'Mandrake Woods' })[a] end
+      LEN['384334>1716894'] = 72; LEN['9834>10490'] = 90
+      POS = { [384334] = { map = 'Alyria', x = 560, y = 216 }, [1716894] = { map = 'Alyria', x = 560, y = 285 }, [384335] = { map = 'Alyria', x = 560, y = 216 } }
+      sbo.worldPos = function(r) return POS[tonumber(r)] end
+      sbo.cfg.recallsImported = nil; sbo.recallImport(); sbo.mapRoom = 600; LOGS = {}; SENT = {}""")
+    eq((o.ev("sbo.cfg.recalls['1716894'].land"), o.ev("sbo.cfg.recalls['1716894'].cmd")), (9834, "cast 'word of recall'"), "the recall spot")
+    o.lua("sbo.goTo(10490)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "clan gohall to Megaleios Clan Hall" in text and "cast 'word of recall' to Mandrake Woods" in text and "72 steps to" in text, text
+    o.lua("sbo.walkStep = function() WALK = sbo.walk end; sbo.travelStart(sbo.goAsk.travel, 10490); sbo.goAsk = nil")
+    eq(o.ev("SENT[#SENT]"), "clan gohall", "first the hall")
+    o.lua("sbo.mapRoom = 384334; sbo.travelOnRoom(384334); runTimers()")
+    eq((o.ev("sbo.travel.link.kind"), o.ev("#WALK.dirs")), ("recall", 72), "walking to the recall spot")
+    o.lua("sbo.mapRoom = 1716894; WALK.thenDo()")
+    eq(o.ev("SENT[#SENT]"), "cast 'word of recall'", "recall")
+    o.lua("WALKED = nil; sbo.mapRoom = 9834; sbo.travelOnRoom(9834); runTimers()")
+    eq(o.ev("WALKED"), 10490, "landed in Mandrake Woods: on to Rune")
 
 
 @test

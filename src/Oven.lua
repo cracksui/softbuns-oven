@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.57.0"
+M.version = "1.58.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10206,6 +10206,7 @@ function M.onSend(_, cmd)
   pcall(M.noteLootCommand, cmd)
   pcall(M.noteEnterCommand, cmd)
   pcall(M.clanHallNoteSend, cmd)
+  pcall(M.recallNoteSend, cmd)
   pcall(M.noteRunCommand, cmd)
   -- (formatting off: replies are still read - quests, items, eq - just left as the game sends them)
   local kind, target = M.classify(cmd)
@@ -13065,6 +13066,7 @@ function M.onRoom()
   pcall(M.shopOnArrive, id)
   if M.travel then pcall(M.travelOnRoom, id) end
   if M.clanGoAt then pcall(M.clanHallNoteRoom, id) end
+  if M.recallFrom then pcall(M.recallNoteRoom, id) end
 end
 
 -- walk notes: a line in the game text (the prompt bar has no room to spare)
@@ -15318,6 +15320,19 @@ local function steps(a, b)
   if getPath(a, b) then return #speedWalkDir end
 end
 
+-- the rest of the way from a landing: on foot, or with a signpost run when that's shorter
+function M.travelAfter(land, target, walk)
+  local n = walk(land, target)
+  if not n or n == 0 then return n end
+  if getPath(land, target) then
+    local d, p = {}, {}
+    for i, x in ipairs(speedWalkDir or {}) do d[i] = x; p[i] = tonumber((speedWalkPath or {})[i]) end
+    local okR, rp = pcall(M.runPlan, land, target, d, p)
+    if okR and rp and rp.cost < n then return rp.cost end
+  end
+  return n
+end
+
 -- the best trip from here to target (when it beats walking by enough): rides chained - walk to a shop,
 -- ride, walk from where it lands to the next shop, ride… (up to M.TRAVEL_LEGS), then walk the rest.
 -- { legs = { { link, walk } … }, after, cost, gold }
@@ -15329,6 +15344,7 @@ function M.travelPlan(here, target, onFoot)
   for _, L in ipairs(M.travelLinks()) do if L.board and L.areaId then links[#links + 1] = L end end
   local ch = M.clanHallLink()
   if ch then links[#links + 1] = ch end
+  for _, L in ipairs(M.recallLinks()) do links[#links + 1] = L end
   if #links == 0 then return nil end
   -- where each ride lands (a room of its town to measure from)
   local landAt = {}
@@ -15351,7 +15367,11 @@ function M.travelPlan(here, target, onFoot)
     local nextLayer = {}
     for _, st in ipairs(layer) do
       for _, L in ipairs(links) do
-        if L.areaId ~= st.area and (L.anywhere or getRoomArea(L.shop) == st.area) then
+        local close = L.near and (function()
+          local a, b = M.worldPos and M.worldPos(st.room), M.worldPos and M.worldPos(L.shop)
+          return a and b and a.map == b.map and math.abs(a.x - b.x) <= M.RECALL_REACH and math.abs(a.y - b.y) <= M.RECALL_REACH
+        end)()
+        if L.areaId ~= st.area and (L.anywhere or getRoomArea(L.shop) == st.area or close) then
           local k = L.anywhere and 0 or walk(st.room, L.shop)
           local land = landAt[L.areaId]
           if k and land then
@@ -15364,7 +15384,7 @@ function M.travelPlan(here, target, onFoot)
               local s2 = { room = land, area = L.areaId, cost = cost, legs = legs }
               nextLayer[#nextLayer + 1] = s2
               -- this town is the one: walk the rest
-              local n = walk(land, target)
+              local n = M.travelAfter(land, target, walk)
               if n then
                 local total = cost + n
                 if (not onFoot or total + M.TRAVEL_SAVES <= onFoot) and (not best or total < best.cost) then
@@ -15443,6 +15463,81 @@ function M.clanHallImport()
   end
 end
 
+-- recall from the wilds: where you cast it decides where it lands (the nearest recall point - from the
+-- tundra south of the clan hall, Mandrake Woods). Each place you've recalled from in the wilds is kept with
+-- where it took you, and is a ride: walk there, recall, go on (a signpost run, often)
+M.RECALL_REACH = 90   -- a recall spot is only walked to from this close (rooms, as the crow flies)
+function M.recallLinks()
+  local out = {}
+  for from, R in pairs(M.cfg.recalls or {}) do
+    local o, land = tonumber(from), tonumber(R.land)
+    if o and land and roomExists(o) and roomExists(land) then
+      local a = getRoomArea(land)
+      local an = getRoomAreaName(a)
+      out[#out + 1] = { kind = "recall", near = true, shop = o, land = land, areaId = a, area = an, dest = an or ("#" .. land),
+        cost = 0, board = { R.cmd or "recall" }, noBuy = true,
+        shopName = string.format("%s (%s,%s)", getRoomName(o) or ("#" .. o), tostring(R.x or "?"), tostring(R.y or "?")) }
+    end
+  end
+  return out
+end
+local RECALL_CMD = { "^recall$", "^rec$", "^reca$", "^recal$", "^c%a*%s+'?word of recall'?" }
+function M.recallNoteSend(cmd)
+  local c = trim(cmd or ""):lower()
+  for _, p in ipairs(RECALL_CMD) do
+    if c:match(p) then
+      local info = M.gmcpGet and M.gmcpGet("room.info")
+      if type(info) == "table" and tostring(info.wilds) == "true" and M.mapRoom then
+        M.recallFrom = { room = M.mapRoom, cmd = trim(cmd), at = os.time(),
+          x = type(info.coord) == "table" and tonumber(info.coord.x), y = type(info.coord) == "table" and tonumber(info.coord.y) }
+      end
+      return
+    end
+  end
+end
+function M.recallNoteRoom(id)
+  local R = M.recallFrom
+  if not R or os.time() - R.at > 10 then M.recallFrom = nil; return end
+  if id == R.room then return end
+  M.recallFrom = nil
+  M.cfg.recalls = M.cfg.recalls or {}
+  M.cfg.recalls[tostring(R.room)] = { land = id, cmd = R.cmd, x = R.x, y = R.y }
+  M.saveSettings()
+end
+-- (the recordings, once: each recall cast in the wilds, and the room after it)
+function M.recallImport()
+  if M.cfg.recallsImported then return end
+  M.cfg.recalls = M.cfg.recalls or {}
+  for _, f in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
+    local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
+    if fh then
+      local prev, pend
+      for l in fh:lines() do
+        if l:sub(1, 6) == "===== " then
+          local c = (l:match("| cmd=(.-) | room=") or ""):lower()
+          for part in c:gmatch("[^;]+") do
+            part = trim(part)
+            for _, p in ipairs(RECALL_CMD) do if part:match(p) then pend = prev and prev.wild and { from = prev, cmd = part } or nil end end
+          end
+        elseif l:sub(1, 15) == "@gmcp room.info" then
+          local num = tonumber(l:match('%["num"%]="(%d+)"'))
+          local coord = l:match('%["coord"%]=%b{}') or ""
+          local cur = { num = num, wild = l:find('["wilds"]="true"', 1, true) ~= nil,
+            x = tonumber(coord:match('%["x"%]=(%d+)')), y = tonumber(coord:match('%["y"%]=(%d+)')) }
+          if pend and num and num ~= pend.from.num then
+            M.cfg.recalls[tostring(pend.from.num)] = { land = num, cmd = pend.cmd, x = pend.from.x, y = pend.from.y }
+            pend = nil
+          end
+          prev = cur
+        end
+      end
+      fh:close()
+    end
+  end
+  M.cfg.recallsImported = true
+  M.saveSettings()
+end
+
 -- the plan in lines, its gold, and a warning when you don't carry enough
 function M.travelPlanLines(plan, target)
   local lines = {}
@@ -15450,7 +15545,7 @@ function M.travelPlanLines(plan, target)
   for x, g in ipairs(plan.legs) do
     local L = g.link
     if g.walk > 0 then lines[#lines + 1] = string.format("%d step%s to %s", g.walk, pl(g.walk), L.shopName) end
-    if L.anywhere then lines[#lines + 1] = L.board[1] .. " to " .. L.dest
+    if L.anywhere or L.noBuy then lines[#lines + 1] = L.board[1] .. " to " .. L.dest
     else lines[#lines + 1] = string.format("%s to %s - %s gold", L.kind, L.dest, commas(L.cost)) end
   end
   lines[#lines + 1] = string.format("about %d step%s on to %s", plan.after, pl(plan.after), getRoomName(target) or ("#" .. target))
@@ -15480,6 +15575,12 @@ function M.travelStart(plan, target, legNo)
   local function atShop()
     local T = M.travel
     if not T then return end
+    if L.noBuy then
+      T.stage, T.boardStep, T.rideFrom = "boarding", 1, getRoomArea(M.mapRoom or 0)
+      M.travelBoard()
+      tempTimer(12, function() if M.travel == T then M.travel = nil; say("travel: " .. L.board[1] .. " didn't take you anywhere - stopped") end end)
+      return
+    end
     T.stage = "buying"
     M.sendOwn("shop buy " .. L.no, true)
     tempTimer(8, function() if M.travel == T and T.stage == "buying" then M.travel = nil; say("travel: the shop didn't sell the " .. L.kind:lower() .. " ticket - stopped") end end)
@@ -17726,4 +17827,4 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.recallImport) end)
