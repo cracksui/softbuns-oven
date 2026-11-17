@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.58.1"
+M.version = "1.58.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -15106,7 +15106,8 @@ function M.runTargets(q)
   return order, fromNotes
 end
 
-function M.mapRun(arg)
+function M.mapRun(arg) return M.withPathMemo(M.mapRunNow, arg) end
+function M.mapRunNow(arg)
   arg = trim(arg or "")
   local all = arg:match("^all%s+(.+)$")
   local q = all or arg
@@ -15192,10 +15193,44 @@ end
 
 -- sbo go's walk: inside your area it's walked (no signpost run); a route out of town is asked about first
 -- ("y" goes, "n" stays - answered to Oven, not the game). Already in the wilds: no question.
-function M.goTo(id)
+-- one sbo go asks the map for the same routes several times over (the trip's plan, its runs, the question,
+-- the walk): while it's working each is looked up once (getPath searches the whole map every time)
+function M.withPathMemo(fn, ...)
+  if M.pathMemoOn then return fn(...) end
+  local real, memo = getPath, {}
+  getPath = function(a, b)
+    local k = tostring(a) .. ">" .. tostring(b)
+    local m = memo[k]
+    if m == nil then
+      if real(a, b) then
+        local d, p = {}, {}
+        for i, x in ipairs(speedWalkDir or {}) do d[i] = x end
+        for i, x in ipairs(speedWalkPath or {}) do p[i] = x end
+        m = { d, p }
+      else m = false end
+      memo[k] = m
+    end
+    if not m then return false end
+    local d, p = {}, {}
+    for i, x in ipairs(m[1]) do d[i] = x end
+    for i, x in ipairs(m[2]) do p[i] = x end
+    speedWalkDir, speedWalkPath = d, p
+    return true
+  end
+  M.pathMemoOn = true
+  local res = { pcall(fn, ...) }
+  getPath, M.pathMemoOn = real, nil
+  if not res[1] then error(res[2], 0) end
+  return unpack(res, 2)
+end
+
+function M.goTo(id) return M.withPathMemo(M.goToNow, id) end
+function M.goToNow(id)
   local here = M.mapRoom or M.currentRoom()
   -- a paid trip (Ganuk, a balloon…) when it beats walking by enough, or when there's no way on foot
-  if here and roomExists(here) and roomExists(id) then
+  -- (only for somewhere outside the area you're in - in town, it's a walk)
+  local okA, sameArea = pcall(function() return getRoomArea(here) == getRoomArea(id) end)
+  if here and roomExists(here) and roomExists(id) and not (okA and sameArea) then
     local onFoot = getPath(here, id) and #(speedWalkDir or {}) or nil
     local runCost
     if onFoot then
@@ -15319,7 +15354,13 @@ local function steps(a, b)
 end
 
 -- the rest of the way from a landing: on foot, or with a signpost run when that's shorter
-function M.travelAfter(land, target, walk)
+function M.travelAfter(land, target, walk, memo)
+  if memo and memo[land] ~= nil then return memo[land] or nil end
+  local n = M.travelAfterNow(land, target, walk)
+  if memo then memo[land] = n or false end
+  return n
+end
+function M.travelAfterNow(land, target, walk)
   local n = walk(land, target)
   if not n or n == 0 then return n end
   if getPath(land, target) then
@@ -15351,7 +15392,7 @@ function M.travelPlan(here, target, onFoot)
     elseif landAt[L.areaId] == nil then landAt[L.areaId] = areaRoom(L.area, L.areaId) or false end
   end
   -- the steps between two rooms, each pair measured once
-  local memo = {}
+  local memo, afterMemo = {}, {}
   local function walk(a, b)
     local k = a .. ">" .. b
     if memo[k] == nil then memo[k] = steps(a, b) or false end
@@ -15382,7 +15423,7 @@ function M.travelPlan(here, target, onFoot)
               local s2 = { room = land, area = L.areaId, cost = cost, legs = legs }
               nextLayer[#nextLayer + 1] = s2
               -- this town is the one: walk the rest
-              local n = M.travelAfter(land, target, walk)
+              local n = M.travelAfter(land, target, walk, afterMemo)
               if n then
                 local total = cost + n
                 if (not onFoot or total + M.TRAVEL_SAVES <= onFoot) and (not best or total < best.cost) then
@@ -15396,7 +15437,7 @@ function M.travelPlan(here, target, onFoot)
     end
     -- (recall from here, as the last ride)
     for _, st in ipairs(layer) do
-      local okR, r = pcall(M.recallFrom, st.room, target, function(room) return M.travelAfter(room, target, walk) end)
+      local okR, r = pcall(M.recallFrom, st.room, target, walk)
       if okR and r then
         local total = st.cost + r.cost
         if (not onFoot or total + M.TRAVEL_SAVES <= onFoot) and (not best or total < best.cost) then
@@ -15521,23 +15562,49 @@ end
 
 -- a recall from a room (where you stand, or where a ride lands): for each signpost worth it, the walk out
 -- and the cost on from it - the best { link, walk, cost (to the target) }
-function M.recallFrom(room, target, after)
+M.RECALL_TRY = 5   -- signposts measured exactly (the rest ranked out by a quick estimate)
+function M.recallFrom(room, target, walk)
   local p = M.worldPos and M.worldPos(room)
   if not p then return nil end
   local pts = M.signpostPoints()
-  local best
+  local r = M.runData()
+  local town = M.runForArea and M.runForArea(target)
+  local tp = M.worldPos and M.worldPos(target)
+  local sps = {}
+  for _, sp in ipairs(M.signposts()) do sps[sp.room] = sp end
+  -- a quick estimate for each: the walk out, then its run to the target's town or the distance on
+  local cands = {}
   for _, S in ipairs(pts) do
     if S.map == p.map then
       local k = M.recallWalkTo(pts, S, p.map, p.x, p.y)
-      local n = k and after(S.room)
-      if n then
-        local cost = k + M.TRAVEL_COST + n
-        if not best or cost < best.cost then
-          local L = { kind = "recall", recall = S, board = { M.RECALL_CMD }, cost = 0, noBuy = true,
-            dest = (M.signLabel and M.signLabel(S.room)) or ("#" .. S.room), land = S.room, areaId = getRoomArea(S.room),
-            dir = k > 0 and M.compassTo(p.x, p.y, S.x, S.y) or nil, shopName = "" }
-          best = { link = L, walk = k, cost = cost, after = n }
-        end
+      if k then
+        local sp = sps[S.room]
+        local est
+        if town and sp and sp.dests[town] then est = k + M.RUN_COST
+        elseif tp and tp.map == S.map then est = k + math.max(math.abs(tp.x - S.x), math.abs(tp.y - S.y))
+        else est = k + 1000 end
+        cands[#cands + 1] = { S = S, k = k, est = est, sp = sp }
+      end
+    end
+  end
+  table.sort(cands, function(a, b) return a.est < b.est end)
+  -- the best few, measured: from the signpost it lands on, on foot or one of its own runs
+  local best
+  for i, c in ipairs(cands) do
+    if i > M.RECALL_TRY then break end
+    local n = walk(c.S.room, target)
+    for name in pairs(c.sp and c.sp.dests or {}) do
+      local e = r.ends[name]
+      local m = e and (e == target and 0 or walk(e, target))
+      if m and (not n or M.RUN_COST + m < n) then n = M.RUN_COST + m end
+    end
+    if n then
+      local cost = c.k + M.TRAVEL_COST + n
+      if not best or cost < best.cost then
+        local L = { kind = "recall", recall = c.S, board = { M.RECALL_CMD }, cost = 0, noBuy = true,
+          dest = (M.signLabel and M.signLabel(c.S.room)) or ("#" .. c.S.room), land = c.S.room, areaId = getRoomArea(c.S.room),
+          dir = c.k > 0 and M.compassTo(p.x, p.y, c.S.x, c.S.y) or nil, shopName = "" }
+        best = { link = L, walk = c.k, cost = cost, after = n }
       end
     end
   end
