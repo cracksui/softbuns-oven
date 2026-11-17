@@ -1095,6 +1095,10 @@ def travel_by_ganuk():
     text = "\n".join(o.ev("LOGS").values())
     assert "Iron Worm to Sigil - 3,625 gold" in text and "costs 3,625 gold in all" in text and "you carry 2,000" in text, text
     assert "y to go" in text, text
+    eq((o.ev("#SENT"), o.ev("sbo.walk"), o.ev("sbo.travel")), (0, None, None), "nothing bought, no walk, until you answer")
+    o.lua("sbo.goAnswer('n'); runTimers()")
+    eq((o.ev("#SENT"), o.ev("sbo.travel")), (0, None), "n: nothing")
+    o.lua("sbo.goTo(600)")
     # y: walk to the shop, buy, down, give the token, land, walk on
     eq(o.ev("sbo.goAsk.travel.legs[1].link.dest"), "Sigil", "y would take the Worm")
     o.lua("sbo.travelStart(sbo.goAsk.travel, 600); sbo.goAsk = nil")
