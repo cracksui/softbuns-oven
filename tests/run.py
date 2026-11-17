@@ -3409,6 +3409,24 @@ def shop_and_quest_id_like_look():
 
 
 @test
+def a_move_is_not_a_containers_contents():
+    o = Oven()
+    def run(move):
+        o.lua("""sbo.cfg.window = true; ADDED = 0; sbo.viewAdd = function() ADDED = ADDED + 1 end
+          CARRIED = 0; sbo.updateCarried = function() CARRIED = CARRIED + 1 end
+          gmcp.room = { info = { num = '206864' } }
+          sbo.start('contents', 'safe', 'look in safe')
+          sbo.cap.plain = { '  Large bay windows afford a view into the hallway to the north, where',
+            '     A tiny imp stands inside a glass bottle, silently pounding on the walls.' }
+          sbo.cap.decho = { '', '' }""")
+        if move: o.lua("gmcp.room.info.num = '206886'")
+        o.lua("sbo.finish('prompt'); runTimers()")
+        return o.ev("ADDED"), o.ev("CARRIED")
+    eq(run(True), (0, 0), "sw, then look in safe: the room's description isn't the safe's contents")
+    eq(run(False), (1, 1), "without a move: laid out as before")
+
+
+@test
 def marks_on_quest_panel():
     o = Oven()
     eq(o.ev("function(c) return (sbo.classify(c)) end")("mark info bravery"), "markinfo", "mark info")

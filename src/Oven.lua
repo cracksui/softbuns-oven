@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.54.1"
+M.version = "1.54.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10110,9 +10110,16 @@ local function selectionDecho()
   return ok and d or nil
 end
 
+-- the room you're in (GMCP): a reply that arrives with a move in it (sw, then look in safe) is the new
+-- room's description, not what was asked for
+function M.capRoomNow()
+  local info = type(gmcp) == "table" and type(gmcp.room) == "table" and gmcp.room.info
+  return type(info) == "table" and info.num and tostring(info.num) or nil
+end
+
 function M.start(kind, target, cmd)
   M.cap = { kind = kind, target = target, cmd = cmd, plain = {}, decho = {}, lastAt = now(),
-            hasLayout = M.formatters[kind] ~= nil }
+            hasLayout = M.formatters[kind] ~= nil, room = M.capRoomNow() }
   if kind == "help" then M.cap.gag = M.cfg.helpWindow
   else M.cap.gag = M.cfg.main == "replace" and M.cap.hasLayout end
   -- formatting off: read it, show nothing of Oven's - the game's text stays as it is
@@ -12718,6 +12725,9 @@ function M.finish(reason)
   local nonBlank = 0
   for _, l in ipairs(cap.plain) do if trim(l) ~= "" then nonBlank = nonBlank + 1 end end
   local worth = cap.hasLayout and (nonBlank >= 2 or (nonBlank == 1 and ulen(cap.plain[1]) > 100))
+  -- you moved while it came in: what arrived is (mostly) the room you walked into - shown as the game sent it
+  local moved = cap.room ~= nil and M.capRoomNow() ~= nil and M.capRoomNow() ~= cap.room
+  if moved and (cap.kind == "contents" or cap.kind == "item") then worth = false; cap.moved = true end
 
   -- draw after the game's text for this packet has been processed
   tempTimer(0, function()
@@ -12787,7 +12797,7 @@ function M.finish(reason)
       end
     end
     if cap.kind == "eq" then M.updateEqNames(cap.plain); pcall(M.noteCombat, cap.plain) end
-    if cap.kind == "contents" then pcall(M.updateCarried, cap) end
+    if cap.kind == "contents" and not cap.moved then pcall(M.updateCarried, cap) end
     if cap.kind == "score" then M.updateMaxes(cap.plain); M.drawBar(); M.dataChanged() end
     if cap.kind == "skills" then
       pcall(M.noteTrain, cap.plain)
@@ -12800,7 +12810,7 @@ function M.finish(reason)
         end)
       end
     end
-    if cap.kind == "item" then M.afterItem(cap.plain, entry) end
+    if cap.kind == "item" and not cap.moved then M.afterItem(cap.plain, entry) end
     if entry then M.viewAdd(entry) end
   end)
 
