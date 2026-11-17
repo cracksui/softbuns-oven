@@ -1094,123 +1094,123 @@ def route_plan_text():
 @test
 def travel_by_ganuk():
     o = Oven()
+    # a small map, searched like Mudlet does (Dijkstra): exits cost 1, special exits their weight
     o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end
       LOGS = {}; sbo.log = function(m) LOGS[#LOGS+1] = m end
-      AREA = { [1] = 1, [10636] = 1, [10637] = 1, [500] = 2, [600] = 2, [3908670] = 3 }
+      AREA, EX, SPECIAL, WEIGHT = {}, {}, {}, {}
+      local NAMES = { 'Towne of Rune', 'Sigil', 'Alyria', 'Lowangen', 'The Towne of New Rigel', 'Megaleios Clan Hall', 'Mandrake Woods' }
+      getRoomAreaName = function(a) return NAMES[a] end
+      getAreaTable = function() local t = {} for i, n in ipairs(NAMES) do t[n] = i end return t end
       roomExists = function(id) return AREA[tonumber(id)] ~= nil end
       getRoomArea = function(id) return AREA[tonumber(id)] end
-      getRoomAreaName = function(a) return ({ 'Towne of Rune', 'Sigil', 'Alyria' })[a] end
-      getAreaTable = function() return { ['Towne of Rune'] = 1, ['Sigil'] = 2, ['Alyria'] = 3 } end
       getRoomName = function(id) return 'room ' .. id end
-      LEN = { ['1>10636'] = 5, ['500>600'] = 3 }
-      getPath = function(a, b) local n = LEN[tonumber(a) .. '>' .. tonumber(b)]; if not n then return false end
-        speedWalkDir, speedWalkPath = {}, {}
-        for i = 1, n do speedWalkDir[i] = 'n'; speedWalkPath[i] = tostring(i == n and b or 0) end return true end
+      function CHAIN(area, rooms, dir) for i, r in ipairs(rooms) do AREA[r] = area; EX[r] = EX[r] or {}
+        if rooms[i + 1] then EX[r][#EX[r] + 1] = { dir, rooms[i + 1] } end end end
+      addSpecialExit = function(a, b, cmd) if not AREA[a] or not AREA[b] then error('no room') end SPECIAL[a] = SPECIAL[a] or {}; SPECIAL[a][cmd] = b end
+      removeSpecialExit = function(a, cmd) if SPECIAL[a] then SPECIAL[a][cmd] = nil end; WEIGHT[a .. cmd] = nil end
+      setExitWeight = function(a, cmd, w) WEIGHT[a .. cmd] = w end
+      CALLS = 0
+      getPath = function(a, b)
+        CALLS = CALLS + 1
+        a, b = tonumber(a), tonumber(b)
+        local dist, prev, done = { [a] = 0 }, {}, {}
+        while true do
+          local u, du
+          for r, d in pairs(dist) do if not done[r] and (not du or d < du) then u, du = r, d end end
+          if not u then return false end
+          if u == b then break end
+          done[u] = true
+          local function relax(dir, v, w) if not dist[v] or du + w < dist[v] then dist[v] = du + w; prev[v] = { u, dir } end end
+          for _, e in ipairs(EX[u] or {}) do relax(e[1], e[2], 1) end
+          for cmd, v in pairs(SPECIAL[u] or {}) do relax(cmd, v, WEIGHT[u .. cmd] or 1) end
+        end
+        local dirs, path, r = {}, {}, b
+        while r ~= a do table.insert(dirs, 1, prev[r][2]); table.insert(path, 1, tostring(r)); r = prev[r][1] end
+        speedWalkDir, speedWalkPath = dirs, path
+        return true
+      end
       sbo.signposts = function() return {} end
+      sbo.cfg.runs = { names = {}, ends = {}, endsFixed = 1 }
       gmcp.char = gmcp.char or {}; gmcp.char.worth = { gold = 2000, bank = 579098 }
-      sbo.mapRoom = 1
+      sbo.walkStep = function() WALK = sbo.walk end
+      centerview = function() end; updateMap = function() end
+      local tt = tempTimer; tempTimer = function(d, f, r) if d >= 5 then return 0 end return tt(d, f, r) end   -- (no stall checks)
+      -- Rune: you (1) and Ganuk (10636); Sigil: its exit (500) and the target (600) - no road between
+      CHAIN(1, { 1, 2, 3, 4, 5, 10636 }, 'e'); CHAIN(1, { 10637 }, 'x')
+      CHAIN(2, { 500, 501, 502, 600 }, 'n')
       sbo.dbx("INSERT INTO shops (room, name, last) VALUES (10636, %s, 0)", "Ganuk's Express Travels")
       sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last) VALUES (10636, 4, 'A token for Sigil passage', 25, 'No limit', 3625, 0)")
       sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last) VALUES (10636, 12, 'A token for passage to Irda Isle', 25, 'No limit', 50000, 0)")
-      sbo.dbx("INSERT INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('Sigil', 'exit', 500, 0, '', 0)")""")
-    links = o.ev("sbo.travelLinks()")
-    eq((o.ev("#sbo.travelLinks()"), links[1].dest, links[1].area, links[2].dest), (2, "Sigil", "Sigil", "Irda Isle"), "read from the shop list")
-    # no way on foot to Sigil: the Worm, its gold, and what you carry
+      sbo.dbx("INSERT INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('Sigil', 'exit', 500, 0, '', 0)")
+      sbo.mapRoom = 1""")
+    eq((o.ev("#sbo.travelLinks()"), o.ev("sbo.travelLinks()[1].dest")), (2, "Sigil"), "read from the shop list")
     o.lua("sbo.goTo(600)")
     text = "\n".join(o.ev("LOGS").values())
-    assert "Iron Worm to Sigil - 3,625 gold" in text and "costs 3,625 gold in all" in text and "you carry 2,000" in text, text
-    assert "y to go" in text, text
-    eq((o.ev("#SENT"), o.ev("sbo.walk"), o.ev("sbo.travel")), (0, None, None), "nothing bought, no walk, until you answer")
-    o.lua("sbo.goAnswer('n'); runTimers()")
-    eq((o.ev("#SENT"), o.ev("sbo.travel")), (0, None), "n: nothing")
-    o.lua("sbo.goTo(600)")
-    # y: walk to the shop, buy, down, give the token, land, walk on
-    eq(o.ev("sbo.goAsk.travel.legs[1].link.dest"), "Sigil", "y would take the Worm")
-    o.lua("sbo.travelStart(sbo.goAsk.travel, 600); sbo.goAsk = nil")
-    eq((o.ev("sbo.travel.stage"), o.ev("#sbo.walk.dirs")), ("toShop", 5), "walking to the shop")
-    o.lua("sbo.mapRoom = 10636; sbo.walk.thenDo()")
+    assert "5 steps to room 10636" in text and "Iron Worm to Sigil - 3,625 gold" in text and "about 3 steps on to room 600" in text, text
+    assert "costs 3,625 gold in all" in text and "you carry 2,000" in text and "y to go" in text, text
+    eq((o.ev("#SENT"), o.ev("next(SPECIAL[10636] or {})")), (0, None), "nothing sent; the map left as it was")
+    eq(o.ev("sbo.goAnswer('n')"), True, "n")
+    eq(o.ev("#SENT"), 0, "n: nothing")
+    # y: walk to Ganuk, buy, down, give, land, walk on
+    o.lua("sbo.goTo(600); sbo.goAnswer('y'); runTimers()")
+    eq((o.ev("sbo.trip.waitAt"), o.ev("#WALK.dirs")), (10636, 5), "walking to Ganuk")
+    o.lua("sbo.walk = nil; sbo.mapRoom = 10636; sbo.tripOnRoom(10636); runTimers()")
     eq(o.ev("SENT[#SENT]"), "shop buy 4", "the token")
     o.feed("Ganuk Jr. takes your payment and hands you a token for Sigil passage.")
     o.lua("runTimers()")
     eq(o.ev("SENT[#SENT]"), "down", "down to Ganuk")
-    o.lua("sbo.travelOnRoom(10637); runTimers(); runTimers()")
+    o.lua("sbo.mapRoom = 10637; sbo.travelOnRoom(10637); runTimers()")
     eq(o.ev("SENT[#SENT]"), "give token ganuk", "the token handed over")
-    o.lua("runTimers(); WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; sbo.travelOnRoom(3908670); runTimers()")
-    eq((o.ev("WALKED"), o.ev("sbo.travel")), (600, None), "landed: on to the room asked for")
-    # chained: the Worm to Lowangen, then Gerry's balloon on to New Rigel (it takes off once bought)
-    o.lua("""AREA[16091] = 4; AREA[700] = 4; AREA[62000] = 5; AREA[62100] = 5; AREA[5000] = 3
-      getRoomAreaName = function(a) return ({ 'Towne of Rune', 'Sigil', 'Alyria', 'Lowangen', 'The Towne of New Rigel' })[a] end
-      getAreaTable = function() return { ['Towne of Rune'] = 1, ['Sigil'] = 2, ['Alyria'] = 3, ['Lowangen'] = 4, ['The Towne of New Rigel'] = 5 } end
-      LEN['700>16091'] = 4; LEN['62000>62100'] = 2; LEN['5000>16091'] = 4
+    o.lua("runTimers(); WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; CHAIN(2, { 499, 500 }, 'n'); sbo.mapRoom = 499; sbo.travelOnRoom(499); runTimers()")
+    eq((o.ev("WALKED"), o.ev("sbo.trip"), o.ev("sbo.travel")), (600, None, None), "landed: on to the room asked for")
+    # chained: the Worm to Lowangen, Gerry's balloon on to New Rigel (it takes off once bought)
+    o.lua("""CHAIN(4, { 700, 701, 702, 703, 16091 }, 'w'); CHAIN(5, { 62000, 62001, 62100 }, 's')
       sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last) VALUES (10636, 1, 'A token for Lowangen passage', 25, 'No limit', 3625, 0)")
       sbo.dbx("INSERT INTO shops (room, name, last) VALUES (16091, %s, 0)", "Gerry's Hot Air Balloon Travels")
       sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last) VALUES (16091, 1, 'A ticket to New Rigel', 1, 'No limit', 2500, 0)")
       sbo.dbx("INSERT INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('Lowangen', 'exit', 700, 0, '', 0)")
       sbo.dbx("INSERT INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('The Towne of New Rigel', 'exit', 62000, 0, '', 0)")
-      sbo.mapRoom = 1; LOGS = {}; sbo.mapWalkTo = function(id) WALKED = id end""")
+      sbo.mapRoom = 1; LOGS = {}; CALLS = 0""")
     o.lua("sbo.goTo(62100)")
     text = "\n".join(o.ev("LOGS").values())
-    assert "Iron Worm to Lowangen - 3,625 gold" in text and "balloon to New Rigel - 2,500 gold" in text and "costs 6,125 gold in all" in text, text
-    o.lua("sbo.travelStart(sbo.goAsk.travel, 62100); sbo.goAsk = nil; sbo.mapRoom = 10636; sbo.walk.thenDo()")
-    o.feed("Ganuk Jr. takes your payment and hands you a token for Lowangen passage.")
-    o.lua("runTimers(); sbo.travelOnRoom(10637); runTimers(); runTimers(); runTimers()")
-    o.lua("sbo.walkStep = function() WALK = sbo.walk end; sbo.mapRoom = 5000; sbo.travelOnRoom(5000); runTimers()")
-    eq((o.ev("sbo.travel.leg"), o.ev("sbo.travel.link.kind"), o.ev("#WALK.dirs")), (2, "balloon", 4), "landed: on to the balloon")
-    o.lua("sbo.mapRoom = 16091; WALK.thenDo()")
-    eq(o.ev("SENT[#SENT]"), "shop buy 1", "the ticket")
-    o.feed("Gerry takes your payment and hands you a ticket to New Rigel.")
-    o.lua("runTimers(); WALKED = nil; sbo.travelOnRoom(62000); runTimers()")
-    eq((o.ev("WALKED"), o.ev("sbo.travel")), (62100, None), "the balloon landed: walk the rest")
-    # clan gohall: from where you stand, free; the hall's room learned from the recordings
-    open(o.home + "/oven_record.txt", "w").write("===== 2026-11-15 21:57:31 | cmd=clan gohall | room=384334\n")
-    o.lua("""AREA[384334] = 6; AREA[384400] = 3; LEN['384334>384400'] = 6
-      getRoomAreaName = function(a) return ({ 'Towne of Rune', 'Sigil', 'Alyria', 'Lowangen', 'The Towne of New Rigel', 'Megaleios Clan Hall' })[a] end
-      sbo.clanHallImport(); sbo.mapRoom = 600; LOGS = {}; SENT = {}""")
-    eq(o.ev("sbo.cfg.clanHall"), 384334, "the hall")
-    o.lua("sbo.goTo(384400)")
-    text = "\n".join(o.ev("LOGS").values())
-    assert "clan gohall to Megaleios Clan Hall" in text and "the trip is free" in text and "y to go" in text, text
-    eq(o.ev("#SENT"), 0, "asked first")
-    o.lua("sbo.travelStart(sbo.goAsk.travel, 384400); sbo.goAsk = nil")
-    eq(o.ev("SENT[#SENT]"), "clan gohall", "from where you stand")
-    o.lua("WALKED = nil; sbo.mapRoom = 384334; sbo.travelOnRoom(384334); runTimers()")
-    eq(o.ev("WALKED"), 384400, "then on foot")
-    # the clan hall, walk out until Mandrake Woods' signpost is the nearest, recall there, run on to Rune
-    o.lua("""AREA[1900988] = 3; AREA[1500000] = 3; AREA[10490] = 1; AREA[9834] = 7
-      getRoomAreaName = function(a) return ({ 'Towne of Rune', 'Sigil', 'Alyria', 'Lowangen', 'The Towne of New Rigel', 'Megaleios Clan Hall', 'Mandrake Woods' })[a] end
-      LEN['1900988>10490'] = 90
+    assert "Iron Worm to Lowangen - 3,625 gold" in text and "4 steps to room 16091" in text and "balloon to New Rigel - 2,500 gold" in text, text
+    assert "costs 6,125 gold in all" in text, text
+    eq(o.ev("CALLS"), 2, "one search for the trip (and one for the walk on foot)")
+    # the clan hall, walk out until Mandrake Woods' signpost is the nearest, recall, run to Rune
+    o.lua("""CHAIN(6, { 384334 }, 'x'); CHAIN(3, { 1900988 }, 'x'); CHAIN(3, { 1500000 }, 'x'); CHAIN(1, { 10490, 10491, 10495 }, 'e')
+      sbo.cfg.clanHall = 384334
       POS = { [384334] = { map = 'Alyria', x = 560, y = 216 }, [1900988] = { map = 'Alyria', x = 654, y = 365 }, [1500000] = { map = 'Alyria', x = 560, y = 150 } }
       sbo.worldPos = function(r) return POS[tonumber(r)] end
       sbo.signposts = function() return { { room = 1900988, dests = { rune = 'south' } }, { room = 1500000, dests = { civmar = 'north' } } } end
+      sbo.cfg.runs = { names = { rune = {} }, ends = { rune = 10490 }, endsFixed = 1 }
+      sbo.runForArea = function(id) return getRoomArea(id) == 1 and 'rune' or nil end
       sbo.signLabel = function(r) return r == 1900988 and 'signpost on the Shadow Road' or 'signpost near the hall' end
-      sbo.mapRoom = 600; LOGS = {}; SENT = {}""")
-    o.lua("sbo.goTo(10490)")
+      sbo.mapRoom = 600; LOGS = {}; SENT = {}; sbo.mapWalkTo = function(id) WALKED = id end""")
+    o.lua("sbo.goTo(10495)")
     text = "\n".join(o.ev("LOGS").values())
-    assert "clan gohall to Megaleios Clan Hall" in text and "recall to the signpost on the Shadow Road" in text and "southeast" in text, text
-    o.lua("sbo.walkStep = function() WALK = sbo.walk end; sbo.travelStart(sbo.goAsk.travel, 10490); sbo.goAsk = nil")
+    for want in ["clan gohall to Megaleios Clan Hall", "southeast", "recall to the signpost on the Shadow Road", "run rune to the", "about 2 steps on to room 10495", "the trip is free"]:
+        assert want in text, (want, text)
+    o.lua("sbo.goAnswer('y'); runTimers()")
     eq(o.ev("SENT[#SENT]"), "clan gohall", "first the hall")
     o.lua("""gmcp.room = { info = { num = '384334', wilds = 'false', exits = { n = '1558194' }, coord = { name = 'Alyria', x = 560, y = 216 } } }
-      local tt = tempTimer; tempTimer = function(d, f, r) if d >= 5 then return 0 end return tt(d, f, r) end   -- (no stall checks here)
       sbo.mapRoom = 384334; sbo.travelOnRoom(384334); runTimers()""")
     eq(o.ev("SENT[#SENT]"), "n", "out of the hall")
-    # a room at a time toward the Shadow Road's signpost, until it's the nearest one; then recall
     steps = o.ev("""(function()
       local x, y, n = 560, 216, 0
       local D = { n = {0,-1}, s = {0,1}, e = {1,0}, w = {-1,0}, ne = {1,-1}, nw = {-1,-1}, se = {1,1}, sw = {-1,1} }
       while D[SENT[#SENT]] and n < 300 do
         local d = D[SENT[#SENT]]
-        if SENT[#SENT] ~= 'n' or n > 0 then x, y = x + d[1], y + d[2] end
+        if n > 0 then x, y = x + d[1], y + d[2] end
         n = n + 1
-        local id = 2000000 + n
-        gmcp.room = { info = { num = tostring(id), wilds = 'true', coord = { name = 'Alyria', x = x, y = y } } }
-        sbo.mapRoom = id; sbo.travelCastStep()
+        gmcp.room = { info = { num = tostring(2000000 + n), wilds = 'true', coord = { name = 'Alyria', x = x, y = y } } }
+        sbo.mapRoom = 2000000 + n; sbo.travelCastStep()
       end
       return n
     end)()""")
     assert 10 < steps < 150, steps
     eq(o.ev("SENT[#SENT]"), "cast 'word of recall'", "recall once it's the nearest")
-    o.lua("runTimers(); WALKED = nil; sbo.mapRoom = 9834; sbo.travelOnRoom(9834); runTimers()")
-    eq(o.ev("WALKED"), 10490, "recalled: on to Rune")
+    o.lua("runTimers(); WALKED = nil; sbo.mapRoom = 1900988; sbo.travelOnRoom(1900988); runTimers()")
+    eq((o.ev("WALKED"), o.ev("sbo.trip")), (10495, None), "recalled: the rest (the run) by the usual walk")
 
 
 @test
