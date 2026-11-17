@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.55.1"
+M.version = "1.56.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13282,6 +13282,8 @@ function M.worldNote(info)
     local width = img and img.w or 2300
     local off = num - (y * width + x)
     if w.offsets[name] ~= off then w.offsets[name] = off; M.saveSettings() end
+    -- a waterway runs under the land and sea the map shows: not that pixel's terrain - its path is kept instead
+    if M.worldWaterNote(name, x, y, info.terrain) then return end
     -- the colour of this terrain
     if img and info.terrain then
       local o = img.off + (img.h - 1 - y) * img.row + x * 3 + 1
@@ -13299,6 +13301,79 @@ function M.worldNote(info)
       M.dbx("INSERT OR REPLACE INTO room_xy (room, map, x, y) VALUES (%s, %s, %s, %s)", num, name, x, y)
     end
   end
+end
+
+-- the waterways: no map shows them (they run under ordinary land and sea), so the ones you pass through are
+-- kept - each room, and the step between two in a row (a run's rooms come some way apart: joined when close)
+M.WATER_JOIN = 20
+function M.worldWaterNote(map, x, y, terrain)
+  if terrain ~= "sailable-bridge" then
+    M.wwLast = nil
+    if M.wwDirty then M.worldWaterSave() end   -- off the water: what was sailed is saved
+    return false
+  end
+  local w = W()
+  w.water = w.water or {}
+  local t = w.water[map] or { pts = {}, segs = {} }
+  w.water[map] = t
+  local k = x .. "," .. y
+  local new = not t.pts[k]
+  t.pts[k] = true
+  local L = M.wwLast
+  if L and L.map == map and (L.x ~= x or L.y ~= y) and math.abs(L.x - x) <= M.WATER_JOIN and math.abs(L.y - y) <= M.WATER_JOIN then
+    local a, b = L.x .. "," .. L.y, k
+    if a > b then a, b = b, a end
+    if not t.segs[a .. ">" .. b] then t.segs[a .. ">" .. b] = true; new = true end
+  end
+  M.wwLast = { map = map, x = x, y = y }
+  if new then M.wwDirty = true end
+  return true
+end
+
+-- (saved now and then, not on every step of a long sail)
+function M.worldWaterSave()
+  if M.wwDirty then M.wwDirty = nil; M.saveSettings() end
+end
+
+-- waterways from the recordings (oven_record.txt and the one before), once: rooms in the order you went
+function M.worldWaterImport(force)
+  local w = W()
+  if w.waterImported and not force then return 0 end
+  local n = 0
+  for _, f in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
+    local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
+    if fh then
+      M.wwLast = nil
+      for l in fh:lines() do
+        if l:sub(1, 15) == "@gmcp room.info" then
+          local map = l:match('%["coord"%]=%b{}')
+          local mname = map and map:match('%["name"%]="([^"]*)"')
+          local x, y = map and tonumber(map:match('%["x"%]=(%d+)')), map and tonumber(map:match('%["y"%]=(%d+)'))
+          local terr = l:match('%["terrain"%]="([^"]*)"')
+          if mname and x and y and l:find('["wilds"]="true"', 1, true) then
+            if M.worldWaterNote(mname, x, y, terr) then n = n + 1 end
+          else
+            M.wwLast = nil
+          end
+        end
+      end
+      fh:close()
+    end
+  end
+  M.wwLast = nil
+  w.waterImported = true
+  M.wwDirty = true
+  M.worldWaterSave()
+  return n
+end
+
+-- terrain colours learned from waterway rooms (before 1.56): wrong - the pixel is the land or sea above
+function M.worldWaterUnlearn()
+  local w = W()
+  local gone = 0
+  for k, v in pairs(w.terrain or {}) do if v == "sailable-bridge" then w.terrain[k] = nil; gone = gone + 1 end end
+  if gone > 0 then M.saveSettings() end
+  return gone
 end
 
 -- a room's place on a world map: { map, x, y } or nil
@@ -13408,6 +13483,7 @@ RGB.you, RGB.youIn = bgr(255, 255, 255), bgr(230, 40, 40)
 RGB.friend, RGB.route, RGB.run = bgr(60, 230, 240), bgr(255, 230, 30), bgr(255, 160, 30)
 RGB.found, RGB.sign = bgr(255, 60, 200), bgr(250, 250, 250)
 RGB.under = bgr(60, 150, 255)   -- a route's part on the layer below (or above)
+RGB.water = bgr(30, 120, 230)   -- the waterways (sailable-bridge passages) you've been through
 
 -- muted: mostly grey and darker, a hint of the colour left - so highlights stand out. The maps have only a few
 -- hundred colours, so each is worked out once
@@ -13545,6 +13621,22 @@ function M.worldDrawNow()
     if not p then return nil end
     if p.map == mapName then return p end
     if M.worldStacked(p.map, mapName) then return { x = p.x, y = p.y, map = p.map, other = true } end
+  end
+  -- the waterways you've been through (Alyria's, drawn on the layers above and below it too)
+  if M.cfg.worldWater ~= false then
+    for wmap, t in pairs(W().water or {}) do
+      if wmap == mapName or M.worldStacked(wmap, mapName) then
+        local sz = math.max(zoom, 2)
+        for seg in pairs(t.segs or {}) do
+          local x1, y1, x2, y2 = seg:match("^(%d+),(%d+)>(%d+),(%d+)$")
+          if x1 then line(tonumber(x1), tonumber(y1), tonumber(x2), tonumber(y2), function(x, y) M.worldPaint(rows, outW, x, y, sz, RGB.water) end) end
+        end
+        for k in pairs(t.pts or {}) do
+          local x, y = k:match("^(%d+),(%d+)$")
+          if x then M.worldPaint(rows, outW, tonumber(x), tonumber(y), sz, RGB.water) end
+        end
+      end
+    end
   end
   -- signposts you've read
   for _, sp in ipairs(M.signposts()) do
@@ -17582,3 +17674,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
   pcall(M.buildNotes, M.tabPages.notes)
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
+-- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport) end)

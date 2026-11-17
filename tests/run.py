@@ -948,6 +948,31 @@ def world_map_follows_through_a_portal():
 
 
 @test
+def world_waterways():
+    o = Oven()
+    home = o.L.globals().OVEN_TEST_HOME
+    # a colour learned from a waterway before: wrong (it's the land above) - forgotten
+    o.lua("sbo.cfg.world = { offsets = {}, terrain = { ['552de2'] = 'sailable-bridge', ['618347'] = 'plain' } }")
+    eq(o.ev("sbo.worldWaterUnlearn()"), 1, "one wrong colour")
+    eq((o.ev("sbo.cfg.world.terrain['552de2']"), o.ev("sbo.cfg.world.terrain['618347']")), (None, "plain"), "the plain one stays")
+    # a sail: each room kept, the steps between joined; not a terrain colour
+    o.lua("""local function at(x, y, t) sbo.worldNote({ num = tostring(1060834 + y * 2300 + x), wilds = 'true', terrain = t, coord = { name = 'Alyria', x = x, y = y } }) end
+      at(500, 1000, 'plain'); at(514, 1004, 'sailable-bridge'); at(514, 1005, 'sailable-bridge'); at(505, 1014, 'sailable-bridge'); at(600, 1100, 'plain')""")
+    W = "sbo.cfg.world.water.Alyria"
+    eq(o.ev("(function() local n = 0 for _ in pairs(" + W + ".pts) do n = n + 1 end return n end)()"), 3, "three waterway rooms")
+    eq(o.ev("(function() local n = 0 for _ in pairs(" + W + ".segs) do n = n + 1 end return n end)()"), 2, "joined in order")
+    eq(o.ev("sbo.cfg.world.terrain['552de2']"), None, "no terrain learned from them")
+    # from a recording (hand-written): read once
+    open(home + "/oven_record.txt", "w").write(
+        '===== 2026-11-16 22:00:00 | cmd= | room=1\n'
+        '@gmcp room.info = {["num"]="3480909",["terrain"]="sailable-bridge",["coord"]={["y"]=1052,["x"]=475,["name"]="Alyria"},["wilds"]="true"}\n'
+        '@gmcp room.info = {["num"]="3467116",["terrain"]="sailable-bridge",["coord"]={["y"]=1046,["x"]=482,["name"]="Alyria"},["wilds"]="true"}\n')
+    eq(o.ev("sbo.worldWaterImport()"), 2, "two from the recording")
+    assert o.ev(W + ".segs['475,1052>482,1046']"), "joined"
+    eq(o.ev("sbo.worldWaterImport()"), 0, "once")
+
+
+@test
 def world_map():
     import struct, os as _os
     o = Oven()
