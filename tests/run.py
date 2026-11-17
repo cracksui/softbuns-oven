@@ -1161,6 +1161,20 @@ def travel_by_ganuk():
     o.feed("Gerry takes your payment and hands you a ticket to New Rigel.")
     o.lua("runTimers(); WALKED = nil; sbo.travelOnRoom(62000); runTimers()")
     eq((o.ev("WALKED"), o.ev("sbo.travel")), (62100, None), "the balloon landed: walk the rest")
+    # clan gohall: from where you stand, free; the hall's room learned from the recordings
+    open(o.home + "/oven_record.txt", "w").write("===== 2026-11-15 21:57:31 | cmd=clan gohall | room=384334\n")
+    o.lua("""AREA[384334] = 6; AREA[384400] = 3; LEN['384334>384400'] = 6
+      getRoomAreaName = function(a) return ({ 'Towne of Rune', 'Sigil', 'Alyria', 'Lowangen', 'The Towne of New Rigel', 'Megaleios Clan Hall' })[a] end
+      sbo.clanHallImport(); sbo.mapRoom = 600; LOGS = {}; SENT = {}""")
+    eq(o.ev("sbo.cfg.clanHall"), 384334, "the hall")
+    o.lua("sbo.goTo(384400)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "clan gohall to Megaleios Clan Hall" in text and "the trip is free" in text and "y to go" in text, text
+    eq(o.ev("#SENT"), 0, "asked first")
+    o.lua("sbo.travelStart(sbo.goAsk.travel, 384400); sbo.goAsk = nil")
+    eq(o.ev("SENT[#SENT]"), "clan gohall", "from where you stand")
+    o.lua("WALKED = nil; sbo.mapRoom = 384334; sbo.travelOnRoom(384334); runTimers()")
+    eq(o.ev("WALKED"), 384400, "then on foot")
 
 
 @test

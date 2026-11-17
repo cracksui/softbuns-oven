@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.56.0"
+M.version = "1.57.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10205,6 +10205,7 @@ function M.onSend(_, cmd)
   pcall(M.tempNoteSend, cmd)
   pcall(M.noteLootCommand, cmd)
   pcall(M.noteEnterCommand, cmd)
+  pcall(M.clanHallNoteSend, cmd)
   pcall(M.noteRunCommand, cmd)
   -- (formatting off: replies are still read - quests, items, eq - just left as the game sends them)
   local kind, target = M.classify(cmd)
@@ -13063,6 +13064,7 @@ function M.onRoom()
   end
   pcall(M.shopOnArrive, id)
   if M.travel then pcall(M.travelOnRoom, id) end
+  if M.clanGoAt then pcall(M.clanHallNoteRoom, id) end
 end
 
 -- walk notes: a line in the game text (the prompt bar has no room to spare)
@@ -15325,11 +15327,14 @@ function M.travelPlan(here, target, onFoot)
   local tArea = getRoomArea(target)
   local links = {}
   for _, L in ipairs(M.travelLinks()) do if L.board and L.areaId then links[#links + 1] = L end end
+  local ch = M.clanHallLink()
+  if ch then links[#links + 1] = ch end
   if #links == 0 then return nil end
   -- where each ride lands (a room of its town to measure from)
   local landAt = {}
   for _, L in ipairs(links) do
-    if landAt[L.areaId] == nil then landAt[L.areaId] = areaRoom(L.area, L.areaId) or false end
+    if L.land then landAt[L.areaId] = L.land
+    elseif landAt[L.areaId] == nil then landAt[L.areaId] = areaRoom(L.area, L.areaId) or false end
   end
   -- the steps between two rooms, each pair measured once
   local memo = {}
@@ -15346,8 +15351,8 @@ function M.travelPlan(here, target, onFoot)
     local nextLayer = {}
     for _, st in ipairs(layer) do
       for _, L in ipairs(links) do
-        if L.areaId ~= st.area and getRoomArea(L.shop) == st.area then
-          local k = walk(st.room, L.shop)
+        if L.areaId ~= st.area and (L.anywhere or getRoomArea(L.shop) == st.area) then
+          local k = L.anywhere and 0 or walk(st.room, L.shop)
           local land = landAt[L.areaId]
           if k and land then
             local cost = st.cost + k + M.TRAVEL_COST
@@ -15359,7 +15364,7 @@ function M.travelPlan(here, target, onFoot)
               local s2 = { room = land, area = L.areaId, cost = cost, legs = legs }
               nextLayer[#nextLayer + 1] = s2
               -- this town is the one: walk the rest
-              local n = (L.areaId == tArea) and walk(land, target) or nil
+              local n = walk(land, target)
               if n then
                 local total = cost + n
                 if (not onFoot or total + M.TRAVEL_SAVES <= onFoot) and (not best or total < best.cost) then
@@ -15377,7 +15382,7 @@ function M.travelPlan(here, target, onFoot)
   -- (the first shop may be in another town: walk there first - a ride's shop reached on foot)
   if not best then
     for _, L in ipairs(links) do
-      if getRoomArea(L.shop) ~= getRoomArea(here) and L.areaId == tArea then
+      if not L.anywhere and getRoomArea(L.shop) ~= getRoomArea(here) and L.areaId == tArea then
         local k, land = walk(here, L.shop), landAt[L.areaId]
         local n = k and land and walk(land, target)
         if n then
@@ -15401,6 +15406,43 @@ function M.goldOnHand()
   return type(w) == "table" and tonumber(w.gold) or nil, type(w) == "table" and tonumber(w.bank) or nil
 end
 
+-- clan gohall: from (almost) anywhere to your clan hall, free - where it lands is learned when you use it
+function M.clanHallLink()
+  local r = tonumber(M.cfg.clanHall)
+  if not r or not roomExists(r) then return nil end
+  local a = getRoomArea(r)
+  return { kind = "clan hall", anywhere = true, land = r, areaId = a, area = getRoomAreaName(a), dest = getRoomAreaName(a) or "your clan hall",
+    cost = 0, board = { "clan gohall" }, shopName = "your clan hall" }
+end
+function M.clanHallNoteSend(cmd)
+  local c = trim(cmd or ""):lower()
+  if c:match("^cla?n?%s+goh") then M.clanGoAt = os.time() end
+end
+function M.clanHallNoteRoom(id)
+  if not M.clanGoAt or os.time() - M.clanGoAt > 6 then return end
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  local home = type(info) == "table" and info.home
+  if type(home) == "table" and home.type == "clanhall" then
+    M.clanGoAt = nil
+    if M.cfg.clanHall ~= id then M.cfg.clanHall = id; M.saveSettings() end
+  end
+end
+-- (from the recordings, once: the room a clan gohall took you to)
+function M.clanHallImport()
+  if M.cfg.clanHall then return end
+  for _, f in ipairs({ "oven_record.txt", "oven_record.old.txt" }) do
+    local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
+    if fh then
+      for l in fh:lines() do
+        local r = l:match("^===== .- | cmd=clan gohall | room=(%d+)")
+        if r then M.cfg.clanHall = tonumber(r) end
+      end
+      fh:close()
+    end
+    if M.cfg.clanHall then M.saveSettings(); return end
+  end
+end
+
 -- the plan in lines, its gold, and a warning when you don't carry enough
 function M.travelPlanLines(plan, target)
   local lines = {}
@@ -15408,11 +15450,12 @@ function M.travelPlanLines(plan, target)
   for x, g in ipairs(plan.legs) do
     local L = g.link
     if g.walk > 0 then lines[#lines + 1] = string.format("%d step%s to %s", g.walk, pl(g.walk), L.shopName) end
-    lines[#lines + 1] = string.format("%s to %s - %s gold", L.kind, L.dest, commas(L.cost))
+    if L.anywhere then lines[#lines + 1] = L.board[1] .. " to " .. L.dest
+    else lines[#lines + 1] = string.format("%s to %s - %s gold", L.kind, L.dest, commas(L.cost)) end
   end
   lines[#lines + 1] = string.format("about %d step%s on to %s", plan.after, pl(plan.after), getRoomName(target) or ("#" .. target))
   local gold, bank = M.goldOnHand()
-  local tail = string.format("the trip costs %s gold in all", commas(plan.gold or 0))
+  local tail = (plan.gold or 0) == 0 and "the trip is free" or string.format("the trip costs %s gold in all", commas(plan.gold or 0))
   if gold and gold < (plan.gold or 0) then
     tail = tail .. string.format(" - you carry %s%s", commas(gold), bank and string.format(" (%s in the bank)", commas(bank)) or "")
   end
@@ -15426,6 +15469,14 @@ function M.travelStart(plan, target, legNo)
   if not g then return M.mapWalkTo(target) end
   local L = g.link
   M.travel = { plan = plan, leg = legNo, link = L, target = target, stage = "toShop", at = os.time() }
+  if L.anywhere then
+    local T = M.travel
+    T.stage, T.boardStep, T.rideFrom = "boarding", 1, getRoomArea(M.mapRoom or 0)
+    M.travelBoard()
+    -- it didn't take you (a no-recall room, another plane, the clan's rules): stop
+    tempTimer(10, function() if M.travel == T then M.travel = nil; say("travel: " .. L.board[1] .. " didn't take you anywhere - stopped") end end)
+    return
+  end
   local function atShop()
     local T = M.travel
     if not T then return end
@@ -17675,4 +17726,4 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport) end)
