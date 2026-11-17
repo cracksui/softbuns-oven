@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.54.2"
+M.version = "1.54.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10257,6 +10257,12 @@ M.shapes = {
     return t:match("^Player Information") or l:match("^%s%s%S") or t:match("^%*")
   end,
   levels = function(t) return t:match("^%[Level:") end,
+  -- mark info: "[Judgment    ] - Levels  11 - 120" (bracketed like a channel line, so said outright), then
+  -- its hint, grants, places and restrictions - anything that isn't someone else's activity
+  markinfo = function(t, l, cap)
+    if t:match("^%[[^%]]*%]%s*%-%s*Levels%s+%d") then cap.markHead = true; return true end
+    return cap.markHead and (l:match("^%s%s+%S") or not M.looksLikeActivity(t))
+  end,
   where = function(t, l)
     return t:match("^Where is what%?") or t:match("^You sense that ") or t:match("^When you do find")
       or (l:match("^[%w%-]+%s%s") and not t:match("[%.!?']$")) or t:match("^[%w%-]+$") ~= nil

@@ -3434,6 +3434,11 @@ def marks_on_quest_panel():
     lines = ["[Bravery                   ] - Levels  60 - 100", "Visit the statued guard of the Proving Grounds. ",
       "  Grants 35-50 practices. Grants 250,000 experience. ", "  * Located in 'Ogre Village', Alyria",
       "  * Located in 'Irda Isle', Alyria", "", "  Restrictions:", "  Bravery must be attempted while alive."]
+    # the reply's lines belong to it - the header too (it looks like a channel line: "[Judgment   ] ...")
+    o.lua("sbo.start('markinfo', 'bravery', 'mark info bravery')")
+    eq([bool(o.ev("function(l) return sbo.belongs(sbo.cap, l) end")(l)) for l in lines[:4]], [True] * 4, "the reply is the mark's")
+    eq(bool(o.ev("function(l) return sbo.belongs(sbo.cap, l) end")("[CLAN] Cobb: 'welcome back'")), False, "a channel line isn't")
+    o.lua("sbo.cap = nil")
     o.L.globals().ML = o.L.table_from(lines)
     o.lua("""SENTQ = nil; sbo.inGame = function() return true end
       sbo.quietly = function(cmd, kind, fn) SENTQ = cmd .. '|' .. kind; local t = {} for _, l in ipairs(ML) do t[#t+1] = l end fn(t) end
