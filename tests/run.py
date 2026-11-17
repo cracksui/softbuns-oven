@@ -1096,7 +1096,7 @@ def travel_by_ganuk():
     assert "Iron Worm to Sigil - 3,625 gold" in text and "costs 3,625 gold in all" in text and "you carry 2,000" in text, text
     assert "y to go" in text, text
     # y: walk to the shop, buy, down, give the token, land, walk on
-    eq(o.ev("sbo.goAsk.travel.link.dest"), "Sigil", "y would take the Worm")
+    eq(o.ev("sbo.goAsk.travel.legs[1].link.dest"), "Sigil", "y would take the Worm")
     o.lua("sbo.travelStart(sbo.goAsk.travel, 600); sbo.goAsk = nil")
     eq((o.ev("sbo.travel.stage"), o.ev("#sbo.walk.dirs")), ("toShop", 5), "walking to the shop")
     o.lua("sbo.mapRoom = 10636; sbo.walk.thenDo()")
@@ -1108,6 +1108,30 @@ def travel_by_ganuk():
     eq(o.ev("SENT[#SENT]"), "give token ganuk", "the token handed over")
     o.lua("runTimers(); WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; sbo.travelOnRoom(3908670); runTimers()")
     eq((o.ev("WALKED"), o.ev("sbo.travel")), (600, None), "landed: on to the room asked for")
+    # chained: the Worm to Lowangen, then Gerry's balloon on to New Rigel (it takes off once bought)
+    o.lua("""AREA[16091] = 4; AREA[700] = 4; AREA[62000] = 5; AREA[62100] = 5; AREA[5000] = 3
+      getRoomAreaName = function(a) return ({ 'Towne of Rune', 'Sigil', 'Alyria', 'Lowangen', 'The Towne of New Rigel' })[a] end
+      getAreaTable = function() return { ['Towne of Rune'] = 1, ['Sigil'] = 2, ['Alyria'] = 3, ['Lowangen'] = 4, ['The Towne of New Rigel'] = 5 } end
+      LEN['700>16091'] = 4; LEN['62000>62100'] = 2; LEN['5000>16091'] = 4
+      sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last) VALUES (10636, 1, 'A token for Lowangen passage', 25, 'No limit', 3625, 0)")
+      sbo.dbx("INSERT INTO shops (room, name, last) VALUES (16091, %s, 0)", "Gerry's Hot Air Balloon Travels")
+      sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last) VALUES (16091, 1, 'A ticket to New Rigel', 1, 'No limit', 2500, 0)")
+      sbo.dbx("INSERT INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('Lowangen', 'exit', 700, 0, '', 0)")
+      sbo.dbx("INSERT INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('The Towne of New Rigel', 'exit', 62000, 0, '', 0)")
+      sbo.mapRoom = 1; LOGS = {}; sbo.mapWalkTo = function(id) WALKED = id end""")
+    o.lua("sbo.goTo(62100)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "Iron Worm to Lowangen - 3,625 gold" in text and "balloon to New Rigel - 2,500 gold" in text and "costs 6,125 gold in all" in text, text
+    o.lua("sbo.travelStart(sbo.goAsk.travel, 62100); sbo.goAsk = nil; sbo.mapRoom = 10636; sbo.walk.thenDo()")
+    o.feed("Ganuk Jr. takes your payment and hands you a token for Lowangen passage.")
+    o.lua("runTimers(); sbo.travelOnRoom(10637); runTimers(); runTimers(); runTimers()")
+    o.lua("sbo.walkStep = function() WALK = sbo.walk end; sbo.mapRoom = 5000; sbo.travelOnRoom(5000); runTimers()")
+    eq((o.ev("sbo.travel.leg"), o.ev("sbo.travel.link.kind"), o.ev("#WALK.dirs")), (2, "balloon", 4), "landed: on to the balloon")
+    o.lua("sbo.mapRoom = 16091; WALK.thenDo()")
+    eq(o.ev("SENT[#SENT]"), "shop buy 1", "the ticket")
+    o.feed("Gerry takes your payment and hands you a ticket to New Rigel.")
+    o.lua("runTimers(); WALKED = nil; sbo.travelOnRoom(62000); runTimers()")
+    eq((o.ev("WALKED"), o.ev("sbo.travel")), (62100, None), "the balloon landed: walk the rest")
 
 
 @test

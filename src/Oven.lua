@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.55.0"
+M.version = "1.55.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -15163,8 +15163,9 @@ M.TRAVEL_SAVES = 60    -- and only used when it saves at least this many more (i
 M.TRAVEL_KINDS = {
   { kind = "Iron Worm", shop = "ganuk", item = { "^a token for passage to (.+)$", "^a token for (.-) passage$" },
     board = { "down", "give token ganuk" } },
-  { kind = "balloon", shop = "balloon", item = { "^a ticket to (.+)$" } },
-  { kind = "balloon", shop = "air travel", item = { "^a ticket to (.+)$" } },
+  -- a balloon takes off once the ticket's bought
+  { kind = "balloon", shop = "balloon", item = { "^a ticket to (.+)$" }, board = {} },
+  { kind = "balloon", shop = "air travel", item = { "^a ticket to (.+)$" }, board = {} },
   { kind = "passage", shop = "passage", item = { "^passage to (.+)$" } },
 }
 
@@ -15223,23 +15224,82 @@ local function steps(a, b)
   if getPath(a, b) then return #speedWalkDir end
 end
 
--- the best trip from here to target (when it beats walking by enough): { link, toShop, after, cost }
+-- the best trip from here to target (when it beats walking by enough): rides chained - walk to a shop,
+-- ride, walk from where it lands to the next shop, ride… (up to M.TRAVEL_LEGS), then walk the rest.
+-- { legs = { { link, walk } … }, after, cost, gold }
+M.TRAVEL_LEGS = 3
 function M.travelPlan(here, target, onFoot)
   if not here or not target then return nil end
   local tArea = getRoomArea(target)
+  local links = {}
+  for _, L in ipairs(M.travelLinks()) do if L.board and L.areaId then links[#links + 1] = L end end
+  if #links == 0 then return nil end
+  -- where each ride lands (a room of its town to measure from)
+  local landAt = {}
+  for _, L in ipairs(links) do
+    if landAt[L.areaId] == nil then landAt[L.areaId] = areaRoom(L.area, L.areaId) or false end
+  end
+  -- the steps between two rooms, each pair measured once
+  local memo = {}
+  local function walk(a, b)
+    local k = a .. ">" .. b
+    if memo[k] == nil then memo[k] = steps(a, b) or false end
+    return memo[k] or nil
+  end
+  -- by number of rides: the cheapest way to stand in each town (the start, then each landing)
   local best
-  for _, L in ipairs(M.travelLinks()) do
-    if L.board and L.areaId and L.areaId == tArea and getRoomArea(here) ~= L.areaId then
-      local k = steps(here, L.shop)
-      local rep = k and areaRoom(L.area, L.areaId)
-      local n = rep and steps(rep, target)
-      if k and n then
-        local cost = k + M.TRAVEL_COST + n
-        if (not onFoot or cost + M.TRAVEL_SAVES <= onFoot) and (not best or cost < best.cost) then
-          best = { link = L, toShop = k, after = n, cost = cost }
+  local layer = { { room = here, area = getRoomArea(here), cost = 0, legs = {} } }
+  local seen = { [getRoomArea(here)] = 0 }
+  for _ = 1, M.TRAVEL_LEGS do
+    local nextLayer = {}
+    for _, st in ipairs(layer) do
+      for _, L in ipairs(links) do
+        if L.areaId ~= st.area and getRoomArea(L.shop) == st.area then
+          local k = walk(st.room, L.shop)
+          local land = landAt[L.areaId]
+          if k and land then
+            local cost = st.cost + k + M.TRAVEL_COST
+            if not seen[L.areaId] or cost < seen[L.areaId] then
+              seen[L.areaId] = cost
+              local legs = {}
+              for x, g in ipairs(st.legs) do legs[x] = g end
+              legs[#legs + 1] = { link = L, walk = k }
+              local s2 = { room = land, area = L.areaId, cost = cost, legs = legs }
+              nextLayer[#nextLayer + 1] = s2
+              -- this town is the one: walk the rest
+              local n = (L.areaId == tArea) and walk(land, target) or nil
+              if n then
+                local total = cost + n
+                if (not onFoot or total + M.TRAVEL_SAVES <= onFoot) and (not best or total < best.cost) then
+                  best = { legs = legs, after = n, cost = total }
+                end
+              end
+            end
+          end
         end
       end
     end
+    if #nextLayer == 0 then break end
+    layer = nextLayer
+  end
+  -- (the first shop may be in another town: walk there first - a ride's shop reached on foot)
+  if not best then
+    for _, L in ipairs(links) do
+      if getRoomArea(L.shop) ~= getRoomArea(here) and L.areaId == tArea then
+        local k, land = walk(here, L.shop), landAt[L.areaId]
+        local n = k and land and walk(land, target)
+        if n then
+          local total = k + M.TRAVEL_COST + n
+          if (not onFoot or total + M.TRAVEL_SAVES <= onFoot) and (not best or total < best.cost) then
+            best = { legs = { { link = L, walk = k } }, after = n, cost = total }
+          end
+        end
+      end
+    end
+  end
+  if best then
+    best.gold = 0
+    for _, g in ipairs(best.legs) do best.gold = best.gold + (g.link.cost or 0) end
   end
   return best
 end
@@ -15251,25 +15311,29 @@ end
 
 -- the plan in lines, its gold, and a warning when you don't carry enough
 function M.travelPlanLines(plan, target)
-  local L = plan.link
   local lines = {}
   local function pl(n) return n == 1 and "" or "s" end
-  if plan.toShop > 0 then lines[#lines + 1] = string.format("%d step%s to %s", plan.toShop, pl(plan.toShop), L.shopName) end
-  lines[#lines + 1] = string.format("%s to %s - %s gold", L.kind, L.dest, commas(L.cost))
+  for x, g in ipairs(plan.legs) do
+    local L = g.link
+    if g.walk > 0 then lines[#lines + 1] = string.format("%d step%s to %s", g.walk, pl(g.walk), L.shopName) end
+    lines[#lines + 1] = string.format("%s to %s - %s gold", L.kind, L.dest, commas(L.cost))
+  end
   lines[#lines + 1] = string.format("about %d step%s on to %s", plan.after, pl(plan.after), getRoomName(target) or ("#" .. target))
   local gold, bank = M.goldOnHand()
-  local tail = string.format("the trip costs %s gold in all", commas(L.cost))
-  if gold and gold < L.cost then
-    tail = tail .. string.format(" - you carry %s%s", commas(gold),
-      bank and string.format(" (%s in the bank)", commas(bank)) or "")
+  local tail = string.format("the trip costs %s gold in all", commas(plan.gold or 0))
+  if gold and gold < (plan.gold or 0) then
+    tail = tail .. string.format(" - you carry %s%s", commas(gold), bank and string.format(" (%s in the bank)", commas(bank)) or "")
   end
   return lines, tail
 end
 
--- the trip: walk to the shop, buy, board; then walk on from wherever it lands
-function M.travelStart(plan, target)
-  local L = plan.link
-  M.travel = { link = L, target = target, stage = "toShop", at = os.time() }
+-- the trip: for each ride, walk to its shop, buy, board; after the last, walk on from where it lands
+function M.travelStart(plan, target, legNo)
+  legNo = legNo or 1
+  local g = plan.legs[legNo]
+  if not g then return M.mapWalkTo(target) end
+  local L = g.link
+  M.travel = { plan = plan, leg = legNo, link = L, target = target, stage = "toShop", at = os.time() }
   local function atShop()
     local T = M.travel
     if not T then return end
@@ -15278,7 +15342,7 @@ function M.travelStart(plan, target)
     tempTimer(8, function() if M.travel == T and T.stage == "buying" then M.travel = nil; say("travel: the shop didn't sell the " .. L.kind:lower() .. " ticket - stopped") end end)
   end
   if M.mapRoom == L.shop then return atShop() end
-  if not getPath(M.mapRoom, L.shop) then M.travel = nil; return say("no route on the map to " .. L.shopName) end
+  if not M.mapRoom or not getPath(M.mapRoom, L.shop) then M.travel = nil; return say("no route on the map to " .. L.shopName) end
   local d, p = {}, {}
   for i, x in ipairs(speedWalkDir) do d[i] = x; p[i] = tonumber(speedWalkPath[i]) end
   M.walk = { dirs = d, path = p, step = 1, thenDo = atShop }
@@ -15293,6 +15357,7 @@ function M.travelLine(l)
   if T.stage == "buying" then
     if t:find("takes your payment and hands you", 1, true) then
       T.stage, T.boardStep = "boarding", 1
+      T.rideFrom = getRoomArea(M.mapRoom or 0)
       tempTimer(0.3, function() M.travelBoard() end)
     elseif t:match("^You can't afford") or t:match("^You don't have enough") or t:match("can't afford") then
       M.travel = nil; say("travel: not enough gold on hand for the " .. T.link.kind .. " - stopped")
@@ -15304,7 +15369,7 @@ function M.travelBoard()
   local T = M.travel
   if not T or T.stage ~= "boarding" then return end
   local cmd = T.link.board[T.boardStep]
-  if not cmd then T.stage = "riding"; T.rideFrom = getRoomArea(M.mapRoom or 0); return end
+  if not cmd then T.stage = "riding"; return end
   T.boardStep = T.boardStep + 1
   M.sendOwn(cmd, true)
   -- a move (down): the next step once you've arrived; anything else: a moment later
@@ -15319,10 +15384,16 @@ function M.travelOnRoom(id)
   if T.stage == "boarding" and T.waitRoom and id ~= T.waitRoom then
     T.waitRoom = nil
     tempTimer(0.5, function() M.travelBoard() end)
-  elseif T.stage == "riding" and getRoomArea(id) ~= T.rideFrom then
+  elseif (T.stage == "riding" or T.stage == "boarding") and T.rideFrom and getRoomArea(id) ~= T.rideFrom and not T.waitRoom then
     M.travel = nil
-    say("travel: landed - on to " .. (getRoomName(T.target) or ("#" .. T.target)))
-    tempTimer(1, function() M.mapWalkTo(T.target) end)
+    local more = T.plan and T.plan.legs[T.leg + 1]
+    if more then
+      say("travel: landed - on to " .. more.link.shopName .. " for the " .. more.link.kind .. " to " .. more.link.dest)
+      tempTimer(1, function() M.travelStart(T.plan, T.target, T.leg + 1) end)
+    else
+      say("travel: landed - on to " .. (getRoomName(T.target) or ("#" .. T.target)))
+      tempTimer(1, function() M.mapWalkTo(T.target) end)
+    end
   end
 end
 
