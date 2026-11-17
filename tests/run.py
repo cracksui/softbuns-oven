@@ -1175,31 +1175,42 @@ def travel_by_ganuk():
     eq(o.ev("SENT[#SENT]"), "clan gohall", "from where you stand")
     o.lua("WALKED = nil; sbo.mapRoom = 384334; sbo.travelOnRoom(384334); runTimers()")
     eq(o.ev("WALKED"), 384400, "then on foot")
-    # the clan hall, then ~70 rooms south, recall (Mandrake Woods), then on to Rune - learned from a recording
-    open(o.home + "/oven_record.txt", "w").write(
-        "===== 2026-11-17 01:15:44 | cmd=s | room=1716894\n"
-        '@gmcp room.info = {["num"]="1716894",["coord"]={["y"]=285,["x"]=560,["name"]="Alyria"},["wilds"]="true"}\n'
-        "===== 2026-11-17 01:15:50 | cmd=cast 'word of recall' | room=1716894\n"
-        "===== 2026-11-17 01:15:58 | cmd= | room=9834\n"
-        '@gmcp room.info = {["num"]="9834",["coord"]={["y"]=365,["x"]=654,["name"]="Alyria"},["wilds"]="false"}\n')
-    o.lua("""AREA[1716894] = 3; AREA[9834] = 7; AREA[10490] = 1; AREA[384335] = 6
+    # the clan hall, walk out until Mandrake Woods' signpost is the nearest, recall there, run on to Rune
+    o.lua("""AREA[1900988] = 3; AREA[1500000] = 3; AREA[10490] = 1; AREA[9834] = 7
       getRoomAreaName = function(a) return ({ 'Towne of Rune', 'Sigil', 'Alyria', 'Lowangen', 'The Towne of New Rigel', 'Megaleios Clan Hall', 'Mandrake Woods' })[a] end
-      LEN['384334>1716894'] = 72; LEN['9834>10490'] = 90
-      POS = { [384334] = { map = 'Alyria', x = 560, y = 216 }, [1716894] = { map = 'Alyria', x = 560, y = 285 }, [384335] = { map = 'Alyria', x = 560, y = 216 } }
+      LEN['1900988>10490'] = 90
+      POS = { [384334] = { map = 'Alyria', x = 560, y = 216 }, [1900988] = { map = 'Alyria', x = 654, y = 365 }, [1500000] = { map = 'Alyria', x = 560, y = 150 } }
       sbo.worldPos = function(r) return POS[tonumber(r)] end
-      sbo.cfg.recallsImported = nil; sbo.recallImport(); sbo.mapRoom = 600; LOGS = {}; SENT = {}""")
-    eq((o.ev("sbo.cfg.recalls['1716894'].land"), o.ev("sbo.cfg.recalls['1716894'].cmd")), (9834, "cast 'word of recall'"), "the recall spot")
+      sbo.signposts = function() return { { room = 1900988, dests = { rune = 'south' } }, { room = 1500000, dests = { civmar = 'north' } } } end
+      sbo.signLabel = function(r) return r == 1900988 and 'signpost on the Shadow Road' or 'signpost near the hall' end
+      sbo.mapRoom = 600; LOGS = {}; SENT = {}""")
     o.lua("sbo.goTo(10490)")
     text = "\n".join(o.ev("LOGS").values())
-    assert "clan gohall to Megaleios Clan Hall" in text and "cast 'word of recall' to Mandrake Woods" in text and "72 steps to" in text, text
+    assert "clan gohall to Megaleios Clan Hall" in text and "recall to the signpost on the Shadow Road" in text and "southeast" in text, text
     o.lua("sbo.walkStep = function() WALK = sbo.walk end; sbo.travelStart(sbo.goAsk.travel, 10490); sbo.goAsk = nil")
     eq(o.ev("SENT[#SENT]"), "clan gohall", "first the hall")
-    o.lua("sbo.mapRoom = 384334; sbo.travelOnRoom(384334); runTimers()")
-    eq((o.ev("sbo.travel.link.kind"), o.ev("#WALK.dirs")), ("recall", 72), "walking to the recall spot")
-    o.lua("sbo.mapRoom = 1716894; WALK.thenDo()")
-    eq(o.ev("SENT[#SENT]"), "cast 'word of recall'", "recall")
-    o.lua("WALKED = nil; sbo.mapRoom = 9834; sbo.travelOnRoom(9834); runTimers()")
-    eq(o.ev("WALKED"), 10490, "landed in Mandrake Woods: on to Rune")
+    o.lua("""gmcp.room = { info = { num = '384334', wilds = 'false', exits = { n = '1558194' }, coord = { name = 'Alyria', x = 560, y = 216 } } }
+      local tt = tempTimer; tempTimer = function(d, f, r) if d >= 5 then return 0 end return tt(d, f, r) end   -- (no stall checks here)
+      sbo.mapRoom = 384334; sbo.travelOnRoom(384334); runTimers()""")
+    eq(o.ev("SENT[#SENT]"), "n", "out of the hall")
+    # a room at a time toward the Shadow Road's signpost, until it's the nearest one; then recall
+    steps = o.ev("""(function()
+      local x, y, n = 560, 216, 0
+      local D = { n = {0,-1}, s = {0,1}, e = {1,0}, w = {-1,0}, ne = {1,-1}, nw = {-1,-1}, se = {1,1}, sw = {-1,1} }
+      while D[SENT[#SENT]] and n < 300 do
+        local d = D[SENT[#SENT]]
+        if SENT[#SENT] ~= 'n' or n > 0 then x, y = x + d[1], y + d[2] end
+        n = n + 1
+        local id = 2000000 + n
+        gmcp.room = { info = { num = tostring(id), wilds = 'true', coord = { name = 'Alyria', x = x, y = y } } }
+        sbo.mapRoom = id; sbo.travelCastStep()
+      end
+      return n
+    end)()""")
+    assert 10 < steps < 150, steps
+    eq(o.ev("SENT[#SENT]"), "cast 'word of recall'", "recall once it's the nearest")
+    o.lua("runTimers(); WALKED = nil; sbo.mapRoom = 9834; sbo.travelOnRoom(9834); runTimers()")
+    eq(o.ev("WALKED"), 10490, "recalled: on to Rune")
 
 
 @test
