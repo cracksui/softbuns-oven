@@ -3396,6 +3396,42 @@ def shop_and_quest_id_like_look():
 
 
 @test
+def marks_on_quest_panel():
+    o = Oven()
+    eq(o.ev("function(c) return (sbo.classify(c)) end")("mark info bravery"), "markinfo", "mark info")
+    eq(o.ev("function(c) return (sbo.classify(c)) end")("mark list"), None, "mark list: not")
+    lines = ["[Bravery                   ] - Levels  60 - 100", "Visit the statued guard of the Proving Grounds. ",
+      "  Grants 35-50 practices. Grants 250,000 experience. ", "  * Located in 'Ogre Village', Alyria",
+      "  * Located in 'Irda Isle', Alyria", "", "  Restrictions:", "  Bravery must be attempted while alive."]
+    o.L.globals().ML = o.L.table_from(lines)
+    o.lua("""SENTQ = nil; sbo.inGame = function() return true end
+      sbo.quietly = function(cmd, kind, fn) SENTQ = cmd .. '|' .. kind; local t = {} for _, l in ipairs(ML) do t[#t+1] = l end fn(t) end
+      RAN = nil; sbo.mapRun = function(w) RAN = w end""")
+    o.lua("sbo.command('quest mark bravery')")
+    eq(o.ev("SENTQ"), "mark info bravery|markinfo", "asked quietly")
+    Mk = "sbo.cfg.markPins.bravery"
+    eq((o.ev(Mk + ".lo"), o.ev(Mk + ".hi"), o.ev("#" + Mk + ".located"), o.ev(Mk + ".restrict[1]")),
+       (60, 100, 2, "Bravery must be attempted while alive."), "read")
+    eq(o.ev(Mk + ".hint[1]"), "Visit the statued guard of the Proving Grounds.", "the hint")
+    # on the panel: its card, title count
+    text = o.ev("(function() local t = {} for j = 1, 20 do local w = WIDGETS['ovenQuestLine1_' .. j] if w then t[#t+1] = tostring(w.html) end end return table.concat(t, '\\n') end)()")
+    for want in ["Mark", "Bravery", "60-100", "Proving Grounds", "Ogre Village", "Irda Isle", "35-50", "practices", "250,000", "while alive", "take it off"]:
+        assert want in text, (want, text)
+    assert "Marks" in (o.ev("WIDGETS['ovenQuestTitle'].html") or ""), o.ev("WIDGETS['ovenQuestTitle'].html")
+    # go ▸ on a place walks there; ✕ takes it off
+    o.lua("sbo.questAct({ mark = 'bravery', go = 'Irda Isle' })")
+    eq(o.ev("RAN"), "Irda Isle", "go ▸")
+    o.lua("sbo.questAct({ mark = 'bravery', fold = true })")
+    assert "Proving Grounds" not in str(o.ev("WIDGETS['ovenQuestLine1_2'].html") or "") or not o.ev("WIDGETS['ovenQuestLine1_2'].shown")
+    # a tutorial mark: the quest that grants it
+    tut = o.ev("""(function() local m = sbo.markParse({ "[Minimalism                ] - Levels  61 - 120", "  * Granted by quest #3276",
+      "  To begin this tutorial, QUEST UNDERTAKE 3276" }) return m.quest .. '|' .. m.hint[1] end)()""")
+    eq(tut, "3276|To begin this tutorial, QUEST UNDERTAKE 3276", "tutorial mark")
+    o.lua("sbo.command('quest unmark brav')")
+    eq(o.ev("next(sbo.cfg.markPins)"), None, "unmarked")
+
+
+@test
 def levelling_log():
     o = Oven()
     o.lua("""sbo.cfg.char = { class = 'monk' }

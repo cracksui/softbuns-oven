@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.53.0"
+M.version = "1.54.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -403,6 +403,9 @@ M.commands = {
   -- "check eqlookup <hash>" (clicking an eqdb result): an item page, laid out like any item
   { word = "check",     min = 5, kind = "item",
     argsOk = function(r) return r:match("^eqlookup%s+%x+$") ~= nil end },
+  -- "mark info <name>": read (sbo quest mark pins it); shown as the game sends it, with a link to pin it
+  { word = "mark",      min = 4, kind = "markinfo",
+    argsOk = function(r) local w = r:match("^(%S+)%s+%S") return w ~= nil and ("info"):sub(1, #w) == w end },
   { word = "shop",      min = 2, kind = "shop",
     argsOk = function(r) return r ~= "" and (("list"):sub(1, #r) == r or ("inventory"):sub(1, #r) == r) end },
 }
@@ -3353,6 +3356,136 @@ local function hudCallbacks(label, id, act)
 end
 M.hudCallbacks = hudCallbacks
 
+
+do
+-- Marks on the quest panel: "mark info <name>" read (quietly, for sbo quest mark) into a card - its levels,
+-- the hint, what it grants, where it's found (each a go ▸), the quest that grants it, any restrictions
+function M.markParse(lines)
+  local Mk
+  local inRestr = false
+  for _, l in ipairs(lines or {}) do
+    local t = trim(l)
+    if not Mk then
+      local name, lo, hi = t:match("^%[%s*(.-)%s*%]%s*%-%s*Levels%s+(%d+)%s*%-%s*(%d+)")
+      if name and name ~= "" then Mk = { name = name, lo = tonumber(lo), hi = tonumber(hi), hint = {}, located = {}, restrict = {} } end
+    elseif t == "" then
+      -- (a gap: restrictions may follow)
+    elseif t:match("^Restrictions:") then inRestr = true
+    elseif inRestr then Mk.restrict[#Mk.restrict + 1] = t
+    elseif t:match("^Grants ") then Mk.grants = t
+    elseif t:match("^%* Located in ") then
+      local area, where = t:match("^%* Located in '(.-)',%s*(.-)%s*$")
+      Mk.located[#Mk.located + 1] = { area = area or t:gsub("^%* Located in ", ""), plane = where }
+    elseif t:match("^%* Granted by quest #%d+") then Mk.quest = t:match("#(%d+)")
+    elseif t:match("^%* ") then Mk.hint[#Mk.hint + 1] = t:gsub("^%* ", "")
+    else Mk.hint[#Mk.hint + 1] = t end
+  end
+  return Mk
+end
+
+local function markKey(name) return trim(tostring(name or "")):lower() end
+
+function M.markPin(name)
+  name = trim(name or "")
+  if name == "" then return M.say("sbo quest mark {mark name}: puts the mark on the quest panel (from mark info)") end
+  if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return M.say("not in the game - nothing sent") end
+  M.quietly("mark info " .. name, "markinfo", function(plain)
+    local Mk = plain and M.markParse(plain)
+    if not Mk then return M.say("the game didn't describe a mark called '" .. name .. "' (mark list shows them)") end
+    M.markPinData(Mk)
+  end)
+end
+
+function M.markPinData(Mk)
+  M.cfg.markPins = M.cfg.markPins or {}
+  Mk.at = os.time()
+  M.cfg.markPins[markKey(Mk.name)] = Mk
+  M.saveSettings()
+  pcall(M.drawQuestTracker)
+  M.say("the mark of " .. Mk.name .. " is on the quest panel (sbo quest unmark " .. Mk.name:lower() .. " takes it off)")
+end
+
+function M.markUnpin(name)
+  local k = markKey(name)
+  local P = M.cfg.markPins or {}
+  if k == "all" then M.cfg.markPins = {}
+  elseif not P[k] then
+    for key, Mk in pairs(P) do if key:find(k, 1, true) == 1 then k = key; break end end
+    if not P[k] then return M.say("no mark '" .. tostring(name) .. "' on the quest panel") end
+  end
+  local nm = P[k] and P[k].name
+  if P[k] then P[k] = nil end
+  M.saveSettings()
+  pcall(M.drawQuestTracker)
+  M.say(k == "all" and "marks taken off the quest panel" or ("the mark of " .. tostring(nm) .. " is off the quest panel"))
+end
+
+-- after you type mark info yourself: a link to pin it
+function M.markOffer(plain)
+  local Mk = M.markParse(plain)
+  if not Mk then return end
+  M.lastMarkInfo = Mk
+  local pinned = (M.cfg.markPins or {})[markKey(Mk.name)]
+  pcall(function()
+    cecho("main", "<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> ")
+    cechoLink("main", "<oven_key>[" .. (pinned and "update it on" or "pin it to") .. " the quest panel]",
+      function() M.markPinData(Mk) end, "put the mark of " .. Mk.name .. " on the quest panel", true)
+    echo("main", "\n")
+  end)
+end
+
+-- the ids on the panel for pinned marks ("mark:<name>"), in the order pinned
+function M.markIds()
+  local out = {}
+  for k, Mk in pairs(M.cfg.markPins or {}) do out[#out + 1] = { "mark:" .. k, Mk.at or 0 } end
+  table.sort(out, function(a, b) return a[2] < b[2] end)
+  for i, x in ipairs(out) do out[i] = x[1] end
+  return out
+end
+function M.hudAny() return next(M.cfg.questPins or {}) ~= nil or next(M.cfg.markPins or {}) ~= nil end
+end
+
+-- a mark's card: like a quest's - its title (folds it), the hint, what it grants, where (go ▸), unpin
+function M.markCardHtml(id, Mk)
+  local html, widest, acts = {}, 0, {}
+  local function add(h, w, a) html[#html + 1] = h; widest = math.max(widest, w); acts[#html] = a end
+  local key = id:sub(6)
+  local folded = (M.cfg.questFolded or {})[id]
+  local lv = (Mk.lo and Mk.hi) and string.format("%d-%d", Mk.lo, Mk.hi) or ""
+  local head = span(C.slot, folded and "▸ " or "▾ ") .. "<b>" .. span(C.rare, "✦ Mark") .. "</b>&nbsp;&nbsp;"
+  add(head .. span(C.item, Mk.name or key) .. "&nbsp;&nbsp;" .. span(C.num, lv), 12 + ulen(Mk.name or key) + ulen(lv), { mark = key, fold = true })
+  if folded then return html, widest, acts end
+  for _, h in ipairs(Mk.hint or {}) do
+    for _, l in ipairs(hudWrap(h, HUD_WRAP, 3)) do add("   " .. span(C.text, l), ulen(l) + 3, { mark = key, fold = true }) end
+  end
+  if Mk.quest then
+    local Q = M.quests[tostring(Mk.quest)]
+    local pinned = (M.cfg.questPins or {})[tostring(Mk.quest)]
+    local t = "quest #" .. Mk.quest .. ((Q and Q.name) and (" " .. Q.name) or "")
+    add("   " .. span(C.dim, "→ ") .. span(C.flag, t) .. (pinned and "" or ("&nbsp;&nbsp;<u>" .. span(C.slot, "pin ▸") .. "</u>")),
+      ulen(t) + 10, not pinned and { mark = key, quest = tostring(Mk.quest) } or nil)
+  end
+  for i, L in ipairs(Mk.located or {}) do
+    local t = L.area .. (L.plane and (", " .. L.plane) or "")
+    add("   " .. span(C.dim, "→ ") .. span(C.flag, t) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>", ulen(t) + 10,
+      { mark = key, go = L.area })
+  end
+  if Mk.grants then
+    local g = Mk.grants:gsub("^Grants%s+", ""):gsub("%s*Grants%s+", " · "):gsub("%.%s*·", " ·"):gsub("%.$", "")
+    local segs = { { C.key, "Reward " }, { C.num, g } }
+    for _, ln in ipairs(segWrap(segs, HUD_WRAP, 6)) do
+      local h = {}
+      for _, sg in ipairs(ln[1]) do h[#h + 1] = span(sg[1] or C.dim, sg[2]) end
+      add("   " .. table.concat(h), ln[2] + 3, { mark = key, fold = true })
+    end
+  end
+  for _, r in ipairs(Mk.restrict or {}) do
+    for _, l in ipairs(hudWrap(r, HUD_WRAP, 3)) do add("   " .. span(C.minus, l), ulen(l) + 3) end
+  end
+  add("   <u>" .. span(C.dim, "✕ take it off the panel") .. "</u>", 25, { mark = key, unpin = true })
+  return html, widest, acts
+end
+
 -- the HUD: a frame, with one card per pinned quest inside it (each its own click area)
 M.questCardHtml = questCardHtml
 function M.drawQuestTracker()
@@ -3361,8 +3494,9 @@ function M.drawQuestTracker()
   if M.cfg.questHud == false then pins = {} end           -- sbo config quest.hud off
   local ids = {}
   for id in pairs(pins) do ids[#ids + 1] = id end
+  local markIds = (M.cfg.questHud == false) and {} or M.markIds()
   M.questCards = M.questCards or {}
-  if #ids == 0 then
+  if #ids == 0 and #markIds == 0 then
     if M.questHud then M.questHud:hide() end
     for _, c in ipairs(M.questCards) do c:hide() end
     for _, b in ipairs({ M.ScrollUp, M.ScrollDown }) do pcall(function() b:hide() end) end
@@ -3371,6 +3505,7 @@ function M.drawQuestTracker()
     return
   end
   table.sort(ids, function(a, b2) return tonumber(a) < tonumber(b2) end)
+  for _, m in ipairs(markIds) do ids[#ids + 1] = m end
   if not M.questHud then
     M.questHud = Geyser.Label:new({ name = "ovenQuestHud", x = 0, y = 0, width = 300, height = 60 })
     hudCallbacks(M.questHud, nil)
@@ -3407,7 +3542,9 @@ function M.drawQuestTracker()
       M.questCards[i] = card
     end
     hudCallbacks(card, id)
-    local html, w, acts = questCardHtml(id, M.quests[id] or {})
+    local html, w, acts
+    if id:sub(1, 5) == "mark:" then html, w, acts = M.markCardHtml(id, (M.cfg.markPins or {})[id:sub(6)] or { name = id:sub(6) })
+    else html, w, acts = questCardHtml(id, M.quests[id] or {}) end
     -- a quest note ("step 1 done") at the top of the HUD for a few seconds
     if i == 1 and M.hudNote then
       table.insert(html, 1, span(C.title, "» " .. M.hudNote))
@@ -3457,7 +3594,7 @@ end
 
 -- keep the quest HUD above every other window
 function M.raiseQuestHud()
-  if M.questHud and next(M.cfg.questPins or {}) then
+  if M.questHud and M.hudAny() then
     pcall(function() M.questHud:raise() end)
     for i = 1, #(M.questCardLayout or {}) do
       local c = M.questCards and M.questCards[i]
@@ -3523,6 +3660,16 @@ end
 -- a link on a card line: fold, a step (done ones too), go ▸, back to the questmaster, turn in
 function M.questAct(a)
   if not a or a.drag then return end
+  if a.mark then
+    local id = "mark:" .. a.mark
+    if a.unpin then return M.markUnpin(a.mark) end
+    if a.go then return M.mapRun(a.go) end
+    if a.quest then return M.questPin(a.quest, true) end
+    M.cfg.questFolded = M.cfg.questFolded or {}
+    M.cfg.questFolded[id] = (not M.cfg.questFolded[id]) or nil
+    M.saveSettings()
+    return M.drawQuestTracker()
+  end
   do
     if a.fold then
       M.cfg.questFolded = M.cfg.questFolded or {}
@@ -3544,6 +3691,7 @@ end
 
 function M.questHudClick(id)
   if not id then return M.questRefresh("all") end
+  if tostring(id):sub(1, 5) == "mark:" then return M.questAct({ mark = tostring(id):sub(6), fold = true }) end
   local Q = M.quests[id] or {}
   if questFinished(Q) then
     M.questPin(id, false)
@@ -3682,12 +3830,14 @@ function M.layoutQuestHud()
     pcall(function() M.questTitle:setToolTip("drag to move the quest panel") end)
   end
   M.hudCallbacks(M.questTitle, nil, { drag = true })
-  local n = 0
+  local n, nm = 0, 0
   for _ in pairs(M.cfg.questPins or {}) do n = n + 1 end
+  for _ in pairs(M.cfg.markPins or {}) do nm = nm + 1 end
   local font = (pcall(getFont) and getFont()) or "monospace"
   local fs = math.max(8, (M.cfg.fontSize or 10) - 1)
   M.questTitle:rawEcho(string.format("<span style=\"font-family:'%s'; font-size:%dpt;\">%s%s</span>",
-    font, fs, span(C.title, "⠿⠿ "), span(C.title, "Quests") .. span(C.text, "  (" .. n .. ")")))
+    font, fs, span(C.title, "⠿⠿ "), span(C.title, "Quests") .. span(C.text, "  (" .. n .. ")")
+    .. (nm > 0 and (span(C.dim, " · ") .. span(C.title, "Marks") .. span(C.text, "  (" .. nm .. ")")) or "")))
   M.questTitle:move(x + 1, y + 1); M.questTitle:resize(w - 2, titleH); M.questTitle:show()
   M.questHud:move(x, y)
   M.questHud:resize(w, h)
@@ -12561,6 +12711,10 @@ function M.finish(reason)
     if M.cfg.samples then writeSample(cap) end
   end
 
+  if cap.kind == "markinfo" and not cap.quiet then
+    local plain = cap.plain
+    tempTimer(0.05, function() pcall(M.markOffer, plain) end)
+  end
   local nonBlank = 0
   for _, l in ipairs(cap.plain) do if trim(l) ~= "" then nonBlank = nonBlank + 1 end end
   local worth = cap.hasLayout and (nonBlank >= 2 or (nonBlank == 1 and ulen(cap.plain[1]) > 100))
@@ -15811,6 +15965,8 @@ M.CMDS = {
   { name = "quest", desc = "the quest panel: pin quests, go to the next step", run = function() return M.questShow() end, subs = {
     { name = "pin", args = "{id|all}", desc = "put quests on the quest HUD", run = function(r) return legacy("quest pin " .. r) end },
     { name = "unpin", args = "{id|all}", desc = "take them off", run = function(r) return legacy("quest unpin " .. r) end },
+    { name = "mark", args = "{mark name}", desc = "put a mark on the quest panel (what mark info says about it)", run = function(r) return M.markPin(r) end },
+    { name = "unmark", args = "{mark name|all}", desc = "take a mark off the quest panel", run = function(r) return M.markUnpin(r) end },
     { name = "go", args = "[{id}]", desc = "to the next step of a quest", run = function(r) return legacy("quest go " .. r) end },
     { name = "refresh", args = "[{id}]", desc = "re-check pinned quests with the game", run = function(r) return legacy("quest refresh " .. r) end },
     { name = "clear", args = "{id}", desc = "forget a quest: off the panel, its record gone (read anew next time)",
@@ -17078,7 +17234,7 @@ function M.init()
   if M.cfg.bar then M.showBar(true) end
   if M.cfg.map then M.mapStart() end
   if M.cfg.mapPanel then pcall(M.showMapPanel, true) end
-  if next(M.cfg.questPins or {}) then pcall(M.drawQuestTracker) end
+  if M.hudAny() then pcall(M.drawQuestTracker) end
   M.startUpdatePoll()
   if not M.booted then
     M.booted = true
