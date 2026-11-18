@@ -973,44 +973,6 @@ def world_waterways():
 
 
 @test
-def world_map_follows_through_a_portal():
-    o = Oven()
-    o.lua("""DL = {}; downloadFile = function(path, url) DL[#DL+1] = url end
-      sbo.mapMode = 'world'; sbo.worldLabel = { echo = function() end, setStyleSheet = function() end, show = function() end, hide = function() end }
-      local function at(num, map, x, y, wild) gmcp.room = { info = { num = num, wilds = wild, coord = { name = map, x = x, y = y } } }; sbo.worldOnRoom(); sbo.worldDrawNow() end
-      AT = at""")
-    o.lua("AT('3933989', 'Alyria', 1709, 1710, 'true')")
-    o.lua("AT('6102034', 'Faerie Plane', 200, 200, 'true')")
-    assert any("faerieplane.bmp" in u for u in o.ev("DL").values()), list(o.ev("DL").values())
-    eq(o.ev("sbo.worldV.map"), "Faerie Plane", "the map you are on")
-
-
-@test
-def world_waterways():
-    o = Oven()
-    home = o.L.globals().OVEN_TEST_HOME
-    # a colour learned from a waterway before: wrong (it's the land above) - forgotten
-    o.lua("sbo.cfg.world = { offsets = {}, terrain = { ['552de2'] = 'sailable-bridge', ['618347'] = 'plain' } }")
-    eq(o.ev("sbo.worldWaterUnlearn()"), 1, "one wrong colour")
-    eq((o.ev("sbo.cfg.world.terrain['552de2']"), o.ev("sbo.cfg.world.terrain['618347']")), (None, "plain"), "the plain one stays")
-    # a sail: each room kept, the steps between joined; not a terrain colour
-    o.lua("""local function at(x, y, t) sbo.worldNote({ num = tostring(1060834 + y * 2300 + x), wilds = 'true', terrain = t, coord = { name = 'Alyria', x = x, y = y } }) end
-      at(500, 1000, 'plain'); at(514, 1004, 'sailable-bridge'); at(514, 1005, 'sailable-bridge'); at(505, 1014, 'sailable-bridge'); at(600, 1100, 'plain')""")
-    W = "sbo.cfg.world.water.Alyria"
-    eq(o.ev("(function() local n = 0 for _ in pairs(" + W + ".pts) do n = n + 1 end return n end)()"), 3, "three waterway rooms")
-    eq(o.ev("(function() local n = 0 for _ in pairs(" + W + ".segs) do n = n + 1 end return n end)()"), 2, "joined in order")
-    eq(o.ev("sbo.cfg.world.terrain['552de2']"), None, "no terrain learned from them")
-    # from a recording (hand-written): read once
-    open(home + "/oven_record.txt", "w").write(
-        '===== 2026-11-16 22:00:00 | cmd= | room=1\n'
-        '@gmcp room.info = {["num"]="3480909",["terrain"]="sailable-bridge",["coord"]={["y"]=1052,["x"]=475,["name"]="Alyria"},["wilds"]="true"}\n'
-        '@gmcp room.info = {["num"]="3467116",["terrain"]="sailable-bridge",["coord"]={["y"]=1046,["x"]=482,["name"]="Alyria"},["wilds"]="true"}\n')
-    eq(o.ev("sbo.worldWaterImport()"), 2, "two from the recording")
-    assert o.ev(W + ".segs['475,1052>482,1046']"), "joined"
-    eq(o.ev("sbo.worldWaterImport()"), 0, "once")
-
-
-@test
 def world_natural_colours():
     import struct, os as _os
     o = Oven()
@@ -1040,11 +1002,11 @@ def world_natural_colours():
     eq(r, "62,62,66", "unknown: grey")
     # (a colour in all four corners is the sea - this little map's corners differ, so there's none here)
     eq(o.ev("next(sbo.worldEdges or {})"), None, "no edge colour")
-    o.lua("sbo.cfg.worldNatural = false")
+    o.lua("sbo.cfg.worldColours = 'game'")
     r = o.ev("(function() local s = sbo.worldCut(sbo.worldImage('Alyria'), 3, 2, 1, 7, 1)[1] local b, g, r = s:byte(4, 6) return r .. ',' .. g .. ',' .. b end)()")
-    eq(r, "0,160,0", "map.natural off: the bitmap's own")
+    eq(r, "0,160,0", "map.colours game: the bitmap's own")
     # one that is: drawn deep blue - also for a map already loaded by an Oven from before
-    o.lua("sbo.worldImages = {}; sbo.cfg.worldNatural = nil")
+    o.lua("sbo.worldImages = {}; sbo.cfg.worldColours = 'natural'")
     body2 = b"".join(b"".join(bytes([85, 213, 32]) if (x in (0, W_ - 1) or y in (0, H_ - 1)) else col(x, y) for x in range(W_)).ljust(rowb, b"\0") for y in range(H_ - 1, -1, -1))
     open(home + "/oven_maps/alyria.bmp", "wb").write(head + body2)
     o.lua("sbo.worldImage('Alyria').edgeChecked = nil; sbo.worldEdges = nil; sbo.worldNaturalReset()")
@@ -1068,6 +1030,29 @@ def world_natural_colours():
     o.lua("sbo.cfg.world.pal['aa0005'] = { sym = { ['*'] = 9 } }; sbo.cfg.world.terrain['aa0005'] = 'deep water'")
     eq(o.ev("table.concat(sbo.worldNaturalRGB('aa0005'), ',')"), "52,112,52", "symbol first on land")
     # a line of game text isn't a map row; one that looks like one isn't read without an @
+    # the default: the mini-map's own colours. The colour GMCP gave the terrain when you stood on it (|B, |C…, as
+    # your Mudlet draws them, learned from the mini-map); else the colour the mini-map drew its symbol in there -
+    # not the marks over it (a mountain colour with magenta I's on it stays grey); else the symbol's usual colour;
+    # else the natural one; the open sea stays the darkest
+    o.lua("""sbo.cfg.worldColours = nil
+      local pal = sbo.cfg.world.pal
+      pal['aa0009'] = { sym = { ['*'] = 3 } }
+      pal['aa000a'] = { sym = { ['^'] = 616, I = 120 }, sc = { ['^'] = { ['128,128,128'] = 92 }, I = { ['255,0,255'] = 121 } } }
+      pal['aa000b'] = { sym = { ['^'] = 5 } }
+      pal['aa000c'] = { sym = { ['~'] = 9 }, sc = { ['~'] = { ['0,0,250'] = 9 } } }
+      sbo.worldLookNote('aa000c', '~', '|B'); sbo.worldLookNote('aa0007', '~', '|C')
+      sbo.worldLookNote('aa000d', '#', '|Y')
+      -- (learned before 1.63.1: colours not kept by symbol)
+      pal['aa000e'] = { sym = { ['~'] = 9891, ['%'] = 2461 }, rgb = { ['0,0,255'] = 8946, ['0,128,0'] = 2461 } }
+      pal['aa000f'] = { sym = { ['^'] = 616, I = 120, ['='] = 182 }, rgb = { ['255,0,255'] = 121, ['128,128,128'] = 92 } }
+      sbo.worldNaturalReset()""")
+    eq(o.ev("sbo.worldColourMode()"), "ascii", "ascii by default")
+    eq([o.ev("table.concat(sbo.worldAsciiRGB('%s'), ',')" % h) for h in ("aa000a", "aa000b", "aa000c", "aa0007", "aa000d", "aa0009", "20d555", "aa000e", "aa000f")],
+       ["128,128,128", "128,128,128", "0,0,250", "0,255,255", "255,255,0", "52,112,52", "14,30,82", "0,0,255", "128,128,128"],
+       "mountain under magenta marks, another ^ not seen in colour, |B as this Mudlet draws it, |C, |Y, * never seen in colour (natural), open sea, old votes: sea mostly blue, mountain not magenta")
+    # GMCP's look of the room you're in is kept by the bitmap colour under you
+    o.lua("sbo.worldNote({ num = '1027', wilds = 'true', terrain = 'plain', coord = { name = 'Alyria', x = 3, y = 2, sym = '*', color = '|y' } })")
+    eq(o.ev("(function() local n = 0 for k, v in pairs(sbo.cfg.world.look) do if v.col == '|y' then n = n + 1 end end return n end)()"), 1, "learned from GMCP")
     eq((o.ev("sbo.worldMapRowLike('The Light Forest')"), o.ev("sbo.worldMapRowLike('   ~~..!!@==')")), (False, True), "rows")
 
 

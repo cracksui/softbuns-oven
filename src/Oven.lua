@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.63.0"
+M.version = "1.63.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13354,6 +13354,7 @@ function M.worldNote(info)
       if r then
         local key = string.format("%02x%02x%02x", r, g, b)
         if w.terrain[key] ~= info.terrain then w.terrain[key] = info.terrain end
+        M.worldLookNote(key, info.coord.sym, info.coord.color)
       end
     end
   else
@@ -13519,40 +13520,131 @@ function M.worldColourMode()
   return "ascii"
 end
 
--- the mini-map's colour for a bitmap colour: the one the game drew its symbol in there; for a colour not seen in
--- colour yet, the colour that symbol most often has elsewhere; else the natural colour. The open sea (the map's
--- edge) stays darker than any water, as the mini-map has no colour of its own for it
-local symColour
+-- the game's colour codes (GMCP's coord.color for the room you're in: |C, |y…) as Mudlet draws them; the ones
+-- your own Mudlet draws are learned from the mini-map and used first
+M.WORLD_CODE_RGB = {
+  ["|k"] = { 0, 0, 0 }, ["|r"] = { 128, 0, 0 }, ["|g"] = { 0, 128, 0 }, ["|y"] = { 128, 128, 0 }, ["|b"] = { 0, 0, 128 },
+  ["|m"] = { 128, 0, 128 }, ["|c"] = { 0, 128, 128 }, ["|w"] = { 192, 192, 192 }, ["|D"] = { 128, 128, 128 },
+  ["|R"] = { 255, 0, 0 }, ["|G"] = { 0, 255, 0 }, ["|Y"] = { 255, 255, 0 }, ["|B"] = { 0, 0, 255 },
+  ["|M"] = { 255, 0, 255 }, ["|C"] = { 0, 255, 255 }, ["|W"] = { 255, 255, 255 },
+}
+-- GMCP gives the room you're in its terrain's own symbol and colour: kept by the bitmap colour under you
+function M.worldLookNote(hex, sym, col)
+  if type(sym) ~= "string" or type(col) ~= "string" or sym == "" or col == "" then return end
+  local w = W()
+  w.look = w.look or {}
+  local L = w.look[hex]
+  if L and L.sym == sym and L.col == col then return end
+  w.look[hex] = { sym = sym, col = col }
+  M.worldNaturalReset()
+end
+-- (the recordings, once)
+function M.worldLookImport()
+  local w = W()
+  if w.lookImported then return 0 end
+  local n = 0
+  for _, f in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
+    local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
+    if fh then
+      for l in fh:lines() do
+        if l:sub(1, 15) == "@gmcp room.info" and l:find('["wilds"]="true"', 1, true) then
+          local coord = l:match('%["coord"%]=%b{}')
+          local map = coord and coord:match('%["name"%]="([^"]*)"')
+          local x, y = coord and tonumber(coord:match('%["x"%]=(%d+)')), coord and tonumber(coord:match('%["y"%]=(%d+)'))
+          local sym = coord and coord:match('%["sym"%]="(\\?.)"')
+          local col = coord and coord:match('%["color"%]="([^"]*)"')
+          local terr = l:match('%["terrain"%]="([^"]*)"')
+          if sym and #sym == 2 then sym = sym:sub(2) end
+          if map and x and y and sym and col and terr ~= "sailable-bridge" then
+            local okI, img = pcall(M.worldImage, map)
+            if okI and img and x < img.w and y < img.h then
+              local o = img.off + (img.h - 1 - y) * img.row + x * 3 + 1
+              local b, g, r = img.data:byte(o, o + 2)
+              if r then
+                local hex = string.format("%02x%02x%02x", r, g, b)
+                w.look = w.look or {}
+                w.look[hex] = { sym = sym, col = col }
+                n = n + 1
+              end
+            end
+          end
+        end
+      end
+      fh:close()
+    end
+  end
+  w.lookImported = true
+  M.worldNaturalReset()
+  M.saveSettings()
+  return n
+end
+
+-- the mini-map's colour for a bitmap colour, from what the game showed for it:
+--   1. the colour GMCP gave the terrain when you stood on it (as your Mudlet draws that code) - only when its
+--      symbol is the one the mini-map shows for this colour: roads and bridges cross other terrain, so the room
+--      can be a road where the map's pixel is sea
+--   2. the colour the mini-map drew its symbol in, on this colour (not the marks drawn over it: I, =, O…)
+--   3. the colour seen on it most, when seen more often than all its other symbols together (learned before 1.63.1)
+--   4. the colour that symbol usually has (mini-map, else GMCP)
+--   5. the natural colour
+-- The open sea (the map's edge) stays darker than any water: the mini-map has no colour of its own for it
+local symColour, codeColour
+local function rgbOf(c)
+  local r, g, b = tostring(c or ""):match("(%d+),(%d+),(%d+)")
+  if r then return { tonumber(r), tonumber(g), tonumber(b) } end
+end
+local function codeRGB(code) return rgbOf(codeColour[code]) or M.WORLD_CODE_RGB[code] end
+local function learnColours()
+  local P, look = pal(), W().look or {}
+  local sv, cv, lv = {}, {}, {}
+  for hex, e in pairs(P) do
+    for s, v in pairs(e.sc or {}) do
+      sv[s] = sv[s] or {}
+      for k, n in pairs(v) do sv[s][k] = (sv[s][k] or 0) + n end
+    end
+    local L = look[hex]
+    local v = L and e.sc and e.sc[L.sym]
+    if v then
+      cv[L.col] = cv[L.col] or {}
+      for k, n in pairs(v) do cv[L.col][k] = (cv[L.col][k] or 0) + n end
+    end
+  end
+  for hex, L in pairs(look) do
+    local e = P[hex]
+    if not e or top(e.sym) == L.sym then lv[L.sym] = lv[L.sym] or {}; lv[L.sym][L.col] = (lv[L.sym][L.col] or 0) + 1 end
+  end
+  symColour, codeColour = {}, {}
+  for c, v in pairs(cv) do codeColour[c] = top(v) end
+  for s, v in pairs(lv) do symColour[s] = codeRGB(top(v)) end
+  for s, v in pairs(sv) do symColour[s] = rgbOf(top(v)) end
+end
 function M.worldAsciiRGB(hex)
   local P = pal()[hex]
   local sym = P and top(P.sym)
   local edge = (M.worldEdges or {})[hex]
   if edge == "sea" and (not sym or sym == "~") then return M.WORLD_OPEN_SEA_RGB end
   if edge == "under" and not sym then return { 22, 22, 26 } end
-  local c = P and top(P.rgb)
-  if not c and sym then
-    if not symColour then
-      local votes = {}
-      for _, e in pairs(pal()) do
-        local s = top(e.sym)
-        if s and e.rgb then
-          votes[s] = votes[s] or {}
-          for k, n in pairs(e.rgb) do votes[s][k] = (votes[s][k] or 0) + n end
-        end
-      end
-      symColour = {}
-      for s, v in pairs(votes) do symColour[s] = top(v) end
-    end
-    c = symColour[sym]
+  if not symColour then learnColours() end
+  local L = (W().look or {})[hex]
+  if L and (not sym or L.sym == sym) then
+    local c = codeRGB(L.col)
+    if c then return c end
+    sym = L.sym
   end
-  local r, g, b = tostring(c or ""):match("(%d+),(%d+),(%d+)")
-  if r then return { tonumber(r), tonumber(g), tonumber(b) } end
-  return M.worldNaturalRGB(hex)
+  local c = P and P.sc and sym and rgbOf(top(P.sc[sym]))
+  if c then return c end
+  if P and sym and P.rgb then
+    -- (a colour seen more often than all its other symbols' cells together is mostly this symbol's)
+    local others, best = 0, top(P.rgb)
+    for k, n in pairs(P.sym) do if k ~= sym then others = others + n end end
+    if P.rgb[best] > others then return rgbOf(best) end
+  end
+  return sym and symColour[sym] or M.worldNaturalRGB(hex)
 end
 
 -- the bitmap's 3 bytes (blue, green, red) → the chosen colour's, worked out once a colour
 function M.worldNaturalReset()
-  symColour = nil
+  symColour, codeColour = nil, nil
   M.WORLD_NATURAL = setmetatable({}, { __index = function(t, k)
     local v = k
     if k ~= "\0\0\0" then
@@ -13590,7 +13682,12 @@ function M.worldPaletteNote(map, x, y, rows)
             local before = top(e.sym)
             e.sym[ch] = (e.sym[ch] or 0) + 1
             local col = R.cols and R.cols[c]
-            if col then e.rgb = e.rgb or {}; local k = col[1] .. "," .. col[2] .. "," .. col[3]; e.rgb[k] = (e.rgb[k] or 0) + 1 end
+            if col then
+              local k = col[1] .. "," .. col[2] .. "," .. col[3]
+              e.rgb = e.rgb or {}; e.rgb[k] = (e.rgb[k] or 0) + 1
+              -- (by symbol: a colour's cells also carry marks drawn over it - I, =, O… - in colours of their own)
+              e.sc = e.sc or {}; e.sc[ch] = e.sc[ch] or {}; e.sc[ch][k] = (e.sc[ch][k] or 0) + 1
+            end
             if top(e.sym) ~= before then changed = true end
             n = n + 1
           end
@@ -18428,4 +18525,4 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport) end)
