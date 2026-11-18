@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.67.2"
+M.version = "1.67.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16629,6 +16629,14 @@ function M.tripEdges(here, target, used)
   end
   -- (standing in the clan hall: walk out and recall)
   if tonumber(M.cfg.clanHall) == here then sources[#sources + 1] = here end
+  -- no other way (an island, a ship, a place the map can't walk out of): recall where you stand - to the
+  -- signpost nearest you now (in the wilds, a walk toward a better one first, as above)
+  local hereOnly = false
+  if used.recallHere then
+    local dup = false
+    for _, s0 in ipairs(sources) do if s0 == here then dup = true end end
+    if not dup then sources[#sources + 1] = here; hereOnly = not M.isWildRoom(here) end
+  end
   local ch = not used.clan and M.clanHallLink()
   if ch and getRoomArea(here) ~= ch.areaId then
     ch.key = "clan"
@@ -16638,7 +16646,7 @@ function M.tripEdges(here, target, used)
   if not used.recall then
     for _, src in ipairs(sources) do
       for _, c in ipairs(M.recallCandidates(src, target)) do
-        if c.link.land ~= src then
+        if c.link.land ~= src and not (hereOnly and src == here and c.k > 0) then
           add({ from = src, to = c.link.land, cmd = TRIP .. "recall:" .. src .. ":" .. c.link.land, link = c.link,
             weight = c.k + M.TRAVEL_COST + M.TRIP_FREE_EXTRA })
         end
@@ -16650,6 +16658,14 @@ end
 
 -- the best trip from here to target: { segs = { walk | run | ride … }, gold, rides, walked } or nil
 function M.tripPlan(here, target, used)
+  local plan = M.tripPlanOnce(here, target, used)
+  if plan or (used or {}).recall or (used or {}).recallHere then return plan end
+  local u = {}
+  for k, v in pairs(used or {}) do u[k] = v end
+  u.recallHere = true
+  return M.tripPlanOnce(here, target, u)
+end
+function M.tripPlanOnce(here, target, used)
   used = used or {}
   if not here or not target or not roomExists(here) or not roomExists(target) then return nil end
   local find = M.pathReal or getPath

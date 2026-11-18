@@ -1494,6 +1494,19 @@ def travel_by_ganuk():
     o.lua("sbo.goTo(1300001)")
     text = "\n".join(o.ev("LOGS").values())
     assert "Iron Worm to Sigil" in text and "y to go" in text and "no route" not in text, text
+    # an island in town (the Iceberg: no way off on the map, nor a ride): recall where you stand, to the nearest
+    # signpost, the run from there
+    o.lua("""sbo.mapWalkTo = REALWALK; sbo.trip = nil; sbo.travel = nil
+      CHAIN(2, { 917741, 917742 }, 'n'); POS[917741] = { map = 'Alyria', x = 655, y = 366 }
+      sbo.signposts = function() return { { room = 1900988, dests = { rune = 'south' } } } end
+      sbo.cfg.runs = { names = { rune = {} }, ends = { rune = 10490 }, endsFixed = 1 }
+      gmcp.room = { info = { num = '917741', wilds = 'false', exits = { n = '917742' }, coord = { name = 'Alyria', x = 655, y = 366 } } }
+      sbo.mapRoom = 917741; LOGS = {}; SENT = {}""")
+    o.lua("sbo.goTo(10495)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "recall to the signpost on the Shadow Road" in text and "run rune" in text and "y to go" in text and "no route" not in text, text
+    o.lua("sbo.goAnswer('y'); runTimers()")
+    eq(o.ev("SENT[#SENT]"), "cast 'word of recall'", "recalled where you stand")
 
 
 @test
