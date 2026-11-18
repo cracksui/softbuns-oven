@@ -1073,7 +1073,7 @@ def world_map():
     eq(o.ev("sbo.worldV.follow"), False, "dragging stops following")
     o.lua("sbo.worldFollow()")
     eq(o.ev("sbo.worldV.follow"), True, "◎ follows again")
-    # a search: zoomed and moved to fit its matches; the map muted so they stand out
+    # a search: zoomed and moved to fit its matches
     o.lua("""sbo.mapSearchRooms = function() return { 1000 + 1 * 10 + 1, 1000 + 4 * 10 + 8 } end
       sbo.worldLabel.get_width = function() return 120 end; sbo.worldLabel.get_height = function() return 80 end
       sbo.worldSearch('x')""")

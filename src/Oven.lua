@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.60.1"
+M.version = "1.60.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13808,7 +13808,9 @@ function M.worldDrawNow()
   v.cx, v.cy = v.cx or math.floor(img.w / 2), v.cy or math.floor(img.h / 2)
   v.map = mapName
   local route = M.worldRoute()
-  local mute = (M.worldFound and #M.worldFound > 0) or #route > 0
+  -- (the game's own loud colours are dimmed under a route or search hits so they stand out; the natural ones
+  -- don't need it)
+  local mute = M.cfg.worldNatural == false and ((M.worldFound and #M.worldFound > 0) or #route > 0)
   local rows = M.worldCut(img, v.cx, v.cy, zoom, outW, outH, mute)
   local dot = math.max(zoom, 3)
   -- a room on this map, or on a map above / below it (the same place, drawn in another colour)
