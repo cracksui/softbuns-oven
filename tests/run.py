@@ -1402,6 +1402,23 @@ def travel_by_ganuk():
     eq(o.ev("SENT[#SENT]"), "run rune", "recalled at the signpost: the run")
     o.lua("sbo.running.started = true; sbo.mapRoom = 10490; sbo.runStopped(true); runTimers()")
     eq((o.ev("WALKED"), o.ev("sbo.trip")), (10495, None), "the run's over: the last steps on foot")
+    # in the wilds, nowhere on the map joined to anything: first straight to the nearest signpost, the trip on
+    # from there (its run)
+    o.lua("""sbo.mapWalkTo = REALWALK; sbo.trip = nil; sbo.travel = nil; sbo.cfg.clanHall = nil
+      CHAIN(3, { 1250000 }, 'x'); POS[1250000] = { map = 'Alyria', x = 650, y = 360 }
+      sbo.signposts = function() return { { room = 1900988, dests = { rune = 'south' } } } end
+      sbo.cfg.runs = { names = { rune = {} }, ends = { rune = 10490 }, endsFixed = 1 }
+      gmcp.room = { info = { num = '1250000', wilds = 'true', coord = { name = 'Alyria', x = 650, y = 360 } } }
+      sbo.mapRoom = 1250000; LOGS = {}; SENT = {}""")
+    o.lua("sbo.goTo(10495)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "about 5 rooms southeast to the signpost on the Shadow Road" in text and "run rune" in text and "y to go" in text, text
+    o.lua("sbo.goAnswer('y'); runTimers()")
+    eq(o.ev("SENT[#SENT]"), "se", "a room toward the signpost")
+    o.lua("""gmcp.room = { info = { num = '1900988', wilds = 'true', coord = { name = 'Alyria', x = 654, y = 365 } } }
+      sbo.mapRoom = 1900988; sbo.travelOnRoom(1900988); runTimers(); runTimers()""")
+    eq(o.ev("SENT[#SENT]"), "run rune", "there: the run")
+    o.lua("sbo.running = nil; sbo.trip = nil; sbo.travel = nil")
     # wilds to wilds (one area, the size of the world): no way on foot between the two shores - the Worm
     o.lua("""sbo.mapWalkTo = REALWALK; sbo.trip = nil; sbo.cfg.clanHall = nil
       sbo.signposts = function() return {} end; sbo.cfg.runs = { names = {}, ends = {}, endsFixed = 1 }

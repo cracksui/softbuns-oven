@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.63.8"
+M.version = "1.64.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16258,6 +16258,30 @@ function M.recallCandidates(room, target)
   return out
 end
 
+-- the nearest signposts to a room of the wilds (by their place on the map), each a straight walk away
+M.WILD_SIGN_TRY = 3       -- the nearest this many
+M.WILD_SIGN_MAX = 150     -- rooms away at most
+function M.wildSignLinks(room)
+  local p = M.worldPos and M.worldPos(room)
+  if not p then return {} end
+  local c = {}
+  for _, S in ipairs(M.signpostPoints()) do
+    if S.map == p.map and S.room ~= room then
+      local d = math.max(math.abs(S.x - p.x), math.abs(S.y - p.y))
+      if d <= M.WILD_SIGN_MAX and roomExists(S.room) then c[#c + 1] = { S = S, d = d } end
+    end
+  end
+  table.sort(c, function(a, b) return a.d < b.d end)
+  local out = {}
+  for i = 1, math.min(#c, M.WILD_SIGN_TRY) do
+    local S, d = c[i].S, c[i].d
+    out[#out + 1] = { kind = "wildwalk", sign = S, board = {}, cost = 0, noBuy = true, walkOut = d, land = S.room,
+      areaId = getRoomArea(S.room), dest = (M.signLabel and M.signLabel(S.room)) or ("#" .. S.room),
+      dir = M.compassTo(p.x, p.y, S.x, S.y), shopName = "", key = "wildwalk:" .. S.room }
+  end
+  return out
+end
+
 -- One search for the whole trip: for a moment, every ride (Ganuk's tokens, balloons, passage), every signpost
 -- run, clan gohall (from where you stand) and recall (toward the few signposts worth it) is an extra exit on
 -- the map with its cost - one getPath finds the best mix of walking, runs and rides - then they're taken off
@@ -16299,6 +16323,12 @@ function M.tripEdges(here, target, used)
   local sources = {}
   local info = M.gmcpGet and M.gmcpGet("room.info")
   if type(info) == "table" and tostring(info.wilds) == "true" then sources[#sources + 1] = here end
+  -- in the wilds: first to the nearest signposts (straight there, a room at a time), the trip built on from them
+  if M.isWildRoom(here) and not used.wildwalk then
+    for _, w in ipairs(M.wildSignLinks(here)) do
+      add({ from = here, to = w.land, cmd = TRIP .. w.key, link = w, weight = w.walkOut + 2 })
+    end
+  end
   -- (standing in the clan hall: walk out and recall)
   if tonumber(M.cfg.clanHall) == here then sources[#sources + 1] = here end
   local ch = not used.clan and M.clanHallLink()
@@ -16417,7 +16447,9 @@ function M.tripPlanLines(plan, target)
       lines[#lines + 1] = "run " .. sg.name .. " to the " .. ((M.signLabel and M.signLabel(sg.to)) or ("#" .. sg.to))
     else
       local L = sg.link
-      if L.kind == "recall" then
+      if L.kind == "wildwalk" then
+        lines[#lines + 1] = string.format("about %d room%s %s to the %s", L.walkOut, pl(L.walkOut), COMPASS_WORD[L.dir] or "on", L.dest)
+      elseif L.kind == "recall" then
         if (L.walkOut or 0) > 0 then lines[#lines + 1] = string.format("about %d room%s %s (out of the building first, if inside)",
           L.walkOut, pl(L.walkOut), COMPASS_WORD[L.dir] or "on") end
         lines[#lines + 1] = "recall to the " .. L.dest .. " (the nearest signpost)"
@@ -16454,6 +16486,7 @@ function M.tripContinue()
   if first.kind == "ride" then
     T.used[first.link.key or "?"] = true
     if first.link.kind == "recall" then T.used.recall = true end
+    if first.link.kind == "wildwalk" then T.used.wildwalk = true end
   end
   T.ride = first
   if here == first.from then return M.tripRide() end
@@ -16489,6 +16522,12 @@ function M.travelStart(plan, target, legNo)
     local T = M.travel
     T.stage, T.steps = "toCast", 0
     M.travelCastStep()
+    return
+  end
+  if L.kind == "wildwalk" then
+    local T = M.travel
+    T.stage, T.steps = "toSign", 0
+    M.travelSignStep()
     return
   end
   if L.anywhere then
@@ -16587,11 +16626,36 @@ function M.travelCastStep()
   go(d)
 end
 
+-- in the wilds, to the signpost a trip starts from: a room at a time straight toward it (by the map's
+-- coordinates), then the trip goes on from there
+function M.travelSignStep()
+  local T = M.travel
+  if not T or T.stage ~= "toSign" then return end
+  local S = T.link.sign
+  local function stop(why) M.travel = nil; M.trip = nil; say("travel: " .. why .. " - stopped") end
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  local x, y = type(info) == "table" and tonumber(info.coord and info.coord.x), type(info) == "table" and tonumber(info.coord and info.coord.y)
+  if M.mapRoom == S.room or (x == S.x and y == S.y) then
+    M.travel = nil
+    say("travel: at the " .. T.link.dest .. " - on from here")
+    return tempTimer(0.5, function() if M.trip then M.tripContinue() else M.goTo(T.target) end end)
+  end
+  T.steps = T.steps + 1
+  if T.steps > (T.link.walkOut or 0) + 30 then return stop("couldn't get to the " .. T.link.dest) end
+  if not x then return stop("lost the way (no coordinates here)") end
+  local d = M.compassTo(x, y, S.x, S.y)
+  if not d then return stop("lost the way") end
+  local mine, n = T, T.steps
+  M.sendOwn(d, false)
+  tempTimer(6, function() if M.travel == mine and mine.steps == n then stop("no way " .. d .. " (blocked?)") end end)
+end
+
 -- a room change while travelling: down to Ganuk → give the token; landed elsewhere → walk on
 function M.travelOnRoom(id)
   local T = M.travel
   if not T then return end
   if T.stage == "toCast" then return tempTimer(0.2, function() M.travelCastStep() end) end
+  if T.stage == "toSign" then return tempTimer(0.2, function() M.travelSignStep() end) end
   if T.castRoom and (T.stage == "riding" or T.stage == "boarding") and id ~= T.castRoom then
     M.travel = nil
     local more = T.plan and T.plan.legs[T.leg + 1]
