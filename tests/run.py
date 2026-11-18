@@ -829,6 +829,16 @@ def quest_steps_are_links():
     assert "&amp;" not in h[last], h[last]
     o.lua("WALKS = {}; sbo.questGoMaster('78')")
     eq(list(o.ev("WALKS").values()), [555], "back to the abbot")
+    # "Return to your quest master": the abbot, back to the same room
+    o.lua("WALKS = {}; sbo.quests['78'].turnIn = 'your quest master'; sbo.questGoMaster('78')")
+    eq(list(o.ev("WALKS").values()), [555], "your quest master is the abbot")
+    eq(o.ev("sbo.questReturnTo(sbo.quests['78'])"), "the Abbot", "shown as the abbot")
+    o.lua("sbo.quests['78'].turnIn = nil")
+    # another quest from the abbot, its room not known (taken before Oven kept it): where you took one from them
+    o.lua("WALKS = {}; sbo.quests['79'] = { name = 'More', master = 'the Abbot', complete = true }; sbo.questGoMaster('79')")
+    eq(list(o.ev("WALKS").values()), [555], "the abbot's room from the other quest")
+    eq(o.ev("sbo.cfg.questMasterRooms['the abbot']"), 555, "kept by name")
+    o.lua("sbo.quests['79'] = nil")
     # finished: its "return to" line is a link too
     o.lua("sbo.quests['78'].complete = true; sbo.quests['78'].done = 1; sbo.quests['78'].phases[1].done = true")
     h, w, a = o.ev("function() return sbo.questCardHtml('78', sbo.quests['78']) end")()

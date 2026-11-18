@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.63.5"
+M.version = "1.63.6"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2844,7 +2844,11 @@ function M.rememberQuests(q, bare)
     if M.questReplyRequest and (Q.complete or Q.turnedIn) then M.questInProgress(Q, true) end
     for k, v in pairs(d) do Q[k] = v end
     -- taken here: the questmaster's room (the HUD's link back to them)
-    if M.questReplyRequest and M.mapRoom then Q.masterRoom = M.mapRoom end
+    if M.questReplyRequest and M.mapRoom then
+      Q.masterRoom = M.mapRoom
+      -- (by name too: kept after the quest is gone, for the next one from them)
+      if Q.master then M.cfg.questMasterRooms = M.cfg.questMasterRooms or {}; M.cfg.questMasterRooms[Q.master:lower()] = M.mapRoom end
+    end
     if d.total and d.done < d.total then M.questInProgress(Q) end
     Q.seen = now
     Q.active = true
@@ -3186,7 +3190,7 @@ local function questCardHtml(id, Q)
   if folded then return html, widest, acts end
   if finished then
     -- who to turn it in to: "Return to Lord Agrippa in time to receive your reward!" (else the quest master)
-    local who = Q.turnIn or Q.master
+    local who = M.questReturnTo(Q)
     local tail = (who and (" · return to " .. who) or "") .. " · stays until you quest complete"
     add(span(C.plus, " complete") .. span(C.dim, tail), 9 + ulen(tail))
     if who then
@@ -3252,7 +3256,7 @@ local function questCardHtml(id, Q)
         first = false
       end
     end
-    local who = Q.turnIn or Q.master
+    local who = M.questReturnTo(Q)
     if who then
       add("   " .. span(C.dim, "↩ " .. who) .. "&nbsp;&nbsp;<u>" .. span(C.dim, "go ▸") .. "</u>", ulen(who) + 10)
       acts[#html] = { id = id, master = true }
@@ -4088,18 +4092,45 @@ function M.questDeliverTarget(ph, qid)
   return room, why, okS and shop or nil, shopWhy, carrying
 end
 
--- back to whoever gave the quest (or the one to return to): where you took it, else by name
+-- "your quest master", "the questmaster": not a name - whoever gave the quest
+function M.questGenericMaster(n)
+  n = trim(tostring(n or "")):lower()
+  return n == "" or n:match("^%a+ quest ?master$") ~= nil or n == "quest master" or n == "questmaster"
+end
+-- who to hand a quest in to: the one named in "Return to X…", else the questmaster
+function M.questReturnTo(Q)
+  if Q.turnIn and not M.questGenericMaster(Q.turnIn) then return Q.turnIn end
+  return Q.master
+end
+
+-- back to whoever gave the quest (or the one to return to): the room you took it in; else where that questmaster
+-- was when you took another quest from them; else the room they were last seen in; else by name
 function M.questGoMaster(id)
   local Q = M.quests[tostring(id)] or {}
-  local who = Q.turnIn or Q.master
-  local same = not Q.turnIn or not Q.master or Q.turnIn:lower() == Q.master:lower()
-  if same and Q.masterRoom and roomExists(Q.masterRoom) then
-    M.say(string.format("#%s → %s · %s #%d (where you took the quest)", id, who or "the questmaster",
-      getRoomName(Q.masterRoom) or "?", Q.masterRoom))
-    return M.goTo(Q.masterRoom)
+  local who = M.questReturnTo(Q)
+  local function bare(n) return (n or ""):lower():gsub("^the ", "") end
+  local same = not who or not Q.master or bare(who) == bare(Q.master)
+  local room, why
+  if same and Q.masterRoom and roomExists(Q.masterRoom) then room, why = Q.masterRoom, "where you took the quest" end
+  local known = who and (M.cfg.questMasterRooms or {})[who:lower()]
+  if not known and who then   -- (another quest of theirs, taken where they stand)
+    for _, O in pairs(M.quests) do
+      if O.master and bare(O.master) == bare(who) and O.masterRoom then known = O.masterRoom; break end
+    end
+  end
+  if not room and known and roomExists(known) then room, why = known, "where you took a quest from them" end
+  if not room and who then
+    for _, r in ipairs(M.dbRows("SELECT room FROM room_npcs WHERE instr(lower(text), %s) > 0 ORDER BY last DESC", bare(who))) do
+      local n = tonumber(r.room)
+      if n and roomExists(n) then room, why = n, "where they were last seen"; break end
+    end
+  end
+  if room then
+    M.say(string.format("#%s → %s · %s #%d (%s)", id, who or "the questmaster", getRoomName(room) or "?", room, why))
+    return M.goTo(room)
   end
   if not who then return M.say("quest " .. id .. ": Oven doesn't know who gave it (quest info " .. id .. " says)") end
-  return M.mapRun(who:lower():gsub("^the ", ""))
+  return M.mapRun(bare(who))
 end
 
 -- one step of a quest, done or not: walk to where it is
@@ -12515,7 +12546,9 @@ function M.onLineWork()
       local Q = M.quests[id]
       M.questJustDone = nil
       if Q then
-        Q.turnIn = who
+        -- "Return to your quest master": the one who gave it, not someone else
+        Q.turnIn = not M.questGenericMaster(who) and who or nil
+        who = Q.turnIn or Q.master or who
         M.cfg.quests = M.quests; M.saveSettings()
         pcall(M.drawQuestTracker)
         if (M.cfg.questPins or {})[id] then M.notifyQuest((Q.name or ("#" .. id)) .. " complete - return to " .. who .. " for your reward") end
