@@ -4289,7 +4289,9 @@ def combat_bar():
     others = bar.split("others: ")[1]
     assert others.startswith("a goblin 20 20%"), f"lowest health first: {others}"
     o.feed("A mental patient has been slain!"); o.feed("A wolf has been slain!")
-    o.lua("for i = 1, 20 do line = 'A goblin ' .. i .. ' has been slain!'; sbo.onLine() end; runTimers()")
+    o.lua("for i = 1, 20 do line = 'A goblin ' .. i .. ' has been slain!'; sbo.onLine() end")
+    eq(o.ev("sbo.cbarShown"), False, "gone the moment the last one dies (no timers run)")
+    o.lua("runTimers()")
     eq(o.ev("sbo.cbar.shown"), False, "gone once the fights are over")
     o.lua('sbo.command("combat bar off"); ROUND("a rat", 90, 1)')
     eq(o.ev("sbo.cbar.shown"), False, "sbo combat bar off")

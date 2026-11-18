@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.64.1"
+M.version = "1.64.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -9354,14 +9354,10 @@ function M.drawCombatBar()
   table.sort(fights, function(a, b) return (a.order or 0) < (b.order or 0) end)
   local want = #fights > 0 and M.cfg.combatBar and M.cfg.bar and M.bar ~= nil
   if not want then
-    if M.cbarShown then
-      -- a moment with the end result before it goes
-      if M.cbarHideTimer then killTimer(M.cbarHideTimer) end
-      M.cbarHideTimer = tempTimer(3, function()
-        M.cbarHideTimer = nil
-        if not next(M.fights or {}) and M.cbarShown then M.cbarShown = false; pcall(M.layoutBar) end
-      end)
-    end
+    -- the fight's over: gone at once (kept a moment, it only showed the last health - not that it died); the
+    -- fight's summary line says how it ended
+    if M.cbarHideTimer then killTimer(M.cbarHideTimer); M.cbarHideTimer = nil end
+    if M.cbarShown then M.cbarShown = false; pcall(M.layoutBar) end
     return
   end
   if M.cbarHideTimer then killTimer(M.cbarHideTimer); M.cbarHideTimer = nil end
