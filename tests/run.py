@@ -1012,6 +1012,23 @@ def world_natural_colours():
     o.lua("sbo.worldImage('Alyria').edgeChecked = nil; sbo.worldEdges = nil; sbo.worldNaturalReset()")
     r = o.ev("(function() local s = sbo.worldCut(sbo.worldImage('Alyria'), 3, 2, 1, 7, 1)[1] local b, g, r = s:byte(4, 6) return r .. ',' .. g .. ',' .. b end)()")
     eq(r, "28,58,135", "the sea: deep blue")
+    # still deep blue once the sea has learned its ~ (the mini-map draws all water as ~)
+    o.lua("sbo.cfg.world.pal['20d555'] = { sym = { ['~'] = 50 } }; sbo.worldNaturalReset()")
+    eq(o.ev("table.concat(sbo.worldNaturalRGB('20d555'), ',')"), "28,58,135", "the sea with ~: deep blue")
+    # water kinds share ~ but not a colour: told apart by a specific name (deep, shallow, river), else by the
+    # game's own colour - "salt water" is both the dark sea (|B blue) and the lighter one (|C cyan)
+    o.lua("""sbo.cfg.world.terrain = sbo.cfg.world.terrain or {}
+      local pal, ter = sbo.cfg.world.pal, sbo.cfg.world.terrain
+      for hex, v in pairs({ aa0001 = { 'deep water' }, aa0002 = { 'shallow water' }, aa0004 = { 'river' },
+                            aa0006 = { 'salt water', '0,0,255' }, aa0007 = { 'salt water', '0,255,255' }, aa0008 = { 'salt water' } }) do
+        pal[hex] = { sym = { ['~'] = 9 }, rgb = v[2] and { [v[2]] = 9 } or nil }; ter[hex] = v[1]
+      end""")
+    eq([o.ev("table.concat(sbo.worldNaturalRGB('%s'), ',')" % h) for h in ("aa0001", "aa0002", "aa0004", "aa0006", "aa0007", "aa0008")],
+       ["28,58,135", "72,122,190", "50,100,180", "28,58,135", "45,90,170", "45,90,170"],
+       "deep, shallow, river, salt water drawn blue (deep), salt water drawn cyan (the sea), salt water not seen yet")
+    # a land colour keeps its symbol's colour whatever its name
+    o.lua("sbo.cfg.world.pal['aa0005'] = { sym = { ['*'] = 9 } }; sbo.cfg.world.terrain['aa0005'] = 'deep water'")
+    eq(o.ev("table.concat(sbo.worldNaturalRGB('aa0005'), ',')"), "52,112,52", "symbol first on land")
     # a line of game text isn't a map row; one that looks like one isn't read without an @
     eq((o.ev("sbo.worldMapRowLike('The Light Forest')"), o.ev("sbo.worldMapRowLike('   ~~..!!@==')")), (False, True), "rows")
 

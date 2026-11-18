@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.62.0"
+M.version = "1.62.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13436,16 +13436,38 @@ local function top(votes)
   return best
 end
 
--- a colour's natural look: its symbol, else its terrain's name, else the game's colour (softened), else grey
+-- the game's colour for a ~ (from its mini-map): blue is deep water, cyan the lighter sea; nil if neither
+local function waterTone(rgb)
+  local r, g, b = tostring(rgb or ""):match("(%d+),(%d+),(%d+)")
+  r, g, b = tonumber(r), tonumber(g), tonumber(b)
+  if not b or b < 128 or r > 100 then return nil end
+  if g < 100 then return { 28, 58, 135 } end    -- |B blue: deep
+  if g > 150 then return { 45, 90, 170 } end    -- |C cyan: the sea
+end
+
+-- a colour's natural look: its symbol, else its terrain's name, else the game's colour (softened), else grey.
+-- Water is the exception: the mini-map draws every kind as ~, so its kinds are told apart by a specific terrain
+-- name (deep water, shallow, river, lake), else by the game's own colour for it (blue = deep, cyan = the sea -
+-- both are "salt water"); the open sea (the map's edge colour) stays deep blue
+local WATER_NAMES = { "deep water", "shallow", "river", "lake" }
 function M.worldNaturalRGB(hex)
   local P = pal()[hex]
   local sym = P and top(P.sym)
-  if sym and M.WORLD_SYM_RGB[sym] then return M.WORLD_SYM_RGB[sym] end
   local t = (W().terrain or {})[hex]
-  if t then for _, e in ipairs(M.WORLD_TERRAIN_RGB) do if t:find(e[1], 1, true) then return e[2] end end end
+  local named
+  if t then for _, e in ipairs(M.WORLD_TERRAIN_RGB) do if t:find(e[1], 1, true) then named = e[2]; break end end end
   -- a map's edge colour (all four corners): the open sea on the surface, solid rock / nothing underground
   local edge = (M.worldEdges or {})[hex]
-  if edge and not sym then return edge == "under" and { 22, 22, 26 } or { 28, 58, 135 } end
+  if edge == "sea" and (not sym or sym == "~") then return { 28, 58, 135 } end
+  if edge == "under" and not sym then return { 22, 22, 26 } end
+  if sym == "~" then
+    if t then for _, n in ipairs(WATER_NAMES) do if t:find(n, 1, true) then return named end end end
+    local tone = waterTone(P and top(P.rgb))
+    if tone then return tone end
+    if named then return named end
+  end
+  if sym and M.WORLD_SYM_RGB[sym] then return M.WORLD_SYM_RGB[sym] end
+  if named then return named end
   local g = P and top(P.rgb)
   if g then
     local r, gg, b = g:match("(%d+),(%d+),(%d+)")
