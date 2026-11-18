@@ -332,8 +332,20 @@ def quest_targets():
     eq(o.ev("sbo.questFindName('Defeat a unicorn')"), None, "never seen: no link")
     o.lua("HL = {}; sbo.questAct({ id = '1', n = 1, find = 'janitor' })")
     eq(len(o.ev("HL")), 3, "the link lights them up")
+    # the map lights up every target's room by itself (violet), under your own highlight where they overlap
+    o.lua("""sbo.mapHighlightAll(""); LIT = {}; highlightRoom = function(id, r) LIT[id] = r end
+      unHighlightRoom = function(id) LIT[id] = nil end; sbo.targetLight()""")
+    eq(sorted(o.ev("LIT").keys()), [10442, 10522], "the necromancer's room; Samara's and the herb shop's")
+    eq(o.ev("LIT[10442]"), 190, "violet")
+    o.lua('sbo.mapHighlightAll("janitor"); sbo.mapHighlights = {10442}; sbo.targetLight()')
+    eq(o.ev("LIT[10442]"), 190, "kept, not cleared under yours")
+    o.lua('sbo.cfg.mapTargets = false; sbo.mapHighlights = {}; sbo.targetLight()')
+    eq(o.ev("LIT[10522]"), None, "map.targets off")
+    o.lua('sbo.cfg.mapTargets = nil')
     o.lua('sbo.command("map targets clear")')
     eq(o.rows("SELECT COUNT(*) AS n FROM quest_targets")[0]["n"], 0, "cleared")
+    o.lua("runTimers(); sbo.targetLight()")
+    eq(o.ev("LIT[10522]"), None, "gone with them")
 
 
 @test

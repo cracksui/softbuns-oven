@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.65.0"
+M.version = "1.66.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11388,6 +11388,7 @@ function M.targetMob(key, text, room, quest)
     local was = M.targetMobAt and M.targetMobAt[key]
     if K[ck] and was and was.room == room and os.time() - was.t < 60 then return end   -- (same room, just now: no write)
     M.targetMobAt = M.targetMobAt or {}
+    if not K[ck] or not was or was.room ~= room then M.targetLightSoon() end
     M.targetMobAt[key] = { room = room, t = os.time() }
     M.dbx("DELETE FROM quest_targets WHERE kind = 'mob' AND key = %s", key)
     M.dbx("INSERT INTO quest_targets (kind, key, room, text, holder, t) VALUES ('mob', %s, %s, %s, NULL, %s)", key, room, text, os.time())
@@ -11395,7 +11396,35 @@ function M.targetMob(key, text, room, quest)
   elseif K[ck] then
     K[ck] = nil
     M.dbx("DELETE FROM quest_targets WHERE kind = 'mob' AND key = %s", key)
+    M.targetLightSoon()
   end
+end
+
+-- the map: every room with a quest target lit up in violet (a [!] mob where it was last marked, a shop
+-- with a [!] item, a mob wearing one), kept as targets come and go. Your own highlights (sbo map
+-- highlight, the search box, show) keep their colour where they overlap, and these come back after.
+function M.targetLight()
+  local others = {}
+  for _, id in ipairs(M.mapHighlights or {}) do others[id] = true end
+  for _, id in ipairs(M.mapSearchLit or {}) do others[id] = true end
+  if M.mapHighlight then others[M.mapHighlight] = true end
+  for _, id in ipairs(M.targetLit or {}) do
+    if not others[id] then pcall(unHighlightRoom, id) end
+  end
+  M.targetLit = {}
+  if M.cfg.mapTargets == false then return end
+  for _, r in ipairs(M.dbRows("SELECT DISTINCT room FROM quest_targets")) do
+    local id = tonumber(r.room)
+    if id and id ~= 0 and not others[id] and roomExists(id) then
+      pcall(highlightRoom, id, 190, 70, 255, 255, 140, 255, 1.4, 235, 90)
+      M.targetLit[#M.targetLit + 1] = id
+    end
+  end
+end
+function M.targetLightSoon()
+  if M.targetLightPending then return end
+  M.targetLightPending = true
+  tempTimer(0.3, function() M.targetLightPending = nil; pcall(M.targetLight) end)
 end
 
 -- a shop's list: its [!] items are this shop's targets now (the rest aren't)
@@ -11414,6 +11443,7 @@ function M.targetShop(room, items)
   end
   -- (shop:<item> stays true while any shop still marks it)
   for _, r in ipairs(M.dbRows("SELECT DISTINCT key FROM quest_targets WHERE kind = 'shop'")) do K["shop:" .. r.key] = true end
+  M.targetLightSoon()
 end
 
 -- "look <mob>": its worn items - the [!] ones are targets, worn by it (by name), where you are
@@ -11443,6 +11473,7 @@ function M.wornTargets(lines, room)
     if not K["worn:" .. key] then M.say("quest target: " .. it .. ", worn by " .. holder .. "  (sbo map targets)") end
     K["worn:" .. key] = true
   end
+  M.targetLightSoon()
   return #worn
 end
 
@@ -14767,6 +14798,7 @@ function M.mapSearchUnlight()
   -- rooms that were lit for something else too
   for _, id in ipairs(M.mapHighlights or {}) do pcall(highlightRoom, id, 255, 165, 0, 255, 215, 0, 1.2, 220, 80) end
   if M.mapHighlight then pcall(highlightRoom, M.mapHighlight, 64, 224, 208, 64, 224, 208, 1.5, 200, 60) end
+  pcall(M.targetLightSoon)
 end
 -- light the matches in the area on show
 function M.mapSearchLight()
@@ -15315,6 +15347,7 @@ function M.targetsShow(arg)
   if arg == "clear" then
     M.dbx("DELETE FROM quest_targets")
     M.targetCache = nil
+    M.targetLightSoon()
     return say("quest targets cleared - Oven keeps the next ones the game marks [!]")
   end
   local width = M.cfg.window and M.viewCols() or 80
@@ -15458,6 +15491,7 @@ function M.mapShow(id)
   if M.mapHighlight then pcall(unHighlightRoom, M.mapHighlight) end
   pcall(highlightRoom, id, 64, 224, 208, 64, 224, 208, 1.5, 200, 60)
   M.mapHighlight = id
+  pcall(M.targetLightSoon)
   if M.mapPanel and M.cfg.mapPanel then M.showMapPanel(true) end   -- (this centres on you...)
   M.centerOn(id)                                                    -- ...so centre on the room after
 end
@@ -18243,6 +18277,7 @@ end
 function M.mapHighlightAll(q, quiet)
   for _, id in ipairs(M.mapHighlights or {}) do pcall(unHighlightRoom, id) end
   M.mapHighlights = {}
+  pcall(M.targetLightSoon)   -- (target rooms that were under them come back)
   q = trim(q or "")
   M.mapHighlightQuery = (q ~= "") and q or nil   -- kept up to date as Oven learns more (M.mapLearned)
   if q == "" then return say("map highlights cleared") end
@@ -18466,6 +18501,8 @@ M.SETTINGS = {
   { "map.card", "Map panel", BOOL, function() return onoff(M.cfg.mapCard) end, function(v) legacy("map card " .. v) end },
   { "map.wherelearn", "Map panel", BOOL, function() return onoff(M.cfg.whereLearn ~= false) end,
     function(v) M.cfg.whereLearn = (v == "on"); M.saveSettings(); say("learning each area's 'where is' features while you're idle: " .. v) end },
+  { "map.targets", "Map panel", BOOL, function() return onoff(M.cfg.mapTargets ~= false) end,
+    function(v) M.cfg.mapTargets = (v == "on"); M.saveSettings(); pcall(M.targetLight); say("quest targets [!] lit up on the map: " .. v) end },
   { "map.shoplist", "Map panel", BOOL, function() return onoff(M.cfg.shopList ~= false) end,
     function(v) M.cfg.shopList = (v == "on"); M.saveSettings(); say("listing shops when you stop in one: " .. v) end },
   { "signposts.look", "Map panel", BOOL, function() return onoff(M.cfg.signLook) end, function(v) legacy("signposts look " .. v) end },
@@ -19114,4 +19151,4 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight) end)
