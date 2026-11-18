@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.62.1"
+M.version = "1.62.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13428,6 +13428,7 @@ M.WORLD_TERRAIN_RGB = {
   { "lava", { 200, 64, 24 } }, { "chasm", { 44, 34, 34 } }, { "void", { 22, 22, 24 } },
 }
 M.WORLD_UNKNOWN_RGB = { 62, 62, 66 }
+M.WORLD_OPEN_SEA_RGB = { 14, 30, 82 }   -- the open sea round the map (its edge colour): darker than any deep water
 
 local function pal() local w = W(); w.pal = w.pal or {}; return w.pal end
 local function top(votes)
@@ -13448,7 +13449,7 @@ end
 -- a colour's natural look: its symbol, else its terrain's name, else the game's colour (softened), else grey.
 -- Water is the exception: the mini-map draws every kind as ~, so its kinds are told apart by a specific terrain
 -- name (deep water, shallow, river, lake), else by the game's own colour for it (blue = deep, cyan = the sea -
--- both are "salt water"); the open sea (the map's edge colour) stays deep blue
+-- both are "salt water"); the open sea (the map's edge colour) is darker still
 local WATER_NAMES = { "deep water", "shallow", "river", "lake" }
 function M.worldNaturalRGB(hex)
   local P = pal()[hex]
@@ -13458,7 +13459,7 @@ function M.worldNaturalRGB(hex)
   if t then for _, e in ipairs(M.WORLD_TERRAIN_RGB) do if t:find(e[1], 1, true) then named = e[2]; break end end end
   -- a map's edge colour (all four corners): the open sea on the surface, solid rock / nothing underground
   local edge = (M.worldEdges or {})[hex]
-  if edge == "sea" and (not sym or sym == "~") then return { 28, 58, 135 } end
+  if edge == "sea" and (not sym or sym == "~") then return M.WORLD_OPEN_SEA_RGB end
   if edge == "under" and not sym then return { 22, 22, 26 } end
   if sym == "~" then
     if t then for _, n in ipairs(WATER_NAMES) do if t:find(n, 1, true) then return named end end end

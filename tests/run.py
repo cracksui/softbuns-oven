@@ -1011,10 +1011,10 @@ def world_natural_colours():
     open(home + "/oven_maps/alyria.bmp", "wb").write(head + body2)
     o.lua("sbo.worldImage('Alyria').edgeChecked = nil; sbo.worldEdges = nil; sbo.worldNaturalReset()")
     r = o.ev("(function() local s = sbo.worldCut(sbo.worldImage('Alyria'), 3, 2, 1, 7, 1)[1] local b, g, r = s:byte(4, 6) return r .. ',' .. g .. ',' .. b end)()")
-    eq(r, "28,58,135", "the sea: deep blue")
+    eq(r, "14,30,82", "the open sea: darker than deep water")
     # still deep blue once the sea has learned its ~ (the mini-map draws all water as ~)
     o.lua("sbo.cfg.world.pal['20d555'] = { sym = { ['~'] = 50 } }; sbo.worldNaturalReset()")
-    eq(o.ev("table.concat(sbo.worldNaturalRGB('20d555'), ',')"), "28,58,135", "the sea with ~: deep blue")
+    eq(o.ev("table.concat(sbo.worldNaturalRGB('20d555'), ',')"), "14,30,82", "the open sea with ~: still the darkest")
     # water kinds share ~ but not a colour: told apart by a specific name (deep, shallow, river), else by the
     # game's own colour - "salt water" is both the dark sea (|B blue) and the lighter one (|C cyan)
     o.lua("""sbo.cfg.world.terrain = sbo.cfg.world.terrain or {}
