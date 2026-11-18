@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.63.6"
+M.version = "1.63.7"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -15903,9 +15903,11 @@ function M.goToNow(id)
   local here = M.mapRoom or M.currentRoom()
   -- a paid trip (Ganuk, a balloon…) when it beats walking by enough, or when there's no way on foot
   -- (only for somewhere outside the area you're in - in town, it's a walk)
+  -- (the wilds are one area the size of the world: never "in town"; and with no way on foot, a trip is looked for anyway)
   local okA, sameArea = pcall(function() return getRoomArea(here) == getRoomArea(id) end)
-  if here and roomExists(here) and roomExists(id) and not (okA and sameArea) then
-    local onFoot = getPath(here, id) and #(speedWalkDir or {}) or nil
+  sameArea = okA and sameArea and not M.isWildRoom(id) and not M.isWildRoom(here)
+  local onFoot = here and roomExists(here) and roomExists(id) and getPath(here, id) and #(speedWalkDir or {}) or nil
+  if here and roomExists(here) and roomExists(id) and (not sameArea or not onFoot) then
     local okT, plan = pcall(M.tripPlan, here, id, {})
     if okT and plan and (plan.rides > 0 or plan.runs > 0 or (plan.wild or 0) > M.TRIP_WILD_WARN) then
       local lines, tail = M.tripPlanLines(plan, id)

@@ -1391,6 +1391,17 @@ def travel_by_ganuk():
     eq(o.ev("SENT[#SENT]"), "run rune", "recalled at the signpost: the run")
     o.lua("sbo.running.started = true; sbo.mapRoom = 10490; sbo.runStopped(true); runTimers()")
     eq((o.ev("WALKED"), o.ev("sbo.trip")), (10495, None), "the run's over: the last steps on foot")
+    # wilds to wilds (one area, the size of the world): no way on foot between the two shores - the Worm
+    o.lua("""sbo.mapWalkTo = REALWALK; sbo.trip = nil; sbo.cfg.clanHall = nil
+      sbo.signposts = function() return {} end; sbo.cfg.runs = { names = {}, ends = {}, endsFixed = 1 }
+      sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last) VALUES (10636, 4, 'A token for Sigil passage', 25, 'No limit', 3625, 0)")
+      CHAIN(3, { 1200001, 1200002 }, 'e'); EX[1200002][#EX[1200002] + 1] = { 'w', 1 }
+      CHAIN(3, { 1300001 }, 'x'); EX[600][#EX[600] + 1] = { 'n', 1300001 }
+      gmcp.room = { info = { num = '1200001', wilds = 'true', coord = { name = 'Alyria', x = 1, y = 1 } } }
+      sbo.mapRoom = 1200001; LOGS = {}; SENT = {}""")
+    o.lua("sbo.goTo(1300001)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "Iron Worm to Sigil" in text and "y to go" in text and "no route" not in text, text
 
 
 @test
