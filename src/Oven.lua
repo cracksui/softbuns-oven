@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.63.2"
+M.version = "1.63.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13444,8 +13444,8 @@ end
 -- for a wild room: 0E, 4U, 5K…), picked to look distinct, not like the land. The game's mini-map (the ASCII
 -- map round you in the wilds: ~ water, * forest, ^ mountains, # road…) lines up room for room with the
 -- bitmap, so each colour's symbol (and the game's colour for it) is learned from it - from the recordings
--- once, then every step you take in the wilds - and the map is drawn in the mini-map's colours (map.colours
--- ascii, the default) or Oven's natural ones (map.colours natural) instead
+-- once, then every step you take in the wilds - and the map is drawn in the natural colour palette (map.colours
+-- natural, the default) or the ASCII colour palette, the mini-map's own colours (map.colours ascii) instead
 M.WORLD_SYM_RGB = {
   ["~"] = { 45, 90, 170 }, ["."] = { 128, 150, 82 }, ['"'] = { 96, 150, 64 }, ["="] = { 116, 142, 76 },
   ["!"] = { 132, 146, 86 }, ["*"] = { 52, 112, 52 }, ["&"] = { 34, 86, 38 }, ["^"] = { 128, 112, 96 },
@@ -13513,13 +13513,13 @@ function M.worldNaturalRGB(hex)
   end
   return M.WORLD_UNKNOWN_RGB
 end
--- which colours the world map uses: "ascii" (the game's mini-map colours), "natural" (Oven's earth tones) or
--- "game" (the bitmap's own palette)
+-- which palette the world map uses: "natural" (Oven's earth tones, the default), "ascii" (the ASCII colour
+-- palette: the game's mini-map colours) or "game" (the bitmap's own palette)
 function M.worldColourMode()
   local m = M.cfg.worldColours
   if m == "ascii" or m == "natural" or m == "game" then return m end
   if M.cfg.worldNatural == false then return "game" end
-  return "ascii"
+  return "natural"
 end
 
 -- the game's colour codes (GMCP's coord.color for the room you're in: |C, |y…) as Mudlet draws them; the ones
@@ -18007,10 +18007,10 @@ M.SETTINGS = {
   { "quest.opacity", "Quest panel", "number", function() return tostring(M.cfg.questHudOpacity or 100) end, function(v) legacy("quest hud opacity " .. v) end },
   { "map", "Map panel", BOOL, function() return onoff(M.cfg.map) end, function(v) legacy("map " .. v) end },
   { "map.panel", "Map panel", BOOL, function() return onoff(M.cfg.mapPanel) end, function(v) legacy("map panel " .. v) end },
-  { "map.colours", "Map panel", { "ascii", "natural", "game" }, function() return M.worldColourMode() end,
+  { "map.colours", "Map panel", { "natural", "ascii", "game" }, function() return M.worldColourMode() end,
     function(v)
       M.cfg.worldColours = v; M.cfg.worldNatural = nil; M.saveSettings(); M.worldNaturalReset(); pcall(M.worldDraw)
-      say("world map: " .. ({ ascii = "the mini-map's colours", natural = "natural colours", game = "the game's bitmap colours" })[v])
+      say("world map: " .. ({ ascii = "the ASCII colour palette (the mini-map's colours)", natural = "the natural colour palette", game = "the game's bitmap colours" })[v])
     end },
   { "map.card", "Map panel", BOOL, function() return onoff(M.cfg.mapCard) end, function(v) legacy("map card " .. v) end },
   { "map.wherelearn", "Map panel", BOOL, function() return onoff(M.cfg.whereLearn ~= false) end,

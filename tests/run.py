@@ -1030,11 +1030,13 @@ def world_natural_colours():
     o.lua("sbo.cfg.world.pal['aa0005'] = { sym = { ['*'] = 9 } }; sbo.cfg.world.terrain['aa0005'] = 'deep water'")
     eq(o.ev("table.concat(sbo.worldNaturalRGB('aa0005'), ',')"), "52,112,52", "symbol first on land")
     # a line of game text isn't a map row; one that looks like one isn't read without an @
-    # the default: the mini-map's own colours. The colour GMCP gave the terrain when you stood on it (|B, |C…, as
+    # the ASCII colour palette: the mini-map's own colours. The colour GMCP gave the terrain when you stood on it (|B, |C…, as
     # your Mudlet draws them, learned from the mini-map); else the colour the mini-map drew its symbol in there -
     # not the marks over it (a mountain colour with magenta I's on it stays grey); else the symbol's usual colour;
     # else the natural one; the open sea stays the darkest
     o.lua("""sbo.cfg.worldColours = nil
+      NATURAL_DEFAULT = sbo.worldColourMode()
+      sbo.cfg.worldColours = 'ascii'
       local pal = sbo.cfg.world.pal
       pal['aa0009'] = { sym = { ['*'] = 3 } }
       pal['aa000a'] = { sym = { ['^'] = 616, I = 120 }, sc = { ['^'] = { ['128,128,128'] = 92 }, I = { ['255,0,255'] = 121 } } }
@@ -1046,7 +1048,7 @@ def world_natural_colours():
       pal['aa000e'] = { sym = { ['~'] = 9891, ['%'] = 2461 }, rgb = { ['0,0,255'] = 8946, ['0,128,0'] = 2461 } }
       pal['aa000f'] = { sym = { ['^'] = 616, I = 120, ['='] = 182 }, rgb = { ['255,0,255'] = 121, ['128,128,128'] = 92 } }
       sbo.worldNaturalReset()""")
-    eq(o.ev("sbo.worldColourMode()"), "ascii", "ascii by default")
+    eq(o.ev("NATURAL_DEFAULT"), "natural", "natural by default")
     eq([o.ev("table.concat(sbo.worldAsciiRGB('%s'), ',')" % h) for h in ("aa000a", "aa000b", "aa000c", "aa0007", "aa000d", "aa0009", "20d555", "aa000e", "aa000f")],
        ["128,128,128", "128,128,128", "0,0,250", "0,255,255", "255,255,0", "52,112,52", "14,30,82", "0,0,255", "128,128,128"],
        "mountain under magenta marks, another ^ not seen in colour, |B as this Mudlet draws it, |C, |Y, * never seen in colour (natural), open sea, old votes: sea mostly blue, mountain not magenta")
