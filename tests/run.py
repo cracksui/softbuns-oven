@@ -1441,7 +1441,7 @@ def travel_by_ganuk():
       sbo.mapRoom = 600; LOGS = {}; SENT = {}; sbo.mapWalkTo = function(id) WALKED = id end""")
     o.lua("sbo.goTo(10495)")
     text = "\n".join(o.ev("LOGS").values())
-    for want in ["clan gohall to Megaleios Clan Hall", "southeast", "recall to the signpost on the Shadow Road", "run rune to the", "about 2 steps on to room 10495", "the trip is free"]:
+    for want in ["clan gohall to Megaleios Clan Hall", "out of the hall, 5 east, about 60 south", "recall to the signpost on the Shadow Road", "run rune to the", "about 2 steps on to room 10495", "the trip is free"]:
         assert want in text, (want, text)
     o.lua("sbo.goAnswer('y'); runTimers()")
     eq(o.ev("SENT[#SENT]"), "clan gohall", "first the hall")
@@ -1461,6 +1461,8 @@ def travel_by_ganuk():
       return n
     end)()""")
     assert 10 < steps < 150, steps
+    walked = [x for x in o.ev("SENT").values() if x in ("n", "s", "e", "w", "se", "sw", "ne", "nw")]
+    eq((walked[:7], set(walked[7:])), (["n", "e", "e", "e", "e", "e", "s"], {"s"}), "out, 5 east, then south")
     eq(o.ev("SENT[#SENT]"), "cast 'word of recall'", "recall once it's the nearest")
     o.lua("runTimers(); WALKED = nil; sbo.mapRoom = 1900988; sbo.travelOnRoom(1900988); runTimers()")
     eq(o.ev("SENT[#SENT]"), "run rune", "recalled at the signpost: the run")
@@ -1507,6 +1509,25 @@ def travel_by_ganuk():
     assert "recall to the signpost on the Shadow Road" in text and "run rune" in text and "y to go" in text and "no route" not in text, text
     o.lua("sbo.goAnswer('y'); runTimers()")
     eq(o.ev("SENT[#SENT]"), "cast 'word of recall'", "recalled where you stand")
+    # the clan hall isn't on the map (it usually isn't): still clan gohall, out, east, south, recall
+    o.lua("""sbo.trip = nil; sbo.travel = nil; AREA[384334] = nil; sbo.cfg.clanHall = 384334
+      sbo.signposts = function() return { { room = 1900988, dests = { rune = 'south' } }, { room = 1500000, dests = { civmar = 'north' } } } end
+      CHAIN(2, { 917800 }, 'x'); POS[917800] = { map = 'Alyria', x = 560, y = 230 }
+      gmcp.room = { info = { num = '917800', wilds = 'false', exits = {}, coord = { name = 'Alyria', x = 560, y = 230 } } }
+      sbo.mapRoom = 917800; LOGS = {}; SENT = {}""")
+    o.lua("sbo.goTo(10495)")
+    text = "\n".join(o.ev("LOGS").values())
+    for want in ["clan gohall to your clan hall", "out of the hall, 5 east, about 60 south", "recall to the signpost on the Shadow Road", "run rune"]:
+        assert want in text, (want, text)
+    o.lua("sbo.goAnswer('y'); runTimers()")
+    eq(o.ev("SENT[#SENT]"), "clan gohall", "the hall first")
+    o.lua("""gmcp.room = { info = { num = '384334', wilds = 'false', exits = { n = '1558194' }, coord = { name = 'Alyria', x = 560, y = 216 } } }
+      sbo.mapRoom = 384334; sbo.travelOnRoom(384334); runTimers()""")
+    eq(o.ev("SENT[#SENT]"), "n", "landed: out of the hall")
+    # standing in it: the plan starts with the walk out
+    o.lua("sbo.trip = nil; sbo.travel = nil; LOGS = {}; SENT = {}; sbo.goTo(10495)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "out of the hall, 5 east" in text and "clan gohall" not in text and "run rune" in text and "y to go" in text, text
 
 
 @test

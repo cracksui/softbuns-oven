@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.67.3"
+M.version = "1.68.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16316,7 +16316,8 @@ function M.goToNow(id)
   local okA, sameArea = pcall(function() return getRoomArea(here) == getRoomArea(id) end)
   sameArea = okA and sameArea and not M.isWildRoom(id) and not M.isWildRoom(here)
   local onFoot = here and roomExists(here) and roomExists(id) and getPath(here, id) and #(speedWalkDir or {}) or nil
-  if here and roomExists(here) and roomExists(id) and (not sameArea or not onFoot) then
+  local inHall = here and not roomExists(here) and tonumber(M.cfg.clanHall) == here
+  if here and (roomExists(here) or inHall) and roomExists(id) and (not sameArea or not onFoot) then
     local okT, plan = pcall(M.tripPlan, here, id, {})
     if okT and plan and (plan.rides > 0 or plan.runs > 0 or (plan.wild or 0) > M.TRIP_WILD_WARN) then
       local lines, tail = M.tripPlanLines(plan, id)
@@ -16439,10 +16440,55 @@ end
 -- clan gohall: from (almost) anywhere to your clan hall, free - where it lands is learned when you use it
 function M.clanHallLink()
   local r = tonumber(M.cfg.clanHall)
-  if not r or not roomExists(r) then return nil end
-  local a = getRoomArea(r)
-  return { kind = "clan hall", anywhere = true, land = r, areaId = a, area = getRoomAreaName(a), dest = getRoomAreaName(a) or "your clan hall",
-    cost = 0, board = { "clan gohall" }, shopName = "your clan hall" }
+  if not r then return nil end
+  -- (the hall needn't be on the map: a trip goes on from it by recall, worked out from where it is)
+  local a = roomExists(r) and getRoomArea(r) or nil
+  return { kind = "clan hall", anywhere = true, land = r, areaId = a, area = a and getRoomAreaName(a) or nil,
+    dest = (a and getRoomAreaName(a)) or "your clan hall", cost = 0, board = { "clan gohall" }, shopName = "your clan hall" }
+end
+
+-- from the clan hall, the way you go out to recall: out of the hall, 5 rooms east, then north or south
+-- (south usually) until the signpost you want is the nearest (then recall goes there)
+M.CLAN_OUT_EAST = 5
+function M.clanRecallCandidates(target)
+  local hall = tonumber(M.cfg.clanHall)
+  local p = hall and M.worldPos and M.worldPos(hall)
+  if not p then return {} end
+  local pts = M.signpostPoints()
+  local town = M.runForArea and M.runForArea(target)
+  local tp = M.worldPos and M.worldPos(target)
+  local sps = {}
+  for _, sp in ipairs(M.signposts()) do sps[sp.room] = sp end
+  local cands = {}
+  local x0 = p.x + M.CLAN_OUT_EAST
+  for _, S in ipairs(pts) do
+    if S.map == p.map then
+      local dy = S.y >= p.y and 1 or -1
+      for m = 0, M.RECALL_MAX_WALK do
+        local near = M.recallNearest(pts, p.map, x0, p.y + m * dy)
+        if near and near.room == S.room then
+          local k = 1 + M.CLAN_OUT_EAST + m
+          local sp = sps[S.room]
+          local est
+          if town and sp and sp.dests[town] then est = k + M.RUN_COST
+          elseif tp and tp.map == S.map then est = k + math.max(math.abs(tp.x - S.x), math.abs(tp.y - S.y))
+          else est = k + 1000 end
+          cands[#cands + 1] = { S = S, k = k, m = m, dir = dy > 0 and "s" or "n", est = est }
+          break
+        end
+      end
+    end
+  end
+  table.sort(cands, function(a, b) return a.est < b.est end)
+  local out = {}
+  for i, c in ipairs(cands) do
+    if i > M.RECALL_TRY then break end
+    out[#out + 1] = { k = c.k, link = { kind = "recall", recall = c.S, board = { M.RECALL_CMD }, cost = 0, noBuy = true, walkOut = c.k,
+      clanRoute = { east = M.CLAN_OUT_EAST, dir = c.dir, n = c.m }, dir = c.dir,
+      dest = (M.signLabel and M.signLabel(c.S.room)) or ("#" .. c.S.room), land = c.S.room, areaId = getRoomArea(c.S.room),
+      shopName = "", key = "recall" } }
+  end
+  return out
 end
 function M.clanHallNoteSend(cmd)
   local c = trim(cmd or ""):lower()
@@ -16627,8 +16673,8 @@ function M.tripEdges(here, target, used)
       add({ from = here, to = w.land, cmd = TRIP .. w.key, link = w, weight = w.walkOut + 2 })
     end
   end
-  -- (standing in the clan hall: walk out and recall)
-  if tonumber(M.cfg.clanHall) == here then sources[#sources + 1] = here end
+  -- (standing in the clan hall: out, east, north or south, and recall)
+  local inHall = tonumber(M.cfg.clanHall) == here
   -- no other way (an island, a ship, a place the map can't walk out of): recall where you stand - to the
   -- signpost nearest you now (in the wilds, a walk toward a better one first, as above)
   local hereOnly = false
@@ -16637,11 +16683,21 @@ function M.tripEdges(here, target, used)
     for _, s0 in ipairs(sources) do if s0 == here then dup = true end end
     if not dup then sources[#sources + 1] = here; hereOnly = not M.isWildRoom(here) end
   end
+  -- clan gohall, then the walk out and recall: one step to the signpost it lands at
   local ch = not used.clan and M.clanHallLink()
-  if ch and getRoomArea(here) ~= ch.areaId then
-    ch.key = "clan"
-    add({ from = here, to = ch.land, cmd = TRIP .. "clan", link = ch, weight = M.TRAVEL_COST + M.TRIP_FREE_EXTRA })
-    sources[#sources + 1] = ch.land
+  if (ch and not inHall and (not ch.areaId or getRoomArea(here) ~= ch.areaId)) or inHall then
+    for _, c in ipairs(M.clanRecallCandidates(target)) do
+      if roomExists(c.link.land) and c.link.land ~= here then
+        local link, w = c.link, c.k + M.TRAVEL_COST + M.TRIP_FREE_EXTRA
+        if not inHall then
+          link = {}
+          for k, v in pairs(ch) do link[k] = v end
+          link.key, link["then"] = "clan", c.link
+          w = w + M.TRAVEL_COST + M.TRIP_FREE_EXTRA
+        end
+        add({ from = here, to = c.link.land, cmd = TRIP .. (inHall and "hallrecall:" or "clan:") .. c.link.land, link = link, weight = w })
+      end
+    end
   end
   if not used.recall then
     for _, src in ipairs(sources) do
@@ -16658,6 +16714,29 @@ end
 
 -- the best trip from here to target: { segs = { walk | run | ride … }, gold, rides, walked } or nil
 function M.tripPlan(here, target, used)
+  -- in the clan hall, which isn't on the map: out and recall, then the best trip on from the signpost
+  if here and not roomExists(here) and tonumber(M.cfg.clanHall) == here and roomExists(target) then
+    local best, bestCost
+    for _, c in ipairs(M.clanRecallCandidates(target)) do
+      if roomExists(c.link.land) then
+        local u = {}
+        for k, v in pairs(used or {}) do u[k] = v end
+        u.recall, u.recallHere, u.clan = true, true, true
+        local sub = c.link.land == target and { segs = {}, gold = 0, rides = 0, runs = 0, walked = 0, wild = 0 }
+          or M.tripPlanOnce(c.link.land, target, u)
+        if sub then
+          local cost = c.k + sub.walked + (sub.rides + sub.runs) * M.TRAVEL_COST + (sub.wild or 0)
+          if not bestCost or cost < bestCost then
+            bestCost = cost
+            local segs = { { kind = "ride", link = c.link, from = here, to = c.link.land } }
+            for _, sg in ipairs(sub.segs) do segs[#segs + 1] = sg end
+            best = { segs = segs, gold = sub.gold, rides = sub.rides + 1, runs = sub.runs, walked = sub.walked, wild = sub.wild }
+          end
+        end
+      end
+    end
+    return best
+  end
   local plan = M.tripPlanOnce(here, target, used)
   if plan or (used or {}).recall or (used or {}).recallHere then return plan end
   local u = {}
@@ -16763,10 +16842,14 @@ function M.tripPlanLines(plan, target)
       local L = sg.link
       if L.kind == "wildwalk" then
         lines[#lines + 1] = string.format("about %d room%s %s to the %s", L.walkOut, pl(L.walkOut), COMPASS_WORD[L.dir] or "on", L.dest)
-      elseif L.kind == "recall" then
-        if (L.walkOut or 0) > 0 then lines[#lines + 1] = string.format("about %d room%s %s (out of the building first, if inside)",
-          L.walkOut, pl(L.walkOut), COMPASS_WORD[L.dir] or "on") end
-        lines[#lines + 1] = "recall to the " .. L.dest .. " (the nearest signpost)"
+      elseif L.kind == "recall" or L["then"] then
+        local R = L["then"] or L
+        if L["then"] then lines[#lines + 1] = L.board[1] .. " to " .. L.dest end
+        if R.clanRoute then
+          lines[#lines + 1] = string.format("out of the hall, %d east, about %d %s", R.clanRoute.east, R.clanRoute.n, COMPASS_WORD[R.clanRoute.dir])
+        elseif (R.walkOut or 0) > 0 then lines[#lines + 1] = string.format("about %d room%s %s (out of the building first, if inside)",
+          R.walkOut, pl(R.walkOut), COMPASS_WORD[R.dir] or "on") end
+        lines[#lines + 1] = "recall to the " .. R.dest .. " (the nearest signpost)"
       elseif L.anywhere then lines[#lines + 1] = L.board[1] .. " to " .. L.dest
       else lines[#lines + 1] = string.format("%s to %s - %s gold", L.kind, L.dest, commas(L.cost)) end
     end
@@ -16817,7 +16900,9 @@ function M.tripRide()
     if M.running then M.running.trip = T end
     return
   end
-  M.travelStart({ legs = { { link = sg.link, walk = 0 } } }, T.target, 1)
+  local legs = { { link = sg.link, walk = 0 } }
+  if sg.link["then"] then legs[2] = { link = sg.link["then"], walk = 0 } end   -- clan gohall, then out and recall
+  M.travelStart({ legs = legs }, T.target, 1)
 end
 -- arrived where the next ride starts (on foot or by a run)
 function M.tripOnRoom(id)
@@ -16930,12 +17015,17 @@ function M.travelCastStep()
   local map = info.coord and info.coord.name
   local S = L.recall
   local pts = M.signpostPoints()
+  -- from the clan hall: east first, then straight north or south
+  if L.clanRoute then
+    T.east = T.east or 0
+    if T.east < L.clanRoute.east then T.east = T.east + 1; return go("e") end
+  end
   local near = x and M.recallNearest(pts, map, x, y)
   if not x or (near and near.room == S.room) then
     T.stage, T.boardStep, T.castRoom = "boarding", 1, M.mapRoom
     return M.travelBoard()
   end
-  local d = M.compassTo(x, y, S.x, S.y)
+  local d = L.clanRoute and L.clanRoute.dir or M.compassTo(x, y, S.x, S.y)
   if not d then return stop("lost the way") end
   go(d)
 end
