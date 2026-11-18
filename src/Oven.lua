@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.63.7"
+M.version = "1.63.8"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13508,6 +13508,7 @@ M.WORLD_SYM_RGB = {
   ["~"] = { 45, 90, 170 }, ["."] = { 128, 150, 82 }, ['"'] = { 96, 150, 64 }, ["="] = { 116, 142, 76 },
   ["!"] = { 132, 146, 86 }, ["*"] = { 52, 112, 52 }, ["&"] = { 34, 86, 38 }, ["^"] = { 128, 112, 96 },
   ["#"] = { 172, 150, 112 }, [":"] = { 96, 112, 70 }, ["%"] = { 92, 108, 64 }, ["'"] = { 150, 140, 96 },
+  ["I"] = { 120, 114, 108 }, ["O"] = { 96, 84, 70 },   -- (walls and their gates: stone, not the game's magenta)
 }
 -- (by terrain name, for a colour with no symbol yet: the first word that matches)
 M.WORLD_TERRAIN_RGB = {
@@ -13525,12 +13526,36 @@ M.WORLD_OPEN_SEA_RGB = { 14, 30, 82 }   -- the open sea round the map (its edge 
 
 local function pal() local w = W(); w.pal = w.pal or {}; return w.pal end
 -- a bitmap pixel's 3 bytes (blue, green, red) → its colour as hex ("" for none)
-local function hexOf(t) if #t < 3 then return "" end local b, g, r = t:byte(1, 3) return string.format("%02x%02x%02x", r, g, b) end
+local function hexOf(t)
+  if #t == 4 and t:sub(1, 1) == "~" then return "~" .. hexOf(t:sub(2)) end   -- (round its patch, not beside it)
+  if #t < 3 then return "" end
+  local b, g, r = t:byte(1, 3)
+  return string.format("%02x%02x%02x", r, g, b)
+end
 local function top(votes)
   local best, bn
   for k, n in pairs(votes or {}) do if not bn or n > bn then best, bn = k, n end end
   return best
 end
+-- a colour's usual symbol: the one most regions of the map show for it (a jungle walked through every day
+-- doesn't outweigh the deep sea of the same colour, seen in passing over hundreds of regions); else the most seen
+local usualCache = {}
+local function usual(hex)
+  local v = usualCache[hex]
+  if v ~= nil then return v or nil end
+  local votes, any = {}, false
+  for _, F in pairs(W().reg or {}) do
+    for _, C in pairs(F[hex] or {}) do
+      local t = top(C)
+      if t then votes[t] = (votes[t] or 0) + 1; any = true end
+    end
+  end
+  local P = (W().pal or {})[hex]
+  v = any and top(votes) or (P and top(P.sym)) or false
+  usualCache[hex] = v
+  return v or nil
+end
+M.worldUsualSym = usual
 
 -- the game's colour for a ~ (from its mini-map): blue is deep water, cyan the lighter sea; nil if neither
 local function waterTone(rgb)
@@ -13557,17 +13582,21 @@ function M.worldShoreShare(hex)
     local b, g, r = t:byte(1, 3)
     local h = string.format("%02x%02x%02x", r, g, b)
     local e = P[h]
-    local sym = e and top(e.sym)
+    local sym = e and usual(h)
     if sym or (M.worldEdges or {})[h] then
       all = all + n
-      if sym and sym ~= "~" and not (M.worldEdges or {})[h] then land = land + n end
+      -- (water some of the time - a sea colour also used for a jungle - is water here)
+      local tot = 0
+      for _, k in pairs(e and e.sym or {}) do tot = tot + k end
+      local wet = sym == "~" or (e and (e.sym["~"] or 0) >= 0.25 * tot)
+      if not wet and not (M.worldEdges or {})[h] then land = land + n end
     end
   end
   return all > 0 and land / all or 0
 end
-function M.worldNaturalRGB(hex)
+function M.worldNaturalRGB(hex, symHere)
   local P = pal()[hex]
-  local sym = P and top(P.sym)
+  local sym = symHere or (P and usual(hex))
   local t = (W().terrain or {})[hex]
   local named
   if t then for _, e in ipairs(M.WORLD_TERRAIN_RGB) do if t:find(e[1], 1, true) then named = e[2]; break end end end
@@ -13577,10 +13606,20 @@ function M.worldNaturalRGB(hex)
   if edge == "under" and not sym then return { 22, 22, 26 } end
   if sym == "~" then
     if t then for _, n in ipairs(WATER_NAMES) do if t:find(n, 1, true) then return named end end end
-    local tone = waterTone(P and top(P.rgb))
+    -- (the game's colour for it as water: seen on its ~, else the commonest of its colours that is a water one -
+    -- the same colour can be a jungle, drawn green)
+    local tone = waterTone(P and P.sc and top(P.sc["~"]))
+    if not tone and P and P.rgb then
+      local best, bn
+      for k, n in pairs(P.rgb) do if waterTone(k) and (not bn or n > bn) then best, bn = k, n end end
+      tone = waterTone(best)
+    end
     if tone and tone[1] == 45 and M.worldShoreShare(hex) >= 0.25 then return { 72, 122, 190 } end   -- (shallow)
     if tone then return tone end
-    if named then return named end
+    if named then
+      for _, n in ipairs({ "water", "ocean", "sea", "river", "lake", "shallow", "sailable" }) do if t:find(n, 1, true) then return named end end
+    end
+    return M.WORLD_SYM_RGB["~"]   -- (named for what crosses it - a road, a bridge - not the water)
   end
   if sym and M.WORLD_SYM_RGB[sym] then return M.WORLD_SYM_RGB[sym] end
   if named then return named end
@@ -13691,7 +13730,7 @@ local function learnColours()
   end
   for hex, L in pairs(look) do
     local e = P[hex]
-    if not e or top(e.sym) == L.sym then lv[L.sym] = lv[L.sym] or {}; lv[L.sym][L.col] = (lv[L.sym][L.col] or 0) + 1 end
+    if not e or usual(hex) == L.sym then lv[L.sym] = lv[L.sym] or {}; lv[L.sym][L.col] = (lv[L.sym][L.col] or 0) + 1 end
   end
   symColour, codeColour = {}, {}
   for c, v in pairs(cv) do codeColour[c] = top(v) end
@@ -13700,7 +13739,7 @@ local function learnColours()
 end
 function M.worldAsciiRGB(hex, symHere)
   local P = pal()[hex]
-  local sym = symHere or (P and top(P.sym))
+  local sym = symHere or (P and usual(hex))
   local edge = (M.worldEdges or {})[hex]
   if edge == "sea" and (not sym or sym == "~") then return M.WORLD_OPEN_SEA_RGB end
   if edge == "under" and not sym then return { 22, 22, 26 } end
@@ -13752,11 +13791,11 @@ function M.worldAmbig(file)
   return A
 end
 -- the symbol a colour shows here: the nearest region where it was seen (up to ~100 pixels away), else its usual one
-function M.worldRegSym(file, hex, x, y)
+function M.worldRegSym(file, hex, x, y, from, to)
   local cells = ((W().reg or {})[file] or {})[hex]
   if not cells then return nil end
   local cx, cy = math.floor(x / M.WORLD_REG_CELL), math.floor(y / M.WORLD_REG_CELL)
-  for rad = 0, 6 do
+  for rad = from or 0, to or 6 do
     local votes, any = {}, false
     for dy = -rad, rad do
       for dx = -rad, rad do
@@ -13770,23 +13809,61 @@ function M.worldRegSym(file, hex, x, y)
   end
   return nil
 end
+-- the share of a colour's sightings that were this symbol
+function M.worldSymShare(hex, sym)
+  local P = pal()[hex]
+  if not (P and P.sym and P.sym[sym]) then return 0 end
+  local all = 0
+  for _, n in pairs(P.sym) do all = all + n end
+  return P.sym[sym] / all
+end
+-- what a colour is where nobody's looked: going by what it borders on the map - the deep sea's colour lies by
+-- the sea's other bands, so it's water, whatever jungle of the same colour you walk through every day
+local areaCache = {}
+function M.worldAreaSym(hex)
+  local v = areaCache[hex]
+  if v ~= nil then return v or nil end
+  local bytes = string.char(tonumber(hex:sub(5, 6), 16), tonumber(hex:sub(3, 4), 16), tonumber(hex:sub(1, 2), 16))
+  local votes, any = {}, false
+  for t, n in pairs(M.worldNeighbours()[bytes] or {}) do
+    local h = hexOf(t)
+    local s = (M.worldEdges or {})[h] == "sea" and "~" or usual(h)
+    if s and M.worldSymShare(hex, s) >= 0.1 then votes[s] = (votes[s] or 0) + n; any = true end
+  end
+  v = any and top(votes) or usual(hex) or false
+  areaCache[hex] = v
+  return v or nil
+end
 -- a pixel of such a colour: its colour where it is (worked out once a region)
 function M.worldRegColour(file, bytes, x, y)
   local img = M.worldImages[file]
   local around = img and M.worldAround(img, x, y) or ""
   local hex = ambig[file] and ambig[file][bytes]
-  local C = hex and (((W().ctx or {})[file] or {})[hex] or {})[hexOf(around)]
-  local key = C and (bytes .. "|" .. around) or (bytes .. math.floor(x / M.WORLD_REG_CELL) .. "," .. math.floor(y / M.WORLD_REG_CELL))
+  local C = hex and #around >= 3 and (((W().ctx or {})[file] or {})[hex] or {})[hexOf(around)] or nil
+  local key = bytes .. math.floor(x / M.WORLD_REG_CELL) .. "," .. math.floor(y / M.WORLD_REG_CELL) .. "|" .. around
   local v = regCache[key]
   if v then return v end
-  local sym = C and top(C) or (hex and M.worldRegSym(file, hex, x, y))
+  -- 1. what the mini-map showed for it right here (its region or the next), when it's a real share of what the
+  -- colour is. Inside a patch of its own colour, that's all: else what the colour borders on the map (the deep
+  -- sea's colour lies by the sea, though a jungle of the same colour is walked through every day). On a patch's
+  -- edge: 2. what it showed beside the same neighbour as here (seen enough); 3. further off; 4. what it borders
+  local sym = hex and M.worldRegSym(file, hex, x, y, 0, 1)
+  if sym and M.worldSymShare(hex, sym) < 0.05 then sym = nil end
+  local edgeOf = #around == 3
+  if not sym and hex and edgeOf and C then
+    local n = 0
+    for _, k in pairs(C) do n = n + k end
+    if n >= 10 then sym = top(C) end   -- (a few stray sightings aren't enough)
+  end
+  if not sym and hex and edgeOf then sym = M.worldRegSym(file, hex, x, y, 3, 6) end
+  if not sym and hex then sym = M.worldAreaSym(hex) end
   if not sym then v = M.WORLD_NATURAL[bytes]
   else
     local c
     if M.worldColourMode() == "natural" then
       -- (its own usual symbol here, or water: the colour's own natural look - water bands, shallows - not the bare symbol's)
       local P = pal()[hex]
-      if sym == "~" or sym == (P and top(P.sym)) then c = M.worldNaturalRGB(hex)
+      if sym == "~" or sym == (P and usual(hex)) then c = M.worldNaturalRGB(hex, sym)
       else c = M.WORLD_SYM_RGB[sym] or M.worldNaturalRGB(hex) end
     else c = M.worldAsciiRGB(hex, sym) end
     v = string.char(c[3], c[2], c[1])
@@ -13807,6 +13884,8 @@ end
 -- the bitmap's 3 bytes (blue, green, red) → the chosen colour's, worked out once a colour
 function M.worldNaturalReset()
   symColour, codeColour = nil, nil
+  usualCache = {}
+  areaCache = {}
   ambig, regCache = {}, {}
   M.WORLD_NATURAL = setmetatable({}, { __index = function(t, k)
     local v = k
@@ -13844,6 +13923,35 @@ function M.worldAround(img, x, y)
         if n[t] > bn then best, bn = t, n[t] end
       end
     end
+  end
+  if best == "" and me then
+    -- inside a patch of its own colour: the commonest other colour round its patch (the block about it) -
+    -- deep sea lies by the sea's other bands, a jungle of the same colour by land
+    local cell = M.WORLD_REG_CELL
+    local cx, cy = math.floor(x / cell), math.floor(y / cell)
+    local key = me .. cx .. "," .. cy
+    img.blockAround = img.blockAround or {}
+    local v = img.blockAround[key]
+    if v == nil then
+      -- (the block about it; all its own colour - the open sea - a wider one, and wider again)
+      local b2 = ""
+      for _, R in ipairs({ { 1, 2 }, { 3, 4 }, { 7, 8 } }) do
+        local n2, bn2 = {}, 0
+        for py = (cy - R[1]) * cell, (cy + R[1] + 1) * cell - 1, R[2] do
+          for px = (cx - R[1]) * cell, (cx + R[1] + 1) * cell - 1, R[2] do
+            local t = at(px, py)
+            if t and t ~= me then
+              n2[t] = (n2[t] or 0) + 1
+              if n2[t] > bn2 then b2, bn2 = t, n2[t] end
+            end
+          end
+        end
+        if b2 ~= "" then break end
+      end
+      v = b2 ~= "" and ("~" .. b2) or ""
+      img.blockAround[key] = v
+    end
+    return v
   end
   return best
 end
@@ -13947,7 +14055,9 @@ function M.worldPaletteImport()
   local w = W()
   -- (from 1.63.2 the regions too: read again for them alone)
   local regOnly = w.palImported
-  if w.palImported and w.regImported then return 0 end
+  -- (1.63.8: a pixel inside a patch of its own colour is told by what lies round the patch - read again)
+  if w.palImported and w.regImported and w.ctxVersion == 2 then return 0 end
+  if regOnly then w.reg, w.ctx = nil, nil end
   local n = 0
   for _, f in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
     local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
@@ -13982,6 +14092,7 @@ function M.worldPaletteImport()
   end
   w.palImported = true
   w.regImported = true
+  w.ctxVersion = 2
   M.worldNaturalReset()
   M.saveSettings()
   return n

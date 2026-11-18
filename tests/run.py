@@ -1093,6 +1093,17 @@ def world_natural_colours():
     r = o.ev("(function() local s = sbo.worldCut(sbo.worldImage('Alyria'), 3, 2, 1, 7, 1)[1] local b, g, r = s:byte(10, 12) return r .. ',' .. g .. ',' .. b end)()")
     eq(r, "255,0,255", "drawn as the wall there (2, 2)")
     eq(o.ev("table.concat(sbo.worldAsciiRGB('00a000', '^'), ',')"), "128,128,128", "and as the mountains' ^ elsewhere")
+    # a colour that is the deep sea and a jungle walked through every day (seen as % far more often): unseen, it's
+    # what it borders - the sea
+    o.lua("""local pal = sbo.cfg.world.pal
+      pal['cc0001'] = { sym = { ['~'] = 100, ['%'] = 900 } }
+      pal['cc0002'] = { sym = { ['~'] = 50 } }; pal['cc0003'] = { sym = { ['.'] = 50 } }
+      sbo.cfg.world.reg = nil; sbo.cfg.world.ctx = nil
+      local function b(h) return string.char(tonumber(h:sub(5, 6), 16), tonumber(h:sub(3, 4), 16), tonumber(h:sub(1, 2), 16)) end
+      sbo.worldNb = { [b('cc0001')] = { [b('cc0002')] = 400, [b('cc0003')] = 30 } }
+      sbo.worldNaturalReset()""")
+    eq((o.ev("sbo.worldUsualSym('cc0001')"), o.ev("sbo.worldAreaSym('cc0001')")), ("%", "~"), "seen most as jungle, but it lies by the sea")
+    o.lua("sbo.worldNb = nil; sbo.worldNaturalReset()")
     eq((o.ev("sbo.worldMapRowLike('The Light Forest')"), o.ev("sbo.worldMapRowLike('   ~~..!!@==')")), (False, True), "rows")
 
 
