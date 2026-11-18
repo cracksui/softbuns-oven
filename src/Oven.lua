@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.68.4"
+M.version = "1.68.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2513,6 +2513,16 @@ function M.noteTrain(raw)
       if old and st and st.cur and r.cur > old.cur and st.cur < r.max then st.cur = math.min(r.max, st.cur + (r.cur - old.cur)) end
       if not st then c.stats[k] = { cur = r.cur, max = r.max } end
       c.trained[k] = { cur = r.cur, max = r.max }
+    end
+  end
+  -- an attribute the table leaves out is trained all the way (the game lists only what you can still train):
+  -- its base is its maximum, and there's nothing to pay
+  local listed = {}
+  for _, r in ipairs(tr.rows) do listed[r.name:lower()] = true end
+  for k, st in pairs(c.stats) do
+    if not listed[k] and tonumber(st.max) then
+      c.trained[k] = { cur = tonumber(st.max), max = tonumber(st.max) }
+      c.trainCost[k] = nil
     end
   end
   if tr.prac then c.practices = tr.prac end

@@ -1954,6 +1954,12 @@ def training_advice():
     assert "13/21" in page(), page()
     eq(o.ev("sbo.cfg.char.trained.knowledge.cur"), 9, "trained 9 (gear brings it to 13)")
     eq(o.ev("sbo.cfg.char.trainCost.knowledge"), 60, "and what it costs")
+    # trained all the way: the table leaves it out - its base is its maximum, not the last number it showed
+    o.lua("sbo.cfg.char.stats.strength = { cur = 25, max = 22 }; sbo.cfg.char.trained.strength = { cur = 21, max = 22 }; sbo.cfg.char.trainCost.strength = 80")
+    o.ev("sbo.noteTrain")(o.L.table_from(TRAIN))
+    eq((o.ev("sbo.cfg.char.trained.strength.cur"), o.ev("sbo.cfg.char.trainCost.strength")), (22, None), "strength: trained to 22")
+    st = next(l for l in f(o.ev("sbo.buildLines(100)")).split("\n") if l.strip().startswith("strength"))
+    assert "25/22" in st and " 22 " in st and "with gear" in st, st
 
 
 @test
