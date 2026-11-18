@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.66.2"
+M.version = "1.67.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2722,7 +2722,7 @@ function M.parseQuests(raw, decho)
         elseif detail.inRewards and (t:match("^%*?Up to") or t:match("^[%d,]+ %a")) then
           detail.rewardText = (detail.rewardText and (detail.rewardText .. " ") or "") .. t:gsub("^%*", "")
           if t:match("%.$") then detail.inRewards = false end
-        elseif t:match("^You have [%d,]+ Alyrian minutes? remaining") then
+        elseif t:match("^You have [%d,]+ Alyrian minutes? remaining") and not t:find("request another quest", 1, true) then
           -- an Alyrian minute is 15 real seconds (quest 52: 300 of them = GMCP's deadline 75 minutes later)
           local n = tonumber((t:match("^You have ([%d,]+)"):gsub(",", "")))
           if n then detail.deadline = os.time() + n * M.ALYRIAN_MINUTE end
@@ -3118,6 +3118,58 @@ local HUD_WRAP, HUD_COLS = 60, 68
 -- Quest time limits: Q.deadline (a Unix time) from GMCP's quest_info.timer, or from
 -- "You have 289 Alyrian minute remaining" (an Alyrian minute is 15 real seconds)
 M.ALYRIAN_MINUTE = 15
+
+-- When you can ask for another quest: "You have 19 Alyrian minutes remaining until you can request another
+-- quest." / "You have less than an Alyrian minute remaining until…" -> M.cfg.questNextAt (Unix time, kept
+-- over a restart). The top bar counts it down, then says "ready" until you take a quest (or for 10 minutes).
+function M.questNextLine(t)
+  local n = t:match("^You have ([%d,]+) Alyrian minutes? remaining until you can request another quest")
+  n = n and tonumber((n:gsub(",", "")))
+  if not n and t:match("^You have less than an Alyrian minute remaining until you can request another quest") then n = 1 end
+  if not n then return false end
+  M.cfg.questNextAt = os.time() + n * M.ALYRIAN_MINUTE
+  M.cfg.questNextSaid = nil
+  M.saveSettings()
+  M.questNextTick()
+  return true
+end
+M.QUEST_READY_SHOWN = 600
+-- what the bar shows: "4:45" (to go) or "ready"; nil when there's nothing to show
+function M.questNextText()
+  local at = tonumber(M.cfg.questNextAt)
+  if not at then return nil end
+  local left = at - os.time()
+  if left > 0 then return string.format("%d:%02d", math.floor(left / 60), left % 60), left end
+  if -left <= M.QUEST_READY_SHOWN then return "ready", left end
+  return nil
+end
+-- one timer while there's a countdown: the bar each second, a line when it's up, gone 10 minutes after
+function M.questNextTick()
+  if M.questNextTimer then killTimer(M.questNextTimer); M.questNextTimer = nil end
+  local at = tonumber(M.cfg.questNextAt)
+  if not at then return end
+  local left = at - os.time()
+  if left <= 0 and not M.cfg.questNextSaid then
+    M.cfg.questNextSaid = true
+    M.saveSettings()
+    M.say("you can request another quest now")
+  end
+  if -left > M.QUEST_READY_SHOWN then
+    M.cfg.questNextAt, M.cfg.questNextSaid = nil, nil
+    M.saveSettings()
+  else
+    M.questNextTimer = tempTimer(left > 0 and 1 or 30, function() M.questNextTimer = nil; M.questNextTick() end)
+  end
+  pcall(M.drawBar)
+end
+-- a quest taken: nothing to wait for
+function M.questNextDone()
+  if not M.cfg.questNextAt then return end
+  M.cfg.questNextAt, M.cfg.questNextSaid = nil, nil
+  M.saveSettings()
+  if M.questNextTimer then killTimer(M.questNextTimer); M.questNextTimer = nil end
+  pcall(M.drawBar)
+end
 function M.timeLeftText(sec)
   if sec <= 0 then return "time's up" end
   if sec < 60 then return "<1m left" end
@@ -9529,6 +9581,14 @@ function M.drawBar()
     where[#where + 1] = { M.timeLeftColor(sLeft), M.shortDur(sLeft) }
     where[#where + 1] = { C.dim, " · " }
   end
+  -- when you can request another quest
+  local okN, nText = pcall(M.questNextText)
+  if okN and nText then
+    local where = top and topSegs or segs
+    where[#where + 1] = { C.dim, "next quest " }
+    where[#where + 1] = { nText == "ready" and C.plus or C.title, nText }
+    where[#where + 1] = { C.dim, " · " }
+  end
   if #segs > 0 then segs[#segs] = { C.dim, "   " } end
   -- level and exp to level: prompt > MSDP > last `score`
   local pools, lvl, tnl = {}, nil, nil
@@ -11243,6 +11303,14 @@ M.addBlockReader("quest_undertaken", "*", function(b)
       end
       return
     end
+  end
+end)
+
+-- the wait for another quest, and the end of it (a quest taken, whatever command asked for it)
+M.addBlockReader("quest_next", "*", function(b)
+  for _, l in ipairs(b.lines) do
+    if l:find("Alyrian minute", 1, true) then pcall(M.questNextLine, trim(l))
+    elseif l:find("You undertake the quest", 1, true) then pcall(M.questNextDone) end
   end
 end)
 
@@ -19160,4 +19228,4 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick) end)

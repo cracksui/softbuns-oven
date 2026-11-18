@@ -4133,6 +4133,33 @@ def score_tail_tidy():
 
 
 @test
+def next_quest_countdown():
+    o = Oven()
+    o.lua("""sbo.cfg.bar = true; sbo.cfg.barSession = true; sbo.cfg.maxes = { hp = 300 }; sbo.lastPromptText = "<291hp>"
+      sbo.showBar(true); SAYS = {}; sbo.say = function(m) SAYS[#SAYS+1] = m end
+      T0 = os.time(); os.time = function() return T0 end""")
+    top = lambda: o.ev("(function() local t = {} for _, x in ipairs(sbo.topBarSegs or {}) do t[#t+1] = x[2] end return table.concat(t) end)()")
+    o.block(["You have 19 Alyrian minutes remaining until you can request another quest.", "<291hp>"], ["quest request rewarding"])
+    eq(o.ev("sbo.cfg.questNextAt - T0"), 19 * 15, "an Alyrian minute is 15 real seconds")
+    assert "next quest 4:45" in top(), top()
+    o.lua("T0 = T0 + 46; sbo.questNextTick()")
+    assert "next quest 3:59" in top(), "counts itself down: " + top()
+    o.block(["You have less than an Alyrian minute remaining until you can request another quest.", "<291hp>"], ["quest req"])
+    eq(o.ev("sbo.cfg.questNextAt - T0"), 15, "less than a minute: 15 seconds at most")
+    o.lua("T0 = T0 + 20; sbo.questNextTick()")
+    assert "next quest ready" in top(), top()
+    eq(list(o.ev("SAYS").values()), ["you can request another quest now"], "said once")
+    o.lua("sbo.questNextTick()")
+    eq(len(o.ev("SAYS")), 1, "only once")
+    o.block(["You undertake the quest 'Rewarding Work', #3600.", "<291hp>"], ["quest request rewarding"])
+    eq(o.ev("sbo.cfg.questNextAt"), None, "a quest taken: gone")
+    assert "next quest" not in top(), top()
+    # 'ready' isn't kept forever
+    o.lua("sbo.cfg.questNextAt = T0 + 30; T0 = T0 + 30 + 601; sbo.questNextTick()")
+    eq(o.ev("sbo.cfg.questNextAt"), None, "ready shown ten minutes, then gone")
+
+
+@test
 def top_bar():
     o = Oven()
     o.lua("""sbo.cfg.bar = true; sbo.cfg.barSession = true; sbo.cfg.maxes = { hp = 300, sp = 700, st = 460 }
