@@ -1053,6 +1053,20 @@ def world_natural_colours():
     # GMCP's look of the room you're in is kept by the bitmap colour under you
     o.lua("sbo.worldNote({ num = '1027', wilds = 'true', terrain = 'plain', coord = { name = 'Alyria', x = 3, y = 2, sym = '*', color = '|y' } })")
     eq(o.ev("(function() local n = 0 for k, v in pairs(sbo.cfg.world.look) do if v.col == '|y' then n = n + 1 end end return n end)()"), 1, "learned from GMCP")
+    # one colour, two things: a wall line (magenta I) in one place, specks in the mountains (^) in another - each
+    # drawn as what the mini-map showed for it nearby
+    o.lua("""sbo.cfg.world.pal['00a000'] = { sym = { I = 5, ['^'] = 5 }, sc = { I = { ['255,0,255'] = 5 } } }
+      sbo.cfg.world.look = {}
+      sbo.cfg.world.reg = nil
+      for i = 1, 5 do sbo.worldRegNote('alyria.bmp', '00a000', 1, 1, 'I') end
+      for i = 1, 5 do sbo.worldRegNote('alyria.bmp', '00a000', 200, 200, '^') end
+      sbo.cfg.world.pal['00a000'].sym.I = 6; sbo.cfg.world.pal['00a000'].sc['^'] = { ['128,128,128'] = 4 }
+      sbo.worldNaturalReset()""")
+    eq(o.ev("sbo.worldRegSym('alyria.bmp', '00a000', 3, 2)"), "I", "near the wall")
+    eq(o.ev("sbo.worldRegSym('alyria.bmp', '00a000', 210, 190)"), "^", "in the mountains")
+    r = o.ev("(function() local s = sbo.worldCut(sbo.worldImage('Alyria'), 3, 2, 1, 7, 1)[1] local b, g, r = s:byte(10, 12) return r .. ',' .. g .. ',' .. b end)()")
+    eq(r, "255,0,255", "drawn as the wall there (2, 2)")
+    eq(o.ev("table.concat(sbo.worldAsciiRGB('00a000', '^'), ',')"), "128,128,128", "and as the mountains' ^ elsewhere")
     eq((o.ev("sbo.worldMapRowLike('The Light Forest')"), o.ev("sbo.worldMapRowLike('   ~~..!!@==')")), (False, True), "rows")
 
 

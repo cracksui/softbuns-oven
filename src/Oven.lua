@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.63.1"
+M.version = "1.63.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13466,6 +13466,8 @@ M.WORLD_UNKNOWN_RGB = { 62, 62, 66 }
 M.WORLD_OPEN_SEA_RGB = { 14, 30, 82 }   -- the open sea round the map (its edge colour): darker than any deep water
 
 local function pal() local w = W(); w.pal = w.pal or {}; return w.pal end
+-- a bitmap pixel's 3 bytes (blue, green, red) → its colour as hex ("" for none)
+local function hexOf(t) if #t < 3 then return "" end local b, g, r = t:byte(1, 3) return string.format("%02x%02x%02x", r, g, b) end
 local function top(votes)
   local best, bn
   for k, n in pairs(votes or {}) do if not bn or n > bn then best, bn = k, n end end
@@ -13618,9 +13620,9 @@ local function learnColours()
   for s, v in pairs(lv) do symColour[s] = codeRGB(top(v)) end
   for s, v in pairs(sv) do symColour[s] = rgbOf(top(v)) end
 end
-function M.worldAsciiRGB(hex)
+function M.worldAsciiRGB(hex, symHere)
   local P = pal()[hex]
-  local sym = P and top(P.sym)
+  local sym = symHere or (P and top(P.sym))
   local edge = (M.worldEdges or {})[hex]
   if edge == "sea" and (not sym or sym == "~") then return M.WORLD_OPEN_SEA_RGB end
   if edge == "under" and not sym then return { 22, 22, 26 } end
@@ -13639,12 +13641,91 @@ function M.worldAsciiRGB(hex)
     for k, n in pairs(P.sym) do if k ~= sym then others = others + n end end
     if P.rgb[best] > others then return rgbOf(best) end
   end
+  if symHere then return symColour[sym] or M.WORLD_SYM_RGB[sym] or M.worldNaturalRGB(hex) end
   return sym and symColour[sym] or M.worldNaturalRGB(hex)
+end
+
+-- the colours that are more than one thing (their regions' symbols differ), by the bitmap's bytes: per map file
+local ambig, regCache = {}, {}
+function M.worldAmbig(file)
+  local A = ambig[file]
+  if A then return A end
+  A = {}
+  local function mark(hex) A[string.char(tonumber(hex:sub(5, 6), 16), tonumber(hex:sub(3, 4), 16), tonumber(hex:sub(1, 2), 16))] = hex end
+  for hex, ctx in pairs(((W().ctx or {})[file]) or {}) do
+    local first, many
+    for _, C in pairs(ctx) do
+      local t = top(C)
+      if first and t ~= first then many = true; break end
+      first = first or t
+    end
+    if many then mark(hex) end
+  end
+  for hex, cells in pairs(((W().reg or {})[file]) or {}) do
+    local first, many
+    for _, C in pairs(cells) do
+      local t = top(C)
+      if first and t ~= first then many = true; break end
+      first = first or t
+    end
+    if many then mark(hex) end
+  end
+  ambig[file] = A
+  return A
+end
+-- the symbol a colour shows here: the nearest region where it was seen (up to ~100 pixels away), else its usual one
+function M.worldRegSym(file, hex, x, y)
+  local cells = ((W().reg or {})[file] or {})[hex]
+  if not cells then return nil end
+  local cx, cy = math.floor(x / M.WORLD_REG_CELL), math.floor(y / M.WORLD_REG_CELL)
+  for rad = 0, 6 do
+    local votes, any = {}, false
+    for dy = -rad, rad do
+      for dx = -rad, rad do
+        if math.max(math.abs(dx), math.abs(dy)) == rad then
+          local C = cells[(cx + dx) .. "," .. (cy + dy)]
+          if C then for k, n in pairs(C) do votes[k] = (votes[k] or 0) + n; any = true end end
+        end
+      end
+    end
+    if any then return top(votes) end
+  end
+  return nil
+end
+-- a pixel of such a colour: its colour where it is (worked out once a region)
+function M.worldRegColour(file, bytes, x, y)
+  local img = M.worldImages[file]
+  local around = img and M.worldAround(img, x, y) or ""
+  local hex = ambig[file] and ambig[file][bytes]
+  local C = hex and (((W().ctx or {})[file] or {})[hex] or {})[hexOf(around)]
+  local key = C and (bytes .. "|" .. around) or (bytes .. math.floor(x / M.WORLD_REG_CELL) .. "," .. math.floor(y / M.WORLD_REG_CELL))
+  local v = regCache[key]
+  if v then return v end
+  local sym = C and top(C) or (hex and M.worldRegSym(file, hex, x, y))
+  if not sym then v = M.WORLD_NATURAL[bytes]
+  else
+    local c
+    if M.worldColourMode() == "natural" then c = M.WORLD_SYM_RGB[sym] or M.worldNaturalRGB(hex)
+    else c = M.worldAsciiRGB(hex, sym) end
+    v = string.char(c[3], c[2], c[1])
+  end
+  regCache[key] = v
+  return v
+end
+-- a row of the bitmap's bytes → the chosen colours; x of its first pixel, step between pixels
+function M.worldRecolour(file, seg, x0, y, step)
+  local A = M.worldAmbig(file)
+  if not next(A) then return (seg:gsub("...", M.WORLD_NATURAL)) end
+  return (seg:gsub("()(...)", function(p, t)
+    if A[t] then return M.worldRegColour(file, t, x0 + (p - 1) / 3 * step, y) end
+    return M.WORLD_NATURAL[t]
+  end))
 end
 
 -- the bitmap's 3 bytes (blue, green, red) → the chosen colour's, worked out once a colour
 function M.worldNaturalReset()
   symColour, codeColour = nil, nil
+  ambig, regCache = {}, {}
   M.WORLD_NATURAL = setmetatable({}, { __index = function(t, k)
     local v = k
     if k ~= "\0\0\0" then
@@ -13660,8 +13741,55 @@ end
 M.worldNaturalReset()
 
 -- one mini-map: rows of symbols (with the game's colour of each, when known), you at the @; x, y where you are
-function M.worldPaletteNote(map, x, y, rows)
-  local img = M.worldImages[(M.worldFileFor(map) or {}).file or ""]
+-- (where it was seen too: a bitmap colour can be two things - the magenta I wall round a field by the Great North
+-- Road is the same colour as specks in the mountains, where the mini-map shows ^ - so each region of the map keeps
+-- its own count of the symbols seen on each colour)
+M.WORLD_REG_CELL = 16
+-- what surrounds a pixel: the commonest other colour of its 8 neighbours (as bytes), "" when they're all its own
+function M.worldAround(img, x, y)
+  local data, H, row, off = img.data, img.h, img.row, img.off
+  local function at(px, py)
+    if px < 0 or py < 0 or px >= img.w or py >= H then return nil end
+    local o = off + (H - 1 - py) * row + px * 3 + 1
+    return data:sub(o, o + 2)
+  end
+  local me, n, best, bn = at(x, y), {}, "", 0
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      local t = (dx ~= 0 or dy ~= 0) and at(x + dx, y + dy)
+      if t and t ~= me then
+        n[t] = (n[t] or 0) + 1
+        if n[t] > bn then best, bn = t, n[t] end
+      end
+    end
+  end
+  return best
+end
+-- (and by what surrounds it: a speck in the mountains is ^ wherever it is; the wall runs beside its field)
+function M.worldCtxNote(file, hex, around, ch)
+  local w = W()
+  w.ctx = w.ctx or {}
+  local F = w.ctx[file] or {}; w.ctx[file] = F
+  local Hx = F[hex] or {}; F[hex] = Hx
+  local C = Hx[around] or {}; Hx[around] = C
+  local before = top(C)
+  C[ch] = (C[ch] or 0) + 1
+  return top(C) ~= before
+end
+function M.worldRegNote(file, hex, px, py, ch)
+  local w = W()
+  w.reg = w.reg or {}
+  local F = w.reg[file] or {}; w.reg[file] = F
+  local Hx = F[hex] or {}; F[hex] = Hx
+  local ck = math.floor(px / M.WORLD_REG_CELL) .. "," .. math.floor(py / M.WORLD_REG_CELL)
+  local C = Hx[ck] or {}; Hx[ck] = C
+  local before = top(C)
+  C[ch] = (C[ch] or 0) + 1
+  return top(C) ~= before
+end
+function M.worldPaletteNote(map, x, y, rows, regOnly)
+  local file = (M.worldFileFor(map) or {}).file or ""
+  local img = M.worldImages[file]
   if not img then return 0 end
   local ar, ac
   for r, R in ipairs(rows) do local c = R.text:find("@", 1, true); if c then ar, ac = r, c end end
@@ -13676,6 +13804,11 @@ function M.worldPaletteNote(map, x, y, rows)
           local o = img.off + (img.h - 1 - py) * img.row + px * 3 + 1
           local b, g, rr = img.data:byte(o, o + 2)
           if rr then
+            local hex = string.format("%02x%02x%02x", rr, g, b)
+            if M.worldRegNote(file, hex, px, py, ch) then changed = true end
+            if M.worldCtxNote(file, hex, hexOf(M.worldAround(img, px, py)), ch) then changed = true end
+          end
+          if rr and not regOnly then
             local hex = string.format("%02x%02x%02x", rr, g, b)
             local e = P[hex] or { sym = {} }
             if not P[hex] then P[hex] = e; changed = true end
@@ -13730,7 +13863,9 @@ end
 -- (the recordings, once: every mini-map in them, where you stood)
 function M.worldPaletteImport()
   local w = W()
-  if w.palImported then return 0 end
+  -- (from 1.63.2 the regions too: read again for them alone)
+  local regOnly = w.palImported
+  if w.palImported and w.regImported then return 0 end
   local n = 0
   for _, f in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
     local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
@@ -13739,7 +13874,7 @@ function M.worldPaletteImport()
       local function flush()
         if rows and #rows >= 3 and here then
           pcall(M.worldImage, here.map)
-          n = n + M.worldPaletteNote(here.map, here.x, here.y, rows)
+          n = n + M.worldPaletteNote(here.map, here.x, here.y, rows, regOnly)
         end
         rows = nil
       end
@@ -13764,6 +13899,7 @@ function M.worldPaletteImport()
     end
   end
   w.palImported = true
+  w.regImported = true
   M.worldNaturalReset()
   M.saveSettings()
   return n
@@ -13893,6 +14029,8 @@ end })
 -- each a string of outW × 3 bytes (b, g, r)
 function M.worldCut(img, cx, cy, zoom, outW, outH, mute)
   local rows = {}
+  local file = ""
+  for f, i in pairs(M.worldImages) do if i == img then file = f end end
   local data, H, row, off = img.data, img.h, img.row, img.off
   local blackRow = string.rep("\0", outW * 3)
   if zoom >= 1 then
@@ -13908,7 +14046,7 @@ function M.worldCut(img, cx, cy, zoom, outW, outH, mute)
         seg = string.rep("\0", (a - x0) * 3) .. (b >= a and data:sub(o + a * 3 + 1, o + b * 3 + 3) or "")
         seg = seg .. string.rep("\0", srcW * 3 - #seg)
       end
-      if M.worldColourMode() ~= "game" then seg = seg:gsub("...", M.WORLD_NATURAL) end
+      if M.worldColourMode() ~= "game" then seg = M.worldRecolour(file, seg, x0, y, 1) end
       if mute then seg = seg:gsub("...", M.WORLD_MUTE) end
       local r = zoom == 1 and seg or seg:gsub("...", function(p) return p:rep(zoom) end)
       r = r:sub(1, outW * 3)
@@ -13929,7 +14067,7 @@ function M.worldCut(img, cx, cy, zoom, outW, outH, mute)
           if x < 0 or x >= img.w then t[#t + 1] = "\0\0\0" else t[#t + 1] = data:sub(o + x * 3 + 1, o + x * 3 + 3) end
         end
         local r = table.concat(t)
-        if M.worldColourMode() ~= "game" then r = r:gsub("...", M.WORLD_NATURAL) end
+        if M.worldColourMode() ~= "game" then r = M.worldRecolour(file, r, x0, y, step) end
         rows[#rows + 1] = mute and r:gsub("...", M.WORLD_MUTE) or r
       end
     end
