@@ -1101,6 +1101,17 @@ def world_map():
     assert muted < 200 * 0.6, f"the blue pixel, muted: {muted}"
 
 
+    # the wheel zooms toward the mouse: the room under it stays under it
+    o.lua("""sbo.worldFound = nil; sbo.walk = nil; sbo.worldLabel.get_width = function() return 200 end; sbo.worldLabel.get_height = function() return 120 end
+      sbo.worldV = { zoomI = 3, follow = false, cx = 5, cy = 3, map = 'Alyria' }; sbo.worldDrawNow()
+      function UNDER(ex, ey) local vw = sbo.worldView local z = vw.zoom local rp = z >= 1 and 1 / z or math.floor(1 / z + 0.5)
+        return math.floor(vw.x0 + ex * rp) .. ',' .. math.floor(vw.y0 + ey * rp) end""")
+    for d, ex, ey in [(120, 150, 30), (120, 150, 30), (-120, 150, 30), (120, 20, 100), (-120, 20, 100)]:
+        before = o.ev("UNDER(%d, %d)" % (ex, ey))
+        o.lua("sbo.worldWheel({ angleDeltaY = %d, x = %d, y = %d }); sbo.worldDrawNow()" % (d, ex, ey))
+        eq(o.ev("UNDER(%d, %d)" % (ex, ey)), before, "zoom %+d at %d,%d keeps the room under the mouse" % (d, ex, ey))
+    eq(o.ev("sbo.worldV.follow"), False, "and stops following (◎ to follow again)")
+
 @test
 def route_plan_text():
     o = Oven()

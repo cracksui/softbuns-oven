@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.60.2"
+M.version = "1.61.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13925,7 +13925,37 @@ function M.worldLayer()
 end
 function M.worldWheel(ev)
   local d = type(ev) == "table" and tonumber(ev.angleDeltaY) or 0
-  if d > 0 then M.worldZoom(1) elseif d < 0 then M.worldZoom(-1) end
+  local ex, ey = type(ev) == "table" and tonumber(ev.x), type(ev) == "table" and tonumber(ev.y)
+  if d ~= 0 then M.worldZoomAt(d > 0 and 1 or -1, ex, ey) end
+end
+-- the wheel zooms toward what's under the mouse: that room stays where it is on screen
+local function roomsPerPixel(z) return z >= 1 and 1 / z or math.floor(1 / z + 0.5) end
+local function viewHalf(z, out)   -- (how far the left / top edge is from the centre, in rooms - as worldCut lays it out)
+  if z >= 1 then return math.floor((math.ceil(out / z) + 1) / 2) end
+  return math.floor(out * math.floor(1 / z + 0.5) / 2)
+end
+function M.worldZoomAt(dir, ex, ey)
+  local v, vw = V(), M.worldView
+  local lab = M.worldLabel
+  if not (vw and ex and ey and lab) then return M.worldZoom(dir) end
+  local okW, lw = pcall(function() return lab:get_width() end)
+  local okH, lh = pcall(function() return lab:get_height() end)
+  local outW = math.max(40, math.floor(((okW and tonumber(lw)) or 400) / 4) * 4)
+  local outH = math.max(40, math.floor((okH and tonumber(lh)) or 300))
+  local newI = math.max(1, math.min(#M.WORLD_ZOOMS, v.zoomI + dir))
+  if newI == v.zoomI then return end
+  -- the room under the mouse now
+  local rp = roomsPerPixel(vw.zoom)
+  local mx, my = vw.x0 + ex * rp, vw.y0 + ey * rp
+  -- the centre that puts it under the mouse at the new zoom
+  local z2 = M.WORLD_ZOOMS[newI]
+  local rp2 = roomsPerPixel(z2)
+  v.zoomI = newI
+  -- (the left edge whole rooms from it, so the mouse lands inside that same room)
+  v.cx = math.floor(mx) - math.floor(ex * rp2) + viewHalf(z2, outW)
+  v.cy = math.floor(my) - math.floor(ey * rp2) + viewHalf(z2, outH)
+  v.follow = false   -- (◎ follows you again)
+  M.worldDraw()
 end
 -- drag to pan: the mouse's travel in screen pixels, over the zoom
 function M.worldPress(ev)
