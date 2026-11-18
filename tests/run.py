@@ -332,8 +332,9 @@ def quest_targets():
     # the quest panel: a step that names a mob Oven has seen
     eq(o.ev("sbo.questFindName('Defeat a janitor [Towne of Rune]')"), "janitor", "find ▸ for it")
     eq(o.ev("sbo.questFindName('Defeat a unicorn')"), None, "never seen: no link")
-    o.lua("HL = {}; sbo.questAct({ id = '1', n = 1, find = 'janitor' })")
+    o.lua("HL = {}; GOTO = nil; sbo.goTo = function(id) GOTO = id end; sbo.questAct({ id = '1', n = 1, find = 'janitor' })")
     eq(len(o.ev("HL")), 3, "the link lights them up")
+    eq(o.ev("GOTO"), 3, "and goes to the latest sighting")
     # the map lights up every target's room by itself (violet), under your own highlight where they overlap
     o.lua("""sbo.mapHighlightAll(""); LIT = {}; highlightRoom = function(id, r) LIT[id] = r end
       unHighlightRoom = function(id) LIT[id] = nil end; sbo.targetLight()""")

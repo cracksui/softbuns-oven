@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.66.1"
+M.version = "1.66.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3259,8 +3259,8 @@ local function questCardHtml(id, Q)
           -- a creature the step names that Oven has seen: light up where it roams
           local okF, fname = pcall(M.questFindName, ph.text)
           if okF and fname then
-            add("   " .. span(C.dim, "⌕ ") .. span(C.flag, fname) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "find ▸") .. "</u>",
-              ulen(fname) + 12)
+            add("   " .. span(C.dim, "⌕ ") .. span(C.flag, fname) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>",
+              ulen(fname) + 10)
             acts[#html] = { id = id, n = ph.n, find = fname }
           end
         first = false
@@ -3695,7 +3695,12 @@ function M.questAct(a)
       M.saveSettings()
       return M.drawQuestTracker()
     end
-    if a.find then return M.mapHighlightAll(a.find) end
+    -- find ▸: light up where it's been seen, and go to the latest sighting (sbo go's trip, y/n for a long one)
+    if a.find then
+      local room = M.mapHighlightAll(a.find)
+      if room and room ~= M.mapRoom then M.goTo(room) end
+      return
+    end
     if a.master then return M.questGoMaster(a.id) end
     if a.get or a.deliver then return M.questGoStep(a.id, a.n, a.get and "get" or "deliver") end
     if a.hint then return M.questHudClick(a.id) end   -- the card's own click: opens or folds the hint
@@ -18358,13 +18363,14 @@ function M.mapHighlightAll(q, quiet)
     centre = nearest or lit[1]
     note = steps and string.format(" · centred on the nearest, %d step%s away", steps, steps == 1 and "" or "s") or ""
   end
-  if quiet then return end
+  if quiet then return centre end
   if centre then
     if M.mapPanel and M.cfg.mapPanel then pcall(M.showMapPanel, true) end
     pcall(M.centerOn, centre)
   end
   say(string.format("%d room%s lit up on the map for '%s'%s  (sbo map highlight clears them)", #M.mapHighlights,
     #M.mapHighlights == 1 and "" or "s", q, note or ""))
+  return centre
 end
 
 -- something new about a room (an NPC or tag, a shop listed, a where-is feature, a bookmark): a highlight
