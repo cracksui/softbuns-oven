@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.63.4"
+M.version = "1.63.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13750,7 +13750,11 @@ function M.worldRegColour(file, bytes, x, y)
   if not sym then v = M.WORLD_NATURAL[bytes]
   else
     local c
-    if M.worldColourMode() == "natural" then c = M.WORLD_SYM_RGB[sym] or M.worldNaturalRGB(hex)
+    if M.worldColourMode() == "natural" then
+      -- (its own usual symbol here, or water: the colour's own natural look - water bands, shallows - not the bare symbol's)
+      local P = pal()[hex]
+      if sym == "~" or sym == (P and top(P.sym)) then c = M.worldNaturalRGB(hex)
+      else c = M.WORLD_SYM_RGB[sym] or M.worldNaturalRGB(hex) end
     else c = M.worldAsciiRGB(hex, sym) end
     v = string.char(c[3], c[2], c[1])
   end

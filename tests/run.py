@@ -1035,6 +1035,10 @@ def world_natural_colours():
       sbo.worldNb = { [b('bb0001')] = { [b('bb0002')] = 50, [b('aa0006')] = 50 },
                       [b('bb0002')] = { [b('bb0001')] = 50, [b('bb0003')] = 40 } }""")
     eq([o.ev("table.concat(sbo.worldNaturalRGB('%s'), ',')" % h) for h in ("bb0001", "bb0002")], ["45,90,170", "72,122,190"], "the sea, the shallows by the beach")
+    # (also when drawn as a colour that is two things: its ~ regions keep the shallows)
+    o.lua("sbo.cfg.world.reg = { ['alyria.bmp'] = { bb0002 = { ['0,0'] = { ['~'] = 5 }, ['9,9'] = { ['.'] = 5 } } } }; sbo.worldNaturalReset(); sbo.worldAmbig('alyria.bmp')")
+    eq(o.ev("(function() local s = sbo.worldRegColour('alyria.bmp', string.char(2, 0, 187), 1, 1) local b, g, r = s:byte(1, 3) return r .. ',' .. g .. ',' .. b end)()"), "72,122,190", "drawn: still the shallows")
+    o.lua("sbo.cfg.world.reg = nil; sbo.worldNaturalReset()")
     o.lua("sbo.worldNb = nil")
     # a land colour keeps its symbol's colour whatever its name
     o.lua("sbo.cfg.world.pal['aa0005'] = { sym = { ['*'] = 9 } }; sbo.cfg.world.terrain['aa0005'] = 'deep water'")
