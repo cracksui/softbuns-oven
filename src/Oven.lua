@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.59.3"
+M.version = "1.60.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -12408,6 +12408,12 @@ function M.onLineWork()
   end
   if M.levelEvent or line:find("You gain ", 1, true) or line:find(", you are now a", 1, true) then pcall(M.levelNoteLine, line) end
   if M.tempMap then pcall(M.tempNoteLine, line) end
+  -- the game's mini-map in the wilds: what each colour of the world map is
+  if (M.mmRows or (M.worldHere and M.worldHere.wild)) then
+    local d
+    if M.worldMapRowLike(line) then local okD, dd = pcall(function() selectCurrentLine(); local x = copy2decho(); deselect(); return x end); d = okD and dd or nil end
+    pcall(M.worldMapLine, line, d)
+  end
   if line:find("takes your payment and hands you", 1, true) then pcall(M.noteBought, line) end
   if M.travel then pcall(M.travelLine, line) end
   if M.eqdbAt and not cap then
@@ -13246,6 +13252,15 @@ function M.worldImage(mapName)
   if bpp ~= 24 then return nil, "the map isn't a 24-bit bitmap" end
   img = { data = data, w = w, h = h, row = math.ceil(w * 3 / 4) * 4, off = le(data, 11, 4), name = mapName }
   M.worldImages[e.file] = img
+  -- its edge colour (the same in all four corners): the sea, or (underground) the rock round it
+  local function at(x, y) local o = img.off + (h - 1 - y) * img.row + x * 3 + 1; local b, g, r = data:byte(o, o + 2); return string.format("%02x%02x%02x", r, g, b) end
+  local c = at(0, 0)
+  if c == at(w - 1, 0) and c == at(0, h - 1) and c == at(w - 1, h - 1) then
+    M.worldEdges = M.worldEdges or {}
+    local under = tostring(mapName):lower():find("under", 1, true) or tostring(mapName):lower():find("sigil", 1, true)
+    M.worldEdges[c] = under and "under" or "sea"
+    if M.worldNaturalReset then M.worldNaturalReset() end
+  end
   return img
 end
 
@@ -13377,6 +13392,173 @@ function M.worldWaterUnlearn()
   for k, v in pairs(w.terrain or {}) do if v == "sailable-bridge" then w.terrain[k] = nil; gone = gone + 1 end end
   if gone > 0 then M.saveSettings() end
   return gone
+end
+
+-- Natural colours: the game's bitmaps are a palette - each colour is one kind of terrain (the code GMCP sends
+-- for a wild room: 0E, 4U, 5K…), picked to look distinct, not like the land. The game's mini-map (the ASCII
+-- map round you in the wilds: ~ water, * forest, ^ mountains, # road…) lines up room for room with the
+-- bitmap, so each colour's symbol (and the game's colour for it) is learned from it - from the recordings
+-- once, then every step you take in the wilds - and the map is drawn in natural colours instead
+M.WORLD_SYM_RGB = {
+  ["~"] = { 45, 90, 170 }, ["."] = { 128, 150, 82 }, ['"'] = { 96, 150, 64 }, ["="] = { 116, 142, 76 },
+  ["!"] = { 132, 146, 86 }, ["*"] = { 52, 112, 52 }, ["&"] = { 34, 86, 38 }, ["^"] = { 128, 112, 96 },
+  ["#"] = { 172, 150, 112 }, [":"] = { 96, 112, 70 }, ["%"] = { 92, 108, 64 }, ["'"] = { 150, 140, 96 },
+}
+-- (by terrain name, for a colour with no symbol yet: the first word that matches)
+M.WORLD_TERRAIN_RGB = {
+  { "deep water", { 28, 58, 135 } }, { "shallow", { 72, 122, 190 } }, { "water", { 45, 90, 170 } }, { "ocean", { 30, 64, 145 } },
+  { "sailable", { 45, 90, 170 } }, { "river", { 50, 100, 180 } }, { "lake", { 50, 100, 180 } }, { "swamp", { 84, 100, 62 } },
+  { "beach", { 222, 206, 150 } }, { "desert", { 208, 186, 122 } }, { "glacier", { 205, 228, 240 } }, { "snow", { 236, 240, 245 } },
+  { "dense forest", { 32, 86, 36 } }, { "jungle", { 40, 110, 46 } }, { "forest", { 54, 116, 52 } },
+  { "mountain", { 124, 110, 98 } }, { "foothill", { 146, 128, 84 } }, { "rocky", { 132, 122, 110 } }, { "hill", { 140, 126, 86 } },
+  { "road", { 172, 150, 112 } }, { "trail", { 152, 132, 92 } }, { "bridge", { 150, 112, 72 } },
+  { "plain", { 120, 150, 80 } }, { "grass", { 96, 150, 64 } }, { "field", { 110, 150, 70 } }, { "tundra", { 150, 158, 132 } },
+  { "lava", { 200, 64, 24 } }, { "chasm", { 44, 34, 34 } }, { "void", { 22, 22, 24 } },
+}
+M.WORLD_UNKNOWN_RGB = { 62, 62, 66 }
+
+local function pal() local w = W(); w.pal = w.pal or {}; return w.pal end
+local function top(votes)
+  local best, bn
+  for k, n in pairs(votes or {}) do if not bn or n > bn then best, bn = k, n end end
+  return best
+end
+
+-- a colour's natural look: its symbol, else its terrain's name, else the game's colour (softened), else grey
+function M.worldNaturalRGB(hex)
+  local P = pal()[hex]
+  local sym = P and top(P.sym)
+  if sym and M.WORLD_SYM_RGB[sym] then return M.WORLD_SYM_RGB[sym] end
+  local t = (W().terrain or {})[hex]
+  if t then for _, e in ipairs(M.WORLD_TERRAIN_RGB) do if t:find(e[1], 1, true) then return e[2] end end end
+  -- a map's edge colour (all four corners): the open sea on the surface, solid rock / nothing underground
+  local edge = (M.worldEdges or {})[hex]
+  if edge and not sym then return edge == "under" and { 22, 22, 26 } or { 28, 58, 135 } end
+  local g = P and top(P.rgb)
+  if g then
+    local r, gg, b = g:match("(%d+),(%d+),(%d+)")
+    if r then return { math.floor(r * 0.55 + 20), math.floor(gg * 0.55 + 20), math.floor(b * 0.55 + 20) } end
+  end
+  return M.WORLD_UNKNOWN_RGB
+end
+-- the bitmap's 3 bytes (blue, green, red) → the natural colour's, worked out once a colour
+function M.worldNaturalReset()
+  M.WORLD_NATURAL = setmetatable({}, { __index = function(t, k)
+    local v = k
+    if k ~= "\0\0\0" then
+      local b, g, r = k:byte(1, 3)
+      local c = M.worldNaturalRGB(string.format("%02x%02x%02x", r, g, b))
+      v = string.char(c[3], c[2], c[1])
+    end
+    t[k] = v
+    return v
+  end })
+end
+M.worldNaturalReset()
+
+-- one mini-map: rows of symbols (with the game's colour of each, when known), you at the @; x, y where you are
+function M.worldPaletteNote(map, x, y, rows)
+  local img = M.worldImages[(M.worldFileFor(map) or {}).file or ""]
+  if not img then return 0 end
+  local ar, ac
+  for r, R in ipairs(rows) do local c = R.text:find("@", 1, true); if c then ar, ac = r, c end end
+  if not ar then return 0 end
+  local P, n, changed = pal(), 0, false
+  for r, R in ipairs(rows) do
+    for c = 1, #R.text do
+      local ch = R.text:sub(c, c)
+      if ch ~= " " and ch ~= "@" then
+        local px, py = x + c - ac, y + r - ar
+        if px >= 0 and py >= 0 and px < img.w and py < img.h then
+          local o = img.off + (img.h - 1 - py) * img.row + px * 3 + 1
+          local b, g, rr = img.data:byte(o, o + 2)
+          if rr then
+            local hex = string.format("%02x%02x%02x", rr, g, b)
+            local e = P[hex] or { sym = {} }
+            if not P[hex] then P[hex] = e; changed = true end
+            local before = top(e.sym)
+            e.sym[ch] = (e.sym[ch] or 0) + 1
+            local col = R.cols and R.cols[c]
+            if col then e.rgb = e.rgb or {}; local k = col[1] .. "," .. col[2] .. "," .. col[3]; e.rgb[k] = (e.rgb[k] or 0) + 1 end
+            if top(e.sym) ~= before then changed = true end
+            n = n + 1
+          end
+        end
+      end
+    end
+  end
+  if changed then M.worldNaturalReset(); M.wwDirty = true end
+  return n
+end
+
+-- a mini-map row: symbols only, no gaps between them (leading spaces keep it centred), not too wide
+function M.worldMapRowLike(t)
+  local s = t:gsub("%s+$", "")
+  return #s > 0 and #s <= 60 and s:match("^ *%S+$") ~= nil and not s:match("^%s*%a+$")
+end
+-- the game's lines as they come: mini-map rows gathered, read when the map ends (you in the wilds)
+function M.worldMapLine(l, decho)
+  if M.worldMapRowLike(l) then
+    M.mmRows = M.mmRows or {}
+    local cols
+    if decho then
+      cols = {}
+      for _, sg in ipairs(M.dechoSegs(decho) or {}) do
+        for _ = 1, ulen(sg[2]) do cols[#cols + 1] = sg[1] end
+      end
+    end
+    M.mmRows[#M.mmRows + 1] = { text = l:gsub("%s+$", ""), cols = cols }
+    return
+  end
+  local rows = M.mmRows
+  M.mmRows = nil
+  if not rows or #rows < 3 then return end
+  local h = M.worldHere
+  if not h or not h.wild then return end
+  local okI = pcall(M.worldImage, h.map)
+  if okI and M.worldPaletteNote(h.map, h.x, h.y, rows) > 0 and M.mapMode == "world" then pcall(M.worldDraw) end
+end
+
+-- (the recordings, once: every mini-map in them, where you stood)
+function M.worldPaletteImport()
+  local w = W()
+  if w.palImported then return 0 end
+  local n = 0
+  for _, f in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
+    local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
+    if fh then
+      local here, rows
+      local function flush()
+        if rows and #rows >= 3 and here then
+          pcall(M.worldImage, here.map)
+          n = n + M.worldPaletteNote(here.map, here.x, here.y, rows)
+        end
+        rows = nil
+      end
+      for l in fh:lines() do
+        if l:sub(1, 15) == "@gmcp room.info" then
+          flush()
+          local coord = l:match('%["coord"%]=%b{}')
+          local map = coord and coord:match('%["name"%]="([^"]*)"')
+          local x, y = coord and tonumber(coord:match('%["x"%]=(%d+)')), coord and tonumber(coord:match('%["y"%]=(%d+)'))
+          here = (map and x and y and l:find('["wilds"]="true"', 1, true)) and { map = map, x = x, y = y } or nil
+        elseif l:sub(1, 1) == "@" or l:sub(1, 6) == "===== " then
+          flush()
+        elseif M.worldMapRowLike(l) then
+          rows = rows or {}
+          rows[#rows + 1] = { text = l:gsub("%s+$", "") }
+        else
+          flush()
+        end
+      end
+      flush()
+      fh:close()
+    end
+  end
+  w.palImported = true
+  M.worldNaturalReset()
+  M.saveSettings()
+  return n
 end
 
 -- a room's place on a world map: { map, x, y } or nil
@@ -13518,6 +13700,7 @@ function M.worldCut(img, cx, cy, zoom, outW, outH, mute)
         seg = string.rep("\0", (a - x0) * 3) .. (b >= a and data:sub(o + a * 3 + 1, o + b * 3 + 3) or "")
         seg = seg .. string.rep("\0", srcW * 3 - #seg)
       end
+      if M.cfg.worldNatural ~= false then seg = seg:gsub("...", M.WORLD_NATURAL) end
       if mute then seg = seg:gsub("...", M.WORLD_MUTE) end
       local r = zoom == 1 and seg or seg:gsub("...", function(p) return p:rep(zoom) end)
       r = r:sub(1, outW * 3)
@@ -13538,6 +13721,7 @@ function M.worldCut(img, cx, cy, zoom, outW, outH, mute)
           if x < 0 or x >= img.w then t[#t + 1] = "\0\0\0" else t[#t + 1] = data:sub(o + x * 3 + 1, o + x * 3 + 3) end
         end
         local r = table.concat(t)
+        if M.cfg.worldNatural ~= false then r = r:gsub("...", M.WORLD_NATURAL) end
         rows[#rows + 1] = mute and r:gsub("...", M.WORLD_MUTE) or r
       end
     end
@@ -17396,6 +17580,8 @@ M.SETTINGS = {
   { "quest.opacity", "Quest panel", "number", function() return tostring(M.cfg.questHudOpacity or 100) end, function(v) legacy("quest hud opacity " .. v) end },
   { "map", "Map panel", BOOL, function() return onoff(M.cfg.map) end, function(v) legacy("map " .. v) end },
   { "map.panel", "Map panel", BOOL, function() return onoff(M.cfg.mapPanel) end, function(v) legacy("map panel " .. v) end },
+  { "map.natural", "Map panel", BOOL, function() return onoff(M.cfg.worldNatural ~= false) end,
+    function(v) M.cfg.worldNatural = (v == "on"); M.saveSettings(); pcall(M.worldDraw); say("world map: " .. (v == "on" and "natural colours" or "the game's own colours")) end },
   { "map.card", "Map panel", BOOL, function() return onoff(M.cfg.mapCard) end, function(v) legacy("map card " .. v) end },
   { "map.wherelearn", "Map panel", BOOL, function() return onoff(M.cfg.whereLearn ~= false) end,
     function(v) M.cfg.whereLearn = (v == "on"); M.saveSettings(); say("learning each area's 'where is' features while you're idle: " .. v) end },
@@ -18045,4 +18231,4 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport) end)

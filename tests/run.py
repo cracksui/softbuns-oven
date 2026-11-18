@@ -973,6 +973,43 @@ def world_waterways():
 
 
 @test
+def world_natural_colours():
+    import struct, os as _os
+    o = Oven()
+    home = o.L.globals().OVEN_TEST_HOME
+    _os.makedirs(home + "/oven_maps", exist_ok=True)
+    # a 7 x 5 bitmap: green (a forest kind) on the left, magenta (a water kind) on the right
+    W_, H_ = 7, 5
+    rowb = ((W_ * 3 + 3) // 4) * 4
+    def col(x, y): return bytes([200, 0, 200]) if x >= 4 else bytes([0, 160, 0])   # (blue, green, red)
+    body = b"".join(b"".join(col(x, y) for x in range(W_)).ljust(rowb, b"\0") for y in range(H_ - 1, -1, -1))
+    head = b"BM" + struct.pack("<IHHI", 54 + len(body), 0, 0, 54) + struct.pack("<IiiHHIIiiII", 40, W_, H_, 1, 24, 0, len(body), 2835, 2835, 0, 0)
+    open(home + "/oven_maps/alyria.bmp", "wb").write(head + body)
+    o.lua("sbo.worldImage('Alyria'); sbo.worldHere = { map = 'Alyria', x = 3, y = 2, wild = true }")
+    # the game's mini-map round you (you at 3,2): * forest on the left, ~ water on the right
+    for l in ["****~~~", "***@~~~", "****~~~"]:
+        o.lua("sbo.worldMapLine(%r, nil)" % l)
+    o.lua("sbo.worldMapLine('A Leafy Path', nil)")
+    eq((o.ev("(next(sbo.cfg.world.pal['00a000'].sym))"), o.ev("sbo.cfg.world.pal['00a000'].sym['*']"), o.ev("(next(sbo.cfg.world.pal['c800c8'].sym))")), ("*", 11, "~"), "each colour's symbol")
+    # drawn naturally: the green kind as forest, the magenta kind as water
+    r = o.ev("""(function() local img = sbo.worldImage('Alyria') local rows = sbo.worldCut(img, 3, 2, 1, 7, 1)
+      local s = rows[1] local function px(i) local b, g, r = s:byte(i * 3 + 1, i * 3 + 3) return r .. ',' .. g .. ',' .. b end
+      return px(1) .. ' ' .. px(6) end)()""")
+    eq(r, "52,112,52 45,90,170", "forest green, water blue")
+    # not seen yet: grey; the game's own colours on request
+    o.lua("sbo.cfg.world.pal = {}; sbo.worldNaturalReset()")
+    r = o.ev("(function() local s = sbo.worldCut(sbo.worldImage('Alyria'), 3, 2, 1, 7, 1)[1] local b, g, r = s:byte(4, 6) return r .. ',' .. g .. ',' .. b end)()")
+    eq(r, "62,62,66", "unknown: grey")
+    # (a colour in all four corners is the sea - this little map's corners differ, so there's none here)
+    eq(o.ev("next(sbo.worldEdges or {})"), None, "no edge colour")
+    o.lua("sbo.cfg.worldNatural = false")
+    r = o.ev("(function() local s = sbo.worldCut(sbo.worldImage('Alyria'), 3, 2, 1, 7, 1)[1] local b, g, r = s:byte(4, 6) return r .. ',' .. g .. ',' .. b end)()")
+    eq(r, "0,160,0", "map.natural off: the bitmap's own")
+    # a line of game text isn't a map row; one that looks like one isn't read without an @
+    eq((o.ev("sbo.worldMapRowLike('The Light Forest')"), o.ev("sbo.worldMapRowLike('   ~~..!!@==')")), (False, True), "rows")
+
+
+@test
 def world_map():
     import struct, os as _os
     o = Oven()
@@ -999,6 +1036,7 @@ def world_map():
     eq((o.ev("sbo.worldPos(5001).x"), o.ev("sbo.worldPos(5001).y")), (2, 1), "a visited town room")
     o.lua("sbo.worldRoomXY = {}")
     eq(o.ev("sbo.worldPos(5999).x"), 2, "a room of the same area")
+    o.lua("sbo.cfg.worldNatural = false")   # (the bitmap colours here; natural ones: world_natural_colours)
     # the cut-out at ×2, sharp: 4 × 4 screen pixels around (7, 2)
     n, w1, blue = o.ev("""function() local img = sbo.worldImage('Alyria') local r = sbo.worldCut(img, 7, 2, 2, 4, 4)
       return #r, #r[1], r[3]:sub(1 + 2 * 3, 3 + 2 * 3) == string.char(200, 0, 0) end""")()
