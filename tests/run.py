@@ -1468,6 +1468,26 @@ def travel_by_ganuk():
     eq(o.ev("SENT[#SENT]"), "run rune", "recalled at the signpost: the run")
     o.lua("sbo.running.started = true; sbo.mapRoom = 10490; sbo.runStopped(true); runTimers()")
     eq((o.ev("WALKED"), o.ev("sbo.trip")), (10495, None), "the run's over: the last steps on foot")
+    # a recall point that's already the nearest outside the hall: still 30 rooms (north) before recalling
+    cands = o.lua("""local c = sbo.clanRecallCandidates(10495) local o = {}
+      for _, x in ipairs(c) do o[#o+1] = x.link.recall.room .. ':' .. x.link.clanRoute.dir .. x.link.clanRoute.n end return table.concat(o, ',')""")
+    assert "1500000:n30" in cands, cands
+    o.lua("""SENT = {}; sbo.trip = nil; sbo.travel = { stage = 'toCast', steps = 0, link = sbo.clanRecallCandidates(10495)[2].link }
+      if sbo.travel.link.recall.room ~= 1500000 then sbo.travel.link = sbo.clanRecallCandidates(10495)[1].link end""")
+    o.ev("""(function()
+      local x, y, n = 560, 216, 0
+      local D = { n = {0,-1}, s = {0,1}, e = {1,0} }
+      gmcp.room = { info = { num = '1558194', wilds = 'true', coord = { name = 'Alyria', x = x, y = y } } }
+      sbo.travelCastStep()
+      while D[SENT[#SENT]] and n < 300 do
+        local d = D[SENT[#SENT]]; x, y = x + d[1], y + d[2]; n = n + 1
+        gmcp.room = { info = { num = tostring(2100000 + n), wilds = 'true', coord = { name = 'Alyria', x = x, y = y } } }
+        sbo.travelCastStep()
+      end
+    end)()""")
+    walked2 = list(o.ev("SENT").values())
+    eq((walked2[:5], walked2[5:-1]), (["e"] * 5, ["n"] * 30), "5 east, 30 north, even though it was the nearest already")
+    eq(walked2[-1], "cast 'word of recall'", "then recall")
     # in the wilds, nowhere on the map joined to anything: first straight to the nearest signpost, the trip on
     # from there (its run)
     o.lua("""sbo.mapWalkTo = REALWALK; sbo.trip = nil; sbo.travel = nil; sbo.cfg.clanHall = nil

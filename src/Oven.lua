@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.68.1"
+M.version = "1.68.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16487,6 +16487,7 @@ end
 -- from the clan hall, the way you go out to recall: out of the hall, 5 rooms east, then north or south
 -- (south usually) until the signpost you want is the nearest (then recall goes there)
 M.CLAN_OUT_EAST = 5
+M.CLAN_OUT_MIN = 30   -- rooms north or south always walked before recalling (right by the hall it goes nowhere useful)
 function M.clanRecallCandidates(target)
   local hall = tonumber(M.cfg.clanHall)
   local p = hall and M.worldPos and M.worldPos(hall)
@@ -16501,7 +16502,7 @@ function M.clanRecallCandidates(target)
   for _, S in ipairs(pts) do
     if S.map == p.map then
       local dy = S.y >= p.y and 1 or -1
-      for m = 0, M.RECALL_MAX_WALK do
+      for m = M.CLAN_OUT_MIN, M.RECALL_MAX_WALK do
         local near = M.recallNearest(pts, p.map, x0, p.y + m * dy)
         if near and near.room == S.room then
           local k = 1 + M.CLAN_OUT_EAST + m
@@ -17056,6 +17057,9 @@ function M.travelCastStep()
   if L.clanRoute then
     T.east = T.east or 0
     if T.east < L.clanRoute.east then T.east = T.east + 1; return go("e") end
+    -- then at least the planned rooms north or south (never fewer than CLAN_OUT_MIN), before any recall
+    T.out = T.out or 0
+    if T.out < math.max(L.clanRoute.n or 0, M.CLAN_OUT_MIN) then T.out = T.out + 1; return go(L.clanRoute.dir) end
   end
   local near = x and M.recallNearest(pts, map, x, y)
   if not x or (near and near.room == S.room) then
