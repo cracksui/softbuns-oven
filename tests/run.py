@@ -3887,6 +3887,22 @@ def shop_and_quest_id_like_look():
     text = o.ev("""(function() local raw = {} for _, l in ipairs(IL) do raw[#raw+1] = l end local l = sbo.format('item', '9', raw, 100)
       local s = {} for _, r in ipairs(l) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end)()""")
     assert "a pair of cleric's leggings" in text.split("\n")[0] and "Armor" in text and "sp-regen" in text, text
+    assert "You ask the trainer" not in text and "tells you:" not in text, "the shop's boilerplate goes: " + text
+    # an artifact replica the shop doesn't stock now: "Level 241 item '…'", chatter before, a line after
+    lines = ["'Keep in mind, thessse artifactsss are no more than replicasss.' a cobra blacksmith says to you.",
+      "You ask a cobra blacksmith for a description of one of his wares.", "A cobra blacksmith tells you:",
+      "Level 241 item 'an oval energy belt' is type jewelry, with keywords '_21517_2000000101795037597",
+      "  oval pure energy belt shimmering translucent piece'", "and is equipped around the waist.",
+      "*This item may be repaired 4 times.", "The air around this unique belt seems to actually be writhing in pain.", "",
+      "+++ an oval energy belt will, each time a nexus is opened, detect that", "fact and alert its wearer to that fact.",
+      "This item is beyond your power to identify further.", "A cobra blacksmith tells you 'An oval energy belt is currently unavailable.'"]
+    o.L.globals().IL = o.L.table_from(lines)
+    text = o.ev("""(function() local raw = {} for _, l in ipairs(IL) do raw[#raw+1] = l end local l = sbo.format('item', '17', raw, 100)
+      local s = {} for _, r in ipairs(l) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end)()""")
+    head = text.split("\n")[0]
+    assert "an oval energy belt" in head and "241" in text and "around the waist" in text, text
+    bonus = text[text.index("+++"):]
+    assert "beyond your power" not in bonus and "unavailable" not in bonus, "the bonus ends where it ends: " + bonus
 
 
 @test

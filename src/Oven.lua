@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.67.1"
+M.version = "1.67.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1639,15 +1639,26 @@ end
 function M.parseItem(raw)
   local L = {}
   for _, l in ipairs(raw) do L[#L + 1] = rtrim(l) end
-  local start
-  for i, l in ipairs(L) do if l:match("^Item '") then start = i break end end
+  local start, headLevel
+  for i, l in ipairs(L) do
+    -- a shop's identify of something it doesn't stock now (an artifact replica): "Level 241 item 'an oval
+    -- energy belt' is type jewelry, …" - the same sentence, its level in front
+    local lv, rest = l:match("^Level (%d+) item ('.*)$")
+    if lv then L[i] = "Item " .. rest; headLevel = lv end
+    if L[i]:match("^Item '") then start = i break end
+  end
   if not start then return nil end
 
   local it = { other = {}, affects = {}, relics = {}, desc = {}, flags = {}, extra = {}, notes = {},
                relicAffects = {}, grants = {}, bonus = {} }
   for i = 1, start - 1 do
     local n = L[i]:match("^You focus your powers of observation on (.-):%s*$")
-    if n then it.focus = n elseif trim(L[i]) ~= "" then it.other[#it.other + 1] = L[i] end
+    -- a shop's identify: "You ask the blacksmith for a description of one of his wares." / "The blacksmith
+    -- tells you:" say nothing the card doesn't (what the shopkeeper chats besides is kept)
+    local tl = trim(L[i])
+    if n then it.focus = n
+    elseif tl:match("^You ask .- for a description of one of %a+ wares%.?$") or tl:match("^.- tells you:$") then
+    elseif tl ~= "" then it.other[#it.other + 1] = tl end
   end
 
   -- the "Item '...' is type ..." sentence wraps over several lines; join until it ends with "."
@@ -1665,6 +1676,7 @@ function M.parseItem(raw)
   local afterName = h:match("^Item '.-' is type (.*)$") or h
   for f in afterName:gmatch("%[([^%]]+)%]") do it.flags[#it.flags + 1] = f end
   it.keywords = h:match("keywords '(.-)'")
+  if headLevel then it.level = it.level or headLevel end
   it.worn = h:match("equipped ([^,%.]+)")
 
   local lastKnown = i - 1
@@ -1702,6 +1714,12 @@ function M.parseItem(raw)
     elseif t == "" then
       inBonus = false
       unknown[#unknown + 1] = { i, "" }
+    elseif t:match("^This item is beyond your power to identify further%.?$") then
+      it.notes[#it.notes + 1] = "beyond your power to identify further"; inBonus = false
+    elseif t:match("^.- tells you '.*'$") then
+      -- the shopkeeper again, after the item ("An oval energy belt is currently unavailable.")
+      it.after = it.after or {}
+      it.after[#it.after + 1] = t; inBonus = false
     elseif t:match("^%+%+%+") then
       it.bonus[#it.bonus + 1] = { (t:gsub("^%+%+%+%s*", "")) }; inBonus = true
     elseif inBonus then
@@ -2022,6 +2040,7 @@ function M.formatters.item(raw, width)
     for _, o in ipairs(it.other) do prose(out, { o }, width) end
   end
   paragraphs(out, it.desc, width)
+  for _, a in ipairs(it.after or {}) do blank(out); prose(out, { a }, width) end
   for _, b in ipairs(it.bonus) do
     blank(out)
     local text = table.concat(b, " "):gsub("%s+", " ")
