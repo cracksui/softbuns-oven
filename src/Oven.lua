@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.64.0"
+M.version = "1.64.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14203,7 +14203,8 @@ local function bgr(r, g, b) return string.char(b, g, r) end
 local RGB = { black = "\0\0\0" }
 RGB.you, RGB.youIn = bgr(255, 255, 255), bgr(230, 40, 40)
 RGB.friend, RGB.route, RGB.run = bgr(60, 230, 240), bgr(255, 230, 30), bgr(255, 160, 30)
-RGB.found, RGB.sign = bgr(255, 60, 200), bgr(250, 250, 250)
+-- (signposts: violet, outlined in black - no terrain is that colour, and white is you and the snow)
+RGB.found, RGB.sign = bgr(255, 60, 200), bgr(170, 90, 255)
 RGB.under = bgr(60, 150, 255)   -- a route's part on the layer below (or above)
 RGB.water = bgr(30, 120, 230)   -- the waterways (sailable-bridge passages) you've been through
 
@@ -14369,7 +14370,11 @@ function M.worldDrawNow()
   -- signposts you've read
   for _, sp in ipairs(M.signposts()) do
     local p = at(sp.room)
-    if p then M.worldPaint(rows, outW, p.x, p.y, math.max(zoom, 2), RGB.sign) end
+    if p then
+      local sz = math.max(zoom, 2)
+      M.worldPaint(rows, outW, p.x, p.y, sz + 2, RGB.black)
+      M.worldPaint(rows, outW, p.x, p.y, sz, RGB.sign)
+    end
   end
   -- search matches
   for _, id in ipairs(M.worldFound or {}) do
