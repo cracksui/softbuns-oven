@@ -1026,6 +1026,16 @@ def world_natural_colours():
     eq([o.ev("table.concat(sbo.worldNaturalRGB('%s'), ',')" % h) for h in ("aa0001", "aa0002", "aa0004", "aa0006", "aa0007", "aa0008")],
        ["28,58,135", "72,122,190", "50,100,180", "28,58,135", "45,90,170", "45,90,170"],
        "deep, shallow, river, salt water drawn blue (deep), salt water drawn cyan (the sea), salt water not seen yet")
+    # two bands of the same "salt water" cyan: the one along the coast is the shallows
+    o.lua("""local pal = sbo.cfg.world.pal
+      pal['bb0001'] = { sym = { ['~'] = 9 }, rgb = { ['0,255,255'] = 9 } }; sbo.cfg.world.terrain['bb0001'] = 'salt water'
+      pal['bb0002'] = { sym = { ['~'] = 9 }, rgb = { ['0,255,255'] = 9 } }; sbo.cfg.world.terrain['bb0002'] = 'salt water'
+      pal['bb0003'] = { sym = { ['.'] = 9 } }
+      local function b(h) return string.char(tonumber(h:sub(5, 6), 16), tonumber(h:sub(3, 4), 16), tonumber(h:sub(1, 2), 16)) end
+      sbo.worldNb = { [b('bb0001')] = { [b('bb0002')] = 50, [b('aa0006')] = 50 },
+                      [b('bb0002')] = { [b('bb0001')] = 50, [b('bb0003')] = 40 } }""")
+    eq([o.ev("table.concat(sbo.worldNaturalRGB('%s'), ',')" % h) for h in ("bb0001", "bb0002")], ["45,90,170", "72,122,190"], "the sea, the shallows by the beach")
+    o.lua("sbo.worldNb = nil")
     # a land colour keeps its symbol's colour whatever its name
     o.lua("sbo.cfg.world.pal['aa0005'] = { sym = { ['*'] = 9 } }; sbo.cfg.world.terrain['aa0005'] = 'deep water'")
     eq(o.ev("table.concat(sbo.worldNaturalRGB('aa0005'), ',')"), "52,112,52", "symbol first on land")

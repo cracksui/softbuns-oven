@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.63.3"
+M.version = "1.63.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13286,6 +13286,30 @@ function M.worldEdgeCheck(img, mapName)
   end
 end
 
+-- which colours each colour borders (a sample of every 3rd pixel, its right and lower neighbours), per loaded map
+function M.worldNeighbours()
+  if M.worldNb then return M.worldNb end
+  local nb = {}
+  for _, img in pairs(M.worldImages or {}) do
+    local data, w, h = img.data, img.w, img.h
+    local function at(x, y) local o = img.off + (h - 1 - y) * img.row + x * 3 + 1; return data:sub(o, o + 2) end
+    for y = 0, h - 2, 3 do
+      for x = 0, w - 2, 3 do
+        local me = at(x, y)
+        for _, t in ipairs({ at(x + 1, y), at(x, y + 1) }) do
+          if t ~= me then
+            local a, b = nb[me] or {}, nb[t] or {}
+            nb[me], nb[t] = a, b
+            a[t] = (a[t] or 0) + 1; b[me] = (b[me] or 0) + 1
+          end
+        end
+      end
+    end
+  end
+  M.worldNb = nb
+  return nb
+end
+
 -- a bitmap, read once: { data, w, h, row (bytes a row), name }
 M.worldImages = M.worldImages or {}
 function M.worldImage(mapName)
@@ -13305,6 +13329,7 @@ function M.worldImage(mapName)
   if bpp ~= 24 then return nil, "the map isn't a 24-bit bitmap" end
   img = { data = data, w = w, h = h, row = math.ceil(w * 3 / 4) * 4, off = le(data, 11, 4), name = mapName }
   M.worldImages[e.file] = img
+  M.worldNb = nil
   M.worldEdgeCheck(img, mapName)
   return img
 end
@@ -13488,6 +13513,25 @@ end
 -- name (deep water, shallow, river, lake), else by the game's own colour for it (blue = deep, cyan = the sea -
 -- both are "salt water"); the open sea (the map's edge colour) is darker still
 local WATER_NAMES = { "deep water", "shallow", "river", "lake" }
+-- the share of a water colour's border that is land (not ~ and not the open sea): the band along the coast is the
+-- shallows - "salt water" in the game, ~ in its colour, just like the band further out
+function M.worldShoreShare(hex)
+  local bytes = string.char(tonumber(hex:sub(5, 6), 16), tonumber(hex:sub(3, 4), 16), tonumber(hex:sub(1, 2), 16))
+  local nb = M.worldNeighbours()[bytes]
+  if not nb then return 0 end
+  local P, land, all = pal(), 0, 0
+  for t, n in pairs(nb) do
+    local b, g, r = t:byte(1, 3)
+    local h = string.format("%02x%02x%02x", r, g, b)
+    local e = P[h]
+    local sym = e and top(e.sym)
+    if sym or (M.worldEdges or {})[h] then
+      all = all + n
+      if sym and sym ~= "~" and not (M.worldEdges or {})[h] then land = land + n end
+    end
+  end
+  return all > 0 and land / all or 0
+end
 function M.worldNaturalRGB(hex)
   local P = pal()[hex]
   local sym = P and top(P.sym)
@@ -13501,6 +13545,7 @@ function M.worldNaturalRGB(hex)
   if sym == "~" then
     if t then for _, n in ipairs(WATER_NAMES) do if t:find(n, 1, true) then return named end end end
     local tone = waterTone(P and top(P.rgb))
+    if tone and tone[1] == 45 and M.worldShoreShare(hex) >= 0.25 then return { 72, 122, 190 } end   -- (shallow)
     if tone then return tone end
     if named then return named end
   end
