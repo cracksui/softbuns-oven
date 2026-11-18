@@ -1,0 +1,48 @@
+##### fixture: hand-written - [!] quest targets in a room, a shop list and a mob's worn items
+===== 2026-01-01 00:00:00 | cmd=n | room=10522
+@gmcp room.info = {["num"]="10522",["zone"]="Towne of Rune",["terrain"]="grassy field",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=763},["flags"]="high-regen",["name"]="Garden of Life",["exits"]={["s"]="10442",["n"]="10438"},["wilds"]="false"}
+
+ Garden of Life                                         -      N      -
+(-------------------------------------------------)     - <---(M)---> -
+                                                        -      S      -
+
+  This is a large and beautifully appointed garden.  Many types of flowers
+are growing artfully here.  
+[!] A goblin mercenary is here, hiding from the goblin slayer.
+*[!] A master necromancer is here, performing a dark ritual.
+A salesman is here, peddling his wares.
+
+[Mail]<270hp 550sp 200st> 
+
+===== 2026-01-01 00:00:00 | cmd=s | room=10442
+@gmcp room.info = {["num"]="10442",["zone"]="Towne of Rune",["terrain"]="city",["plane"]="physical",["coord"]={["id"]=1,["x"]=705,["name"]="Alyria",["y"]=764},["flags"]="",["name"]="Garden Courtyard",["exits"]={["n"]="10522"},["wilds"]="false"}
+
+ Garden Courtyard                                       -      N      -
+(-------------------------------------------------)     - <---(M)---> -
+                                                        -      -      -
+
+  A small courtyard paved with flat grey stones, a fountain at its centre.  
+A goblin mercenary is here, hiding from the goblin slayer.
+
+[Mail]<270hp 550sp 200st> 
+
+===== 2026-01-01 00:00:00 | cmd=l guard | room=10442
+
+Dressed in a strange mishmash of black armor pieces, this human looks tired.
+He is a human approximately 5'7" tall.
+You are 6 distance away from Samara, guardian of the crossing and your attack range is 2.
+Samara, guardian of the crossing is in good health.
+<worn on head>       an ebony helm (new)
+<worn as shield>     [!] an ebony shield (new)
+<right hand>         an ebony dai-katana (new)
+
+[Mail]<270hp 550sp 200st> 
+
+===== 2026-01-01 00:00:00 | cmd=shop list | room=10442
+
+Welcome to the Herb Shop!
+No.  Item Name                                    Level Amount       Cost
+[!] 16) A shimmering white fish scale                10    No limit     [         25 gold]
+     17) A sprig of mint                              10    No limit     [         10 gold]
+
+[Mail]<270hp 550sp 200st> 

@@ -288,6 +288,55 @@ def mobs_seen():
 
 
 @test
+def quest_targets():
+    o = Oven()
+    o.lua('roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end; getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end')
+    blocks = read_recording(fixture("quest_targets.txt"))
+    def play(i):
+        b = blocks[i]
+        for n, v in b["gmcp"]: o.set_gmcp(n, v)
+        if b["gmcp"]: o.lua("sbo.mapRoom = tonumber(gmcp.room.info.num)")
+        o.block(b["lines"], b["cmds"], b["fg"])
+    play(0)
+    rows = o.rows("SELECT kind, key, room FROM quest_targets ORDER BY key")
+    eq([(r["kind"], r["room"]) for r in rows], [("mob", 10522), ("mob", 10522)], "two [!] mobs")
+    mob = o.rows("SELECT text, ok FROM room_mobs WHERE instr(key, 'a goblin') = 1")
+    eq(mob, [{"text": "A goblin mercenary is here, hiding from the goblin slayer.", "ok": 1}], "saved as a mob, without the [!]")
+    f = o.ev("function(x) local t, ok, w, q = sbo.mobLine(x, '0,255,0') return tostring(t) .. '|' .. tostring(q) end")
+    eq(f("[!] Demonia, Knight Captain, stands here."), "Demonia, Knight Captain, stands here.|true", "a named one too")
+    eq(f("[Shop] A grocer stands here."), "nil|nil", "other tags: room_npcs")
+    play(1)   # the goblin again, no [!]: done with
+    eq([r["key"] for r in o.rows("SELECT key FROM quest_targets")], ["a master necromancer is here, performing a dark ritual."], "unmarked: dropped")
+    eq(o.ev("sbo.isTarget('mob', 'a goblin mercenary is here, hiding from the goblin slayer.')"), False, "memory agrees")
+    o.lua("sbo.mapRoom = 10442"); play(2)
+    eq(o.rows("SELECT key, holder, room FROM quest_targets WHERE kind = 'worn'"),
+       [{"key": "an ebony shield", "holder": "samara, guardian of the crossing", "room": 10442}], "worn by a mob you look at")
+    play(3)
+    eq(o.rows("SELECT text, holder FROM quest_targets WHERE kind = 'shop'"), [{"text": "A shimmering white fish scale", "holder": "25 gold"}], "a shop's [!] item")
+    eq(o.rows("SELECT COUNT(*) AS n FROM shop_items WHERE room = 10442")[0]["n"], 2, "and the [!] line is in its stock now")
+    o.lua('OUTV = nil; OUTL = nil; sbo.viewOut = function(l, k) OUTV = l; OUTL = k end; sbo.command("map targets")')
+    text = o.lua('local s = {} for _, r in ipairs(OUTV) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end return table.concat(s)')
+    assert "worn by samara" in text and "fish scale" in text and "necromancer" in text, text
+    # graded highlight: a roaming mob, brighter where seen more and lately; centred on the latest sighting
+    o.lua("""HL = {}; highlightRoom = function(id, r1, g1, b1, r2, g2, b2, rad, a1, a2) HL[id] = a1 end; unHighlightRoom = function() end
+      getPath = function() return false end; sbo.centerOn = function(id) CENTRE = id end
+      sbo.dbx("INSERT OR REPLACE INTO room_mobs (room, key, text, seen, last, ok) VALUES (1, 'a janitor is here.', 'A janitor is here.', 40, %s, 1)", os.time() - 3600)
+      sbo.dbx("INSERT OR REPLACE INTO room_mobs (room, key, text, seen, last, ok) VALUES (2, 'a janitor is here.', 'A janitor is here.', 1, %s, 1)", os.time() - 60 * 86400)
+      sbo.dbx("INSERT OR REPLACE INTO room_mobs (room, key, text, seen, last, ok) VALUES (3, 'a janitor is here.', 'A janitor is here.', 2, %s, 1)", os.time() - 60)
+      sbo.mapHighlightAll("janitor")""")
+    hl = o.ev("HL")
+    assert hl[1] > hl[3] > hl[2], dict(hl)
+    eq(o.ev("CENTRE"), 3, "the latest sighting")
+    # the quest panel: a step that names a mob Oven has seen
+    eq(o.ev("sbo.questFindName('Defeat a janitor [Towne of Rune]')"), "janitor", "find ▸ for it")
+    eq(o.ev("sbo.questFindName('Defeat a unicorn')"), None, "never seen: no link")
+    o.lua("HL = {}; sbo.questAct({ id = '1', n = 1, find = 'janitor' })")
+    eq(len(o.ev("HL")), 3, "the link lights them up")
+    o.lua('sbo.command("map targets clear")')
+    eq(o.rows("SELECT COUNT(*) AS n FROM quest_targets")[0]["n"], 0, "cleared")
+
+
+@test
 def rooms_negatives():
     o = Oven()
     o.replay(fixture("negatives.txt"))

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.64.2"
+M.version = "1.65.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -195,6 +195,9 @@ local SCHEMA = {
   -- the game confirms it's a mob (you targeted it: char.lasttargeted)
   "CREATE TABLE IF NOT EXISTS room_mobs (room INTEGER, key TEXT, text TEXT, seen INTEGER, last INTEGER, ok INTEGER, vnum INTEGER, race TEXT, PRIMARY KEY (room, key))",
   "CREATE INDEX IF NOT EXISTS room_mobs_key ON room_mobs (key)",
+  -- quest targets: what the game marked [!] (a target of a quest you have now) - a mob in a room, an item in
+  -- a shop's list, or one a mob wears (look at it). kind = mob | shop | worn; dropped once seen without [!]
+  "CREATE TABLE IF NOT EXISTS quest_targets (kind TEXT, key TEXT, room INTEGER, text TEXT, holder TEXT, t INTEGER, PRIMARY KEY (kind, key, room))",
   -- players' names (clan-tagged in a room, on a channel, in who): never saved as mobs
   "CREATE TABLE IF NOT EXISTS players (name TEXT PRIMARY KEY, last INTEGER)",
   -- where a room is on the world map (GMCP's coord when you were there): the world map places town rooms by it
@@ -3253,6 +3256,13 @@ local function questCardHtml(id, Q)
           end
           end
         end
+          -- a creature the step names that Oven has seen: light up where it roams
+          local okF, fname = pcall(M.questFindName, ph.text)
+          if okF and fname then
+            add("   " .. span(C.dim, "⌕ ") .. span(C.flag, fname) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "find ▸") .. "</u>",
+              ulen(fname) + 12)
+            acts[#html] = { id = id, n = ph.n, find = fname }
+          end
         first = false
       end
     end
@@ -3685,6 +3695,7 @@ function M.questAct(a)
       M.saveSettings()
       return M.drawQuestTracker()
     end
+    if a.find then return M.mapHighlightAll(a.find) end
     if a.master then return M.questGoMaster(a.id) end
     if a.get or a.deliver then return M.questGoStep(a.id, a.n, a.get and "get" or "deliver") end
     if a.hint then return M.questHudClick(a.id) end   -- the card's own click: opens or folds the hint
@@ -3894,6 +3905,21 @@ function M.questStepNames(text)
     if m then add((m:gsub(",.*$", ""))) end
   end
   return out
+end
+
+-- the creature a step names that Oven has seen in a room ("Defeat an apprentice psionic [Sigil]" ->
+-- "apprentice psionic"), for the quest panel's find ▸ (kept a minute: the panel redraws often)
+M.questFindCache = M.questFindCache or {}
+function M.questFindName(text)
+  local c = M.questFindCache[text or ""]
+  if c and now() - c.at < 60 then return c.name end
+  local name
+  for _, n in ipairs(M.questStepNames((text or ""):gsub("%s*%[[^%]]*%]%s*$", ""))) do
+    local q = n:lower()
+    if M.dbRow("SELECT 1 AS x FROM room_mobs WHERE ok = 1 AND instr(key, %s) > 0 LIMIT 1", q) then name = n; break end
+  end
+  M.questFindCache[text or ""] = { at = now(), name = name }
+  return name
 end
 
 M.questTargetCache = M.questTargetCache or {}
@@ -10796,11 +10822,14 @@ function M.parseShop(lines)
     if w then shop = w end
     if t:match("^No%.%s+Item Name%s+Level%s+Amount%s+Cost") then header = true
     elseif header then
+      -- "[!] 16) A shimmering white fish scale …": a quest target
+      local quest = false
+      if t:match("^%[!%]") then quest, t = true, trim(t:sub(4)) end
       -- the price in gold, or another currency: "[   25 rewardunits]"
       local no, name, level, amount, cost, cur = t:match("^(%d+)%)%s+(.-)%s%s+(%d+)%s+(.-)%s+%[%s*([%d,]+)%s+([%a][%a ]-)%s*%]$")
       if no then
         items[#items + 1] = { no = tonumber(no), item = trim(name), level = tonumber(level), amount = trim(amount),
-                              cost = tonumber((cost:gsub(",", ""))), currency = trim(cur):lower() }
+                              cost = tonumber((cost:gsub(",", ""))), currency = trim(cur):lower(), quest = quest }
       end
     end
   end
@@ -10830,6 +10859,7 @@ function M.recordShop(room, shop)
     M.dbx("INSERT OR REPLACE INTO shop_items (room, no, item, level, amount, cost, last, currency) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
       room, it.no, it.item, it.level, it.amount, it.cost, t, it.currency or "gold")
   end
+  pcall(M.targetShop, room, shop.items)
 end
 
 M.addBlockReader("shop_list", "*", function(b)
@@ -11247,13 +11277,18 @@ end)
 local MOB_FG = "0,255,0"
 local MOB_PLAYER_TAGS = { duelist = true, guide = true, building = true, hunting = true, outlaw = true, afk = true }
 local ARTICLE = { a = true, an = true, the = true, some = true, one = true, two = true, three = true, several = true }
+-- 4th result: true when the game marked it [!] (a target of a quest you have now)
 function M.mobLine(x, fg)
   local rest = x
   local tags = 0
+  local quest = false
   while true do
     local a = rest:match("^%s*%*+%s*") or rest:match("^%s*%(%a[%a ]-%)%s*")
     local t = not a and rest:match("^%s*%[([^%]]+)%]%s*")
-    if t then
+    if t and trim(t) == "!" then
+      quest = true                                         -- [!]: a quest target, not a tag
+      a = rest:match("^%s*%b[]%s*")
+    elseif t then
       local low = trim(t):lower()
       if MOB_PLAYER_TAGS[low] or low:match("^clan") then
         local who = rest
@@ -11280,8 +11315,9 @@ function M.mobLine(x, fg)
   if not first then return end
   local fl = first:lower()
   if fl == "you" or fl == "your" or fl == "it" or fl == "there" or fl == "someone" then return end
-  if ARTICLE[fl] then return text, 1 end
+  if ARTICLE[fl] then return text, 1, nil, quest end
   if M.isPlayer(first) then return end
+  if quest then return text, 1, nil, true end              -- a quest target is never a player
   -- name first: "Sathan is here, guarding the gate." reads like a mob; "Pip the Tester is here." could be anyone
   local plain = text:match("^%u[%w%-']* .- is %a* ?here%.?$") or text:match("^%u[%w%-']* is %a* ?here%.?$")
   return text, plain and 0 or 1
@@ -11310,15 +11346,17 @@ end
 M.addBlockReader("room_mobs", "room", function(b, seg)
   local seen = {}
   for i, x in ipairs(seg.here) do
-    local text, ok, who = M.mobLine(x, seg.hereFg and seg.hereFg[i] or nil)
+    local text, ok, who, quest = M.mobLine(x, seg.hereFg and seg.hereFg[i] or nil)
     if ok == "player" then
       M.notePlayer((who or ""):match("^(%u%a+)"))
     elseif text and not seen[text:lower()] then
       local key = text:lower()
       seen[key] = true
+      pcall(M.targetMob, key, text, seg.room, quest)
       local have = M.dbRow("SELECT ok FROM room_mobs WHERE room = %s AND key = %s", seg.room, key)
       if have then
-        M.dbx("UPDATE room_mobs SET seen = seen + 1, last = %s WHERE room = %s AND key = %s", os.time(), seg.room, key)
+        M.dbx("UPDATE room_mobs SET seen = seen + 1, last = %s%s WHERE room = %s AND key = %s", os.time(),
+          (quest and tonumber(have.ok) ~= 1) and ", ok = 1" or "", seg.room, key)
       else
         local c = M.dbRow("SELECT COUNT(*) AS c FROM room_mobs WHERE room = %s", seg.room)
         if tonumber(c and c.c or 0) < 30 then
@@ -11328,6 +11366,89 @@ M.addBlockReader("room_mobs", "room", function(b, seg)
         end
       end
     end
+  end
+end)
+
+-- Quest targets ([!]): kept in quest_targets, and a small table in memory of which are, so a room's mobs
+-- cost nothing to check. A mob is one row (where it was last marked); a shop's and a worn item's are by room.
+function M.targetKeys()
+  if not M.targetCache then
+    M.targetCache = {}
+    for _, r in ipairs(M.dbRows("SELECT kind, key FROM quest_targets")) do M.targetCache[r.kind .. ":" .. r.key] = true end
+  end
+  return M.targetCache
+end
+function M.isTarget(kind, key) return M.targetKeys()[kind .. ":" .. tostring(key or ""):lower()] == true end
+
+-- a mob seen in a room: [!] - kept (moved to this room); without - no longer a target
+function M.targetMob(key, text, room, quest)
+  local K = M.targetKeys()
+  local ck = "mob:" .. key
+  if quest then
+    local was = M.targetMobAt and M.targetMobAt[key]
+    if K[ck] and was and was.room == room and os.time() - was.t < 60 then return end   -- (same room, just now: no write)
+    M.targetMobAt = M.targetMobAt or {}
+    M.targetMobAt[key] = { room = room, t = os.time() }
+    M.dbx("DELETE FROM quest_targets WHERE kind = 'mob' AND key = %s", key)
+    M.dbx("INSERT INTO quest_targets (kind, key, room, text, holder, t) VALUES ('mob', %s, %s, %s, NULL, %s)", key, room, text, os.time())
+    if not K[ck] then K[ck] = true; M.say("quest target: " .. text .. "  (sbo map targets)") end
+  elseif K[ck] then
+    K[ck] = nil
+    M.dbx("DELETE FROM quest_targets WHERE kind = 'mob' AND key = %s", key)
+  end
+end
+
+-- a shop's list: its [!] items are this shop's targets now (the rest aren't)
+function M.targetShop(room, items)
+  if not room then return end
+  local K = M.targetKeys()
+  for _, r in ipairs(M.dbRows("SELECT key FROM quest_targets WHERE kind = 'shop' AND room = %s", room)) do K["shop:" .. r.key] = nil end
+  M.dbx("DELETE FROM quest_targets WHERE kind = 'shop' AND room = %s", room)
+  for _, it in ipairs(items or {}) do
+    if it.quest then
+      local key = it.item:lower()
+      M.dbx("INSERT OR REPLACE INTO quest_targets (kind, key, room, text, holder, t) VALUES ('shop', %s, %s, %s, %s, %s)",
+        key, room, it.item, it.cost and (M.commaNum(it.cost) .. " " .. (it.currency or "gold")) or nil, os.time())
+      K["shop:" .. key] = true
+    end
+  end
+  -- (shop:<item> stays true while any shop still marks it)
+  for _, r in ipairs(M.dbRows("SELECT DISTINCT key FROM quest_targets WHERE kind = 'shop'")) do K["shop:" .. r.key] = true end
+end
+
+-- "look <mob>": its worn items - the [!] ones are targets, worn by it (by name), where you are
+-- "<worn as shield>     [!] an ebony shield (new)"
+-- "You are 6 distance away from Samara, guardian of the crossing and your attack range is 2."
+function M.wornTargets(lines, room)
+  local holder, worn, any = nil, {}, false
+  for _, l in ipairs(lines or {}) do
+    local t = trim(l)
+    holder = holder or t:match("^You are %d+ distance away from (.-) and your attack range")
+    local slot, item = t:match("^<([^>]+)>%s+(.+)$")
+    if slot then
+      any = true
+      local bang, rest = item:match("^(%[!%])%s*(.+)$")
+      if bang then worn[#worn + 1] = trim((rest:gsub("%s*%(new%)%s*$", ""))) end
+    end
+  end
+  if not any or not holder then return end
+  local h = holder:lower()
+  local K = M.targetKeys()
+  for _, r in ipairs(M.dbRows("SELECT key FROM quest_targets WHERE kind = 'worn' AND holder = %s", h)) do K["worn:" .. r.key] = nil end
+  M.dbx("DELETE FROM quest_targets WHERE kind = 'worn' AND holder = %s", h)
+  for _, it in ipairs(worn) do
+    local key = it:lower()
+    M.dbx("INSERT OR REPLACE INTO quest_targets (kind, key, room, text, holder, t) VALUES ('worn', %s, %s, %s, %s, %s)",
+      key, room or 0, it, h, os.time())
+    if not K["worn:" .. key] then M.say("quest target: " .. it .. ", worn by " .. holder .. "  (sbo map targets)") end
+    K["worn:" .. key] = true
+  end
+  return #worn
+end
+
+M.addBlockReader("worn_targets", "*", function(b)
+  for _, l in ipairs(b.lines) do
+    if l:find("distance away from", 1, true) then return pcall(M.wornTargets, b.lines, M.mapRoom or b.room) end
   end
 end)
 
@@ -15188,6 +15309,47 @@ function M.showMapPanel(on)
   end
 end
 
+-- sbo map targets: what the game marked [!] - mobs (where last seen), items a mob wears, shop items
+function M.targetsShow(arg)
+  arg = trim(arg or ""):lower()
+  if arg == "clear" then
+    M.dbx("DELETE FROM quest_targets")
+    M.targetCache = nil
+    return say("quest targets cleared - Oven keeps the next ones the game marks [!]")
+  end
+  local width = M.cfg.window and M.viewCols() or 80
+  local rows = M.dbRows("SELECT kind, key, room, text, holder, t FROM quest_targets ORDER BY t DESC")
+  local out = { header("map", "", width, string.format("Quest targets [!]  (%d)", #rows)) }
+  local links = {}
+  if #rows == 0 then
+    out[#out + 1] = { { C.dim, "none yet - Oven keeps what the game marks [!]: mobs in a room, shop lists, a mob you look at" } }
+  end
+  local function where(id)
+    id = tonumber(id)
+    if not id or id == 0 or not roomExists(id) then return "room not on the map" end
+    local a = getRoomArea(id)
+    return (getRoomName(id) or ("#" .. id)) .. " · " .. (a and getRoomAreaName(a) or "?")
+  end
+  local KIND = { mob = "mob", worn = "worn", shop = "shop" }
+  for _, r in ipairs(rows) do
+    local id, text = tonumber(r.room), r.text or r.key
+    local line = { { C.dim, "  " .. pad(KIND[r.kind] or r.kind, 5) }, { C.item, text } }
+    if r.kind == "worn" and r.holder then line[#line + 1] = { C.dim, ", worn by " .. r.holder } end
+    if r.kind == "shop" and r.holder then line[#line + 1] = { C.dim, "  " .. r.holder } end
+    out[#out + 1] = line
+    out[#out + 1] = { { C.dim, "         " .. where(id) .. " · " .. M.shortDur(os.time() - (tonumber(r.t) or os.time())) .. " ago" } }
+    -- highlight: a mob's every room (it may roam); a wearer's by name; a shop's item, the shops with it
+    local hl = r.kind == "mob" and r.key or r.kind == "worn" and r.holder or r.key
+    links[#links + 1] = { "light up " .. (r.kind == "worn" and r.holder or text), function() M.mapHighlightAll(hl) end }
+    if id and id ~= 0 and roomExists(id) then
+      links[#links + 1] = { "walk to " .. text, function() M.mapWalkTo(id) end }
+    end
+  end
+  out[#out + 1] = {}
+  out[#out + 1] = { { C.dim, "a target goes once it's seen without [!] · sbo map targets clear forgets them all" } }
+  M.viewOut(out, links)
+end
+
 -- map search: rooms whose name contains the text (rooms in your current area first)
 -- sbo map mobs [name]: the mobs Oven has seen, each with its rooms (nearest first), how often, kills
 function M.mobsShow(q)
@@ -15229,7 +15391,7 @@ function M.mobsShow(q)
     best = best or m.rooms[1]
     local kills = M.dbRow("SELECT SUM(n) AS c FROM kills WHERE key = %s OR instr(%s, key) > 0", m.key, m.key)
     kills = tonumber(kills and kills.c) or 0
-    out[#out + 1] = { { C.item, m.text } }
+    out[#out + 1] = M.isTarget("mob", m.key) and { { C.title, "[!] " }, { C.item, m.text } } or { { C.item, m.text } }
     local info = { { C.dim, "    " }, { C.num, tostring(#m.rooms) }, { C.dim, #m.rooms == 1 and " room" or " rooms" },
       { C.dim, "  ·  seen " }, { C.num, tostring(m.seen) }, { C.dim, "×, last " .. M.shortDur(os.time() - m.last) .. " ago" } }
     if m.race then info[#info + 1] = { C.dim, "  ·  " .. m.race } end
@@ -17599,6 +17761,8 @@ M.CMDS = {
       run = function(r) return legacy("shops " .. r) end },
     { name = "mobs", args = "[{name}]", desc = "mobs you've seen, where and how often (none: the ones in this area)",
       run = function(r) return M.mobsShow(r) end },
+    { name = "targets", args = "[clear]", desc = "quest targets the game marked [!]: mobs, shop items, items a mob wears",
+      run = function(r) return M.targetsShow(r) end },
     { name = "signposts", desc = "signpost runs and where each ends", run = function() return M.runList() end },
     { name = "mark", args = "[{name}]", desc = "bookmark this room; no name: list them",
       run = function(r) return legacy("mark " .. r) end },
@@ -18099,10 +18263,34 @@ function M.mapHighlightAll(q, quiet)
   if #targets == 0 then return quiet or say("no rooms Oven knows with '" .. q .. "'") end
   local best = math.huge
   for _, t in ipairs(targets) do best = math.min(best, t.rank or 9) end
+  -- a mob (best match: where it was seen): each room graded by how often and how lately it was seen there,
+  -- so a roaming one shows its usual haunts; one query for them all
+  local grade, latest, latestT
+  if best == 2.2 then
+    grade = {}
+    local nowT = os.time()
+    for _, r in ipairs(M.dbRows("SELECT room, SUM(seen) AS n, MAX(last) AS last FROM room_mobs WHERE ok = 1 AND instr(key, %s) > 0 GROUP BY room", what:lower())) do
+      local id, last = tonumber(r.room), tonumber(r.last) or 0
+      -- often (log) × lately (halves every week)
+      grade[id] = math.log(1 + (tonumber(r.n) or 1)) * 0.5 ^ ((nowT - last) / (7 * 86400))
+      if roomExists(id) and (not latestT or last > latestT) then latest, latestT = id, last end
+    end
+    local top = 0
+    for _, g in pairs(grade) do top = math.max(top, g) end
+    for id, g in pairs(grade) do grade[id] = top > 0 and g / top or 1 end
+  end
   local lit = {}
   for _, t in ipairs(targets) do
     if (t.rank or 9) == best then
-      pcall(highlightRoom, t.id, 255, 165, 0, 255, 215, 0, 1.2, 220, 80)
+      local g = grade and grade[t.id]
+      if g then
+        -- bright yellow (its usual rooms) … faint dull orange (once, long ago)
+        local f = 0.25 + 0.75 * g
+        pcall(highlightRoom, t.id, 255, math.floor(110 + 120 * g), 0, 255, math.floor(150 + 80 * g), 0, 1.2,
+          math.floor(60 + 195 * f), math.floor(20 + 80 * f))
+      else
+        pcall(highlightRoom, t.id, 255, 165, 0, 255, 215, 0, 1.2, 220, 80)
+      end
       M.mapHighlights[#M.mapHighlights + 1] = t.id
       lit[#lit + 1] = t.id
     end
@@ -18112,7 +18300,10 @@ function M.mapHighlightAll(q, quiet)
   local keys = {}
   for _, r in ipairs(M.dbRows("SELECT DISTINCT key FROM room_npcs WHERE instr(lower(text), %s) > 0", what:lower())) do keys[#keys + 1] = r.key end
   local centre, note
-  if #keys == 1 then
+  if latest and #keys == 0 then
+    centre = latest
+    note = " · centred on the latest sighting, " .. M.shortDur(os.time() - latestT) .. " ago · brighter = seen there more, and lately"
+  elseif #keys == 1 then
     local r = M.dbRow("SELECT room, last FROM room_npcs WHERE key = %s ORDER BY last DESC LIMIT 1", keys[1])
     if r then
       centre = tonumber(r.room)
