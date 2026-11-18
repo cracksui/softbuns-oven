@@ -4151,9 +4151,15 @@ def next_quest_countdown():
     eq(list(o.ev("SAYS").values()), ["you can request another quest now"], "said once")
     o.lua("sbo.questNextTick()")
     eq(len(o.ev("SAYS")), 1, "only once")
-    o.block(["You undertake the quest 'Rewarding Work', #3600.", "<291hp>"], ["quest request rewarding"])
+    # quest info shows a quest the same way: not a quest taken
+    o.block(["This quest [146] is called 'Prodigal Psionics',", "for Adventurers levels 90 to 120.", "<291hp>"], ["quest info 146"])
+    assert "next quest ready" in top(), "quest info isn't taking one: " + top()
+    o.block(["You ask Lord Vendredi for a quest.", "This quest [146] is called 'Prodigal Psionics',", "for Adventurers levels 90 to 120.",
+             "You have 160 Alyrian minute remaining to complete this quest.", "<291hp>"], ["quest request rewarding"])
     eq(o.ev("sbo.cfg.questNextAt"), None, "a quest taken: gone")
     assert "next quest" not in top(), top()
+    o.lua("sbo.cfg.questNextAt = T0 - 5"); o.block(["You undertake the quest 'Daily Quest - Feeding Hungry Mouths', #3519.", "<291hp>"], [])
+    eq(o.ev("sbo.cfg.questNextAt"), None, "a quest handed to you: gone too")
     # 'ready' isn't kept forever
     o.lua("sbo.cfg.questNextAt = T0 + 30; T0 = T0 + 30 + 601; sbo.questNextTick()")
     eq(o.ev("sbo.cfg.questNextAt"), None, "ready shown ten minutes, then gone")

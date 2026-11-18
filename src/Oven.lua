@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.67.0"
+M.version = "1.67.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11306,11 +11306,17 @@ M.addBlockReader("quest_undertaken", "*", function(b)
   end
 end)
 
--- the wait for another quest, and the end of it (a quest taken, whatever command asked for it)
+-- the wait for another quest, and the end of it: a quest taken - "You ask Lord Vendredi for a quest."
+-- then the quest itself ("This quest [146] is called …"), or one handed to you ("You undertake the quest …")
 M.addBlockReader("quest_next", "*", function(b)
+  local asked = false
   for _, l in ipairs(b.lines) do
-    if l:find("Alyrian minute", 1, true) then pcall(M.questNextLine, trim(l))
-    elseif l:find("You undertake the quest", 1, true) then pcall(M.questNextDone) end
+    local t = trim(l)
+    if t:find("Alyrian minute", 1, true) then pcall(M.questNextLine, t)
+    elseif t:match("^You ask .- for a quest%.$") then asked = true
+    elseif (asked and t:match("^This quest %[%d+%] is called '")) or t:match("^You undertake the quest '") then
+      pcall(M.questNextDone)
+    end
   end
 end)
 
