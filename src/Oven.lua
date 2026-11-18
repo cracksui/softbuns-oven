@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.62.3"
+M.version = "1.63.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13443,7 +13443,8 @@ end
 -- for a wild room: 0E, 4U, 5K…), picked to look distinct, not like the land. The game's mini-map (the ASCII
 -- map round you in the wilds: ~ water, * forest, ^ mountains, # road…) lines up room for room with the
 -- bitmap, so each colour's symbol (and the game's colour for it) is learned from it - from the recordings
--- once, then every step you take in the wilds - and the map is drawn in natural colours instead
+-- once, then every step you take in the wilds - and the map is drawn in the mini-map's colours (map.colours
+-- ascii, the default) or Oven's natural ones (map.colours natural) instead
 M.WORLD_SYM_RGB = {
   ["~"] = { 45, 90, 170 }, ["."] = { 128, 150, 82 }, ['"'] = { 96, 150, 64 }, ["="] = { 116, 142, 76 },
   ["!"] = { 132, 146, 86 }, ["*"] = { 52, 112, 52 }, ["&"] = { 34, 86, 38 }, ["^"] = { 128, 112, 96 },
@@ -13509,13 +13510,55 @@ function M.worldNaturalRGB(hex)
   end
   return M.WORLD_UNKNOWN_RGB
 end
--- the bitmap's 3 bytes (blue, green, red) → the natural colour's, worked out once a colour
+-- which colours the world map uses: "ascii" (the game's mini-map colours), "natural" (Oven's earth tones) or
+-- "game" (the bitmap's own palette)
+function M.worldColourMode()
+  local m = M.cfg.worldColours
+  if m == "ascii" or m == "natural" or m == "game" then return m end
+  if M.cfg.worldNatural == false then return "game" end
+  return "ascii"
+end
+
+-- the mini-map's colour for a bitmap colour: the one the game drew its symbol in there; for a colour not seen in
+-- colour yet, the colour that symbol most often has elsewhere; else the natural colour. The open sea (the map's
+-- edge) stays darker than any water, as the mini-map has no colour of its own for it
+local symColour
+function M.worldAsciiRGB(hex)
+  local P = pal()[hex]
+  local sym = P and top(P.sym)
+  local edge = (M.worldEdges or {})[hex]
+  if edge == "sea" and (not sym or sym == "~") then return M.WORLD_OPEN_SEA_RGB end
+  if edge == "under" and not sym then return { 22, 22, 26 } end
+  local c = P and top(P.rgb)
+  if not c and sym then
+    if not symColour then
+      local votes = {}
+      for _, e in pairs(pal()) do
+        local s = top(e.sym)
+        if s and e.rgb then
+          votes[s] = votes[s] or {}
+          for k, n in pairs(e.rgb) do votes[s][k] = (votes[s][k] or 0) + n end
+        end
+      end
+      symColour = {}
+      for s, v in pairs(votes) do symColour[s] = top(v) end
+    end
+    c = symColour[sym]
+  end
+  local r, g, b = tostring(c or ""):match("(%d+),(%d+),(%d+)")
+  if r then return { tonumber(r), tonumber(g), tonumber(b) } end
+  return M.worldNaturalRGB(hex)
+end
+
+-- the bitmap's 3 bytes (blue, green, red) → the chosen colour's, worked out once a colour
 function M.worldNaturalReset()
+  symColour = nil
   M.WORLD_NATURAL = setmetatable({}, { __index = function(t, k)
     local v = k
     if k ~= "\0\0\0" then
       local b, g, r = k:byte(1, 3)
-      local c = M.worldNaturalRGB(string.format("%02x%02x%02x", r, g, b))
+      local hex = string.format("%02x%02x%02x", r, g, b)
+      local c = M.worldColourMode() == "natural" and M.worldNaturalRGB(hex) or M.worldAsciiRGB(hex)
       v = string.char(c[3], c[2], c[1])
     end
     t[k] = v
@@ -13768,7 +13811,7 @@ function M.worldCut(img, cx, cy, zoom, outW, outH, mute)
         seg = string.rep("\0", (a - x0) * 3) .. (b >= a and data:sub(o + a * 3 + 1, o + b * 3 + 3) or "")
         seg = seg .. string.rep("\0", srcW * 3 - #seg)
       end
-      if M.cfg.worldNatural ~= false then seg = seg:gsub("...", M.WORLD_NATURAL) end
+      if M.worldColourMode() ~= "game" then seg = seg:gsub("...", M.WORLD_NATURAL) end
       if mute then seg = seg:gsub("...", M.WORLD_MUTE) end
       local r = zoom == 1 and seg or seg:gsub("...", function(p) return p:rep(zoom) end)
       r = r:sub(1, outW * 3)
@@ -13789,7 +13832,7 @@ function M.worldCut(img, cx, cy, zoom, outW, outH, mute)
           if x < 0 or x >= img.w then t[#t + 1] = "\0\0\0" else t[#t + 1] = data:sub(o + x * 3 + 1, o + x * 3 + 3) end
         end
         local r = table.concat(t)
-        if M.cfg.worldNatural ~= false then r = r:gsub("...", M.WORLD_NATURAL) end
+        if M.worldColourMode() ~= "game" then r = r:gsub("...", M.WORLD_NATURAL) end
         rows[#rows + 1] = mute and r:gsub("...", M.WORLD_MUTE) or r
       end
     end
@@ -13869,7 +13912,7 @@ function M.worldDrawNow()
   local route = M.worldRoute()
   -- (the game's own loud colours are dimmed under a route or search hits so they stand out; the natural ones
   -- don't need it)
-  local mute = M.cfg.worldNatural == false and ((M.worldFound and #M.worldFound > 0) or #route > 0)
+  local mute = M.worldColourMode() == "game" and ((M.worldFound and #M.worldFound > 0) or #route > 0)
   local rows = M.worldCut(img, v.cx, v.cy, zoom, outW, outH, mute)
   local dot = math.max(zoom, 3)
   -- a room on this map, or on a map above / below it (the same place, drawn in another colour)
@@ -17729,8 +17772,11 @@ M.SETTINGS = {
   { "quest.opacity", "Quest panel", "number", function() return tostring(M.cfg.questHudOpacity or 100) end, function(v) legacy("quest hud opacity " .. v) end },
   { "map", "Map panel", BOOL, function() return onoff(M.cfg.map) end, function(v) legacy("map " .. v) end },
   { "map.panel", "Map panel", BOOL, function() return onoff(M.cfg.mapPanel) end, function(v) legacy("map panel " .. v) end },
-  { "map.natural", "Map panel", BOOL, function() return onoff(M.cfg.worldNatural ~= false) end,
-    function(v) M.cfg.worldNatural = (v == "on"); M.saveSettings(); pcall(M.worldDraw); say("world map: " .. (v == "on" and "natural colours" or "the game's own colours")) end },
+  { "map.colours", "Map panel", { "ascii", "natural", "game" }, function() return M.worldColourMode() end,
+    function(v)
+      M.cfg.worldColours = v; M.cfg.worldNatural = nil; M.saveSettings(); M.worldNaturalReset(); pcall(M.worldDraw)
+      say("world map: " .. ({ ascii = "the mini-map's colours", natural = "natural colours", game = "the game's bitmap colours" })[v])
+    end },
   { "map.card", "Map panel", BOOL, function() return onoff(M.cfg.mapCard) end, function(v) legacy("map card " .. v) end },
   { "map.wherelearn", "Map panel", BOOL, function() return onoff(M.cfg.whereLearn ~= false) end,
     function(v) M.cfg.whereLearn = (v == "on"); M.saveSettings(); say("learning each area's 'where is' features while you're idle: " .. v) end },
