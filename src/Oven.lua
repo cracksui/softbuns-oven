@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.68.0"
+M.version = "1.68.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16115,6 +16115,20 @@ function M.deathLines(width)
   return out, links
 end
 
+-- map areas whose name is q, ignoring case and a leading "The Towne of" / "Towne of" / "The": { {id, name} }
+function M.areasNamed(q)
+  q = trim(tostring(q or "")):lower():gsub("^the ", "")
+  local out = {}
+  if q == "" then return out end
+  local okA, t = pcall(getAreaTable)
+  for name, id in pairs(okA and type(t) == "table" and t or {}) do
+    local n = tostring(name):lower()
+    local bare = n:gsub("^the towne of ", ""):gsub("^towne of ", ""):gsub("^the city of ", ""):gsub("^the ", "")
+    if (n == q or bare == q) and tonumber(id) then out[#out + 1] = { id = tonumber(id), name = name } end
+  end
+  return out
+end
+
 function M.runTargets(q)
   q = trim(q or ""):lower()
   local single = q:gsub("s$", "")          -- "trainers" finds [Trainer]
@@ -16128,6 +16142,23 @@ function M.runTargets(q)
   end
   for _, r in ipairs(M.dbRows("SELECT name, room FROM marks WHERE name = %s OR instr(name, %s) = 1", q, q)) do
     add(r.room, "bookmark '" .. r.name .. "'", r.name == q and 0 or 0.5)
+  end
+  -- a town or area by its name ("vir", "new kolvir", "rune" for The Towne of Rune): its ways in (rooms with
+  -- an exit out of it), so a trip ends at its edge and the map shows where it is; a whole name only, so
+  -- "vir" isn't New Kolvir
+  for _, a in ipairs(M.areasNamed(q)) do
+    local okE, ex = pcall(getAreaExits, a.id)
+    local any = false
+    if okE and type(ex) == "table" then
+      for k, v in pairs(ex) do
+        local id = tonumber(type(k) == "number" and type(v) ~= "table" and v or k)
+        if id then add(id, a.name .. " (a way in)", 0.6); any = true end
+      end
+    end
+    if not any then
+      local okR, rooms = pcall(getAreaRooms, a.id)
+      if okR and type(rooms) == "table" then for _, id in pairs(rooms) do add(id, a.name, 0.6); break end end
+    end
   end
   -- the game's "where is" features Oven has found ("food" in Towne of Rune)
   for _, r in ipairs(M.whereRooms(q)) do
@@ -16234,6 +16265,12 @@ function M.mapRunNow(arg, planned)
     end
     return say(string.format("no route on the map from here (#%d) to %s%s", here, table.concat(names, ", "),
       fromNotes and "" or string.format(" - a room name match: Oven hasn't seen an NPC tagged or named '%s' yet", q)))
+  end
+  -- a town's name (sbo go vir): the town, not a shop item or NPC that happens to have it in its name
+  if #M.areasNamed(q) > 0 then
+    local kept = {}
+    for _, t in ipairs(reach) do if t.rank <= 0.6 then kept[#kept + 1] = t end end
+    if #kept > 0 then reach = kept end
   end
   table.sort(reach, function(a, b) if a.rank ~= b.rank then return a.rank < b.rank end return a.steps < b.steps end)
   -- best kind of match first, then the nearest of that kind
@@ -17995,7 +18032,14 @@ M.CMDS = {
         say((Q and Q.name or ("#" .. id)) .. " cleared - Oven reads it anew the next time the game shows it")
       end },
   } },
-  { name = "map", desc = "the map panel: find rooms, shops, signposts, bookmarks", run = function() return M.mapPanelShow() end, subs = {
+  { name = "map", desc = "the map panel: find rooms, shops, signposts, bookmarks", run = function() return M.mapPanelShow() end,
+    rest = function(r)
+      -- the old forms (map on, map panel off, map load…) as before; any other words: find it (sbo map vir)
+      local w = (r:match("^(%S*)") or ""):lower()
+      local old = { on = 1, off = 1, stop = 1, search = 1, walk = 1, show = 1, card = 1, panel = 1, load = 1 }
+      if old[w] then return M.oldCommand("map", "map " .. r, r) end
+      return M.placesFind(r)
+    end, subs = {
     { name = "find", args = "{what|#}", desc = "NPCs, tags, rooms, nearest first (#: centre the map)",
       run = function(r) return M.placesFind(r) end },
     { name = "shops", args = "[{item}]", desc = "shops listed (by you, or when you stop in one), or who sells an item",
@@ -18640,7 +18684,12 @@ function M.placesFind(q)
   if q == "" then return say("sbo map find {what}: an NPC, a [tag], a room name, or a room #") end
   if tonumber(q) then return legacy("map show " .. q) end
   local okT, targets = pcall(M.runTargets, q)
-  if M.cfg.map and M.mapRoom and okT and type(targets) == "table" and #targets > 0 then return M.mapRun("all " .. q) end
+  if M.cfg.map and M.mapRoom and okT and type(targets) == "table" and #targets > 0 then
+    M.mapRun("all " .. q)
+    -- a town by name: show it on the map too
+    if targets[1].rank == 0.6 and #M.areasNamed(q) > 0 then pcall(M.mapShow, targets[1].id) end
+    return
+  end
   return M.mapFind(q)
 end
 

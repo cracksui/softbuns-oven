@@ -2876,6 +2876,36 @@ def map_search_box():
 
 
 @test
+def map_town_by_name():
+    # "sbo map vir": the town Vir, not the shop selling "virga pastoris" nor New Kolvir
+    o = Oven()
+    o.lua("""roomExists = function(id) return id ~= nil end
+      getAreaTable = function() return { ["Vir"] = 7, ["New Kolvir"] = 8, ["The Towne of Rune"] = 9 } end
+      getAreaExits = function(a) if a == 7 then return { 701, 702 } end if a == 8 then return { 801 } end return {} end
+      getAreaRooms = function(a) return { a * 100 } end
+      getRoomArea = function(id) return math.floor(id / 100) end
+      getRoomAreaName = function(a) return ({ [7] = "Vir", [8] = "New Kolvir", [1] = "Towne of Rune" })[a] or "" end
+      getRoomName = function(id) return "room " .. id end
+      searchRoom = function() return {} end
+      SHOWN = nil; sbo.mapShow = function(id) SHOWN = id end
+      getPath = function(a, b) speedWalkDir = {} for i = 1, (b == 702 and 3 or 9) do speedWalkDir[i] = "e" end return true end
+      sbo.viewOut = function() end
+      SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      sbo.cfg.map = true; sbo.mapRoom = 150""")
+    o.lua("""sbo.dbx("INSERT INTO shops (room, name) VALUES (160, 'herbs')")
+      sbo.dbx("INSERT INTO shop_items (room, no, item, cost) VALUES (160, 1, 'A sprig of virga pastoris', 5)")""")
+    ids = o.lua("local t = sbo.runTargets('Vir') local o = {} for _, x in ipairs(t) do if x.rank == 0.6 then o[#o+1] = x.id end end table.sort(o) return table.concat(o, ',')")
+    eq(ids, "701,702", "Vir's ways in, not New Kolvir's")
+    eq(o.ev("sbo.areasNamed('rune')[1].name"), "The Towne of Rune", "'Towne of' is skipped")
+    o.lua('sbo.command("map Vir")')
+    eq(o.ev("SHOWN"), 701, "sbo map vir shows the town")
+    o.lua('SAYS = {}; sbo.command("map on")')
+    assert any("following you" in x for x in o.ev("SAYS").values()), "sbo map on still works"
+    o.lua('sbo.mapRoom = 150; sbo.goTo = function(id) GONE = id end; sbo.command("go vir")')
+    eq(o.ev("GONE"), 702, "sbo go vir: the nearest way in")
+
+
+@test
 def scan_marks():
     o = Oven()
     o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
