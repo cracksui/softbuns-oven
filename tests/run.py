@@ -1369,6 +1369,26 @@ def quest_shop_in_town_first():
     import re as _re2
     h, w, a = o.ev("function() return sbo.questCardHtml('2452', sbo.quests['2452']) end")()
     assert not any("&amp;" in x for x in h.values()), list(h.values())
+    # bought it, but the one it's for hasn't been seen: no more "get it" (each click was another shop),
+    # sbo quest go says so instead of shopping
+    o.lua("""sbo.quests['2680'] = { name = 'Outbreak', total = 1, done = 0,
+        phases = { { n = 5, text = "Locate and deliver a T-bone steak to an ogre cook" } } }
+      sbo.cfg.questPins = { ['2680'] = true }; SAYS = {}""")
+    h, w, a = o.ev("function() return sbo.questCardHtml('2680', sbo.quests['2680']) end")()
+    plain = [_re.sub("<[^>]+>", "", x).replace("&nbsp;", " ") for x in h.values()]
+    assert not any(v.get for v in a.values()), ("no shop link while you have it", plain)
+    assert any("you have it" in x for x in plain) and any("an ogre cook · not seen yet" in x for x in plain), plain
+    o.lua("WALKS = {}; sbo.questGo('2680')")
+    eq(list(o.ev("WALKS").values()), [], "sbo quest go: not to a shop")
+    assert "you have it" in o.ev("SAYS[#SAYS]"), o.ev("SAYS[#SAYS]")
+    # delivered (the game marks the step done): it's gone from what you carry - the shop is back
+    o.lua("""gmcp.char = { quests = { q2680 = { quest_info = { vnum = 2680, name = "Outbreak", completed = false, abandoned = false },
+        goals = { { phase_number = 5, phase_complete = true, goal_string = "*Phase 5: *Locate and deliver a T-bone steak to an ogre cook.\\r\\n" } } } } }
+      sbo.onGmcpQuests()""")
+    eq(o.ev("(function() for _, n in ipairs(sbo.cfg.carried.inv) do if n:find('T%-bone') then return n end end end)()"), None,
+       "delivered: no longer carried")
+    o.lua("sbo.quests['2452'].phases[1].done = false; WALKS = {}; sbo.questGoStep('2452', 1)")
+    eq(list(o.ev("WALKS").values()), [28017], "another T-bone quest: the shop again")
     # no shop of that kind in town: the nearest that's listed
     o.lua("AREA[1] = 9")
     room, why = o.ev("function() return sbo.shopSelling('a T-bone steak') end")()

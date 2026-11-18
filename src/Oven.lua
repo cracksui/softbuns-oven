@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.62.2"
+M.version = "1.62.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3217,9 +3217,12 @@ local function questCardHtml(id, Q)
         if first then
           -- where the next step is, when Oven can place it
           -- a delivery: where to get it and where to take it, each its own link
-          local okD, dRoom, dWhy, getRoom = pcall(M.questDeliverTarget, ph, id)
+          local okD, dRoom, dWhy, getRoom, _, carrying = pcall(M.questDeliverTarget, ph, id)
           if okD and ph.text:match("deliver .- to ") then
-            if getRoom then
+            if carrying then
+              -- you have it (bought, or in your last inventory): no more shopping - only where to take it
+              add("   " .. span(C.plus, "✓ ") .. span(C.dim, "you have it"), 16)
+            elseif getRoom then
               local nm = getRoomName(getRoom) or ("#" .. getRoom)
               add("   " .. span(C.dim, "→ ") .. span(C.flag, nm) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>"
                 .. "&nbsp;&nbsp;" .. span(C.dim, "get it"), ulen(nm) + 18)
@@ -3954,7 +3957,10 @@ function M.questTarget(ph, qid)
   -- a delivery you have the item for: the recipient, not the shop
   if item and ph.text:match("deliver .- to ") then
     local okD, dRoom, dWhy, _, _, carrying = pcall(M.questDeliverTarget, ph, qid)
-    if okD and carrying and dRoom then return dRoom, dWhy end
+    if okD and carrying then
+      if dRoom then return dRoom, dWhy end
+      return nil, "carrying"   -- you have it but haven't seen who it's for: not another shop
+    end
   end
   if item then
     local stepArea
@@ -4037,6 +4043,10 @@ function M.questGo(id)
       or "no pinned quest with a step to do - pin one with sbo quest pin <id>")
   end
   local room, why = M.questTarget(ph, qid)
+  if not room and why == "carrying" then
+    return M.say(string.format("#%s step %d: you have it - %s hasn't been seen yet (find them once and Oven remembers)",
+      qid, ph.n, ph.text:match("deliver .- to ([^,]+)") or "who it's for"))
+  end
   if not room then
     local names = M.questStepNames(ph.text)
     return M.say(string.format("#%s step %d: \"%s\" - couldn't place %s yet (see the NPC or room once and try again)",
@@ -6405,6 +6415,25 @@ function M.noteBought(l)
   M.saveSettings()
   M.dataChanged()
   pcall(M.drawQuestTracker)
+end
+
+-- a delivery done: one of that item has left your inventory (so a later quest for it doesn't think you have it)
+local function itemKey(n)
+  n = trim(tostring(n or "")):gsub("%s*%[.-%]%s*", " ")
+  return trim(n):lower():gsub("^an? ", ""):gsub("^the ", "")
+end
+function M.dropCarried(item)
+  local c = M.cfg.carried
+  if not c or not c.inv then return false end
+  local want = itemKey(item)
+  for i, n in ipairs(c.inv) do
+    if itemKey(n) == want then
+      table.remove(c.inv, i)
+      M.saveSettings()
+      return true
+    end
+  end
+  return false
 end
 
 -- name -> "" (carried) or the container it's in
@@ -9764,7 +9793,11 @@ function M.questGoals(id, Q, goals)
       end
       local done = g.phase_complete == true
       if (ph.done and true or false) ~= done then
-        if done then newlyDone = ph end
+        if done then
+          newlyDone = ph
+          local given = (ph.text or ""):match("deliver (.-) to ")
+          if given then pcall(M.dropCarried, given) end
+        end
         ph.done, changed = done, true
       end
     end
