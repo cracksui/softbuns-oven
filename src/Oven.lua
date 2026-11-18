@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.68.2"
+M.version = "1.68.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16353,8 +16353,9 @@ function M.goToNow(id)
   local okA, sameArea = pcall(function() return getRoomArea(here) == getRoomArea(id) end)
   sameArea = okA and sameArea and not M.isWildRoom(id) and not M.isWildRoom(here)
   local onFoot = here and roomExists(here) and roomExists(id) and getPath(here, id) and #(speedWalkDir or {}) or nil
-  local inHall = here and not roomExists(here) and tonumber(M.cfg.clanHall) == here
-  if here and (roomExists(here) or inHall) and roomExists(id) and (not sameArea or not onFoot) then
+  -- off the map (the clan hall, a room of the wilds not mapped yet): planned from where it is in the world
+  local offMap = here and not roomExists(here) and (tonumber(M.cfg.clanHall) == here or (M.worldPos and M.worldPos(here)))
+  if here and (roomExists(here) or offMap) and roomExists(id) and (not sameArea or not onFoot) then
     local okT, plan = pcall(M.tripPlan, here, id, {})
     if okT and plan and (plan.rides > 0 or plan.runs > 0 or (plan.wild or 0) > M.TRIP_WILD_WARN) then
       local lines, tail = M.tripPlanLines(plan, id)
@@ -16753,9 +16754,27 @@ end
 -- the best trip from here to target: { segs = { walk | run | ride … }, gold, rides, walked } or nil
 function M.tripPlan(here, target, used)
   -- in the clan hall, which isn't on the map: out and recall, then the best trip on from the signpost
-  if here and not roomExists(here) and tonumber(M.cfg.clanHall) == here and roomExists(target) then
+  -- anywhere else off the map that Oven can place (a room of the wilds it hasn't mapped): walk toward a signpost
+  -- and recall there, or clan gohall and the hall's way out - never "no route"
+  if here and not roomExists(here) and roomExists(target) then
+    local inHall = tonumber(M.cfg.clanHall) == here
+    local starts = {}
+    if inHall then
+      starts = M.clanRecallCandidates(target)
+    else
+      for _, c in ipairs(M.recallCandidates(here, target)) do starts[#starts + 1] = c end
+      local ch = not (used or {}).clan and M.clanHallLink()
+      if ch then
+        for _, c in ipairs(M.clanRecallCandidates(target)) do
+          local link = {}
+          for k, v in pairs(ch) do link[k] = v end
+          link.key, link["then"], link.land = "clan", c.link, c.link.land
+          starts[#starts + 1] = { k = c.k + M.TRAVEL_COST + M.TRIP_FREE_EXTRA, link = link, clan = true }
+        end
+      end
+    end
     local best, bestCost
-    for _, c in ipairs(M.clanRecallCandidates(target)) do
+    for _, c in ipairs(starts) do
       if roomExists(c.link.land) then
         local u = {}
         for k, v in pairs(used or {}) do u[k] = v end

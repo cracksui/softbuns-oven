@@ -1468,6 +1468,17 @@ def travel_by_ganuk():
     eq(o.ev("SENT[#SENT]"), "run rune", "recalled at the signpost: the run")
     o.lua("sbo.running.started = true; sbo.mapRoom = 10490; sbo.runStopped(true); runTimers()")
     eq((o.ev("WALKED"), o.ev("sbo.trip")), (10495, None), "the run's over: the last steps on foot")
+    # a room of the wilds that isn't on the map (just outside the hall): planned from where it is - never "no route"
+    o.lua("""sbo.travel = nil; sbo.trip = nil; POS[1595001] = { map = 'Alyria', x = 567, y = 232 }
+      gmcp.room = { info = { num = '1595001', wilds = 'true', coord = { name = 'Alyria', x = 567, y = 232 } } }
+      sbo.mapRoom = 1595001; LOGS = {}; SENT = {}""")
+    eq(o.ev("roomExists(1595001)"), False, "not on the map")
+    o.lua("sbo.goTo(10495)")
+    text = "\n".join(o.ev("LOGS").values())
+    assert "no route" not in text and "recall to the signpost on the Shadow Road" in text and "run rune" in text and "y to go" in text, text
+    o.lua("sbo.goAnswer('y'); runTimers()")
+    first = o.ev("SENT[1]")
+    assert first in ("s", "se", "e", "clan gohall"), (first, list(o.ev("SENT").values()))
     # a recall point that's already the nearest outside the hall: still 30 rooms (north) before recalling
     cands = o.lua("""local c = sbo.clanRecallCandidates(10495) local o = {}
       for _, x in ipairs(c) do o[#o+1] = x.link.recall.room .. ':' .. x.link.clanRoute.dir .. x.link.clanRoute.n end return table.concat(o, ',')""")
