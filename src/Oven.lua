@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.68.3"
+M.version = "1.68.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13701,9 +13701,15 @@ function M.worldWaterNote(map, x, y, terrain)
   return true
 end
 
--- (saved now and then, not on every step of a long sail)
-function M.worldWaterSave()
-  if M.wwDirty then M.wwDirty = nil; M.saveSettings() end
+-- (saved now and then, not on every step of a long sail or walk: the settings file is big, and written whole)
+M.WORLD_SAVE_EVERY = 120
+function M.worldWaterSave(now)
+  if not M.wwDirty then return end
+  if now then
+    M.wwDirty = nil; M.saveSettings(); return
+  end
+  if M.wwSaveTimer then return end
+  M.wwSaveTimer = tempTimer(M.WORLD_SAVE_EVERY, function() M.wwSaveTimer = nil; if M.wwDirty then M.wwDirty = nil; M.saveSettings() end end)
 end
 
 -- waterways from the recordings (oven_record.txt and the one before), once: rooms in the order you went
@@ -13734,7 +13740,7 @@ function M.worldWaterImport(force)
   M.wwLast = nil
   w.waterImported = true
   M.wwDirty = true
-  M.worldWaterSave()
+  M.worldWaterSave(true)
   return n
 end
 
@@ -14121,13 +14127,49 @@ function M.worldRegColour(file, bytes, x, y)
   return v
 end
 -- a row of the bitmap's bytes → the chosen colours; x of its first pixel, step between pixels
-function M.worldRecolour(file, seg, x0, y, step)
+local function recolourRaw(file, seg, x0, y, step)
   local A = M.worldAmbig(file)
   if not next(A) then return (seg:gsub("...", M.WORLD_NATURAL)) end
   return (seg:gsub("()(...)", function(p, t)
     if A[t] then return M.worldRegColour(file, t, x0 + (p - 1) / 3 * step, y) end
     return M.WORLD_NATURAL[t]
   end))
+end
+-- recoloured in strips of the map, kept: a step in the wilds moves the view a pixel, so nearly all of it was
+-- coloured already (colouring every pixel afresh each step took a second or more)
+M.WORLD_STRIP = 64
+M.WORLD_STRIP_MAX = 60000   -- strips kept (~12 MB); past that the store starts afresh
+local strips, stripN = {}, 0
+function M.worldStripsReset() strips, stripN = {}, 0 end
+function M.worldRecolour(file, seg, x0, y, step)
+  step = step or 1
+  local img = M.worldImages[file]
+  if not img or x0 % step ~= 0 then return recolourRaw(file, seg, x0, y, step) end
+  local n = #seg / 3
+  local S = M.WORLD_STRIP
+  local span = S * step
+  local key0 = file .. "|" .. M.worldColourMode() .. "|" .. step .. "|" .. y .. "|"
+  local data, row, off, W_, H = img.data, img.row, img.off, img.w, img.h
+  local c1, c2 = math.floor(x0 / span), math.floor((x0 + (n - 1) * step) / span)
+  local parts = {}
+  for c = c1, c2 do
+    local k = key0 .. c
+    local v = strips[k]
+    if not v then
+      local t, sx = {}, c * span
+      local o = (y >= 0 and y < H) and (off + (H - 1 - y) * row) or nil
+      for i = 0, S - 1 do
+        local x = sx + i * step
+        if o and x >= 0 and x < W_ then t[#t + 1] = data:sub(o + x * 3 + 1, o + x * 3 + 3) else t[#t + 1] = "\0\0\0" end
+      end
+      v = recolourRaw(file, table.concat(t), sx, y, step)
+      if stripN >= M.WORLD_STRIP_MAX then strips, stripN = {}, 0 end
+      strips[k] = v; stripN = stripN + 1
+    end
+    parts[#parts + 1] = v
+  end
+  local skip = (x0 - c1 * span) / step
+  return table.concat(parts):sub(skip * 3 + 1, (skip + n) * 3)
 end
 
 -- the bitmap's 3 bytes (blue, green, red) → the chosen colour's, worked out once a colour
@@ -14136,6 +14178,7 @@ function M.worldNaturalReset()
   usualCache = {}
   areaCache = {}
   ambig, regCache = {}, {}
+  if M.worldStripsReset then M.worldStripsReset() end
   M.WORLD_NATURAL = setmetatable({}, { __index = function(t, k)
     local v = k
     if k ~= "\0\0\0" then
@@ -14267,7 +14310,13 @@ function M.worldPaletteNote(map, x, y, rows, regOnly)
       end
     end
   end
-  if changed then M.worldNaturalReset(); M.wwDirty = true end
+  -- (what's learned shows once you stop a moment: re-colouring the whole view on every step of the wilds was
+  -- the slow part - a second or more a step)
+  if changed then
+    M.wwDirty = true
+    if M.worldResetTimer then pcall(killTimer, M.worldResetTimer) end
+    M.worldResetTimer = tempTimer(5, function() M.worldResetTimer = nil; M.worldNaturalReset(); pcall(M.worldDraw) end)
+  end
   return n
 end
 
@@ -14499,6 +14548,7 @@ function M.worldCut(img, cx, cy, zoom, outW, outH, mute)
   else
     local step = math.floor(1 / zoom + 0.5)
     local x0, y0 = cx - math.floor(outW * step / 2), cy - math.floor(outH * step / 2)
+    x0, y0 = x0 - x0 % step, y0 - y0 % step   -- (on the step's grid: the coloured strips are kept and reused)
     for oy = 0, outH - 1 do
       local y = y0 + oy * step
       if y < 0 or y >= H then rows[#rows + 1] = blackRow
@@ -19361,7 +19411,7 @@ function M.init()
   pcall(M.fixQuestPhases)
   M.handlers = {
     registerAnonymousEventHandler("sysDataSendRequest", M.onSend),
-    registerAnonymousEventHandler("sysExitEvent", function() pcall(M.dbClose) end),
+    registerAnonymousEventHandler("sysExitEvent", function() pcall(M.worldWaterSave, true); pcall(M.dbClose) end),
     registerAnonymousEventHandler("sysUninstallPackage", function(_, pkg)
       if pkg == "Oven" then
         M.teardown()
