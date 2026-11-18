@@ -2705,6 +2705,37 @@ When you do find what you're looking for, you might also try WHERE IS <feature> 
 
 
 @test
+def go_tab_completion():
+    o = Oven()
+    o.lua("""
+      SUGG = {}
+      addCmdLineSuggestion = function(w) SUGG[w] = true end
+      removeCmdLineSuggestion = function(w) SUGG[w] = nil end
+      sbo.say = function() end
+    """)
+    o.lua("""
+      for _, f in ipairs({ "food", "post-office" }) do
+        sbo.dbx("INSERT OR IGNORE INTO where_features (area, feature) VALUES (%s, %s)", "Towne of Rune", f)
+      end
+      sbo.dbx("INSERT OR REPLACE INTO marks (name, room, t) VALUES (%s, %s, %s)", "home", 7, 1)
+      sbo.dbx("INSERT OR REPLACE INTO marks (name, room, t) VALUES (%s, %s, %s)", "my house", 8, 1)
+      sbo.cfg.friends = { "roarke" }
+      sbo.goSuggestRefresh()
+    """)
+    have = sorted(k for k in o.ev("SUGG").keys())
+    for w in ("food", "post-office", "home", "roarke"):
+        assert w in have, (w, have)
+    assert "my house" not in have and "my" not in have, have   # Tab completes one word: multi-word names left out
+    # a bookmark removed and a friend dropped: their suggestions go; the rest stay
+    o.lua('sbo.unmarkRoom("home"); sbo.friendRemove("roarke"); runTimers()')
+    have = sorted(k for k in o.ev("SUGG").keys())
+    assert "home" not in have and "roarke" not in have and "food" in have, have
+    # Oven's teardown takes only its own suggestions away
+    o.lua('addCmdLineSuggestion("someone-elses"); sbo.goSuggestClear()')
+    eq(sorted(k for k in o.ev("SUGG").keys()), ["someone-elses"], "teardown leaves other packages' suggestions")
+
+
+@test
 def where_is():
     o = Oven()
     o.lua('sbo.cfg.promptPattern = "<%d+hp"; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end')

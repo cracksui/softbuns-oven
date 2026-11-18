@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.61.0"
+M.version = "1.62.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10934,6 +10934,7 @@ M.addBlockReader("where_is", "*", function(b)
     for _, f in ipairs(features) do
       M.dbx("INSERT OR IGNORE INTO where_features (area, feature) VALUES (%s, %s)", listArea, f)
     end
+    M.goSuggestSoon()
   end
   for _, a in ipairs(answers) do
     local here = M.mapRoom
@@ -12200,6 +12201,7 @@ function M.friendAdd(n)
   if not k:match("^%a+$") then return M.say("sbo friend add {name}: a player's name") end
   M.cfg.friends = M.cfg.friends or {}
   if not M.isFriend(k) then M.cfg.friends[#M.cfg.friends + 1] = k; M.saveSettings() end
+  M.goSuggestSoon()
   M.say(cap1(k) .. " is a friend: their Oven can ask yours where you are (sbo go " .. k .. " works both ways once they add you too)")
 end
 function M.friendRemove(n)
@@ -12207,6 +12209,7 @@ function M.friendRemove(n)
   local kept = {}
   for _, f in ipairs(M.cfg.friends or {}) do if f ~= k then kept[#kept + 1] = f end end
   M.cfg.friends = kept; M.saveSettings()
+  M.goSuggestSoon()
   M.say(cap1(k) .. " removed - their Oven won't be told where you are")
 end
 function M.friendList()
@@ -14839,6 +14842,7 @@ function M.signSave(room, sign, dests)
   local old = M.signAt(room)
   M.dbx("INSERT OR REPLACE INTO signposts (room, sign, dests, exact, last) VALUES (%s, %s, %s, 1, %s)",
     room, sign or (old and old.sign), dests and destsStr(dests) or (old and destsStr(old.dests)) or "", os.time())
+  M.goSuggestSoon()
 end
 
 -- before 0.49 "You take note of the directions on a signpost…" (said while running) was logged as loot
@@ -15233,6 +15237,7 @@ function M.unmarkRoom(name)
   if not M.dbRow("SELECT room FROM marks WHERE name = %s", name) then return say("no bookmark called '" .. name .. "'") end
   M.dbx("DELETE FROM marks WHERE name = %s", name)
   say("bookmark '" .. name .. "' removed")
+  M.goSuggestSoon()
 end
 
 function M.marksOf(id)
@@ -17542,6 +17547,7 @@ end
 -- something new about a room (an NPC or tag, a shop listed, a where-is feature, a bookmark): a highlight
 -- that's showing is redone, quietly, so a new match lights up without moving the map
 function M.mapLearned()
+  M.goSuggestSoon()
   if M.mapSearchQuery and not M.mapSearchPending then
     M.mapSearchPending = true
     tempTimer(0.3, function() M.mapSearchPending = nil; if M.mapSearchQuery then pcall(M.mapSearchLight) end end)
@@ -17552,6 +17558,52 @@ function M.mapLearned()
     M.mapRelightPending = nil
     if M.mapHighlightQuery then pcall(M.mapHighlightAll, M.mapHighlightQuery, true) end
   end)
+end
+
+-- Tab completion for sbo go: every one-word name it knows - where-is features, bookmarks, signpost runs,
+-- friends - is offered to the command line's Tab (Mudlet's addCmdLineSuggestion), so "sbo go cook" + Tab
+-- gives "sbo go cooking-mixing-bowl". Only Oven's own suggestions are added and taken away.
+function M.goNames()
+  local out = {}
+  local function add(n)
+    n = trim(tostring(n or "")):lower()
+    if n ~= "" and not n:find("%s") then out[n] = true end   -- Tab completes one word at a time
+  end
+  for _, r in ipairs(M.dbRows("SELECT DISTINCT feature FROM where_features")) do add(r.feature) end
+  for _, r in ipairs(M.dbRows("SELECT DISTINCT feature FROM where_rooms")) do add(r.feature) end
+  for _, r in ipairs(M.dbRows("SELECT name FROM marks")) do add(r.name) end
+  local okR, runs = pcall(M.runNames)
+  if okR and type(runs) == "table" then for n in pairs(runs) do add(n) end end
+  for _, f in ipairs(M.cfg.friends or {}) do add(f) end
+  return out
+end
+
+function M.goSuggestRefresh()
+  if type(addCmdLineSuggestion) ~= "function" then return end
+  local okN, names = pcall(M.goNames)
+  if not okN then return end
+  local had = M.goSuggested or {}
+  for n in pairs(had) do
+    if not names[n] then pcall(removeCmdLineSuggestion, n) end
+  end
+  for n in pairs(names) do
+    if not had[n] then pcall(addCmdLineSuggestion, n) end
+  end
+  M.goSuggested = names
+end
+
+function M.goSuggestClear()
+  if type(removeCmdLineSuggestion) == "function" then
+    for n in pairs(M.goSuggested or {}) do pcall(removeCmdLineSuggestion, n) end
+  end
+  M.goSuggested = nil
+end
+
+-- after something new is learned: once, a moment later (a where-is list can bring many at once)
+function M.goSuggestSoon()
+  if M.goSuggestPending then return end
+  M.goSuggestPending = true
+  tempTimer(0.5, function() M.goSuggestPending = nil; pcall(M.goSuggestRefresh) end)
 end
 
 -- sbo map find: a room number centres the map; otherwise NPCs, tags and rooms, nearest first
@@ -18171,6 +18223,7 @@ function M.teardown()
   if M.panelTimer then killTimer(M.panelTimer); M.panelTimer = nil end
   if M.questClockTimer then killTimer(M.questClockTimer); M.questClockTimer = nil end
   if M.whereTimer then killTimer(M.whereTimer); M.whereTimer = nil end
+  pcall(M.goSuggestClear)
   pcall(M.panelsSave)
   pcall(M.dbClose)
   if M.handlers then for _, h in ipairs(M.handlers) do killAnonymousEventHandler(h) end end
@@ -18232,6 +18285,7 @@ function M.init()
   M.panelsWatch()
   M.questClock()
   M.whereLearnStart()
+  pcall(M.goSuggestRefresh)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("AdjustableContainerRepositionFinish", function(...)
     M.onPanelMoved(...)
     pcall(M.chatChips)
