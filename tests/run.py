@@ -1005,6 +1005,13 @@ def world_natural_colours():
     o.lua("sbo.cfg.worldNatural = false")
     r = o.ev("(function() local s = sbo.worldCut(sbo.worldImage('Alyria'), 3, 2, 1, 7, 1)[1] local b, g, r = s:byte(4, 6) return r .. ',' .. g .. ',' .. b end)()")
     eq(r, "0,160,0", "map.natural off: the bitmap's own")
+    # one that is: drawn deep blue - also for a map already loaded by an Oven from before
+    o.lua("sbo.worldImages = {}; sbo.cfg.worldNatural = nil")
+    body2 = b"".join(b"".join(bytes([85, 213, 32]) if (x in (0, W_ - 1) or y in (0, H_ - 1)) else col(x, y) for x in range(W_)).ljust(rowb, b"\0") for y in range(H_ - 1, -1, -1))
+    open(home + "/oven_maps/alyria.bmp", "wb").write(head + body2)
+    o.lua("sbo.worldImage('Alyria').edgeChecked = nil; sbo.worldEdges = nil; sbo.worldNaturalReset()")
+    r = o.ev("(function() local s = sbo.worldCut(sbo.worldImage('Alyria'), 3, 2, 1, 7, 1)[1] local b, g, r = s:byte(4, 6) return r .. ',' .. g .. ',' .. b end)()")
+    eq(r, "28,58,135", "the sea: deep blue")
     # a line of game text isn't a map row; one that looks like one isn't read without an @
     eq((o.ev("sbo.worldMapRowLike('The Light Forest')"), o.ev("sbo.worldMapRowLike('   ~~..!!@==')")), (False, True), "rows")
 

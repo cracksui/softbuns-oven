@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.60.0"
+M.version = "1.60.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13236,13 +13236,30 @@ function M.worldFileFor(mapName)
   for _, e in ipairs(M.WORLD_FILES) do if n:find(e.match, 1, true) then return e end end
 end
 
+-- a map's edge colour (the same in all four corners): the open sea, or (underground) the rock round it
+function M.worldEdgeCheck(img, mapName)
+  img.edgeChecked = true
+  local data, w, h = img.data, img.w, img.h
+  local function at(x, y) local o = img.off + (h - 1 - y) * img.row + x * 3 + 1; local b, g, r = data:byte(o, o + 2); return string.format("%02x%02x%02x", r or 0, g or 0, b or 0) end
+  local c = at(0, 0)
+  if c == at(w - 1, 0) and c == at(0, h - 1) and c == at(w - 1, h - 1) then
+    M.worldEdges = M.worldEdges or {}
+    local n = tostring(mapName):lower()
+    M.worldEdges[c] = (n:find("under", 1, true) or n:find("sigil", 1, true)) and "under" or "sea"
+    if M.worldNaturalReset then M.worldNaturalReset() end
+  end
+end
+
 -- a bitmap, read once: { data, w, h, row (bytes a row), name }
 M.worldImages = M.worldImages or {}
 function M.worldImage(mapName)
   local e = M.worldFileFor(mapName)
   if not e then return nil, "no world map for " .. tostring(mapName) end
   local img = M.worldImages[e.file]
-  if img then return img end
+  if img then
+    if not img.edgeChecked then M.worldEdgeCheck(img, mapName) end   -- (loaded by an Oven from before this)
+    return img
+  end
   local path = dir() .. "/" .. e.file
   local f = io.open(path, "rb")
   if not f then M.worldFetch(e); return nil, "downloading the " .. tostring(mapName) .. " map…" end
@@ -13252,15 +13269,7 @@ function M.worldImage(mapName)
   if bpp ~= 24 then return nil, "the map isn't a 24-bit bitmap" end
   img = { data = data, w = w, h = h, row = math.ceil(w * 3 / 4) * 4, off = le(data, 11, 4), name = mapName }
   M.worldImages[e.file] = img
-  -- its edge colour (the same in all four corners): the sea, or (underground) the rock round it
-  local function at(x, y) local o = img.off + (h - 1 - y) * img.row + x * 3 + 1; local b, g, r = data:byte(o, o + 2); return string.format("%02x%02x%02x", r, g, b) end
-  local c = at(0, 0)
-  if c == at(w - 1, 0) and c == at(0, h - 1) and c == at(w - 1, h - 1) then
-    M.worldEdges = M.worldEdges or {}
-    local under = tostring(mapName):lower():find("under", 1, true) or tostring(mapName):lower():find("sigil", 1, true)
-    M.worldEdges[c] = under and "under" or "sea"
-    if M.worldNaturalReset then M.worldNaturalReset() end
-  end
+  M.worldEdgeCheck(img, mapName)
   return img
 end
 
