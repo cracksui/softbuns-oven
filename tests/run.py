@@ -305,6 +305,8 @@ def quest_targets():
     f = o.ev("function(x) local t, ok, w, q = sbo.mobLine(x, '0,255,0') return tostring(t) .. '|' .. tostring(q) end")
     eq(f("[!] Demonia, Knight Captain, stands here."), "Demonia, Knight Captain, stands here.|true", "a named one too")
     eq(f("[Shop] A grocer stands here."), "nil|nil", "other tags: room_npcs")
+    play(0)   # the same room again: counted (an unconfirmed [!] one confirmed)
+    eq(o.rows("SELECT seen FROM room_mobs WHERE room = 10522 AND instr(key, 'a master') = 1"), [{"seen": 2}], "seen again")
     play(1)   # the goblin again, no [!]: done with
     eq([r["key"] for r in o.rows("SELECT key FROM quest_targets")], ["a master necromancer is here, performing a dark ritual."], "unmarked: dropped")
     eq(o.ev("sbo.isTarget('mob', 'a goblin mercenary is here, hiding from the goblin slayer.')"), False, "memory agrees")

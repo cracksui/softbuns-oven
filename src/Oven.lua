@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.66.0"
+M.version = "1.66.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11355,8 +11355,11 @@ M.addBlockReader("room_mobs", "room", function(b, seg)
       pcall(M.targetMob, key, text, seg.room, quest)
       local have = M.dbRow("SELECT ok FROM room_mobs WHERE room = %s AND key = %s", seg.room, key)
       if have then
-        M.dbx("UPDATE room_mobs SET seen = seen + 1, last = %s%s WHERE room = %s AND key = %s", os.time(),
-          (quest and tonumber(have.ok) ~= 1) and ", ok = 1" or "", seg.room, key)
+        -- (a [!] one is a mob for certain: confirmed)
+        local sql = (quest and tonumber(have.ok) ~= 1)
+          and "UPDATE room_mobs SET seen = seen + 1, last = %s, ok = 1 WHERE room = %s AND key = %s"
+          or "UPDATE room_mobs SET seen = seen + 1, last = %s WHERE room = %s AND key = %s"
+        M.dbx(sql, os.time(), seg.room, key)
       else
         local c = M.dbRow("SELECT COUNT(*) AS c FROM room_mobs WHERE room = %s", seg.room)
         if tonumber(c and c.c or 0) < 30 then
