@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.77.0"
+M.version = "1.78.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10361,6 +10361,7 @@ function M.gmcpHandlersList()
     registerAnonymousEventHandler("gmcp.char.vitals", function() if M.cfg.bar then pcall(M.drawBar) end end),
     registerAnonymousEventHandler("gmcp.char.maxstats", function() pcall(M.onGmcpMaxStats) end),
     registerAnonymousEventHandler("gmcp.char.worth", function() pcall(M.onGmcpWorth) end),
+    registerAnonymousEventHandler("gmcp.char.cast_finished", function() pcall(M.onGmcpCastFinished) end),
     registerAnonymousEventHandler("gmcp.char.affect_application_msg", function() pcall(M.onGmcpAffect) end),
     registerAnonymousEventHandler("gmcp.char.lasttargeted", function() pcall(M.onGmcpTarget) end),
   }
@@ -12981,6 +12982,7 @@ function M.onLineWork()
     deleteLine()
     return
   end
+  if line:find("cannot be used again", 1, true) then pcall(M.recallLine, line) end
   local mount = line:match("^%s*%(Mount:%s*(%d+)%s*st%)%s*$")
   if mount then
     M.mountPending = tonumber(mount)
@@ -16907,6 +16909,41 @@ local TRIP = "oven-trip:"
 -- gold - none by default; sbo config go.goldmargin 60 to pay only when it saves at least 60 steps
 function M.tripGoldMargin() return tonumber(M.cfg.tripGoldMargin) or 0 end
 M.TRIP_FREE_EXTRA = 20   -- a free one (the clan hall, recall)
+-- the order you'd choose them in, all else equal (the user's): a ride (worm, balloon, a portal) first, then word
+-- of recall, then clan gohall (it ends in a recall too, after the walk out), then a signpost run, then walking.
+-- Each one's own cost in steps, on top of the walking and the run's length:
+M.TRIP_W_RIDE = 20     -- (+ sbo config go.goldmargin when it costs gold)
+M.TRIP_W_RECALL = 30
+M.TRIP_W_CLAN = 45
+M.TRIP_W_RUN_MIN = 35
+-- word of recall's cooldown: 10 minutes from a cast that worked (the game: "cannot be used again for another 9min
+-- 47s" a few seconds after one); while it's cooling down, trips leave recall (and the clan hall's way) out
+M.RECALL_COOLDOWN = 600
+function M.recallReady() return os.time() >= (tonumber(M.cfg.recallReadyAt) or 0) end
+function M.recallCooling(secs)
+  M.cfg.recallReadyAt = os.time() + secs
+  M.saveSettings()
+end
+function M.recallLine(l)
+  local rest = l:match("^'Word of recall' cannot be used again for another (.-)%.?%s*$")
+  if not rest then return false end
+  local m, sec = tonumber(rest:match("(%d+)%s*min")) or 0, tonumber(rest:match("(%d+)%s*s%f[%A]")) or 0
+  M.recallCooling(m * 60 + sec)
+  -- refused in the middle of a trip: planned again, without it
+  local T = M.travel
+  if T and T.link and (T.link.kind == "recall" or (T.link["then"] or {}).kind == "recall") then
+    local target = T.target
+    M.travel, M.trip = nil, nil
+    say(string.format("travel: word of recall is cooling down (%s) - planning again without it", rest))
+    if target then tempTimer(0.5, function() M.goTo(target) end) end
+  end
+  return true
+end
+function M.onGmcpCastFinished()
+  local c = M.gmcpGet and M.gmcpGet("char.cast_finished")
+  local t = type(c) == "table" and tostring(c.casting_completed or ""):lower() or ""
+  if t:find("word of recall", 1, true) and t:find("success", 1, true) then M.recallCooling(M.RECALL_COOLDOWN) end
+end
 M.TRIP_RUN_EXTRA = 10
 M.TRIP_WILD_LIMIT = 40   -- rooms of the wilds on foot before the search looks again (those rooms made dearer)
 M.TRIP_WILD_WARN = 40    -- and a plan that still walks more of them than this says so
@@ -16923,7 +16960,7 @@ function M.tripEdges(here, target, used)
       if land and land ~= L.shop then
         L.land = land
         add({ from = L.shop, to = land, cmd = TRIP .. L.key, link = L,
-          weight = M.TRAVEL_COST + M.TRIP_FREE_EXTRA + ((L.cost or 0) > 0 and (0.5 + M.tripGoldMargin()) or 0) })
+          weight = M.TRIP_W_RIDE + ((L.cost or 0) > 0 and M.tripGoldMargin() or 0) })
       end
     end
   end
@@ -16933,7 +16970,8 @@ function M.tripEdges(here, target, used)
       for name in pairs(sp.dests) do
         local e = r.ends[name]
         if e and e ~= sp.room and roomExists(e) then
-          add({ from = sp.room, to = e, cmd = TRIP .. "run:" .. name, run = name, weight = M.runCost(sp.room, e) + M.TRIP_RUN_EXTRA })
+          add({ from = sp.room, to = e, cmd = TRIP .. "run:" .. name, run = name,
+            weight = math.max(M.TRIP_W_RUN_MIN, M.runCost(sp.room, e) + M.TRIP_RUN_EXTRA) })
         end
       end
     end
@@ -16958,27 +16996,27 @@ function M.tripEdges(here, target, used)
     if not dup then sources[#sources + 1] = here; hereOnly = not M.isWildRoom(here) end
   end
   -- clan gohall, then the walk out and recall: one step to the signpost it lands at
-  local ch = not used.clan and M.clanHallLink()
-  if (ch and not inHall and (not ch.areaId or getRoomArea(here) ~= ch.areaId)) or inHall then
+  local ch = not used.clan and M.recallReady() and M.clanHallLink()
+  if (ch and not inHall and (not ch.areaId or getRoomArea(here) ~= ch.areaId)) or (inHall and M.recallReady()) then
     for _, c in ipairs(M.clanRecallCandidates(target)) do
       if roomExists(c.link.land) and c.link.land ~= here then
-        local link, w = c.link, c.k + M.TRAVEL_COST + M.TRIP_FREE_EXTRA
+        local link, w = c.link, c.k + M.TRIP_W_RECALL
         if not inHall then
           link = {}
           for k, v in pairs(ch) do link[k] = v end
           link.key, link["then"] = "clan", c.link
-          w = w + M.TRAVEL_COST + M.TRIP_FREE_EXTRA
+          w = w + M.TRIP_W_CLAN
         end
         add({ from = here, to = c.link.land, cmd = TRIP .. (inHall and "hallrecall:" or "clan:") .. c.link.land, link = link, weight = w })
       end
     end
   end
-  if not used.recall then
+  if not used.recall and M.recallReady() then
     for _, src in ipairs(sources) do
       for _, c in ipairs(M.recallCandidates(src, target)) do
         if c.link.land ~= src and not (hereOnly and src == here and c.k > 0) then
           add({ from = src, to = c.link.land, cmd = TRIP .. "recall:" .. src .. ":" .. c.link.land, link = c.link,
-            weight = c.k + M.TRAVEL_COST + M.TRIP_FREE_EXTRA })
+            weight = c.k + M.TRIP_W_RECALL })
         end
       end
     end
@@ -16998,13 +17036,13 @@ function M.tripPlan(here, target, used)
       starts = M.clanRecallCandidates(target)
     else
       for _, c in ipairs(M.recallCandidates(here, target)) do starts[#starts + 1] = c end
-      local ch = not (used or {}).clan and M.clanHallLink()
+      local ch = not (used or {}).clan and M.recallReady() and M.clanHallLink()
       if ch then
         for _, c in ipairs(M.clanRecallCandidates(target)) do
           local link = {}
           for k, v in pairs(ch) do link[k] = v end
           link.key, link["then"], link.land = "clan", c.link, c.link.land
-          starts[#starts + 1] = { k = c.k + M.TRAVEL_COST + M.TRIP_FREE_EXTRA, link = link, clan = true }
+          starts[#starts + 1] = { k = c.k + M.TRIP_W_CLAN, link = link, clan = true }
         end
       end
     end
