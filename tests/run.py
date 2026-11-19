@@ -4335,10 +4335,10 @@ def top_bar():
     bottom = o.ev("WIDGETS.ovenPromptBarLabel.html") or ""
     import re as _re
     bottom = _re.sub("<[^>]+>", "", bottom)
-    assert "Mail" in top and "L57" in top and "xp/hr" in top, top
+    assert "Mail" in top and "L57" in top and "xp/min" in top, top
     o.lua("sbo.expRate = function() return 376436.6 end")
     segs = o.ev("(function() local t = {} for _, x in ipairs(sbo.sessionSegs()) do t[#t+1] = x[2] end return table.concat(t) end)()")
-    assert "376,436 xp/hr · 6,273 xp/min" in segs, segs
+    assert "6,273 xp/min" in segs and "xp/hr" not in segs, segs
     assert "SAFE" in bottom and "HP" in bottom and "Mail" not in bottom and "L57" not in bottom, bottom
     assert o.ev("WIDGETS.ovenSessionBarLabel.shown") and o.ev("getBorderTop()") > 0, "the top line takes room at the top"
     # rows left over (updates, Mudlet keeping the border): exactly one row at the very top, however many there were
