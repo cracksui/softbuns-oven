@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.75.0"
+M.version = "1.76.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -15860,7 +15860,17 @@ end
 -- ends from the runs you make; walks (sbo go, double-clicking the map) then use a run when it saves
 -- a long walk: walk to the wilds, run, walk the rest.
 ---------------------------------------------------------------------------
-M.RUN_COST = 25    -- a run counted as this many steps (quick, but it costs stamina and can be cut short)
+M.RUN_COST = 25    -- a run counted as at least this many steps (quick, but it costs stamina and can be cut short)
+-- and by its length: a run goes ~7 rooms a second (68 s for ~480 rooms, from Rune's south road), about half a
+-- step's time a room - so a long run isn't counted as cheap as a short one (a 2-second worm ride beats it)
+M.RUN_PER_ROOM = 0.5
+M.RUN_WINDING = 1.15   -- roads wind: a bit longer than the straight line
+function M.runCost(from, to)
+  local a, b = M.worldPos and M.worldPos(from), M.worldPos and M.worldPos(to)
+  if not (a and b and a.map == b.map) then return M.RUN_COST end
+  local d = math.max(math.abs(a.x - b.x), math.abs(a.y - b.y)) * M.RUN_WINDING
+  return math.max(M.RUN_COST, d * M.RUN_PER_ROOM)
+end
 M.RUN_SAVES = 30   -- and only used when it saves at least this many more
 
 -- signposts, by room
@@ -16109,7 +16119,7 @@ function M.runPlan(here, target, dirs, path)
     if k then
       for name in pairs(sp.dests) do
         local n, cost = after(name), nil
-        if n then cost = k + M.RUN_COST + n
+        if n then cost = k + M.runCost(sp.room, r.ends[name]) + n
         elseif name == town and not r.ends[name] then cost = k + M.RUN_COST end   -- end not known yet: walk on from wherever it stops
         if cost and (not target or cost + M.RUN_SAVES <= direct) and (not best or cost < best.cost) then
           best = { name = name, cost = cost, k = k, start = sp.room, after = n or 0, unknown = not n }
@@ -16732,7 +16742,7 @@ function M.clanRecallCandidates(target)
           local k = 1 + M.CLAN_OUT_EAST + m
           local sp = sps[S.room]
           local est
-          if town and sp and sp.dests[town] then est = k + M.RUN_COST
+          if town and sp and sp.dests[town] then est = k + M.runCost(S.room, M.runData().ends[town])
           elseif tp and tp.map == S.map then est = k + math.max(math.abs(tp.x - S.x), math.abs(tp.y - S.y))
           else est = k + 1000 end
           cands[#cands + 1] = { S = S, k = k, m = m, dir = dy > 0 and "s" or "n", est = est }
@@ -16846,7 +16856,7 @@ function M.recallCandidates(room, target)
       if k then
         local sp = sps[S.room]
         local est
-        if town and sp and sp.dests[town] then est = k + M.RUN_COST
+        if town and sp and sp.dests[town] then est = k + M.runCost(S.room, M.runData().ends[town])
         elseif tp and tp.map == S.map then est = k + math.max(math.abs(tp.x - S.x), math.abs(tp.y - S.y))
         else est = k + 1000 end
         cands[#cands + 1] = { S = S, k = k, est = est }
@@ -16921,7 +16931,7 @@ function M.tripEdges(here, target, used)
       for name in pairs(sp.dests) do
         local e = r.ends[name]
         if e and e ~= sp.room and roomExists(e) then
-          add({ from = sp.room, to = e, cmd = TRIP .. "run:" .. name, run = name, weight = M.RUN_COST + M.TRIP_RUN_EXTRA })
+          add({ from = sp.room, to = e, cmd = TRIP .. "run:" .. name, run = name, weight = M.runCost(sp.room, e) + M.TRIP_RUN_EXTRA })
         end
       end
     end

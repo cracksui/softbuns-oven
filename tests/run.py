@@ -4297,6 +4297,18 @@ def score_tail_tidy():
 
 
 @test
+def run_cost_by_length():
+    # a long run (Rune → Sigil, ~535 rooms) isn't as cheap as a short one: the 2-second worm ride beats it
+    o = Oven()
+    o.lua("""POS = { [1] = { map = 'Alyria', x = 684, y = 760 }, [2] = { map = 'Alyria', x = 435, y = 1226 }, [3] = { map = 'Alyria', x = 700, y = 770 } }
+      sbo.worldPos = function(r) return POS[r] end""")
+    eq(o.ev("sbo.runCost(1, 3)"), 25, "a short run: as before")
+    long = o.ev("sbo.runCost(1, 2)")
+    assert long > o.ev("sbo.TRAVEL_COST + sbo.TRIP_PAID_EXTRA") + 100, long
+    eq(o.ev("sbo.runCost(1, 99)"), 25, "unknown place: as before")
+
+
+@test
 def bar_room_flags():
     o = Oven()
     o.lua("""sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300 }; sbo.lastPromptText = "[Library][SAFE]<291hp>"
