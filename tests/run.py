@@ -1801,6 +1801,12 @@ def eq_reads_eq_first():
     eq((o.ev("VIEWS"), o.ev("sbo.cfg.char.combat.accuracy"), o.ev("sbo.cfg.char.combat.weapon")), (1, 80, "fists"), "read, then shown")
     page = o.ev("function() local l = MAKE(110) local s = {} for _, r in ipairs(l) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end")()
     assert "Weapon: hand to hand" in page and "Offense" in page and page.index("Weapon: hand to hand") < page.index("Offense"), page
+    # wearing something (a haste necklace): eq is read again by itself, quietly
+    o.lua("SENT = {}; sbo.quietNext = nil; sbo.cap = nil; send('wear symbol'); runTimers()")
+    eq(o.ev("SENT[#SENT]"), "eq", "eq read again after wear")
+    o.ev("QFN")(o.ev("function(...) return {...} end")("You are using:", "<worn around neck>  a holy symbol of Dira (used)", "<worn on hands>     fists of the Forest (new)"))
+    assert "a holy symbol of Dira" in list(o.ev("sbo.eqNames").values()), list(o.ev("sbo.eqNames").values())
+    eq([o.ev("sbo.eqChangeCmd")(x) for x in ["rem ring", "wield sword", "hol orb", "we", "west", "read book"]], [True, True, True, False, False, False], "which commands")
     # at a login prompt: nothing sent, the page as it was
     o.lua("SENT = {}; sbo.quietNext = nil; sbo.cap = nil; gmcp.char.status.state = 'login'; sbo.lastStatusPrompt = nil; sbo.lastPromptText = nil; sbo.command('eq')")
     eq((o.ev("#SENT"), o.ev("VIEWS")), (0, 2), "not in the game: no eq sent")
