@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.73.0"
+M.version = "1.73.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8615,7 +8615,16 @@ end
 function M.buildCommand(b)
   b = trim(b or "")
   local w = M.cfg.window and M.viewCols() or columns("main")
-  if b == "" then return M.viewLive(M.buildLines) end
+  if b == "" then
+    -- read eq first, quietly, so the page starts from what you're wearing now (a haste necklace put on…)
+    if M.inGame(M.lastStatusPrompt or M.lastPromptText) and not M.cap and not M.quietNext then
+      return M.quietly("eq", "eq", function(plain)
+        if plain then pcall(M.updateEqNames, plain); pcall(M.noteCombat, plain) end
+        M.viewLive(M.buildLines)
+      end)
+    end
+    return M.viewLive(M.buildLines)
+  end
   -- sbo eq build role defense 1.5: how much a role counts in this build
   local rname, rv = b:lower():match("^role%s+(%a+)%s+([%d%.]+)$")
   if rname then
@@ -10388,39 +10397,12 @@ function M.userIdle(secs)
   return now() - (M.lastUserCmdAt or 0) >= (secs or 2)
 end
 
--- you put something on or took it off (wear, remove, wield, hold): eq is read again, quietly, so what Oven
--- thinks you wear (haste from a necklace, the build page, the gear score) follows without typing eq
-M.EQ_CHANGE = { "wear", "remove", "wield", "hold" }
-function M.eqChangeCmd(cmd)
-  local w = tostring(cmd or ""):lower():match("^%s*(%a+)")
-  if not w or #w < 3 then return false end
-  for _, x in ipairs(M.EQ_CHANGE) do if x:sub(1, #w) == w then return true end end
-  return false
-end
-function M.eqRereadSoon(tries)
-  tries = tries or 0
-  if M.eqRereadTimer and tries == 0 then killTimer(M.eqRereadTimer) end
-  M.eqRereadTimer = tempTimer(1, function()
-    M.eqRereadTimer = nil
-    if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return end
-    -- busy (another reply coming in): a moment later, a few times
-    if M.cap or M.quietNext then if tries < 5 then M.eqRereadSoon(tries + 1) end return end
-    M.quietly("eq", "eq", function(plain)
-      if not plain then return end
-      pcall(M.updateEqNames, plain); pcall(M.noteCombat, plain); pcall(M.dataChanged)
-    end)
-  end)
-end
-
 function M.onSend(_, cmd)
   local own = M.ownCmds and M.ownCmds[cmd]
   M.typedSend = not (own and own > 0)
   if own and own > 0 then M.ownCmds[cmd] = (own > 1) and (own - 1) or nil
   else
     M.lastUserCmdAt = now()
-    for part in tostring(cmd or ""):gmatch("[^;]+") do
-      if M.eqChangeCmd(part) then pcall(M.eqRereadSoon); break end
-    end
     if M.goAsk then
       local okA, mine = pcall(M.goAnswer, cmd)
       if okA and mine then pcall(denyCurrentSend); return end
