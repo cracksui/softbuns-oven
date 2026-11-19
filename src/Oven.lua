@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.73.1"
+M.version = "1.73.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -669,6 +669,12 @@ function M.stripAura(s) return (s:gsub("%.%.+%s*[Ii]t [^%.!]-[!%.]%s*$", "")) en
 local function stripConds(s)
   s = M.stripAura(s)
   local conds = {}
+  -- tags in front of the name ("(Invisible) a holy symbol of Dira", "(Glowing) …"): not part of it
+  while true do
+    local c, rest = s:match("^%s*%((%a[%a%- ]*)%)%s+(.+)$")
+    if not c then break end
+    conds[#conds + 1] = c; s = rest
+  end
   while true do
     local body, c = s:match("^(.-)%s*%(([^()]+)%)%s*$")
     if not body or body == "" then break end

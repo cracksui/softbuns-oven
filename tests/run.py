@@ -1804,7 +1804,7 @@ def eq_reads_eq_first():
     # sbo eq build reads eq first too (a haste necklace put on since)
     o.lua("SENT = {}; VIEWS = 0; sbo.quietNext = nil; sbo.cap = nil; sbo.command('eq build')")
     eq((o.ev("SENT[#SENT]"), o.ev("VIEWS")), ("eq", 0), "eq sent, the page waits")
-    o.ev("QFN")(o.ev("function(...) return {...} end")("You are using:", "<worn around neck>  a holy symbol of Dira (used)", "<worn on hands>     fists of the Forest (new)"))
+    o.ev("QFN")(o.ev("function(...) return {...} end")("You are using:", "<worn around neck>  (Invisible) a holy symbol of Dira (used)", "<worn on hands>     fists of the Forest (new)"))
     assert "a holy symbol of Dira" in list(o.ev("sbo.eqNames").values()), list(o.ev("sbo.eqNames").values())
     eq(o.ev("VIEWS"), 1, "then shown")
     o.lua("SENT = {}; send('wear symbol'); runTimers()")
