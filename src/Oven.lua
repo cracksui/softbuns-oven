@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.74.0"
+M.version = "1.75.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -9539,7 +9539,7 @@ function M.drawCombatBar()
   for _, F in ipairs(fights) do if (F.seq or 0) > (cur.seq or 0) then cur = F end end
   local function col(p) p = tonumber(p) or 0; return p >= 70 and C.plus or (p >= 35 and C.title or C.minus) end
   local pctv = tonumber(cur.lastPct) or 0
-  local segs = { { col(pctv), M.pctBar(pctv, 8) }, { col(pctv), string.format(" %3d%%", pctv) } }
+  local segs = { { C.dim, "⚔ " }, { col(pctv), M.enemyBar(pctv, 8) }, { col(pctv), string.format(" %3d%%", pctv) } }
   local d = cur.drop
   if d and d > 0 then segs[#segs + 1] = { C.plus, " ▼" .. d }
   elseif d and d < 0 then segs[#segs + 1] = { C.minus, " ▲" .. -d } end
@@ -10095,6 +10095,13 @@ local function pctBar(p, n)
   return string.rep("█", k) .. string.rep("░", n - k)
 end
 M.pctBar = pctBar
+-- an enemy's health: segmented (▰▰▰▱▱), with a ⚔ before it, so it's told apart from your own solid gauges at a glance
+function M.enemyBar(p, n)
+  p = math.max(0, math.min(100, tonumber(p) or 0))
+  local k = math.floor(n * p / 100 + 0.5)
+  if p > 0 and k == 0 then k = 1 end   -- (alive: never shown empty)
+  return string.rep("▰", k) .. string.rep("▱", n - k)
+end
 local function hpCol(p) p = tonumber(p) or 0; return p >= 70 and C.plus or (p >= 35 and C.title or C.minus) end
 
 -- how a fight is going, from its health % over the rounds: the last round's change and,
@@ -10163,7 +10170,7 @@ function M.onCombatRound()
   if not M.cfg.combatLines then return end
   -- "⚔ a mental patient ██▌░░ 27% ▼9   you 1 hit · it 1 missed   you 100%   round 3 · ~2 to go"
   local segs = { { C.dim, "⚔ " }, { C.item, r.opponent_name .. " " },
-                 { hpCol(pct), pctBar(pct, 8) }, { hpCol(pct), string.format(" %d%%", pct) } }
+                 { hpCol(pct), M.enemyBar(pct, 8) }, { hpCol(pct), string.format(" %d%%", pct) } }
   dropSegs(F, segs)
   local mine, theirs = {}, {}
   local function add(list, k, word, col) if n(k) > 0 then list[#list + 1] = { col, n(k) .. " " .. word } end end
