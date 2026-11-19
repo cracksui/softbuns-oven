@@ -1798,6 +1798,11 @@ def eq_reads_eq_first():
       "42 Damage: (+38 from weapon) (+1 from +damage) (+4 from skill & strength) ",
       "80 Accuracy: (+4 from level) (+25 from weapon skill) (+45 from fists) ",
       "22% Critical Hit chance:  (+22 from hand to hand)"))
+    eq(o.ev("VIEWS"), 0, "aff next")
+    o.lua("sbo.quietNext = nil; sbo.cap = nil; runTimers()")
+    eq(o.ev("SENT[#SENT]"), "aff", "aff, quietly")
+    o.lua("VIEWS = 0")   # (the test's timers all run at once: aff's give-up timer has drawn it already)
+    o.ev("QFN")(o.ev("function(...) return {...} end")("You are not affected by anything."))
     eq((o.ev("VIEWS"), o.ev("sbo.cfg.char.combat.accuracy"), o.ev("sbo.cfg.char.combat.weapon")), (1, 80, "fists"), "read, then shown")
     page = o.ev("function() local l = MAKE(110) local s = {} for _, r in ipairs(l) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = '\\n' end return table.concat(s) end")()
     assert "Weapon: hand to hand" in page and "Offense" in page and page.index("Weapon: hand to hand") < page.index("Offense"), page
@@ -1806,7 +1811,23 @@ def eq_reads_eq_first():
     eq((o.ev("SENT[#SENT]"), o.ev("VIEWS")), ("eq", 0), "eq sent, the page waits")
     o.ev("QFN")(o.ev("function(...) return {...} end")("You are using:", "<worn around neck>  (Invisible) a holy symbol of Dira (used)", "<worn on hands>     fists of the Forest (new)"))
     assert "a holy symbol of Dira" in list(o.ev("sbo.eqNames").values()), list(o.ev("sbo.eqNames").values())
-    eq(o.ev("VIEWS"), 1, "then shown")
+    eq(o.ev("SENT[#SENT]"), "eq", "aff waits for eq")
+    o.lua("sbo.quietNext = nil; sbo.cap = nil; runTimers()")
+    eq(o.ev("SENT[#SENT]"), "aff", "then aff, quietly")
+    v0 = o.ev("VIEWS")
+    o.lua("""sbo.items['a holy symbol of Dira'] = { name = 'a holy symbol of Dira', extra = { { 'Casts', { { 'x', "'haste'" }, { 'x', '  level 122' } } } } }
+      sbo.items['a cloak'] = { name = 'a cloak', affects = { { 'attack-speed', '18' } } }
+      table.insert(sbo.eqNames, 'a cloak'); sbo.cfg.spellAffects = { haste = { ['attack-speed'] = 10 } }; sbo.aff = nil""")
+    eq(o.ev("sbo.wornAttackSpeed()"), 28, "before aff: the help's haste (+10) and the cloak")
+    o.ev("QFN")(o.ev("function(...) return {...} end")("You are affected by the following:",
+      "Spell:      haste                       - Level 122, modifies attack-speed         by    12.",
+      "Racial:     aquatic                     - Level 111, modifies water-res            by    25.",
+      "Total of 1 magical and 1 non-magical affects."))
+    eq(o.ev("VIEWS"), v0 + 1, "then shown")
+    eq(o.ev("sbo.wornAttackSpeed()"), 30, "aff's haste (+12) once, not the item's too, and the cloak")
+    eq(o.ev("select(2, sbo.wornTotals())"), True, "hasted")
+    o.lua("sbo.noteAff({ 'You are not affected by anything.' })")
+    eq((o.ev("sbo.wornAttackSpeed()"), o.ev("select(2, sbo.wornTotals())")), (18, False), "nothing on you: the symbol off")
     o.lua("SENT = {}; send('wear symbol'); runTimers()")
     eq(o.ev("#SENT"), 1, "wearing something sends nothing more")
     # at a login prompt: nothing sent, the page as it was

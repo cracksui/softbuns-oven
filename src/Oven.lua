@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.73.2"
+M.version = "1.74.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5838,7 +5838,7 @@ local function weaponValue(kind, word)
 end
 
 -- an item's numbers, for the model: { stat = value }, AR split into all-locations and per-location
-local function modelStats(it)
+local function modelStats(it, noSpells)
   local s = {}
   if not it then return s end
   for _, list in ipairs({ it.affects or {}, it.relicAffects or {} }) do
@@ -5852,8 +5852,8 @@ local function modelStats(it)
     local k = loc and ("ar-" .. loc) or "ar"
     s[k] = (s[k] or 0) + tonumber(it.ar)
   end
-  -- spells it casts on you: what each applies (help pages), as if you had it
-  for k, v in pairs(M.itemEffects(it)) do
+  -- spells it casts on you: what each applies (help pages), as if you had it (left out when aff says what's on you)
+  for k, v in pairs(noSpells and {} or M.itemEffects(it)) do
     local sp = k:match("^spell:(.+)$")
     local aff = sp and M.spellAffects(sp)
     if aff then for st, n in pairs(aff) do s[st] = (s[st] or 0) + n * v end end
@@ -5942,6 +5942,9 @@ function M.wornTotals()
       if (M.itemEffects(it))["spell:haste"] then hasted = true end
     end
   end
+  -- (aff, when read: hasted by anything - gear, a potion, a friend - or not at all)
+  local A = M.affNow()
+  if A then hasted = A.spells.haste == true end
   return tot, hasted
 end
 
@@ -5994,13 +5997,40 @@ function M.attacksPerRound(speed)
   end
   return n + left / 100
 end
--- attack speed from what you wear (affects, and haste cast by gear)
+-- what aff says is on you now (spells from gear, potions, others; not your race's): read lately, or nil
+M.AFF_FRESH = 30 * 60
+function M.affNow()
+  local A = M.aff
+  if A and os.time() - (A.at or 0) <= M.AFF_FRESH then return A end
+end
+-- reading aff: "Spell:      haste   - Level 122, modifies attack-speed by 12." (Racial lines are your race's:
+-- kept elsewhere, from GMCP)
+function M.noteAff(lines)
+  local A = { at = os.time(), mods = {}, spells = {} }
+  local any = false
+  for _, l in ipairs(lines or {}) do
+    local t = trim(l)
+    local src, name, what, by = t:match("^(%a[%a ]-):%s+(.-)%s+%-%s+Level%s+%d+,%s+modifies%s+(%S+)%s+by%s+(%-?%d+)")
+    if t:match("^You are affected by the following") or t:match("^You are not affected") then any = true end
+    if src then
+      any = true
+      if src:lower() ~= "racial" then
+        A.spells[name:lower()] = true
+        if what ~= "none" then A.mods[what] = (A.mods[what] or 0) + tonumber(by) end
+      end
+    end
+  end
+  if any then M.aff = A; pcall(M.dataChanged) end
+end
+-- attack speed: what you wear adds (its own affects), and what's on you - spells your gear casts (haste), or
+-- anything else - as aff says; before aff has been read, the spells your gear casts as their help says
 function M.wornAttackSpeed()
-  local sp = 0
+  local A = M.affNow()
+  local sp = A and (A.mods["attack-speed"] or 0) or 0
   for _, nm in ipairs(M.eqNames or {}) do
     local it = M.items[nm]
     if it then
-      sp = sp + (modelStats(it)["attack-speed"] or 0)
+      sp = sp + (modelStats(it, A ~= nil)["attack-speed"] or 0)
     end
   end
   return sp
@@ -8626,7 +8656,15 @@ function M.buildCommand(b)
     if M.inGame(M.lastStatusPrompt or M.lastPromptText) and not M.cap and not M.quietNext then
       return M.quietly("eq", "eq", function(plain)
         if plain then pcall(M.updateEqNames, plain); pcall(M.noteCombat, plain) end
-        M.viewLive(M.buildLines)
+        -- then aff: what's on you now (haste from a necklace, a potion, a friend)
+        if not plain then return M.viewLive(M.buildLines) end
+        tempTimer(0.1, function()   -- (once eq's own reply is done with)
+          if M.cap or M.quietNext then return M.viewLive(M.buildLines) end
+          M.quietly("aff", "affects", function(lines)
+            if lines then pcall(M.noteAff, lines) end
+            M.viewLive(M.buildLines)
+          end)
+        end)
       end)
     end
     return M.viewLive(M.buildLines)
@@ -13190,6 +13228,7 @@ function M.finish(reason)
       -- formatting off: only what Oven learns from it (quests, items, eq, carried, maxes)
       if worth then pcall(M.format, cap.kind, cap.target, cap.plain, columns("main"), cap.decho) end
       if cap.kind == "eq" then pcall(M.updateEqNames, cap.plain) end
+      if cap.kind == "affects" then pcall(M.noteAff, cap.plain) end
       if cap.kind == "contents" then pcall(M.updateCarried, cap) end
       if cap.kind == "score" then pcall(M.updateMaxes, cap.plain) end
       if cap.kind == "item" then pcall(M.afterItem, cap.plain, nil) end
@@ -13252,6 +13291,7 @@ function M.finish(reason)
       end
     end
     if cap.kind == "eq" then M.updateEqNames(cap.plain); pcall(M.noteCombat, cap.plain) end
+    if cap.kind == "affects" then pcall(M.noteAff, cap.plain) end
     if cap.kind == "contents" and not cap.moved then pcall(M.updateCarried, cap) end
     if cap.kind == "score" then M.updateMaxes(cap.plain); M.drawBar(); M.dataChanged() end
     if cap.kind == "skills" then
@@ -18162,8 +18202,9 @@ M.CMDS = {
         return M.quietly("eq", "eq", function(plain)
           if not plain then return M.viewLive(M.buildLines) end
           pcall(M.updateEqNames, plain); pcall(M.noteCombat, plain)
-          -- the enhanced eq: everything eq shows (Oven's layout of it), then the build page
-          M.viewLive(function(w)
+          -- the enhanced eq: everything eq shows (Oven's layout of it), then the build page - after aff (what's on
+          -- you now: haste from a necklace, a potion…)
+          local function show() M.viewLive(function(w)
             M.pendingLinks = nil
             local ok, l = pcall(M.format, "eq", "", plain, w)
             local links = M.pendingLinks or {}
@@ -18171,6 +18212,13 @@ M.CMDS = {
             local out = ok and type(l) == "table" and l or {}
             for _, r in ipairs(M.buildLines(w)) do out[#out + 1] = r end
             return out, links
+          end) end
+          tempTimer(0.1, function()
+            if M.cap or M.quietNext then return show() end
+            M.quietly("aff", "affects", function(lines)
+              if lines then pcall(M.noteAff, lines) end
+              show()
+            end)
           end)
         end)
       end
