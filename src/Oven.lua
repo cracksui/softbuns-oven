@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.69.0"
+M.version = "1.70.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -9578,6 +9578,34 @@ function M.shipSegs(S, gw)
   return out
 end
 
+-- the room's flags (GMCP room.info.flags) for the bar: short words, good ones green, bad ones red, the rest grey;
+-- "indoors" and what the prompt already shows ([SAFE], [Library]) left out
+M.ROOM_FLAG_SHOW = {
+  ["high-regen"] = { "fast heal", "plus" }, ["low-regen"] = { "slow heal", "minus" },
+  ["no-recall"] = { "no recall", "minus" }, ["anti-magic"] = { "no magic", "minus" }, ["magic-unstable"] = { "unstable magic", "minus" },
+  safe = { "safe", "plus" }, NPK = { "NPK", "plus" }, LPK = { "LPK", "title" }, CPK = { "CPK", "minus" },
+  ["no-npcs"] = { "no NPCs" }, ["vanishing-items"] = { "items vanish", "minus" },
+}
+M.ROOM_FLAG_SKIP = { indoors = true, _empty = true }
+function M.roomFlagSegs(promptTags)
+  if M.cfg.barRoomFlags == false then return {} end
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  local flags = type(info) == "table" and info.flags
+  if type(flags) ~= "string" or flags == "" then return {} end
+  local inPrompt = {}
+  for _, t in ipairs(promptTags or {}) do inPrompt[tostring(t):lower()] = true end
+  local out = {}
+  for f in flags:gmatch("[^,]+") do
+    f = trim(f)
+    if f ~= "" and not M.ROOM_FLAG_SKIP[f] and not inPrompt[f:lower()] then
+      local d = M.ROOM_FLAG_SHOW[f]
+      out[#out + 1] = { d and d[2] and C[d[2]] or C.dim, d and d[1] or f:gsub("%-", " ") }
+      out[#out + 1] = { C.dim, " · " }
+    end
+  end
+  return out
+end
+
 function M.drawBar()
   if not M.bar or not M.bar.rawEcho or not M.lastPromptText then return end
   local p = M.barPrompt()
@@ -9604,6 +9632,9 @@ function M.drawBar()
     where[#where + 1] = { tag == "SAFE" and C.plus or C.key, tag }
     where[#where + 1] = { C.dim, " · " }
   end
+  -- the room's flags (fast heal, no recall…)
+  local okF, fl = pcall(M.roomFlagSegs, p.tags)
+  if okF then addAll(top and topSegs or segs, fl) end
   -- the quest with the least time left
   local okS, sQ, _, sLeft = pcall(M.questSoonest)
   if okS and sQ then
@@ -18905,6 +18936,8 @@ M.SETTINGS = {
   { "bar.mode", "Prompt bar", { "gauges", "raw" }, function() return M.cfg.barMode or "gauges" end, function(v) legacy("bar " .. v) end },
   { "sound", "Display", BOOL, function() return onoff(M.cfg.sound ~= false) end, function(v) M.cfg.sound = (v == "on"); M.saveSettings(); say("the game's sounds " .. v) end },
   { "bar.top", "Prompt bar", BOOL, function() return onoff(M.cfg.barTop ~= false) end, function(v) legacy("bar top " .. v) end },
+  { "bar.roomflags", "Prompt bar", BOOL, function() return onoff(M.cfg.barRoomFlags ~= false) end,
+    function(v) M.cfg.barRoomFlags = (v == "on"); M.saveSettings(); pcall(M.drawBar); say("room flags on the bar " .. v) end },
   { "bar.session", "Prompt bar", BOOL, function() return onoff(M.cfg.barSession) end, function(v) legacy("bar session " .. v) end },
   { "bar.session.style", "Prompt bar", { "full", "short" }, function() return M.cfg.barSessionStyle or "full" end, function(v) legacy("bar session " .. v) end },
   { "bar.session.place", "Prompt bar", { "top", "bottom" }, function() return M.cfg.barSessionPos or "top" end, function(v) legacy("bar session " .. v) end },

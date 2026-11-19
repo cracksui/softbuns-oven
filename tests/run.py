@@ -4268,6 +4268,21 @@ def score_tail_tidy():
 
 
 @test
+def bar_room_flags():
+    o = Oven()
+    o.lua("""sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300 }; sbo.lastPromptText = "[Library][SAFE]<291hp>"
+      sbo.showBar(true)""")
+    o.set_gmcp("room.info", '{ num = "28035", flags = "safe, high-regen, no-npcs, reinforced, library, indoors" }')
+    o.lua("sbo.drawBar()")
+    top = o.ev("(function() local t = {} for _, x in ipairs(sbo.topBarSegs or {}) do t[#t+1] = x[2] end return table.concat(t) end)()")
+    assert "fast heal · no NPCs · reinforced" in top, top
+    assert "indoors" not in top and "library" not in top and "safe" not in top, f"left out, or the prompt shows it: {top}"
+    o.lua('sbo.command("config bar.roomflags off")')
+    top = o.ev("(function() local t = {} for _, x in ipairs(sbo.topBarSegs or {}) do t[#t+1] = x[2] end return table.concat(t) end)()")
+    assert "fast heal" not in top, top
+
+
+@test
 def next_quest_countdown():
     o = Oven()
     o.lua("""sbo.cfg.bar = true; sbo.cfg.barSession = true; sbo.cfg.maxes = { hp = 300 }; sbo.lastPromptText = "<291hp>"
