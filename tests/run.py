@@ -4304,7 +4304,10 @@ def run_cost_by_length():
       sbo.worldPos = function(r) return POS[r] end""")
     eq(o.ev("sbo.runCost(1, 3)"), 25, "a short run: as before")
     long = o.ev("sbo.runCost(1, 2)")
-    assert long > o.ev("sbo.TRAVEL_COST + sbo.TRIP_PAID_EXTRA") + 100, long
+    assert long > o.ev("sbo.TRAVEL_COST + sbo.TRIP_FREE_EXTRA") + 100, long
+    eq(o.ev("sbo.tripGoldMargin()"), 0, "no gold margin by default")
+    o.lua('sbo.command("config go.goldmargin 60")')
+    eq(o.ev("sbo.tripGoldMargin()"), 60, "set")
     eq(o.ev("sbo.runCost(1, 99)"), 25, "unknown place: as before")
 
 

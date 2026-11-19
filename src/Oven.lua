@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.76.0"
+M.version = "1.77.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16903,7 +16903,9 @@ end
 -- the map with its cost - one getPath finds the best mix of walking, runs and rides - then they're taken off
 -- again (the map itself never keeps them)
 local TRIP = "oven-trip:"
-M.TRIP_PAID_EXTRA = 60   -- a ride that costs gold: used only when it saves at least this many steps
+-- a ride that costs gold: counted like a free one (free wins a tie), plus the steps it must save to be worth the
+-- gold - none by default; sbo config go.goldmargin 60 to pay only when it saves at least 60 steps
+function M.tripGoldMargin() return tonumber(M.cfg.tripGoldMargin) or 0 end
 M.TRIP_FREE_EXTRA = 20   -- a free one (the clan hall, recall)
 M.TRIP_RUN_EXTRA = 10
 M.TRIP_WILD_LIMIT = 40   -- rooms of the wilds on foot before the search looks again (those rooms made dearer)
@@ -16921,7 +16923,7 @@ function M.tripEdges(here, target, used)
       if land and land ~= L.shop then
         L.land = land
         add({ from = L.shop, to = land, cmd = TRIP .. L.key, link = L,
-          weight = M.TRAVEL_COST + ((L.cost or 0) > 0 and M.TRIP_PAID_EXTRA or M.TRIP_FREE_EXTRA) })
+          weight = M.TRAVEL_COST + M.TRIP_FREE_EXTRA + ((L.cost or 0) > 0 and (0.5 + M.tripGoldMargin()) or 0) })
       end
     end
   end
@@ -19016,6 +19018,14 @@ M.SETTINGS = {
   { "quest.side", "Quest panel", { "left", "right" }, function() return M.cfg.questHudSide or "right" end, function(v) legacy("quest hud " .. v) end },
   { "quest.opacity", "Quest panel", "number", function() return tostring(M.cfg.questHudOpacity or 100) end, function(v) legacy("quest hud opacity " .. v) end },
   { "map", "Map panel", BOOL, function() return onoff(M.cfg.map) end, function(v) legacy("map " .. v) end },
+  { "go.goldmargin", "Travel", "number", function() return tostring(M.tripGoldMargin()) end,
+    function(v)
+      local n = tonumber(v)
+      if not n or n < 0 then return say("go.goldmargin: a number of steps, 0 or more (0: no margin, the default)") end
+      M.cfg.tripGoldMargin = n; M.saveSettings()
+      say(n == 0 and "paid rides (worm, balloons) are taken whenever they're quicker"
+        or string.format("paid rides are taken only when they save at least %d steps", n))
+    end },
   { "map.panel", "Map panel", BOOL, function() return onoff(M.cfg.mapPanel) end, function(v) legacy("map panel " .. v) end },
   { "map.colours", "Map panel", { "natural", "ascii", "game" }, function() return M.worldColourMode() end,
     function(v)
