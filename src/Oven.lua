@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.68.5"
+M.version = "1.69.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -200,6 +200,8 @@ local SCHEMA = {
   "CREATE TABLE IF NOT EXISTS quest_targets (kind TEXT, key TEXT, room INTEGER, text TEXT, holder TEXT, t INTEGER, PRIMARY KEY (kind, key, room))",
   -- players' names (clan-tagged in a room, on a channel, in who): never saved as mobs
   "CREATE TABLE IF NOT EXISTS players (name TEXT PRIMARY KEY, last INTEGER)",
+  -- chat history (the Chat tab's lines), kept across sessions: channel, the plain line, its colours (decho), who, what
+  "CREATE TABLE IF NOT EXISTS chat_log (id INTEGER PRIMARY KEY, t INTEGER, ch TEXT, plain TEXT, decho TEXT, who TEXT, msg TEXT)",
   -- where a room is on the world map (GMCP's coord when you were there): the world map places town rooms by it
   "CREATE TABLE IF NOT EXISTS room_xy (room INTEGER PRIMARY KEY, map TEXT, x INTEGER, y INTEGER)",
   -- each level gained (and class change): what it gave, attributes raised, skills improved / learned
@@ -11713,6 +11715,25 @@ end)
 M.chat = M.chat or { lines = {}, unread = {}, filter = "All" }
 local CHAT_KEEP = 500
 
+-- the history: every chat line goes into oven.db (chat_log) as well; the tab starts with the last CHAT_KEEP of
+-- them (since its last clear) when Mudlet opens
+function M.chatLoad()
+  if #M.chat.lines > 0 then return end
+  local from = tonumber(M.dbGet("chatClearedId")) or 0
+  local rows = M.dbRows("SELECT t, ch, plain, decho, who, msg FROM chat_log WHERE id > %s ORDER BY id DESC LIMIT %s", from, CHAT_KEEP)
+  for i = #rows, 1, -1 do
+    local r = rows[i]
+    M.chat.lines[#M.chat.lines + 1] = { ch = r.ch, plain = r.plain, decho = r.decho ~= "" and r.decho or nil,
+      t = tonumber(r.t), who = r.who ~= "" and r.who or nil, msg = r.msg ~= "" and r.msg or nil }
+  end
+end
+-- a channel kept out of the main window (it still goes to the Chat tab, and the history): sbo chat hide CLAN
+function M.chatHidden(ch)
+  if not ch then return false end
+  if (M.cfg.mirror or {}).chat == false then return true end
+  return (M.cfg.chatHide or {})[ch] == true
+end
+
 -- recognisers: a line -> channel, who, message (nil if it isn't chat). Add more with M.addChatPattern.
 M.chatPatterns = {}
 function M.addChatPattern(name, find) M.chatPatterns[#M.chatPatterns + 1] = { name = name, find = find } end
@@ -11835,6 +11856,8 @@ function M.chatAdd(ch, plain, decho, t, who, msg)
   end
   local e = { ch = ch, plain = plain, decho = decho, t = t or os.time(), who = who, msg = msg }
   C.lines[#C.lines + 1] = e
+  M.dbx("INSERT INTO chat_log (t, ch, plain, decho, who, msg) VALUES (%s, %s, %s, %s, %s, %s)",
+    e.t, ch, plain or "", decho or "", who or "", msg or "")
   while #C.lines > CHAT_KEEP do table.remove(C.lines, 1) end
   local muted = (M.cfg.chatMuted or {})[ch]
   local seen = M.tabOn == "chat" and M.container and (C.filter == "All" or C.filter == ch)
@@ -12447,7 +12470,36 @@ function M.chatCommand(b)
     if not c or c == "All" then return M.say("no channel called '" .. rest .. "' yet - channels: " .. table.concat(M.cfg.chatChannels or {}, ", ")) end
     if (a == "mute") ~= ((M.cfg.chatMuted or {})[c] == true) then M.chatMute(c) end
     return
+  elseif a == "hide" or a == "show" then
+    M.cfg.chatHide = M.cfg.chatHide or {}
+    if rest == "" then
+      local h = {}
+      for _, c in ipairs(M.cfg.chatChannels or {}) do if M.chatHidden(c) then h[#h + 1] = c end end
+      return M.say("kept out of the main window: " .. (#h > 0 and table.concat(h, ", ") or "nothing")
+        .. " · sbo chat hide|show <channel|all>")
+    end
+    local c = find(rest)
+    if not c then return M.say("no channel called '" .. rest .. "' yet - channels: " .. table.concat(M.cfg.chatChannels or {}, ", ")) end
+    if c == "All" then
+      M.cfg.mirror.chat = (a == "show")
+      M.cfg.chatHide = {}
+      if a == "hide" then for _, x in ipairs(M.cfg.chatChannels or {}) do M.cfg.chatHide[x] = true end end
+    else
+      -- (one channel at a time from here on: "every channel hidden" becomes each one hidden)
+      if M.cfg.mirror.chat == false then
+        for _, x in ipairs(M.cfg.chatChannels or {}) do M.cfg.chatHide[x] = true end
+        M.cfg.mirror.chat = nil
+      end
+      M.cfg.chatHide[c] = (a == "hide") or nil
+    end
+    M.saveSettings()
+    return M.say((c == "All" and "every channel" or c) .. (a == "hide" and " now goes to the Chat tab only (and its history)"
+      or " shows in the main window again"))
   elseif a == "clear" then
+    pcall(function()
+      local r = M.dbRow("SELECT MAX(id) AS id FROM chat_log")
+      M.dbSet("chatClearedId", tonumber(r and r.id) or 0)   -- (the history is kept; the tab starts after this)
+    end)
     M.chat.lines, M.chat.unread = {}, {}
     M.chatRender(); pcall(M.chatChips)
     return M.say("chat cleared")
@@ -12817,9 +12869,9 @@ function M.onLineWork()
       pcall(M.noteQuestProgress, line)
     end
   end
-  -- sbo mirror chat off: chat goes to the Chat tab only (while the window is there to show it)
-  if M.cfg.mirror.chat == false and not cap and M.cfg.tabs and M.cfg.window and M.container
-      and not isPromptLine() and M.chatFind(line) then
+  -- sbo chat hide CLAN (or chat.mirror off: every channel): to the Chat tab only (while the window is there to show it)
+  if not cap and M.cfg.tabs and M.cfg.window and M.container and (M.cfg.mirror.chat == false or next(M.cfg.chatHide or {}))
+      and not isPromptLine() and M.chatHidden((M.chatFind(line))) then
     deleteLine()
     return
   end
@@ -18158,7 +18210,10 @@ M.CMDS = {
     { name = "mute", args = "{channel}", desc = "keep a channel out of All", run = function(r) return M.chatCommand("mute " .. r) end },
     { name = "unmute", args = "{channel}", desc = "bring it back", run = function(r) return M.chatCommand("unmute " .. r) end },
     { name = "remove", args = "{channel}", desc = "drop a channel's chip", run = function(r) return M.chatCommand("forget " .. r) end },
-    { name = "clear", desc = "empty the Chat tab", run = function() return M.chatCommand("clear") end },
+    { name = "hide", args = "[{channel}|all]", desc = "keep a channel out of the main window (Chat tab only); none: list them",
+      run = function(r) return M.chatCommand("hide " .. r) end },
+    { name = "show", args = "{channel}|all", desc = "show it in the main window again", run = function(r) return M.chatCommand("show " .. r) end },
+    { name = "clear", desc = "empty the Chat tab (the saved history stays in oven.db)", run = function() return M.chatCommand("clear") end },
   } },
   { name = "item", min = 2, args = "{text}", desc = "find an item: what you have, know, where it's sold, picked up, quests",
     run = function(r) return M.itemFind(r) end },
@@ -19492,3 +19547,4 @@ end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
 tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick) end)
+pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end

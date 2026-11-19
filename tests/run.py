@@ -2197,6 +2197,24 @@ def mirror_tabs():
     eq(o.ev("DELETED_LINES"), 1, "chat off: chat taken off the main screen, other lines kept")
     o.feed("[Mail]<270hp 550sp 401st>")
     eq([dict(x.items())["msg"] for x in o.ev("sbo.chat.lines").values()], ["hi", "hi again"], "both in the Chat tab")
+    # per channel: CLAN to the Chat tab only, tells still on the main screen
+    o.lua('sbo.command("chat show all"); DELETED_LINES = 0; sbo.command("chat hide clan")')
+    o.feed("[CLAN] Moss: 'clan only'", "Wren tells you 'still here'")
+    eq(o.ev("DELETED_LINES"), 1, "CLAN hidden, the tell shown")
+    eq(o.ev("sbo.cfg.chatHide.CLAN"), True, "kept")
+    o.feed("[Mail]<270hp 550sp 401st>")
+    o.lua('sbo.command("chat hide all"); sbo.command("chat show tells"); DELETED_LINES = 0')
+    o.feed("[CLAN] Moss: 'x'", "Wren tells you 'y'")
+    eq((o.ev("DELETED_LINES"), o.ev("sbo.cfg.mirror.chat")), (1, None), "all hidden, then tells shown: CLAN stays hidden")
+    o.feed("[Mail]<270hp 550sp 401st>")
+    # the history: kept in oven.db, back in the tab when Mudlet opens again; clear empties the tab, not the history
+    n = o.ev("#sbo.chat.lines")
+    o.lua("sbo.chat.lines = {}; sbo.chatLoad()")
+    eq(o.ev("#sbo.chat.lines"), n, "reloaded from the history")
+    eq(dict(o.ev("sbo.chat.lines[#sbo.chat.lines]").items())["msg"], "y", "in order, newest last")
+    o.lua('sbo.command("chat clear"); sbo.chat.lines = {}; sbo.chatLoad()')
+    eq(o.ev("#sbo.chat.lines"), 0, "cleared stays cleared")
+    eq(o.ev("sbo.dbRow('SELECT COUNT(*) AS n FROM chat_log').n"), n, "the history itself is kept")
     o.lua('sbo.command("mirror bogus on")')
 
 
