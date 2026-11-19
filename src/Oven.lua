@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.70.1"
+M.version = "1.71.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -9586,24 +9586,33 @@ M.ROOM_FLAG_SHOW = {
   safe = { "safe", "plus" }, NPK = { "NPK", "plus" }, LPK = { "LPK", "title" }, CPK = { "CPK", "minus" },
   ["no-npcs"] = { "no NPCs" }, ["vanishing-items"] = { "items vanish", "minus" },
 }
-M.ROOM_FLAG_SKIP = { indoors = true, _empty = true }
+M.ROOM_FLAG_SKIP = { indoors = true, _empty = true, nothing = true }
+-- terraininfo: all shown (diggable matters - a rune is buried in diggable ground); what you can gather a little
+-- brighter, the treacherous red
+M.TERRAIN_SHOW = { fishable = "key", ["drinkable-water"] = "key", ["salt-mineable"] = "key", slippery = "minus", freezing = "minus" }
 function M.roomFlagSegs(promptTags)
   if M.cfg.barRoomFlags == false then return {} end
   local info = M.gmcpGet and M.gmcpGet("room.info")
-  local flags = type(info) == "table" and info.flags
-  if type(flags) ~= "string" or flags == "" then return {} end
+  if type(info) ~= "table" then return {} end
   local inPrompt = {}
   for _, t in ipairs(promptTags or {}) do inPrompt[tostring(t):lower()] = true end
   local out = {}
-  for f in flags:gmatch("[^,]+") do
-    f = trim(f)
-    if f ~= "" and not M.ROOM_FLAG_SKIP[f] and not inPrompt[f:lower()] then
-      local d = M.ROOM_FLAG_SHOW[f]
-      -- (the game's own word, as sbo map highlight / sbo go find it: high-regen, no-recall…)
-      out[#out + 1] = { d and d[2] and C[d[2]] or C.dim, f }
-      out[#out + 1] = { C.dim, " · " }
-    end
+  -- the area's levels, when the game says (not everywhere does)
+  local lo, hi = tonumber(info.minlevel), tonumber(info.maxlevel)
+  if lo and hi then
+    out[#out + 1] = { C.title, string.format("lvl %d-%d", lo, hi) }
+    out[#out + 1] = { C.dim, " · " }
   end
+  local function add(f, terrain)
+    f = trim(f)
+    if f == "" or M.ROOM_FLAG_SKIP[f] or inPrompt[f:lower()] then return end
+    local d = (terrain and M.TERRAIN_SHOW or M.ROOM_FLAG_SHOW)[f]
+    -- (the game's own word, as sbo map highlight / sbo go find it: high-regen, no-recall, diggable…)
+    out[#out + 1] = { d and C[d] or (type(d) == "table" and d[2] and C[d[2]]) or C.dim, f }
+    out[#out + 1] = { C.dim, " · " }
+  end
+  for f in tostring(info.flags or ""):gmatch("[^,]+") do add(f) end
+  for f in tostring(info.terraininfo or ""):gmatch("%S+") do add(f, true) end
   return out
 end
 
@@ -9897,6 +9906,11 @@ function M.gmcpRoomFlags(id)
   for raw in info.flags:gmatch("[^,]+") do
     local f = trim(raw)
     if f ~= "" and f ~= "_empty" then out[#out + 1] = f end
+  end
+  -- what the ground allows (terraininfo): diggable (to bury a rune), fishable, drinkable-water… - kept with the
+  -- flags, so they're searched the same way (sbo map highlight diggable)
+  for w in tostring(info.terraininfo or ""):gmatch("%S+") do
+    if w ~= "nothing" and w ~= "_empty" then out[#out + 1] = w end
   end
   return out
 end
@@ -15392,6 +15406,9 @@ function M.noteRoomFlags(id, l)
       if not NOT_ROOM_FLAGS[t:lower()] then flags[#flags + 1] = t end
     end
   end
+  -- (a room of the wilds that isn't on the map: nothing could find it there - not kept)
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  if type(info) == "table" and tostring(info.wilds) == "true" and not roomExists(id) then return end
   -- the prompt comes with every line of combat: only touch the database when the room changes
   local now_ = table.concat(flags, ",")
   if M.flagsSeen and M.flagsSeen.room == id and M.flagsSeen.tags == now_ then return end

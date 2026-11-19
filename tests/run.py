@@ -4276,6 +4276,15 @@ def bar_room_flags():
     o.lua("sbo.drawBar()")
     top = o.ev("(function() local t = {} for _, x in ipairs(sbo.topBarSegs or {}) do t[#t+1] = x[2] end return table.concat(t) end)()")
     assert "high-regen · no-npcs · reinforced" in top, top
+    o.set_gmcp("room.info", '{ num = "917741", flags = "indoors, NPK", terraininfo = "diggable hard slippery salt-mineable freezing", minlevel = 1, maxlevel = 180 }')
+    o.lua("sbo.drawBar()")
+    top2 = o.ev("(function() local t = {} for _, x in ipairs(sbo.topBarSegs or {}) do t[#t+1] = x[2] end return table.concat(t) end)()")
+    assert "lvl 1-180 · NPK · diggable · hard · slippery · salt-mineable · freezing" in top2, top2
+    # kept with the flags, so it can be searched: sbo map highlight diggable
+    o.lua("roomExists = function() return true end; sbo.noteRoomFlags(917741, '<291hp>')")
+    eq(o.ev("sbo.dbRow('SELECT tags FROM room_flags WHERE room = 917741').tags"), "indoors,NPK,diggable,hard,slippery,salt-mineable,freezing", "stored")
+    o.lua("getRoomName = function() return 'A Windswept Ice Tunnel' end; searchRoom = function() return {} end")
+    eq(o.ev("sbo.runTargets('diggable')[1].id"), 917741, "found by it")
     assert "indoors" not in top and "library" not in top and "safe" not in top, f"left out, or the prompt shows it: {top}"
     o.lua('sbo.command("config bar.roomflags off")')
     top = o.ev("(function() local t = {} for _, x in ipairs(sbo.topBarSegs or {}) do t[#t+1] = x[2] end return table.concat(t) end)()")
