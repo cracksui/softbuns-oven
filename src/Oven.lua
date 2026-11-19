@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.78.0"
+M.version = "1.78.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16909,11 +16909,11 @@ local TRIP = "oven-trip:"
 -- gold - none by default; sbo config go.goldmargin 60 to pay only when it saves at least 60 steps
 function M.tripGoldMargin() return tonumber(M.cfg.tripGoldMargin) or 0 end
 M.TRIP_FREE_EXTRA = 20   -- a free one (the clan hall, recall)
--- the order you'd choose them in, all else equal (the user's): a ride (worm, balloon, a portal) first, then word
--- of recall, then clan gohall (it ends in a recall too, after the walk out), then a signpost run, then walking.
--- Each one's own cost in steps, on top of the walking and the run's length:
+-- the order you'd choose them in, all else equal (the user's): word of recall when it's off cooldown, then a ride
+-- (worm, balloon, a portal), then clan gohall (it ends in a recall too, after the walk out), then a signpost run,
+-- then walking. Each one's own cost in steps, on top of the walking and the run's length:
+M.TRIP_W_RECALL = 15
 M.TRIP_W_RIDE = 20     -- (+ sbo config go.goldmargin when it costs gold)
-M.TRIP_W_RECALL = 30
 M.TRIP_W_CLAN = 45
 M.TRIP_W_RUN_MIN = 35
 -- word of recall's cooldown: 10 minutes from a cast that worked (the game: "cannot be used again for another 9min

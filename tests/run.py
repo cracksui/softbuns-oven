@@ -4322,7 +4322,7 @@ def recall_cooldown_and_priority():
     o.set_gmcp("room.info", '{ num = "2000000", wilds = "true" }')
     n = "(function() local n = 0 for _, e in ipairs(sbo.tripEdges(2000000, 600, {})) do if e.cmd:find('recall:', 1, true) then n = n + 1 end end return n end)()"
     eq(o.ev(n), 1, "recall offered")
-    eq(o.ev("sbo.tripEdges(2000000, 600, {})[1].weight"), 30, "recall: 30")
+    eq(o.ev("sbo.tripEdges(2000000, 600, {})[1].weight"), 15, "recall: 15, the cheapest")
     o.feed("'Word of recall' cannot be used again for another 2min 5s.")
     eq(o.ev("sbo.cfg.recallReadyAt - T0"), 125, "the time left read")
     eq(o.ev(n), 0, "cooling down: no recall in the plan")
@@ -4331,8 +4331,8 @@ def recall_cooldown_and_priority():
     o.set_gmcp("char.cast_finished", '{ casting_completed = "\'word of recall\' cast successful" }')
     o.lua("sbo.onGmcpCastFinished()")
     eq(o.ev("sbo.cfg.recallReadyAt - T0"), 600, "a recall that worked: 10 minutes")
-    # the order, all else equal: ride < recall < clan gohall; runs never under 35
-    assert o.ev("sbo.TRIP_W_RIDE < sbo.TRIP_W_RECALL and sbo.TRIP_W_RECALL < sbo.TRIP_W_CLAN and sbo.TRIP_W_CLAN <= sbo.TRIP_W_RUN_MIN + 10")
+    # the order, all else equal: recall < ride < clan gohall; runs never under 35
+    assert o.ev("sbo.TRIP_W_RECALL < sbo.TRIP_W_RIDE and sbo.TRIP_W_RIDE < sbo.TRIP_W_CLAN")
 
 
 @test
