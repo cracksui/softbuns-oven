@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.71.0"
+M.version = "1.71.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -9439,7 +9439,7 @@ function M.sessionSegs()
   local fl = math.floor
   if M.cfg.barSessionStyle == "short" then
     local rate = M.expRate()
-    return { { C.num, rate and tostring(fl(rate)) or "-" }, { C.dim, " xp/hr" } }
+    return { { C.num, rate and commaNum(fl(rate)) or "-" }, { C.dim, " xp/hr" } }
   end
   local sec = os.time() - S.start
   local t = sec >= 3600 and string.format("%dh %02dm", fl(sec / 3600), fl((sec % 3600) / 60)) or string.format("%dm", math.max(1, fl(sec / 60)))
@@ -9456,7 +9456,7 @@ function M.sessionSegs()
   segs[#segs + 1] = { deaths > 0 and C.minus or C.dim, (S.kills0 or deaths > 0 or kills > 0) and tostring(deaths) or "-" }
   local rate = M.expRate()
   segs[#segs + 1] = dot
-  segs[#segs + 1] = { C.num, rate and tostring(fl(rate)) or "-" }
+  segs[#segs + 1] = { C.num, rate and commaNum(fl(rate)) or "-" }
   segs[#segs + 1] = { C.dim, " xp/hr" }
   return segs
 end
