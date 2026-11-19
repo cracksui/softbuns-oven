@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.70.0"
+M.version = "1.70.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -9578,7 +9578,7 @@ function M.shipSegs(S, gw)
   return out
 end
 
--- the room's flags (GMCP room.info.flags) for the bar: short words, good ones green, bad ones red, the rest grey;
+-- the room's flags (GMCP room.info.flags) for the bar: the game's words, good ones green, bad ones red, the rest grey;
 -- "indoors" and what the prompt already shows ([SAFE], [Library]) left out
 M.ROOM_FLAG_SHOW = {
   ["high-regen"] = { "fast heal", "plus" }, ["low-regen"] = { "slow heal", "minus" },
@@ -9599,7 +9599,8 @@ function M.roomFlagSegs(promptTags)
     f = trim(f)
     if f ~= "" and not M.ROOM_FLAG_SKIP[f] and not inPrompt[f:lower()] then
       local d = M.ROOM_FLAG_SHOW[f]
-      out[#out + 1] = { d and d[2] and C[d[2]] or C.dim, d and d[1] or f:gsub("%-", " ") }
+      -- (the game's own word, as sbo map highlight / sbo go find it: high-regen, no-recall…)
+      out[#out + 1] = { d and d[2] and C[d[2]] or C.dim, f }
       out[#out + 1] = { C.dim, " · " }
     end
   end
