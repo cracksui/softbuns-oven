@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.78.6"
+M.version = "1.79.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6588,6 +6588,7 @@ end
 function M.noteBought(l)
   local item = trim(l):match("takes your payment and hands you (.-)%.?$")
   if not item or item == "" then return end
+  pcall(M.rideTicketNote, item)
   local c = M.cfg.carried or { inv = {}, bags = {} }
   M.cfg.carried = c
   c.inv = c.inv or {}
@@ -12983,6 +12984,7 @@ function M.onLineWork()
     return
   end
   if line:find("cannot be used again", 1, true) then pcall(M.recallLine, line) end
+  if M.rideTicket and line:find("slams into the ground", 1, true) then pcall(M.rideLine, line) end
   local mount = line:match("^%s*%(Mount:%s*(%d+)%s*st%)%s*$")
   if mount then
     M.mountPending = tonumber(mount)
@@ -16996,13 +16998,68 @@ M.TRIP_WILD_WARN = 40    -- and a plan that still walks more of them than this s
 -- the wilds' rooms: numbered from a million up (Alyria's start at 1,060,834; the Faerie Plane's at 6,000,000)
 function M.isWildRoom(id) return (tonumber(id) or 0) >= 1000000 end
 
+-- where a ride really lands (the worm to Sigil comes down at its south gate's signpost, out in the wilds - not in
+-- the town): learned when you ride, and from your recordings; without it, a room of the place's area is guessed
+function M.rideKey(kind, dest) return (tostring(kind or "") .. "|" .. tostring(dest or "")):lower() end
+function M.rideLand(kind, dest)
+  local r = tonumber(((M.cfg.rideLands or {})[M.rideKey(kind, dest)]))
+  if r and roomExists(r) then return r end
+end
+function M.rideLandNote(kind, dest, room)
+  room = tonumber(room)
+  if not (kind and dest and room) then return end
+  M.cfg.rideLands = M.cfg.rideLands or {}
+  local k = M.rideKey(kind, dest)
+  if M.cfg.rideLands[k] ~= room then M.cfg.rideLands[k] = room; M.saveSettings() end
+end
+-- a ticket or token bought: which ride, to where (kept until it's used)
+function M.rideTicketNote(item)
+  local it = tostring(item):lower()
+  for _, K in ipairs(M.TRAVEL_KINDS) do
+    for _, pat in ipairs(K.item) do
+      local dest = it:match(pat)
+      if dest then M.rideTicket = { kind = K.kind, dest = dest, at = os.time() }; return M.rideTicket end
+    end
+  end
+end
+-- "the Iron Worm slams into the ground": the game has already said where (its room comes before the words)
+function M.rideLine(l)
+  if not l:find("Iron Worm slams into the ground", 1, true) then return end
+  local t, here = M.rideTicket, M.currentRoom()
+  if t and here then M.rideLandNote(t.kind, t.dest, here); M.rideTicket = nil end
+end
+-- the recordings, once: each token bought, then where the worm came down
+function M.rideLandImport()
+  if M.cfg.rideLandsImported then return 0 end
+  M.cfg.rideLandsImported = true
+  local n = 0
+  for _, f in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
+    local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
+    if fh then
+      local ticket, room
+      for l in fh:lines() do
+        local item = l:match("takes your payment and hands you (.-)%.?%s*$")
+        if item then ticket = M.rideTicketNote(item) end
+        if l:sub(1, 15) == "@gmcp room.info" then room = tonumber(l:match('%["num"%]="(%d+)"')) or room end
+        if l:find("Iron Worm slams into the ground", 1, true) and ticket and room then
+          M.rideLandNote(ticket.kind, ticket.dest, room); n = n + 1; ticket = nil
+        end
+      end
+      fh:close()
+    end
+  end
+  M.rideTicket = nil
+  M.saveSettings()
+  return n
+end
+
 function M.tripEdges(here, target, used)
   local edges = {}
   local function add(e) edges[#edges + 1] = e end
   for _, L in ipairs(M.travelLinks()) do
     L.key = "ride:" .. L.shop .. ":" .. L.no
     if L.board and L.areaId and not used[L.key] and roomExists(L.shop) then
-      local land = areaRoom(L.area, L.areaId)
+      local land = M.rideLand(L.kind, L.dest) or areaRoom(L.area, L.areaId)
       if land and land ~= L.shop then
         L.land = land
         add({ from = L.shop, to = land, cmd = TRIP .. L.key, link = L,
@@ -17453,6 +17510,7 @@ function M.travelOnRoom(id)
     tempTimer(0.5, function() M.travelBoard() end)
   elseif (T.stage == "riding" or T.stage == "boarding") and T.rideFrom and getRoomArea(id) ~= T.rideFrom and not T.waitRoom then
     M.travel = nil
+    pcall(M.rideLandNote, T.link.kind, T.link.dest, id)
     local more = T.plan and T.plan.legs[T.leg + 1]
     if more then
       if more.link.kind == "recall" then say("travel: landed - out toward the " .. more.link.dest .. ", then recall")
@@ -19771,5 +19829,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport) end)
 pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end

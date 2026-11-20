@@ -4354,6 +4354,30 @@ def world_water_feature():
 
 
 @test
+def ride_landing_learned():
+    # the worm to Sigil lands at its south gate signpost (the wilds), not in the town: learned, and used to plan
+    o = Oven()
+    home = o.L.globals().OVEN_TEST_HOME
+    open(home + "/oven_record.txt", "w").write(
+        "===== 2026-11-18 20:40:00 | cmd=buy token | room=10636\n"
+        "Ganuk takes your payment and hands you a token for Sigil passage.\n"
+        "===== 2026-11-18 20:40:09 | cmd=give token ganuk | room=10637\n"
+        "Without hesitation, Ganuk crams you into the Iron Worm and closes the hatch.\n"
+        "===== 2026-11-18 20:40:11 | cmd= | room=3908670\n"
+        '@gmcp room.info = {["num"]="3908670",["zone"]="Alyria"}\n'
+        "Before you can finish inhaling, the Iron Worm slams into the ground at break-neck speed, nearly giving you whiplash.\n"
+        "===== 2026-11-18 20:40:12 | cmd=n | room=3906370\n"
+        '@gmcp room.info = {["num"]="3906370",["zone"]="Alyria"}\n')
+    eq(o.ev("sbo.rideLandImport()"), 1, "one ride read")
+    o.lua("roomExists = function() return true end")
+    eq(o.ev("sbo.rideLand('Iron Worm', 'Sigil')"), 3908670, "Sigil's worm lands at the south gate")
+    eq(o.ev("sbo.rideLandImport()"), 0, "once")
+    # live: a token bought, the worm comes down, the next room is where
+    o.lua("sbo.currentRoom = function() return 40835 end; sbo.rideTicketNote('a token for Tellerium passage'); sbo.rideLine('Before you can finish inhaling, the Iron Worm slams into the ground at break-neck speed.')")
+    eq(o.ev("sbo.rideLand('Iron Worm', 'Tellerium')"), 40835, "learned as it happens")
+
+
+@test
 def bar_room_flags():
     o = Oven()
     o.lua("""sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300 }; sbo.lastPromptText = "[Library][SAFE]<291hp>"
