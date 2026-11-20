@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.78.3"
+M.version = "1.78.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14799,8 +14799,20 @@ end
 
 -- draw it (a moment later: several changes at once draw once)
 function M.worldDraw()
-  if M.worldDrawTimer then return end
-  M.worldDrawTimer = tempTimer(0.05, function() M.worldDrawTimer = nil; pcall(M.worldDrawNow) end)
+  -- (a timer that never fired - killed by an update in the same session - mustn't stop the map for good)
+  if M.worldDrawTimer and M.worldDrawAt and getEpoch() - M.worldDrawAt < 2 then return end
+  M.worldDrawAt = getEpoch()
+  M.worldDrawTimer = tempTimer(0.05, function()
+    M.worldDrawTimer = nil
+    local ok, err = pcall(M.worldDrawNow)
+    -- a failure is shown, not swallowed: in the map's status line, and the debug window
+    if not ok then
+      M.worldDrawErr = tostring(err)
+      debugc("Oven world map: " .. M.worldDrawErr)
+      if M.mapSearchStatus then pcall(function() M.mapSearchStatus:echo("<span style=\"color:" .. M.hex("minus") .. ";\">world map: "
+        .. M.worldDrawErr:gsub("&", "&amp;"):gsub("<", "&lt;") .. "</span>") end) end
+    else M.worldDrawErr = nil end
+  end)
 end
 
 function M.worldDrawNow()
