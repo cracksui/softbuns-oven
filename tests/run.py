@@ -4345,6 +4345,15 @@ def world_file_for_underworld():
 
 
 @test
+def world_water_feature():
+    # Irda's reef path (brown on the map, ~ water to the game): water, with its own colour showing through
+    o = Oven()
+    eq(o.ev("table.concat(sbo.worldWaterFeature('725d1d', { 30, 64, 145 }), ',')"), "67,77,92", "the brown path shows")
+    eq(o.ev("table.concat(sbo.worldWaterFeature('20d558', { 30, 64, 145 }), ',')"), "30,64,145", "the sea as it was")
+    eq(o.ev("table.concat(sbo.worldWaterFeature('845074', { 30, 64, 145 }), ',')"), "30,64,145", "the reef speckles as they were")
+
+
+@test
 def bar_room_flags():
     o = Oven()
     o.lua("""sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300 }; sbo.lastPromptText = "[Library][SAFE]<291hp>"

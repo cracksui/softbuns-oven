@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.78.5"
+M.version = "1.78.6"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14032,6 +14032,16 @@ function M.worldShoreShare(hex)
   end
   return all > 0 and land / all or 0
 end
+-- something the map draws in the sea in an earthy colour (a brown path winding through Irda's reef) is water to the
+-- game - the mini-map shows ~ there - but it's a feature of the map: drawn as water with its own colour showing
+-- through, so it doesn't vanish once Oven has learned it's water
+function M.worldWaterFeature(hex, tone)
+  local r, g, b = tonumber(hex:sub(1, 2), 16), tonumber(hex:sub(3, 4), 16), tonumber(hex:sub(5, 6), 16)
+  -- (brown / olive: red over green over blue - not the game palette's pure reds and magentas)
+  if not (r and g and b) or not (r > g * 1.1 and g > b * 1.5) then return tone end
+  local k = 0.45
+  return { math.floor(tone[1] * (1 - k) + r * k), math.floor(tone[2] * (1 - k) + g * k), math.floor(tone[3] * (1 - k) + b * k) }
+end
 function M.worldNaturalRGB(hex, symHere)
   local P = pal()[hex]
   local sym = symHere or (P and usual(hex))
@@ -14053,7 +14063,7 @@ function M.worldNaturalRGB(hex, symHere)
       tone = waterTone(best)
     end
     if tone and tone[1] == 45 and M.worldShoreShare(hex) >= 0.25 then return { 72, 122, 190 } end   -- (shallow)
-    if tone then return tone end
+    if tone then return M.worldWaterFeature(hex, tone) end
     if named then
       for _, n in ipairs({ "water", "ocean", "sea", "river", "lake", "shallow", "sailable" }) do if t:find(n, 1, true) then return named end end
     end
