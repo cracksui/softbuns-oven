@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.78.2"
+M.version = "1.78.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14441,10 +14441,21 @@ function M.worldRegNote(file, hex, px, py, ch)
   C[ch] = (C[ch] or 0) + 1
   return top(C) ~= before
 end
+-- the natural / ASCII colours are learned walking a map's wilds, and a colour means different things on different
+-- maps (the underworld's rock is a purple that's grass in Alyria): a map is recoloured only once its own were learned
+-- there (Alyria's were, before this was kept); the others are drawn in the game's own colours till then
+function M.worldLearnedOn(file)
+  file = tostring(file or "")
+  if file:lower() == "alyria.bmp" then return true end
+  return ((W().learnedOn or {})[file]) == true
+end
 function M.worldPaletteNote(map, x, y, rows, regOnly)
   local file = (M.worldFileFor(map) or {}).file or ""
   local img = M.worldImages[file]
   if not img then return 0 end
+  local w0 = W()
+  w0.learnedOn = w0.learnedOn or {}
+  if not w0.learnedOn[file] then w0.learnedOn[file] = true; M.wwDirty = true; M.worldStripsReset() end
   local ar, ac
   for r, R in ipairs(rows) do local c = R.text:find("@", 1, true); if c then ar, ac = r, c end end
   if not ar then return 0 end
@@ -14710,7 +14721,7 @@ function M.worldCut(img, cx, cy, zoom, outW, outH, mute)
         seg = string.rep("\0", (a - x0) * 3) .. (b >= a and data:sub(o + a * 3 + 1, o + b * 3 + 3) or "")
         seg = seg .. string.rep("\0", srcW * 3 - #seg)
       end
-      if M.worldColourMode() ~= "game" then seg = M.worldRecolour(file, seg, x0, y, 1) end
+      if M.worldColourMode() ~= "game" and M.worldLearnedOn(file) then seg = M.worldRecolour(file, seg, x0, y, 1) end
       if mute then seg = seg:gsub("...", M.WORLD_MUTE) end
       local r = zoom == 1 and seg or seg:gsub("...", function(p) return p:rep(zoom) end)
       r = r:sub(1, outW * 3)
@@ -14732,7 +14743,7 @@ function M.worldCut(img, cx, cy, zoom, outW, outH, mute)
           if x < 0 or x >= img.w then t[#t + 1] = "\0\0\0" else t[#t + 1] = data:sub(o + x * 3 + 1, o + x * 3 + 3) end
         end
         local r = table.concat(t)
-        if M.worldColourMode() ~= "game" then r = M.worldRecolour(file, r, x0, y, step) end
+        if M.worldColourMode() ~= "game" and M.worldLearnedOn(file) then r = M.worldRecolour(file, r, x0, y, step) end
         rows[#rows + 1] = mute and r:gsub("...", M.WORLD_MUTE) or r
       end
     end
