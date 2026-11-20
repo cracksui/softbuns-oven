@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.78.4"
+M.version = "1.78.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13712,7 +13712,12 @@ M.WORLD_ZOOMS = { 0.25, 0.5, 1, 2, 3, 4, 6, 8 }
 -- that goes under (the underwater paths) is drawn on the one you're looking at, the other layer's part in blue
 M.WORLD_STACK = { "alyria", "underworld", "sigil" }
 function M.worldStacked(a, b)
-  local function key(n) n = tostring(n or ""):lower() for _, k in ipairs(M.WORLD_STACK) do if n:find(k, 1, true) then return k end end end
+  local function key(n)
+    n = tostring(n or ""):lower()
+    local best
+    for _, k in ipairs(M.WORLD_STACK) do if n:find(k, 1, true) and (not best or #k > #best) then best = k end end
+    return best
+  end
   local ka, kb = key(a), key(b)
   return ka ~= nil and kb ~= nil
 end
@@ -13721,9 +13726,15 @@ local function W() M.cfg.world = M.cfg.world or { offsets = {}, terrain = {} } r
 local function le(s, i, n) local v = 0 for k = n - 1, 0, -1 do v = v * 256 + s:byte(i + k) end return v end
 local function dir() return getMudletHomeDir() .. "/oven_maps" end
 
+-- the most specific match wins: GMCP calls the underworld "Alyrian Underworld", which has "alyria" in it too
+-- (it was drawn - and learned from - as Alyria's map)
 function M.worldFileFor(mapName)
   local n = tostring(mapName or ""):lower()
-  for _, e in ipairs(M.WORLD_FILES) do if n:find(e.match, 1, true) then return e end end
+  local best
+  for _, e in ipairs(M.WORLD_FILES) do
+    if n:find(e.match, 1, true) and (not best or #e.match > #best.match) then best = e end
+  end
+  return best
 end
 
 -- a map's edge colour (the same in all four corners): the open sea, or (underground) the rock round it

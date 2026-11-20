@@ -4336,6 +4336,15 @@ def recall_cooldown_and_priority():
 
 
 @test
+def world_file_for_underworld():
+    # GMCP's name for the underworld has "alyria" in it: its own map, not Alyria's
+    o = Oven()
+    eq(o.ev("sbo.worldFileFor('Alyrian Underworld').file"), "underworld.bmp", "the underworld")
+    eq(o.ev("sbo.worldFileFor('Alyria').file"), "alyria.bmp", "Alyria")
+    eq(o.ev("sbo.worldStacked('Alyria', 'Alyrian Underworld')"), True, "one above the other")
+
+
+@test
 def bar_room_flags():
     o = Oven()
     o.lua("""sbo.cfg.bar = true; sbo.cfg.maxes = { hp = 300 }; sbo.lastPromptText = "[Library][SAFE]<291hp>"
