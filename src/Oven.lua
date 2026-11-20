@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.78.1"
+M.version = "1.78.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16498,8 +16498,10 @@ function M.mapRunNow(arg, planned)
       area = area and getRoomAreaName(area) or ""
       names[#names + 1] = (getRoomName(t.id) or "?") .. " #" .. t.id .. (area ~= "" and (" (" .. area .. ")") or "")
     end
-    return say(string.format("no route on the map from here (#%d) to %s%s", here, table.concat(names, ", "),
-      fromNotes and "" or string.format(" - a room name match: Oven hasn't seen an NPC tagged or named '%s' yet", q)))
+    return say(string.format("no way there on the map from here (#%d) to %s - nothing on foot, by a ride, recall or a run "
+      .. "reaches it: its way in is probably from the wilds, a portal or a command the map doesn't have (go once and Oven "
+      .. "learns an 'enter' way in)%s", here, table.concat(names, ", "),
+      fromNotes and "" or string.format(" · a room name match: Oven hasn't seen an NPC tagged or named '%s' yet", q)))
   end
   -- a town's name (sbo go vir): the town, not a shop item or NPC that happens to have it in its name
   if #M.areasNamed(q) > 0 then
