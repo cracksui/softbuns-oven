@@ -3727,6 +3727,29 @@ def eqdb_results_learned():
     o.lua('sbo.items["a ring of magma"].eqdb = nil; SENT = {}; sbo.command("eq learn eqdb"); runTimers()')
     eq(o.ev("sbo.items['a ring of magma'].mine"), True, "yours kept")
     o.L.execute("local ok, e = pcall(sbo.upgradeLines, 100, true, nil, 'eqdb'); assert(ok, e)")
+    # read before 1.81.1 (stats tagged {High Freq} were missed): looked at again, from the saved lookup
+    o.lua('sbo.eqdbHits = {}; sbo.items["a fiery red robe of Vyst"].eqdb = "188ec1"; sbo.items["a fiery red robe of Vyst"].eqdbRead = nil')
+    o.lua('sbo.remember(sbo.items["a fiery red robe of Vyst"]); SENT = {}; sbo.command("eq learn eqdb"); runTimers()')
+    eq(list(o.ev("SENT").values()), ["check eqlookup 188ec1"], "the stale one, again")
+    eq(o.ev("sbo.items['a fiery red robe of Vyst'].eqdbRead"), o.ev("sbo.EQDB_READ"), "now up to date")
+
+
+@test
+def item_stats_with_frequency():
+    # eqdb pages tag each stat with how often the item has it
+    o = Oven()
+    o.lua("""IT = sbo.parseItem({
+      "Item 'a demonhide cloak' is type armor, alignment 0, made of leather (in (new) condition),[EQDB]",
+      "has keywords 'demon hide demonhide cloak', equipped about the body.",
+      "This level 150 item has the attributes: invis no-sac", "Armor resistance is 17.",
+      "Affects stamina by -40. {High Freq}", "Affects spell-points by -10. {Med. Freq}", "Affects ar-torso by 3. {Always}",
+      "Affects saving-spell by 5." })""")
+    eq(o.ev("#IT.affects"), 4, "every stat read")
+    eq(o.ev("IT.affects[1][1] .. ' ' .. IT.affects[1][2] .. ' ' .. IT.affects[1][4]"), "stamina -40 High Freq", "with its frequency")
+    eq(o.ev("IT.affects[2][4]"), "Med. Freq", "medium")
+    eq(o.ev("IT.affects[3][4]"), "Always", "always")
+    eq(o.ev("IT.affects[4][4]"), None, "an item's own page: no tag")
+    eq(o.ev("sbo.fromEqdb(IT)"), True, "from eqdb (its page says so)")
 
 
 @test

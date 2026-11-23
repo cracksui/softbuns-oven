@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.81.0"
+M.version = "1.81.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1693,6 +1693,10 @@ function M.parseItem(raw)
   while i <= #L do
     local l = L[i]; local t = trim(l)
     local indented = l:match("^%s%s") ~= nil
+    -- eqdb pages tag each line with how often an item has it: {Always}, {High Freq}, {Med. Freq}, {Low Freq}
+    local tagged, freq = t:match("^(.-)%s*{(%a[%a%.]*%s*Freq)}$")
+    if not tagged then tagged, freq = t:match("^(.-)%s*{(Always)}$") end
+    local afT = tagged or t
     local slotTxt, st, pb, val, rest = t:match("^This ?(.-)item weighs (%d+) stones? and (%d+) pebbles?, and is valued at ([%d,]+) gold%.?%s*(.*)$")
     local wpnName = t:match("^Your (.-) will deal %a+ [%a%-]+ damage")
     local special = t:match("^Special weapon attributes:%s*(.-)%.?$")
@@ -1700,7 +1704,7 @@ function M.parseItem(raw)
     local lvl, attrs = t:match("^This level (%d+) item has the attributes:%s*(.-)%.?$")
     local arv = t:match("^Armor resistance is (%-?%d+)%.?$")
     local rep = t:match("^%*?This item may be repaired (%d+) times?%.?$")
-    local afW, afN = t:match("^Affects (.-) by (%-?%d+)%.?$")
+    local afW, afN = afT:match("^Affects (.-) by (%-?%d+)%.?$")
     local x = M.itemExtra(t)
     if inContents then
       -- container contents: rows until the "A total of ..." line
@@ -1779,7 +1783,7 @@ function M.parseItem(raw)
       it.set.bonus[#it.set.bonus + 1] = { need = need, text = what }
       lastKnown = i
     elseif afW and not indented then
-      it.affects[#it.affects + 1] = { afW, afN, i }; inRelics = false; lastKnown = i
+      it.affects[#it.affects + 1] = { afW, afN, i, freq }; inRelics = false; lastKnown = i
     elseif x then
       if x[1] == "@level" then it.level, it.attrs = x[2], "none"
       elseif x[1] == "@repairs" then
@@ -1944,6 +1948,7 @@ function M.formatters.item(raw, width)
     for n, a in ipairs(it.affects) do
       if n > 1 then segs[#segs + 1] = { C.dim, ", " } end
       for _, s in ipairs(affectSegs(a[1], a[2], a[3] and M.colorAt(a[3], "Affects"))) do segs[#segs + 1] = s end
+      if a[4] and a[4] ~= "Always" then segs[#segs + 1] = { C.dim, " (" .. a[4]:lower() .. ")" } end
     end
     kvLine(out, "Affects", kw, segs, width)
   end
@@ -6693,7 +6698,7 @@ function M.upgradeLines(width, all, role, src)
     local useModel = true
     for _, r in ipairs(byWorn[cur.worn] or {}) do
       local tooHigh = lvl and tonumber(r.level) and tonumber(r.level) > lvl
-      local fromSrc = src ~= "eqdb" or (M.items[r.name] and M.items[r.name].eqdb)
+      local fromSrc = src ~= "eqdb" or M.fromEqdb(M.items[r.name])
       if not isWorn[r.name] and not used[r.name] and not tooHigh and fromSrc and (all or carried[r.name]) then
         if useModel then
           local v, m = M.upgradeValue(cur, M.items[r.name], w, role)
@@ -6722,7 +6727,7 @@ function M.upgradeLines(width, all, role, src)
       end
       local where = carried and carried[best]
       if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where }
-      elseif bestIt and bestIt.eqdb then row[#row + 1] = { C.dim, "  (eqdb)" } end
+      elseif M.fromEqdb(bestIt) then row[#row + 1] = { C.dim, "  (eqdb)" } end
       out[#out + 1] = row
       -- what changes, by category, in the game's numbers
       for _, cat in ipairs(M.swapCategories(bm)) do
@@ -6931,19 +6936,38 @@ function M.eqdbOffer()
   end)
 end
 
--- sbo eq learn eqdb: look at every result of the last eqdb list (check eqlookup), quietly
+-- an item from eqdb (looked up by Oven, or a result you clicked: its page is tagged [EQDB])
+M.EQDB_READ = 2   -- 1.81.1: stat lines tagged {High Freq} etc. are read; items read before are looked at again
+function M.fromEqdb(it)
+  if type(it) ~= "table" then return false end
+  if it.eqdb then return true end
+  for _, f in ipairs(it.flags or {}) do if f == "EQDB" then return true end end
+  return false
+end
+
+-- sbo eq learn eqdb: look at every result of the last eqdb list (check eqlookup), quietly - and any eqdb
+-- item read before Oven understood the whole page
 function M.eqdbLearn()
   local hits = M.eqdbHits or {}
-  if #hits == 0 then
+  local stale = {}
+  for _, r in ipairs(M.dbRows([[SELECT name FROM items WHERE data LIKE '%%["eqdb"]=%%']]) or {}) do
+    local it = M.items[r.name]
+    if it and type(it.eqdb) == "string" and it.eqdbRead ~= M.EQDB_READ then stale[#stale + 1] = it end
+  end
+  if #hits == 0 and #stale == 0 then
     return M.say("no eqdb results to look at - run an eqdb search first (Oven reads its links; if this keeps happening, MXP may be off in Mudlet's settings)")
   end
   if M.learnQueue then return M.say("already looking at items - wait for it to finish") end
-  local q, known = {}, 0
+  local q, known, queued = {}, 0, {}
   for i, h in ipairs(hits) do
     local nm = (M.eqdbNames or {})[i]
     local it = nm and M.items[nm]
-    if it and it.eqdb then known = known + 1
-    else q[#q + 1] = { name = nm or ("eqdb result " .. i), cmd = "check eqlookup " .. h, eqdb = h } end
+    -- known: read from eqdb already, or one you've looked at yourself (kept as it is)
+    if it and (it.eqdbRead == M.EQDB_READ or not M.fromEqdb(it)) then known = known + 1
+    else q[#q + 1] = { name = nm or ("eqdb result " .. i), cmd = "check eqlookup " .. h, eqdb = h }; queued[h] = true end
+  end
+  for _, it in ipairs(stale) do
+    if not queued[it.eqdb] then q[#q + 1] = { name = it.name, cmd = "check eqlookup " .. it.eqdb, eqdb = it.eqdb }; queued[it.eqdb] = true end
   end
   if #q == 0 then return M.say("all " .. known .. " eqdb results are already in Oven's item database - sbo eq upgrades eqdb") end
   M.learnStats = { ok = 0, fail = 0 }
@@ -13267,7 +13291,7 @@ function M.finish(reason)
     if good and entry and entry.eqdb then
       -- from eqdb: don't replace one you've seen yourself (yours may be enchanted or worn down)
       local had = M.items[it.name]
-      if had and not had.eqdb then it = nil else it.eqdb = entry.eqdb end
+      if had and not M.fromEqdb(had) then it = nil else it.eqdb, it.eqdbRead = entry.eqdb, M.EQDB_READ end
     end
     if good then if it then M.remember(it) end; M.learnStats.ok = M.learnStats.ok + 1
     else M.learnStats.fail = M.learnStats.fail + 1 end
