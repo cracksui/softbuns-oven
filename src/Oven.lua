@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.81.1"
+M.version = "1.81.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -19644,11 +19644,18 @@ function M.update(arg)
 end
 
 -- a check whose download never answered (no done, no error) is given up after 90 seconds
+-- Twice in a row: Mudlet's downloads are stuck (seen after days of uptime, while GitHub answers at once) -
+-- the bar keeps ✗ instead of ⟳ and says once what helps
 function M.updateStale()
   if M.pending and M.pendingAt and os.time() - M.pendingAt > 90 then
     M.pending = nil
+    M.updStalls = (M.updStalls or 0) + 1
     M.updState = { state = "err" }
     pcall(M.drawBar)
+    if M.updStalls >= 2 and not M.updStallSaid then
+      M.updStallSaid = true
+      M.notify("updates aren't arriving: Mudlet's downloads stop part way (" .. M.updStalls .. " checks in a row) - restarting Mudlet usually fixes it")
+    end
     return true
   end
 end
@@ -19658,7 +19665,7 @@ function M.checkForUpdate()
   if M.REPO:find("@@", 1, true) or not M.cfg.updateCheck or M.pending then return end
   M.pendingAt = os.time()
   M.pending = M.cfg.autoUpdate and "auto" or "check"
-  if M.cfg.bar then M.updState = { state = "check" }; pcall(M.drawBar) end
+  if M.cfg.bar and (M.updStalls or 0) < 2 then M.updState = { state = "check" }; pcall(M.drawBar) end
   M.fetchVersion()
 end
 
@@ -19696,6 +19703,7 @@ function M.onDownload(event, file, err)
   if file == M.dl.version then
     local f = io.open(file); local latest = f and trim(f:read("*a") or ""); if f then f:close() end
     if not latest or latest == "" then M.pending = nil; return end
+    M.updStalls, M.updStallSaid = 0, nil   -- downloads arrive again
     if mode == "check" then
       M.pending = nil
       if not newer(latest, M.version) then M.updState = { state = "ok" }; pcall(M.drawBar) end

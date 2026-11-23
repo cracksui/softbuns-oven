@@ -938,6 +938,18 @@ def update_check_never_sticks():
     # no answer at all: given up after 90 s, and the next check goes ahead
     o.lua("sbo.checkForUpdate(); sbo.pendingAt = os.time() - 120; DL = {}; sbo.checkForUpdate()")
     assert o.ev("#DL") > 0, "a fresh check started"
+    # stalled twice in a row: ✗ stays on the bar (not ⟳), and Oven says once what helps
+    o.lua("sbo.cfg.bar = true; NOTES = {}; sbo.notify = function(m) NOTES[#NOTES+1] = m end; sbo.updStalls = 0")
+    o.lua("sbo.pendingAt = os.time() - 120; sbo.checkForUpdate()")
+    eq(o.ev("sbo.updState.state"), "check", "one stall: checking again")
+    o.lua("sbo.pendingAt = os.time() - 120; sbo.checkForUpdate()")
+    eq(o.ev("sbo.updState.state"), "err", "two: the bar shows ✗")
+    assert any("restarting Mudlet" in m for m in o.ev("NOTES").values()), list(o.ev("NOTES").values())
+    o.lua("sbo.pendingAt = os.time() - 120; sbo.checkForUpdate()")
+    eq(len([m for m in o.ev("NOTES").values() if "restarting" in m]), 1, "said once")
+    # a version file arrives: back to normal
+    o.lua("local f = io.open(sbo.dl.version, 'w'); f:write(sbo.version); f:close(); sbo.onDownload('sysDownloadDone', sbo.dl.version)")
+    eq(o.ev("sbo.updStalls"), 0, "downloads work again")
 
 
 @test
