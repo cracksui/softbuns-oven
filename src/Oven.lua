@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.83.0"
+M.version = "1.84.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1705,7 +1705,7 @@ function M.parseItem(raw)
     local arv = t:match("^Armor resistance is (%-?%d+)%.?$")
     local rep = t:match("^%*?This item may be repaired (%d+) times?%.?$")
     local afW, afN = afT:match("^Affects (.-) by (%-?%d+)%.?$")
-    local x = M.itemExtra(t)
+    local x = M.itemExtra(afT)
     if inContents then
       -- container contents: rows until the "A total of ..." line
       local n2, w2 = t:match("^A total of (%d+) items? weighing (.-)%.?$")
@@ -6721,13 +6721,18 @@ function M.upgradeLines(width, all, role, src, maxLvl)
       shown = shown + 1
       local bestIt = M.items[best]
       M.lastUpgrades[shown] = { cur = cur.name, best = best }
-      local row
+      local row, split
       if bm then
         out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name } }
-        local tv = math.floor(bs * 10 + 0.5) / 10
-        row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best },
-          { tv > 0 and C.plus or C.minus, string.format("  %s%s%% overall", tv > 0 and "+" or "−", tostring(math.abs(tv))) },
-          { C.dim, " (offense and defense added up" .. ((function() local mx = M.roleMix(); for _, r in ipairs({ "offense", "defense" }) do if mx[r] ~= 1 then return ", with your lean" end end return "" end)()) .. ")" } }
+        row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best } }
+        -- offense and defense each on their own, up or down (ranked by the two together, with your lean)
+        split = { { C.dim, pad("", 26) } }
+        for _, r in ipairs({ "offense", "defense" }) do
+          local pv = bm[r] and math.floor(bm[r].pct * 10 + 0.5) / 10 or 0
+          split[#split + 1] = { C.key, (r == "offense" and "Offense " or "   Defense ") }
+          split[#split + 1] = { pv > 0 and C.plus or (pv < 0 and C.minus or C.dim),
+            (pv > 0 and "▲ " or (pv < 0 and "▼ " or "  ")) .. tostring(math.abs(pv)) .. "%" }
+        end
       else
         out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name }, { C.dim, "  " .. cs } }
         row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
@@ -6737,6 +6742,7 @@ function M.upgradeLines(width, all, role, src, maxLvl)
       if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where }
       elseif M.fromEqdb(bestIt) then row[#row + 1] = { C.dim, "  (eqdb)" } end
       out[#out + 1] = row
+      if split then out[#out + 1] = split end
       -- what changes, by category, in the game's numbers
       for _, cat in ipairs(M.swapCategories(bm)) do
         local units = {}
@@ -6965,7 +6971,7 @@ function M.eqdbOffer()
 end
 
 -- an item from eqdb (looked up by Oven, or a result you clicked: its page is tagged [EQDB])
-M.EQDB_READ = 2   -- 1.81.1: stat lines tagged {High Freq} etc. are read; items read before are looked at again
+M.EQDB_READ = 3   -- items read before are looked at again: 2 (1.81.1) stat lines tagged {High Freq} etc.; 3 (1.84.0) other lines too
 function M.fromEqdb(it)
   if type(it) ~= "table" then return false end
   if it.eqdb then return true end
