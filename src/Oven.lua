@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.84.0"
+M.version = "1.84.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6639,7 +6639,10 @@ function M.upgradeLines(width, all, role, src, maxLvl)
   local bname, w = M.activeBuild()
   local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
   if not (maxLvl and lvl and maxLvl > lvl) then maxLvl = nil end
-  local out = { header("gear", "", width, "Upgrades  (" .. bname .. " build" .. (role and (", " .. role .. " only") or "")
+  local leanTxt = ""
+  do local mx = M.roleMix()
+    for _, r in ipairs({ "offense", "defense" }) do if mx[r] ~= 1 then leanTxt = leanTxt .. ", " .. r .. " ×" .. mx[r] end end end
+  local out = { header("gear", "", width, "Upgrades  (" .. bname .. " build" .. leanTxt .. (role and (", " .. role .. " only") or "")
     .. (src == "eqdb" and ", from eqdb searches" or (all and ", everything seen" or ""))
     .. (maxLvl and (", up to level " .. maxLvl) or "") .. ")") }
   -- by one role: an item's score in that role alone
@@ -8800,7 +8803,7 @@ function M.buildCommand(b)
   if rname then
     local role
     for _, r in ipairs(M.ROLES) do if r:sub(1, #rname) == rname then role = r end end
-    if not role then return M.say("roles: offense, defense, casting, utility - sbo eq build role defense 1.5") end
+    if not role then return M.say("roles: " .. table.concat(M.ROLES, ", ") .. " - sbo eq build role defense 1.5 (only offense and defense change how upgrades are ranked)") end
     local name = M.activeBuild()
     M.cfg.roleMix = M.cfg.roleMix or {}
     M.cfg.roleMix[name] = M.cfg.roleMix[name] or {}
@@ -18549,7 +18552,7 @@ M.CMDS = {
     { name = "items", desc = "the items Oven remembers", run = L("items") },
     { name = "dummy", args = "[reset]", desc = "practice dummy results by build (class, level, weapon); reset: this build's afresh",
       run = function(r) return M.dummyCommand(r) end },
-    { name = "build", args = "[{name}|set|reset|auto]", desc = "gear-score weights (set: a stat and its weight)",
+    { name = "build", args = "[{name}|set|reset|auto|role]", desc = "gear-score weights (set: a stat and its weight); role offense|defense {weight}: how much each counts when ranking upgrades (1 = even, e.g. role defense 1.5)",
       run = function(r) return legacy("build " .. r) end },
   } },
   { name = "sound", min = 2, desc = "the game's sounds (it sends them as !!SOUND lines)", run = function()

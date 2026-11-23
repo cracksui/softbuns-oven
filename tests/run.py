@@ -3456,6 +3456,11 @@ def upgrades_up_to_a_level():
     # the command reads the level; a number alone still compares
     o.lua('SEEN = nil; local u = sbo.upgradeLines; sbo.upgradeLines = function(w, a, r, s, m) SEEN = m; return u(w, a, r, s, m) end; sbo.command("eq upgrades eqdb 175")')
     eq(o.ev("SEEN"), 175, "sbo eq upgrades eqdb 175")
+    # the lean: set, shown in the title; an unknown role lists the real ones
+    o.lua('SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end; sbo.command("eq build role defense 1.5")')
+    assert "defense ×1.5" in o.ev("UP(nil)").split("\n")[0], o.ev("UP(nil)").split("\n")[0]
+    o.lua('sbo.command("eq build role utility 2")')
+    assert any("recovery" in m and "utility" not in m.split(" - ")[0] for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
 
 
 @test
