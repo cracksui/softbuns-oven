@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.80.0"
+M.version = "1.80.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13246,7 +13246,9 @@ function M.finish(reason)
       if cap.kind == "affects" then pcall(M.noteAff, cap.plain) end
       if cap.kind == "contents" then pcall(M.updateCarried, cap) end
       if cap.kind == "score" then pcall(M.updateMaxes, cap.plain) end
-      if cap.kind == "item" then pcall(M.afterItem, cap.plain, nil) end
+      if cap.kind == "item" then   -- remembered only: no comparison shown (sbo on brings it back)
+        pcall(function() local it = M.parseItem(cap.plain); if it and it.name then M.remember(it) end end)
+      end
       return
     end
     if cap.kind == "help" then

@@ -3693,6 +3693,21 @@ def formatting_off_leaves_every_line():
 
 
 @test
+def formatting_off_no_compare():
+    # sbo off: an item you look at is remembered, but no comparison is drawn
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.command("off")')
+    o.lua('sbo.remember({ name = "a fine vest", worn = "on body", level = 1, affects = {}, raw = {} }); sbo.pinned = "a fine vest"')
+    o.lua('COMPARED = 0; sbo.compare = function() COMPARED = COMPARED + 1; return true end')
+    o.lua('sbo.onSend(nil, "look robe")')
+    o.feed("Item 'a black monk's robe' is type armor, alignment 0, made of cloth (in (new) condition),",
+           "It can be worn on the body.", "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    assert o.ev("sbo.items[\"a black monk's robe\"]") is not None, "remembered"
+    eq(o.ev("COMPARED"), 0, "no comparison while formatting is off")
+
+
+@test
 def quest_go_prefers_a_shop_with_the_item():
     o = Oven()
     o.lua("""roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
