@@ -3433,6 +3433,32 @@ def help_ends_at_see_also():
 
 
 @test
+def upgrades_up_to_a_level():
+    # sbo upgrades eqdb 175: what you can wear now, then what's better up to that level in its own section
+    o = Oven()
+    o.lua('''
+      sbo.noteCombat({ "57 Damage: (+46 from weapon)", "55 Accuracy: (+16 from weapon)", "31% Critical Hit chance:" })
+      sbo.cfg.maxes = { hp = 365, sp = 875 }; sbo.cfg.arLoc = { torso = 10 }; sbo.cfg.char = sbo.cfg.char or {}; sbo.cfg.char.total = 142
+      local function it(n, lvl, acc, eqdb) return { name = n, worn = "on body", level = lvl, affects = { { "accuracy", tostring(acc) } }, ar = 1, raw = {}, eqdb = eqdb } end
+      sbo.remember(it("a worn vest", 100, 1))
+      sbo.remember(it("a fine vest", 140, 4, "h1"))      -- wearable now
+      sbo.remember(it("a great vest", 170, 9, "h2"))     -- later
+      sbo.remember(it("a far vest", 200, 20, "h3"))      -- past the asked level
+      sbo.eqNames = { "a worn vest" }
+      function UP(mx) local t = {} for _, r in ipairs(sbo.upgradeLines(100, true, nil, "eqdb", mx)) do local x = {} for _, seg in ipairs(r) do x[#x+1] = seg[2] end t[#t+1] = table.concat(x) end return table.concat(t, "\\n") end''')
+    plain = o.ev("UP(nil)")
+    assert "a fine vest" in plain and "a great vest" not in plain, plain
+    up = o.ev("UP(175)")
+    now, later = up.split("Up to level 175")
+    assert "Wearable now" in now and "a fine vest" in now and "a great vest" not in now, up
+    assert "a great vest" in later and "level 170" in later and "a far vest" not in later, up
+    assert "up to level 175" in up.split("\n")[0], up
+    # the command reads the level; a number alone still compares
+    o.lua('SEEN = nil; local u = sbo.upgradeLines; sbo.upgradeLines = function(w, a, r, s, m) SEEN = m; return u(w, a, r, s, m) end; sbo.command("eq upgrades eqdb 175")')
+    eq(o.ev("SEEN"), 175, "sbo eq upgrades eqdb 175")
+
+
+@test
 def upgrades_from_what_you_carry():
     o = Oven()
     o.lua('''

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.81.4"
+M.version = "1.82.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6635,11 +6635,13 @@ function M.carriedItems()
   return out
 end
 
-function M.upgradeLines(width, all, role, src)
+function M.upgradeLines(width, all, role, src, maxLvl)
   local bname, w = M.activeBuild()
   local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
+  if not (maxLvl and lvl and maxLvl > lvl) then maxLvl = nil end
   local out = { header("gear", "", width, "Upgrades  (" .. bname .. " build" .. (role and (", " .. role .. " only") or "")
-    .. (src == "eqdb" and ", from eqdb searches" or (all and ", everything seen" or "")) .. ")") }
+    .. (src == "eqdb" and ", from eqdb searches" or (all and ", everything seen" or ""))
+    .. (maxLvl and (", up to level " .. maxLvl) or "") .. ")") }
   -- by one role: an item's score in that role alone
   local score = function(it) return M.gearScore(it, w) end
   if role then score = function(it) return it and (math.floor(M.roleScores(it, w)[role] * 10 + 0.5) / 10) or nil end end
@@ -6687,6 +6689,10 @@ function M.upgradeLines(width, all, role, src)
     return sc[x] < sc[y]
   end)
   wearing = order
+  -- one section: the best per slot among items from above level lo (nil: any) up to level hi
+  local lo, hi = nil, lvl
+  local function section()
+  used = {}
   local slotsSeen = {}
   for _, cur in ipairs(wearing) do
    slotsSeen[cur.worn] = (slotsSeen[cur.worn] or 0) + 1
@@ -6697,7 +6703,8 @@ function M.upgradeLines(width, all, role, src)
     -- and spell points (in %), plus the estimate for what has no formula; else the weighted score
     local useModel = true
     for _, r in ipairs(byWorn[cur.worn] or {}) do
-      local tooHigh = lvl and tonumber(r.level) and tonumber(r.level) > lvl
+      local rl = tonumber(r.level)
+      local tooHigh = (hi and rl and rl > hi) or (lo and (not rl or rl <= lo))
       local fromSrc = src ~= "eqdb" or M.fromEqdb(M.items[r.name])
       if not isWorn[r.name] and not used[r.name] and not tooHigh and fromSrc and (all or carried[r.name]) then
         if useModel then
@@ -6725,6 +6732,7 @@ function M.upgradeLines(width, all, role, src)
         out[#out + 1] = { { C.dim, string.format("%2d ", shown) }, { C.slot, pad(cur.worn, 21) }, { C.item, cur.name }, { C.dim, "  " .. cs } }
         row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
       end
+      if lo and bestIt and bestIt.level then row[#row + 1] = { C.num, "  level " .. bestIt.level } end
       local where = carried and carried[best]
       if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where }
       elseif M.fromEqdb(bestIt) then row[#row + 1] = { C.dim, "  (eqdb)" } end
@@ -6771,7 +6779,23 @@ function M.upgradeLines(width, all, role, src)
     end
    end
   end
-  if shown == 0 then
+  end
+  if maxLvl then
+    -- sbo upgrades eqdb 175: what you can wear now, then what's worth aiming for up to that level
+    out[#out + 1] = { { C.title, "Wearable now" }, { C.dim, "  (items up to your level, " .. lvl .. ")" } }
+    local before = shown
+    section()
+    if shown == before then out[#out + 1] = { { C.dim, "   nothing beats what you wear yet" } } end
+    out[#out + 1] = {}
+    out[#out + 1] = { { C.title, "Up to level " .. maxLvl }, { C.dim, "  (items of levels " .. (lvl + 1) .. "–" .. maxLvl .. ": for later)" } }
+    lo, hi = lvl, maxLvl
+    before = shown
+    section()
+    if shown == before then out[#out + 1] = { { C.dim, "   nothing in those levels beats what you wear" } } end
+  else
+    section()
+  end
+  if shown == 0 and not maxLvl then
     out[#out + 1] = { { C.dim, src == "eqdb" and "no eqdb result Oven has looked at beats what you wear (for this build, at your level) - search eqdb, then sbo eq learn eqdb"
       or all and "nothing Oven has seen beats what you wear (for this build, at your level)"
       or "nothing you carry beats what you wear (for this build, at your level)" } }
@@ -18228,12 +18252,13 @@ function M.legacyCommand(args)
     end
     -- sbo upgrades [all] [offense|defense|casting|utility]: everything seen, and/or by one role only
     local all, role, src = false, nil, nil
+    local maxLvl = tonumber(b:match("(%d+)"))   -- sbo upgrades eqdb 175: up to that level, in its own section
     for word in b:lower():gmatch("%a+") do
       if word == "all" then all = true
       elseif word == "eqdb" then all, src = true, "eqdb"
       else for _, r in ipairs(M.ROLES) do if r:sub(1, #word) == word and #word >= 3 then role = r end end end
     end
-    M.viewLive(function(w) return M.upgradeLines(w, all, role, src) end)
+    M.viewLive(function(w) return M.upgradeLines(w, all, role, src, maxLvl) end)
     return
   elseif a == "mark" then if b == "" then return M.listMarks() end return M.markRoom(b)
   elseif a == "marks" then return M.listMarks()
@@ -18494,7 +18519,7 @@ M.CMDS = {
         return legacy("compare " .. r)
       end },
     { name = "compare against", args = "[{item}]", desc = "compare every look to one item; no item: stop", listOnly = true },
-    { name = "upgrades", args = "[all|eqdb] [offense|defense|casting|utility]|{n}", desc = "best upgrade per slot (all: anything seen; eqdb: from eqdb searches only; a role: by that role only; n: compare it)",
+    { name = "upgrades", args = "[all|eqdb] [offense|defense|casting|utility] [{max level}]|{n}", desc = "best upgrade per slot (all: anything seen; eqdb: from eqdb searches only; a role: by that role only; a max level after all/eqdb/a role: what you can wear now, then up to that level in its own section; n alone: compare it)",
       run = function(r)
         if tonumber(r) then return legacy("upgrades compare " .. r) end
         return legacy("upgrades " .. r)
