@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.81.2"
+M.version = "1.81.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -19507,14 +19507,39 @@ function M.rawUrl(file)
   return "https://raw.githubusercontent.com/" .. M.REPO .. "/" .. (M.updSha or M.BRANCH) .. "/" .. file
 end
 function M.apiUrl() return "https://github.com/" .. M.REPO .. ".git/info/refs?service=git-upload-pack" end
+-- the same file of the same commit from jsDelivr (a public CDN serving GitHub repos): used when a download from
+-- raw.githubusercontent.com doesn't finish (a Mudlet up for days was seen stuck on that one host while
+-- github.com still answered); after that, for the rest of the session, jsDelivr first
+function M.cdnUrl(file) return "https://cdn.jsdelivr.net/gh/" .. M.REPO .. "@" .. M.updSha .. "/" .. file end
+M.UPD_FALLBACK = 15   -- seconds without an answer before trying jsDelivr
+
+-- step 2 and 3: VERSION, then the package - from GitHub, or jsDelivr when GitHub doesn't answer
+function M.updGet(key, viaCdn)
+  local file = key == "version" and "VERSION" or "Oven.mpackage"
+  viaCdn = viaCdn and M.updSha ~= nil
+  M.updWant = key
+  if viaCdn then
+    M.updCdnTried = key
+    return downloadFile(M.dl[key .. "Cdn"], M.cdnUrl(file))
+  end
+  M.updCdnTried = nil
+  downloadFile(M.dl[key], M.rawUrl(file))
+  local mine = M.pendingAt
+  tempTimer(M.UPD_FALLBACK, function()
+    if M.pending and M.pendingAt == mine and M.updWant == key and M.updCdnTried ~= key and M.updSha then
+      M.updGet(key, true)
+    end
+  end)
+end
 
 -- step 1 of every check: find the latest commit, then fetch VERSION from it
 function M.fetchVersion()
-  M.updSha = nil
+  M.updSha, M.updWant, M.updCdnTried = nil, nil, nil
   downloadFile(M.dl.api, M.apiUrl())
 end
 M.dl = { version = getMudletHomeDir() .. "/oven_latest_version.txt", pkg = getMudletHomeDir() .. "/oven_latest.mpackage",
-         api = getMudletHomeDir() .. "/oven_latest_refs.txt" }
+         api = getMudletHomeDir() .. "/oven_latest_refs.txt",
+         versionCdn = getMudletHomeDir() .. "/oven_latest_version_cdn.txt", pkgCdn = getMudletHomeDir() .. "/oven_latest_cdn.mpackage" }
 
 local function newer(a, b)  -- is version a newer than b?
   local function parts(v) local t = {} for n in tostring(v):gmatch("%d+") do t[#t + 1] = tonumber(n) end return t end
@@ -19679,10 +19704,25 @@ end
 
 function M.onDownload(event, file, err)
   -- Mudlet's sysDownloadError gives (error, file); sysDownloadDone gives (file)
-  if event == "sysDownloadError" and file ~= M.dl.version and file ~= M.dl.pkg and file ~= M.dl.api then file, err = err, file end
-  if file ~= M.dl.version and file ~= M.dl.pkg and file ~= M.dl.api then return end
+  local function ours(f) for k, v in pairs(M.dl) do if v == f then return k end end end
+  if event == "sysDownloadError" and not ours(file) then file, err = err, file end
+  local which = ours(file)
+  if not which then return end
   local mode = M.pending
   if not mode then return end  -- nothing of ours in flight
+  local key = which:gsub("Cdn$", "")
+  local viaCdn = key ~= which
+  -- a late answer for a step already done (GitHub answering after jsDelivr did): nothing to do
+  if key ~= "api" and M.updWant and key ~= M.updWant then return end
+  if key ~= "api" and not viaCdn and M.updCdnTried == key then
+    if event == "sysDownloadError" then return end   -- jsDelivr is on it
+    M.updCdnTried = nil                             -- GitHub got there first after all
+  end
+  if key ~= "api" and event == "sysDownloadError" and not viaCdn and M.updSha then
+    return M.updGet(key, true)   -- GitHub refused: the same file from jsDelivr
+  end
+  if viaCdn and event ~= "sysDownloadError" then M.updCdn = true end
+  if key == "version" then file = M.dl[which] elseif key == "pkg" then file = M.dl[which] end
   if file == M.dl.api then
     -- latest commit id; on any problem fall back to the branch address
     if event ~= "sysDownloadError" then
@@ -19691,7 +19731,7 @@ function M.onDownload(event, file, err)
       local hex = body:match("(%x+) refs/heads/" .. M.BRANCH .. "%f[%z%s]") or body:match("(%x+) refs/heads/" .. M.BRANCH .. "$")
       M.updSha = (hex and #hex >= 40) and hex:sub(-40) or nil
     end
-    downloadFile(M.dl.version, M.rawUrl("VERSION"))
+    M.updGet("version", M.updCdn)
     return
   end
   if event == "sysDownloadError" then
@@ -19700,7 +19740,7 @@ function M.onDownload(event, file, err)
     else M.updState = { state = "err" }; pcall(M.drawBar) end
     return
   end
-  if file == M.dl.version then
+  if key == "version" then
     local f = io.open(file); local latest = f and trim(f:read("*a") or ""); if f then f:close() end
     if not latest or latest == "" then M.pending = nil; return end
     M.updStalls, M.updStallSaid = 0, nil   -- downloads arrive again
@@ -19716,12 +19756,12 @@ function M.onDownload(event, file, err)
       M.updState = { state = "ok" }; pcall(M.drawBar)
     elseif newer(latest, M.version) or mode == "force" then
       M.notify(mode == "auto" and ("new version v" .. latest .. " - updating automatically…") or ("downloading v" .. latest .. "…"))
-      downloadFile(M.dl.pkg, M.rawUrl("Oven.mpackage"))
+      M.updGet("pkg", M.updCdn)
     else
       M.pending = nil
       M.notify("you already have the latest version (v" .. M.version .. ")")
     end
-  elseif file == M.dl.pkg then
+  elseif key == "pkg" then
     M.pending = nil
     M.installFrom(file)
   end

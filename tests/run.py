@@ -953,6 +953,33 @@ def update_check_never_sticks():
 
 
 @test
+def update_falls_back_to_cdn():
+    # GitHub's raw host never answers: after a short wait the same file of the same commit comes from jsDelivr,
+    # and the rest of the session goes there first
+    o = Oven()
+    o.lua("""sbo.REPO = 'x/y'; sbo.cfg.updateCheck = true; sbo.cfg.autoUpdate = true
+      DL = {}; downloadFile = function(f, u) DL[#DL+1] = { f, u } end
+      INSTALLED = nil; sbo.installFrom = function(p) INSTALLED = p end
+      sbo.checkForUpdate()""")
+    sha = "a" * 40
+    o.lua("local f = io.open(sbo.dl.api, 'w'); f:write('003d%s refs/heads/main\\n'); f:close(); sbo.onDownload('sysDownloadDone', sbo.dl.api)" % sha)
+    eq(o.ev("DL[#DL][2]"), "https://raw.githubusercontent.com/x/y/%s/VERSION" % sha, "GitHub first")
+    o.L.execute("runTimers()")
+    eq(o.ev("DL[#DL][2]"), "https://cdn.jsdelivr.net/gh/x/y@%s/VERSION" % sha, "no answer: jsDelivr")
+    o.lua("local f = io.open(sbo.dl.versionCdn, 'w'); f:write('99.0.0'); f:close(); sbo.onDownload('sysDownloadDone', sbo.dl.versionCdn)")
+    eq(o.ev("DL[#DL][2]"), "https://cdn.jsdelivr.net/gh/x/y@%s/Oven.mpackage" % sha, "the package from jsDelivr too")
+    o.lua("sbo.onDownload('sysDownloadDone', sbo.dl.version)")   # GitHub's late answer: ignored
+    eq(o.ev("#DL"), 4, "nothing more fetched")
+    o.lua("sbo.onDownload('sysDownloadDone', sbo.dl.pkgCdn)")
+    eq(o.ev("INSTALLED"), o.ev("sbo.dl.pkgCdn"), "installed")
+    # GitHub refusing outright: jsDelivr at once
+    o.lua("sbo.updCdn = nil; DL = {}; sbo.checkForUpdate()")
+    o.lua("local f = io.open(sbo.dl.api, 'w'); f:write('003d%s refs/heads/main\\n'); f:close(); sbo.onDownload('sysDownloadDone', sbo.dl.api)" % sha)
+    o.lua("sbo.onDownload('sysDownloadError', 'timeout', sbo.dl.version)")
+    eq(o.ev("DL[#DL][2]"), "https://cdn.jsdelivr.net/gh/x/y@%s/VERSION" % sha, "an error: jsDelivr")
+
+
+@test
 def hidden_rooms_mapped():
     o = Oven()
     o.lua("""ROOMS, AREAS, EXITS, STUBS, NAMES = {}, {}, {}, {}, {}
