@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.84.1"
+M.version = "1.85.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1766,6 +1766,11 @@ function M.parseItem(raw)
     elseif t:match("^This is part of the '.-' set%.?$") then
       it.set = { name = t:match("^This is part of the '(.-)' set"), pieces = {}, bonus = {} }
       inRelics = false; lastKnown = i
+    elseif it.set and t:match("^Requires level range of %d+ to %d+ to activate") then
+      -- the set works only for these levels (the game leaves the set out of the page once you're past them)
+      local lo, hi = t:match("^Requires level range of (%d+) to (%d+)")
+      it.set.minLevel, it.set.maxLevel = tonumber(lo), tonumber(hi)
+      lastKnown = i
     elseif it.set and t:match("^You are currently wearing %d+ of %d+ items? from the set") then
       it.set.worn, it.set.total = t:match("^You are currently wearing (%d+) of (%d+)")
       lastKnown = i
@@ -5250,6 +5255,10 @@ function M.remember(it)
     if k ~= "desc" and k ~= "other" and k ~= "header" and k ~= "relics" then copy[k] = v end
   end
   copy.seen = os.time()
+  if copy.set and copy.set.name and copy.set.minLevel then
+    M.setRanges = M.setRanges or {}
+    M.setRanges[copy.set.name] = { copy.set.minLevel, copy.set.maxLevel }
+  end
   rawset(M.items, it.name, copy)
   M.storeItem(copy)
   for i = #M.recent, 1, -1 do if M.recent[i] == it.name then table.remove(M.recent, i) end end
@@ -6335,11 +6344,83 @@ end
 -- effective hp, casting: spell points, recovery: hp/sp regen), times your lean for it (1 unless you
 -- set one). What has no formula is listed beside it, and doesn't move the ranking.
 -- role: only that role's change
+-- a set's level range: from any piece Oven has looked at since it reads them (nil: not known yet)
+function M.setRange(set)
+  if not set or not set.name then return nil end
+  if set.minLevel then return set.minLevel, set.maxLevel end
+  if not M.setRanges then
+    M.setRanges = {}
+    for _, r in ipairs(M.dbRows([[SELECT name FROM items WHERE data LIKE '%%["minLevel"]=%%']]) or {}) do
+      local it = M.items[r.name]
+      if it and it.set and it.set.name and it.set.minLevel then M.setRanges[it.set.name] = { it.set.minLevel, it.set.maxLevel } end
+    end
+  end
+  local r = M.setRanges[set.name]
+  if r then return r[1], r[2] end
+end
+
+-- what swapping old for new does to your sets: pieces counted from what you wear now, bonuses only inside the
+-- set's level range. Returns the stat changes { {stat, n} }, and the bonuses with no number gained / lost,
+-- and sets whose range isn't known (a piece looked at before Oven read ranges)
+function M.setDelta(old, new)
+  local stats, gained, lost, unknown = {}, {}, {}, {}
+  local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
+  local sets, seen = {}, {}
+  for _, it in ipairs({ old or {}, new or {} }) do
+    local S = it.set
+    if S and S.name and not seen[S.name] and S.bonus and #S.bonus > 0 then seen[S.name] = true; sets[#sets + 1] = S end
+  end
+  local wearing = {}
+  for _, n in ipairs(M.eqNames or {}) do wearing[n] = (wearing[n] or 0) + 1 end
+  for _, S in ipairs(sets) do
+    local lo, hi = M.setRange(S)
+    local inSet = {}
+    for _, p in ipairs(S.pieces or {}) do if p.name then inSet[p.name] = true end end
+    if not lo then
+      unknown[#unknown + 1] = S.name
+    elseif lvl and lvl >= lo and lvl <= hi then
+      local before = 0
+      for n, c in pairs(wearing) do if inSet[n] then before = before + c end end
+      local after = before - ((old and inSet[old.name] and wearing[old.name]) and 1 or 0) + ((new and inSet[new.name]) and 1 or 0)
+      for _, b in ipairs(S.bonus) do
+        local was, now = (b.need or 99) <= before, (b.need or 99) <= after
+        if was ~= now then
+          local sign = now and 1 or -1
+          local n, stat = tostring(b.text or ""):match("^([%+%-]?[%d%.]+) (%S+)$")
+          if n and tonumber(n) then stats[#stats + 1] = { stat, tostring(sign * tonumber(n)) }
+          else
+            local txt = tostring(b.text or ""):gsub("^Casts the level %d+ spell, ", "casts "):gsub("%s+", " ")
+            if #txt > 40 then txt = txt:sub(1, 38) .. "…" end
+            table.insert(now and gained or lost, txt)
+          end
+        end
+      end
+    end
+  end
+  return stats, gained, lost, unknown
+end
+
 function M.upgradeValue(old, new, w, role)
-  local m = M.combatModel(old, new)
+  -- the set bonuses the swap turns on or off count like the item's own stats
+  local sStats, sGain, sLose, sUnknown = M.setDelta(old, new)
+  local newEff = new
+  if #sStats > 0 and new then
+    newEff = {}
+    for k, v in pairs(new) do newEff[k] = v end
+    newEff.affects = {}
+    for _, a in ipairs(new.affects or {}) do newEff.affects[#newEff.affects + 1] = a end
+    for _, a in ipairs(sStats) do newEff.affects[#newEff.affects + 1] = a end
+  end
+  local m = M.combatModel(old, newEff)
   if not m then return nil end
   local _, names = M.estimatePoints(old, new, w, m)
+  -- set bonuses are worked out above: only what has no number is left to judge
+  local kept = {}
+  for _, n in ipairs(names) do if n ~= "set-bonus" then kept[#kept + 1] = n end end
+  for _, sn in ipairs(sUnknown) do kept[#kept + 1] = "set-bonus (look at a " .. sn .. " piece again)" end
+  names = kept
   m.estNames = names
+  m.setStats, m.setGain, m.setLose = sStats, sGain, sLose
   if role then return m[role] and m[role].pct or 0, m end
   -- ranked by what happens in a fight: offense and defense. Spell points and regeneration matter
   -- mostly between fights - shown, not ranked (spells' damage belongs in offense, once it can be worked out)
@@ -6780,6 +6861,15 @@ function M.upgradeLines(width, all, role, src, maxLvl)
         for _, x in ipairs(abl) do t[#t + 1] = x.name .. " " .. x.text end
         out[#out + 1] = { { C.dim, pad("", 26) }, { C.key, pad("Abilities", 10) }, { C.text, table.concat(t, " · ") } }
       end
+      if bm and (#(bm.setStats or {}) + #(bm.setGain or {}) + #(bm.setLose or {})) > 0 then
+        local parts = {}
+        for _, a in ipairs(bm.setStats or {}) do parts[#parts + 1] = { tonumber(a[2]) >= 0 and C.plus or C.minus, (tonumber(a[2]) >= 0 and "+" or "") .. a[2] .. " " .. a[1] } end
+        for _, t in ipairs(bm.setGain or {}) do parts[#parts + 1] = { C.plus, "gains " .. t } end
+        for _, t in ipairs(bm.setLose or {}) do parts[#parts + 1] = { C.minus, "loses " .. t } end
+        local r = { { C.dim, pad("", 26) }, { C.key, pad("Set", 10) } }
+        for i, x in ipairs(parts) do if i > 1 then r[#r + 1] = { C.dim, " · " } end; r[#r + 1] = x end
+        out[#out + 1] = r
+      end
       if bm and bm.estNames and #bm.estNames > 0 then
         out[#out + 1] = { { C.dim, pad("", 26) .. pad("", 10) .. "not calculated: " .. table.concat(bm.estNames, ", ") } }
       end
@@ -6849,7 +6939,12 @@ function M.itemFeatures(it)
       f["proc:" .. gist] = "chance to " .. gist
     end
   end
-  if it.set and it.set.name then f["set:" .. it.set.name] = "set: " .. it.set.name end
+  if it.set and it.set.name then
+    -- a set you're past (or not yet at) the levels of does nothing: not worth naming
+    local lo, hi = M.setRange(it.set)
+    local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
+    if not (lo and lvl and (lvl < lo or lvl > hi)) then f["set:" .. it.set.name] = "set: " .. it.set.name end
+  end
   return f
 end
 

@@ -3464,6 +3464,40 @@ def upgrades_up_to_a_level():
 
 
 @test
+def set_bonus_in_upgrades():
+    # a set's level range is read; inside it, the bonuses a swap turns off count (+60 hp) or are named
+    # (sanctuary); outside it, nothing; range unknown: said so
+    o = Oven()
+    page = ["Item 'a recruit helm' is type armor, alignment 0, made of steel (in (new) condition),",
+            "has keywords 'helm', equipped over the head.", "This level 110 item has no special attributes.", "Armor resistance is 10.",
+            "This is part of the 'Recruit's Attire' set.", "Requires level range of 105 to 140 to activate.",
+            "- Item 'a recruit helm'", "- Item 'some recruit boots'",
+            "Affects ar by 2 (Requires 1 items).", "Affects hp by 60 (Requires 2 items).", "Casts the level 20 spell, 'sanctuary' (Requires 2 items)."]
+    o.L.globals().PAGE = o.L.table_from(page)
+    o.lua('''
+      sbo.noteCombat({ "57 Damage: (+46 from weapon)", "55 Accuracy: (+16 from weapon)", "31% Critical Hit chance:" })
+      sbo.cfg.maxes = { hp = 365, sp = 875 }; sbo.cfg.arLoc = { head = 10 }; sbo.cfg.char = sbo.cfg.char or {}
+      HELM = sbo.parseItem(PAGE); sbo.remember(HELM)
+      local boots = { name = "some recruit boots", worn = "on the feet", level = 110, affects = {}, ar = 5, raw = {}, set = HELM.set }
+      sbo.remember(boots)
+      sbo.remember({ name = "a plain cap", worn = "over the head", level = 110, affects = {}, ar = 12, raw = {} })
+      sbo.eqNames = { "a recruit helm", "some recruit boots" }''')
+    eq(o.ev("HELM.set.minLevel"), 105, "range read"); eq(o.ev("HELM.set.maxLevel"), 140, "to 140")
+    o.lua('sbo.cfg.char.total = 130; S, G, L, U = sbo.setDelta(sbo.items["a recruit helm"], sbo.items["a plain cap"])')
+    eq(o.ev("#S .. ' ' .. S[1][1] .. ' ' .. S[1][2]"), "1 hp -60", "in range: the numbers lost (one piece left keeps +2 ar)")
+    eq(o.ev("L[1]"), "casts 'sanctuary'", "and what has none, named")
+    o.lua('V130, M130 = sbo.upgradeValue(sbo.items["a recruit helm"], sbo.items["a plain cap"], select(2, sbo.activeBuild()))')
+    o.lua('sbo.cfg.char.total = 145; S, G, L, U = sbo.setDelta(sbo.items["a recruit helm"], sbo.items["a plain cap"])')
+    eq(o.ev("#S + #G + #L + #U"), 0, "past the range: nothing")
+    o.lua('V145, M145 = sbo.upgradeValue(sbo.items["a recruit helm"], sbo.items["a plain cap"], select(2, sbo.activeBuild()))')
+    assert o.ev("V130 < V145"), (o.ev("V130"), o.ev("V145"))
+    assert "set-bonus" not in " ".join(o.ev("M145.estNames").values()), "not listed as not calculated"
+    # a piece saved before ranges were read: said so
+    o.lua('sbo.setRanges = {}; sbo.items["a recruit helm"].set.minLevel = nil; S, G, L, U = sbo.setDelta(sbo.items["a recruit helm"], sbo.items["a plain cap"])')
+    eq(o.ev("U[1]"), "Recruit's Attire", "range unknown")
+
+
+@test
 def upgrades_from_what_you_carry():
     o = Oven()
     o.lua('''
