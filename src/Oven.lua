@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.79.0"
+M.version = "1.80.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6897,6 +6897,7 @@ end
 
 -- one line of eqdb's reply: true if it was handled (nothing more to do with it)
 function M.eqdbLine(l)
+  if not M.cfg.enabled then return false end   -- sbo off: the game's text as it is
   if not M.eqdbAt or os.time() - M.eqdbAt > 30 then return false end
   local t = trim(l)
   local what = t:match("^%-%-%- Searching for (.-) %-%-%-$")
@@ -10168,7 +10169,7 @@ function M.onCombatRound()
   if F.timer then killTimer(F.timer) end
   F.timer = tempTimer(10, function() F.timer = nil; if M.fights[key] == F then M.fightSummary(nil, F) end end)
   pcall(M.drawCombatBar)
-  if not M.cfg.combatLines then return end
+  if not M.cfg.combatLines or not M.cfg.enabled then return end
   -- "⚔ a mental patient ██▌░░ 27% ▼9   you 1 hit · it 1 missed   you 100%   round 3 · ~2 to go"
   local segs = { { C.dim, "⚔ " }, { C.item, r.opponent_name .. " " },
                  { hpCol(pct), M.enemyBar(pct, 8) }, { hpCol(pct), string.format(" %d%%", pct) } }
@@ -10277,7 +10278,7 @@ function M.fightSummary(how, F)
   if F.endTimer then killTimer(F.endTimer); F.endTimer = nil end
   for i, E in ipairs(M.fightsEnding or {}) do if E == F then table.remove(M.fightsEnding, i) break end end
   pcall(M.drawCombatBar)
-  if not F or F.rounds == 0 or not M.cfg.combatLines then return end
+  if not F or F.rounds == 0 or not M.cfg.combatLines or not M.cfg.enabled then return end
   local function rate(a, b) return (a + b) > 0 and string.format(" (%d%%)", math.floor(a * 100 / (a + b) + 0.5)) or "" end
   local segs = { { C.dim, "⚔ " }, { C.item, F.name }, { how == "slain" and C.plus or C.dim, how and ("  " .. how) or "" },
     { C.dim, string.format("  ·  %d round%s", F.rounds, F.rounds == 1 and "" or "s") },
@@ -10516,7 +10517,7 @@ end
 
 -- Remove empty lines directly above the current (prompt) line, leaving the cursor on it.
 function M.dropBlankAbove()
-  if not M.cfg.barBlank then return end
+  if not M.cfg.barBlank or not M.cfg.enabled then return end
   for _ = 1, 2 do
     local ok, ln = pcall(getLineNumber)
     if not ok or not ln or ln < 1 then return end
@@ -12850,6 +12851,7 @@ function M.scanMarked(who)
   end
 end
 function M.scanLight(l)
+  if not M.cfg.enabled then return end
   if not (M.cfg.scanMarks and M.cfg.scanMarks[1]) then return end
   local who = M.scanParse(l)
   if not who or not M.scanMarked(who) then return end
@@ -12978,7 +12980,7 @@ function M.onLineWork()
     end
   end
   -- sbo chat hide CLAN (or chat.mirror off: every channel): to the Chat tab only (while the window is there to show it)
-  if not cap and M.cfg.tabs and M.cfg.window and M.container and (M.cfg.mirror.chat == false or next(M.cfg.chatHide or {}))
+  if not cap and M.cfg.enabled and M.cfg.tabs and M.cfg.window and M.container and (M.cfg.mirror.chat == false or next(M.cfg.chatHide or {}))
       and not isPromptLine() and M.chatHidden((M.chatFind(line))) then
     deleteLine()
     return
@@ -13019,7 +13021,7 @@ function M.onLineWork()
   end
   -- the game went on straight after a prompt, on the same line ("<281hp 696sp 444st> You receive an index
   -- card containing a recipe."): the prompt part goes to the bar, the rest stays as the game's text
-  local head = M.cfg.bar and M.promptHead(line)
+  local head = M.cfg.bar and M.cfg.enabled and M.promptHead(line)
   if head then
     do
       local n = #head + #(line:sub(#head + 1):match("^%s*"))
@@ -13050,9 +13052,11 @@ function M.onLineWork()
         end
       end
       M.barUpdate(d)
-      M.dropBlankAbove()   -- the blank line the game sends before each prompt
-      deleteLine()
-      moveCursorEnd()
+      if M.cfg.enabled then   -- sbo off: the bar still updates, the prompt stays in the game text
+        M.dropBlankAbove()   -- the blank line the game sends before each prompt
+        deleteLine()
+        moveCursorEnd()
+      end
     end
     return
   end

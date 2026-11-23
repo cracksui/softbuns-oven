@@ -3676,6 +3676,23 @@ def formatting_off_still_reads():
 
 
 @test
+def formatting_off_leaves_every_line():
+    # sbo off: no part of Oven changes the main window - prompt, blank lines, hidden chat, scan marks
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; sbo.cfg.bar = true; sbo.cfg.barBlank = true; sbo.command("off")')
+    o.lua('GAGGED = 0; deleteLine = function() GAGGED = GAGGED + 1 end; BARS = 0; local bu = sbo.barUpdate; sbo.barUpdate = function(...) BARS = BARS + 1; return bu(...) end')
+    o.feed("", "<281hp 696sp 457st>")
+    eq(o.ev("GAGGED"), 0, "prompt and the blank line above it stay")
+    assert o.ev("BARS") >= 1, "the bar still updates"
+    o.lua('sbo.cfg.chatHide = { CLAN = true }')
+    o.feed("[CLAN] Someone: 'hello'")
+    eq(o.ev("GAGGED"), 0, "hidden chat stays in the game text")
+    o.lua('sbo.command("on"); GAGGED = 0')
+    o.feed("", "<281hp 696sp 457st>")
+    assert o.ev("GAGGED") >= 1, "formatting on: the prompt goes to the bar again"
+
+
+@test
 def quest_go_prefers_a_shop_with_the_item():
     o = Oven()
     o.lua("""roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
