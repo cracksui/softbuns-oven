@@ -3693,6 +3693,43 @@ def formatting_off_leaves_every_line():
 
 
 @test
+def eqdb_results_learned():
+    # eqdb's results are links: Mudlet's mxp.send event hands Oven each one's lookup, and sbo eq learn eqdb
+    # looks at them all quietly, remembered as from eqdb
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end')
+    o.lua(GAME)
+    o.lua("""REPLY["check eqlookup 188ec1"] = { "Item 'a fiery red robe of Vyst' is type armor, alignment -430, made of silk (in (new) condition),[EQDB]",
+        "has keywords 'red robe priestess vyst', equipped about the body.", "This level 180 item has the attributes: rot-death", "Armor resistance is 19." }
+      REPLY["check eqlookup aa77ff"] = { "Item 'a ring of magma' is type armor, alignment 0, made of stone (in (new) condition),[EQDB]",
+        "has keywords 'ring magma', equipped on the finger.", "This level 170 item has the attributes: none" }""")
+    o.lua('sbo.onSend(nil, "eqdb type armor level 150 180")')
+    def link(h):
+        o.lua('mxp = { send = { actions = { "send([[check eqlookup %s]], true)" } } }; handlers["mxp.send"]("mxp.send")' % h)
+    o.feed(" --- Searching for an armor between levels 150-180 --- ", "1    a fiery red robe of Vyst                ")
+    link("188ec1")
+    o.feed("2    a ring of magma                         ")
+    link("aa77ff")
+    o.lua('mxp = { send = { actions = { "send([[c]], true)" } } }; handlers["mxp.send"]("mxp.send")')   # not a result
+    o.feed("---------- 2 results ----------", "<281hp 696sp 457st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("#sbo.eqdbHits"), 2, "both lookups kept, in order")
+    o.lua('SENT = {}; sbo.command("eq learn eqdb"); runTimers()')
+    eq(list(o.ev("SENT").values()), ["check eqlookup 188ec1", "check eqlookup aa77ff"], "each looked at, quietly")
+    eq(o.ev("sbo.items['a fiery red robe of Vyst'] and sbo.items['a fiery red robe of Vyst'].eqdb"), "188ec1", "remembered, from eqdb")
+    eq(o.ev("sbo.items['a ring of magma'] and sbo.items['a ring of magma'].eqdb"), "aa77ff", "both")
+    assert any("learned 2 items" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    # again: nothing new to look at
+    o.lua('SENT = {}; sbo.command("eq learn eqdb"); runTimers()')
+    eq(len(o.ev("SENT") or {}), 0, "already known")
+    # one you've looked at yourself isn't replaced by eqdb's
+    o.lua('sbo.remember({ name = "a ring of magma", worn = "on finger", level = 170, affects = {}, raw = {}, mine = true }); sbo.items["a fiery red robe of Vyst"].eqdb = nil')
+    o.lua('sbo.items["a ring of magma"].eqdb = nil; SENT = {}; sbo.command("eq learn eqdb"); runTimers()')
+    eq(o.ev("sbo.items['a ring of magma'].mine"), True, "yours kept")
+    o.L.execute("local ok, e = pcall(sbo.upgradeLines, 100, true, nil, 'eqdb'); assert(ok, e)")
+
+
+@test
 def formatting_off_no_compare():
     # sbo off: an item you look at is remembered, but no comparison is drawn
     o = Oven()

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.80.1"
+M.version = "1.81.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6630,11 +6630,11 @@ function M.carriedItems()
   return out
 end
 
-function M.upgradeLines(width, all, role)
+function M.upgradeLines(width, all, role, src)
   local bname, w = M.activeBuild()
   local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
   local out = { header("gear", "", width, "Upgrades  (" .. bname .. " build" .. (role and (", " .. role .. " only") or "")
-    .. (all and ", everything seen" or "") .. ")") }
+    .. (src == "eqdb" and ", from eqdb searches" or (all and ", everything seen" or "")) .. ")") }
   -- by one role: an item's score in that role alone
   local score = function(it) return M.gearScore(it, w) end
   if role then score = function(it) return it and (math.floor(M.roleScores(it, w)[role] * 10 + 0.5) / 10) or nil end end
@@ -6693,7 +6693,8 @@ function M.upgradeLines(width, all, role)
     local useModel = true
     for _, r in ipairs(byWorn[cur.worn] or {}) do
       local tooHigh = lvl and tonumber(r.level) and tonumber(r.level) > lvl
-      if not isWorn[r.name] and not used[r.name] and not tooHigh and (all or carried[r.name]) then
+      local fromSrc = src ~= "eqdb" or (M.items[r.name] and M.items[r.name].eqdb)
+      if not isWorn[r.name] and not used[r.name] and not tooHigh and fromSrc and (all or carried[r.name]) then
         if useModel then
           local v, m = M.upgradeValue(cur, M.items[r.name], w, role)
           if v and v > 0.05 and (not bs or v > bs) then best, bs, bm = r.name, v, m end
@@ -6720,7 +6721,8 @@ function M.upgradeLines(width, all, role)
         row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
       end
       local where = carried and carried[best]
-      if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where } end
+      if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where }
+      elseif bestIt and bestIt.eqdb then row[#row + 1] = { C.dim, "  (eqdb)" } end
       out[#out + 1] = row
       -- what changes, by category, in the game's numbers
       for _, cat in ipairs(M.swapCategories(bm)) do
@@ -6765,7 +6767,8 @@ function M.upgradeLines(width, all, role)
    end
   end
   if shown == 0 then
-    out[#out + 1] = { { C.dim, all and "nothing Oven has seen beats what you wear (for this build, at your level)"
+    out[#out + 1] = { { C.dim, src == "eqdb" and "no eqdb result Oven has looked at beats what you wear (for this build, at your level) - search eqdb, then sbo eq learn eqdb"
+      or all and "nothing Oven has seen beats what you wear (for this build, at your level)"
       or "nothing you carry beats what you wear (for this build, at your level)" } }
   end
   out[#out + 1] = {}
@@ -6871,9 +6874,10 @@ function M.upgradeWhy(cur, best, w)
 end
 
 ---------------------------------------------------------------------------
--- eqdb: the game's item directory. Its results are links ("check eqlookup …" shows the item), which
--- Mudlet can't hand to a script - so the list is restyled where it stands rather than redrawn, and
--- every result stays clickable. The pager is answered for you (at most 100 results, 2 screens).
+-- eqdb: the game's item directory. Its results are links ("check eqlookup …" shows the item). Mudlet hands
+-- each link's command to scripts in the mxp.send event: Oven keeps them (M.eqdbHits, in result order) so
+-- sbo eq learn eqdb can look at every result quietly. The list is restyled where it stands, and every
+-- result stays clickable. The pager is answered for you (at most 100 results, 2 screens).
 -- Clicking a result: laid out like any item you look at (M.commands: check eqlookup).
 ---------------------------------------------------------------------------
 do
@@ -6892,14 +6896,73 @@ end
 
 function M.eqdbNoteSend(cmd)
   local c = trim(cmd or ""):lower()
-  if c:match("^eqdb%s") or c == "eqdb" then M.eqdbAt = os.time(); M.eqdbN = 0 end
+  if c:match("^eqdb%s") or c == "eqdb" then M.eqdbAt = os.time(); M.eqdbN = 0; M.eqdbHits = {}; M.eqdbNames = {} end
+end
+
+-- a link the game sent (Mudlet's mxp.send event): while an eqdb list comes in, keep each result's lookup
+function M.onMxpSend()
+  if not M.eqdbAt or os.time() - M.eqdbAt > 30 then return end
+  local found
+  local function scan(v, depth)
+    if found or depth > 3 then return end
+    if type(v) == "string" then found = v:match("check eqlookup (%x+)")
+    elseif type(v) == "table" then for _, x in pairs(v) do scan(x, depth + 1) end end
+  end
+  scan(type(mxp) == "table" and mxp.send, 0)
+  if not found then return end
+  M.eqdbHits = M.eqdbHits or {}
+  for _, h in ipairs(M.eqdbHits) do if h == found then return end end
+  M.eqdbHits[#M.eqdbHits + 1] = found
+end
+
+-- after an eqdb list: a link to add every result Oven doesn't know yet
+function M.eqdbOffer()
+  local n = #(M.eqdbHits or {})
+  if n == 0 and next(M.eqdbNames or {}) and not M.eqdbNoLinksSaid then
+    M.eqdbNoLinksSaid = true
+    return M.say("Oven didn't get eqdb's links from Mudlet (its mxp.send event), so it can't look the results up - is MXP on? (Mudlet: Settings › Special options)")
+  end
+  if n == 0 or not M.cfg.enabled then return end
+  pcall(function()
+    cecho("main", "<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> ")
+    cechoLink("main", "<oven_key>[add these " .. n .. " items to Oven's item database]",
+      function() M.eqdbLearn() end, "sbo eq learn eqdb: look at each one quietly", true)
+    cecho("main", "<oven_dim>  then sbo eq upgrades eqdb<reset>\n")
+  end)
+end
+
+-- sbo eq learn eqdb: look at every result of the last eqdb list (check eqlookup), quietly
+function M.eqdbLearn()
+  local hits = M.eqdbHits or {}
+  if #hits == 0 then
+    return M.say("no eqdb results to look at - run an eqdb search first (Oven reads its links; if this keeps happening, MXP may be off in Mudlet's settings)")
+  end
+  if M.learnQueue then return M.say("already looking at items - wait for it to finish") end
+  local q, known = {}, 0
+  for i, h in ipairs(hits) do
+    local nm = (M.eqdbNames or {})[i]
+    local it = nm and M.items[nm]
+    if it and it.eqdb then known = known + 1
+    else q[#q + 1] = { name = nm or ("eqdb result " .. i), cmd = "check eqlookup " .. h, eqdb = h } end
+  end
+  if #q == 0 then return M.say("all " .. known .. " eqdb results are already in Oven's item database - sbo eq upgrades eqdb") end
+  M.learnStats = { ok = 0, fail = 0 }
+  M.learnStart(q, "eqdb result", function()
+    M.learnReport(known > 0 and (" (" .. known .. " already known)") or "")
+    M.say("sbo eq upgrades eqdb: the best of them for each slot you wear")
+  end)
 end
 
 -- one line of eqdb's reply: true if it was handled (nothing more to do with it)
 function M.eqdbLine(l)
-  if not M.cfg.enabled then return false end   -- sbo off: the game's text as it is
   if not M.eqdbAt or os.time() - M.eqdbAt > 30 then return false end
   local t = trim(l)
+  local rn, rname = l:match("^(%d+)%s+(.-)%s*$")
+  if rn and rname ~= "" then M.eqdbNames = M.eqdbNames or {}; M.eqdbNames[tonumber(rn)] = rname end
+  if t:match("^%-+ %d+ results? %-+$") or t:match("^%-+ Terminating at %d+ results %-+$") then
+    tempTimer(0.5, function() pcall(M.eqdbOffer) end)   -- after the links' events
+  end
+  if not M.cfg.enabled then return false end   -- sbo off: the game's text as it is
   local what = t:match("^%-%-%- Searching for (.-) %-%-%-$")
   if what then
     restyle("── eqdb: " .. what:gsub("^between ", "") .. " " .. string.rep("─", 30), C.title)
@@ -10364,6 +10427,7 @@ function M.gmcpHandlersList()
     registerAnonymousEventHandler("gmcp.char.maxstats", function() pcall(M.onGmcpMaxStats) end),
     registerAnonymousEventHandler("gmcp.char.worth", function() pcall(M.onGmcpWorth) end),
     registerAnonymousEventHandler("gmcp.char.cast_finished", function() pcall(M.onGmcpCastFinished) end),
+    registerAnonymousEventHandler("mxp.send", function() pcall(M.onMxpSend) end),
     registerAnonymousEventHandler("gmcp.char.affect_application_msg", function() pcall(M.onGmcpAffect) end),
     registerAnonymousEventHandler("gmcp.char.lasttargeted", function() pcall(M.onGmcpTarget) end),
   }
@@ -13199,10 +13263,15 @@ function M.finish(reason)
     if reason == "prompt" and not M.cfg.bar then deleteLine() end
     local ok, it = pcall(M.parseItem, cap.plain)
     local good = ok and it and it.name and true or false
-    if good then M.remember(it); M.learnStats.ok = M.learnStats.ok + 1
+    local entry = M.learning and M.learning.entry
+    if good and entry and entry.eqdb then
+      -- from eqdb: don't replace one you've seen yourself (yours may be enchanted or worn down)
+      local had = M.items[it.name]
+      if had and not had.eqdb then it = nil else it.eqdb = entry.eqdb end
+    end
+    if good then if it then M.remember(it) end; M.learnStats.ok = M.learnStats.ok + 1
     else M.learnStats.fail = M.learnStats.fail + 1 end
     if M.cfg.samples and #cap.plain > 0 then writeSample(cap) end
-    local entry = M.learning and M.learning.entry
     M.learning = nil
     pcall(M.learnResult, entry, good)
     tempTimer(0.3, function() M.learnNext() end)
@@ -18134,12 +18203,13 @@ function M.legacyCommand(args)
       return M.compareNames(u.cur, u.best)
     end
     -- sbo upgrades [all] [offense|defense|casting|utility]: everything seen, and/or by one role only
-    local all, role = false, nil
+    local all, role, src = false, nil, nil
     for word in b:lower():gmatch("%a+") do
       if word == "all" then all = true
+      elseif word == "eqdb" then all, src = true, "eqdb"
       else for _, r in ipairs(M.ROLES) do if r:sub(1, #word) == word and #word >= 3 then role = r end end end
     end
-    M.viewLive(function(w) return M.upgradeLines(w, all, role) end)
+    M.viewLive(function(w) return M.upgradeLines(w, all, role, src) end)
     return
   elseif a == "mark" then if b == "" then return M.listMarks() end return M.markRoom(b)
   elseif a == "marks" then return M.listMarks()
@@ -18400,14 +18470,15 @@ M.CMDS = {
         return legacy("compare " .. r)
       end },
     { name = "compare against", args = "[{item}]", desc = "compare every look to one item; no item: stop", listOnly = true },
-    { name = "upgrades", args = "[all] [offense|defense|casting|utility]|{n}", desc = "best upgrade per slot (all: anything seen; a role: by that role only; n: compare it)",
+    { name = "upgrades", args = "[all|eqdb] [offense|defense|casting|utility]|{n}", desc = "best upgrade per slot (all: anything seen; eqdb: from eqdb searches only; a role: by that role only; n: compare it)",
       run = function(r)
         if tonumber(r) then return legacy("upgrades compare " .. r) end
         return legacy("upgrades " .. r)
       end },
-    { name = "learn", args = "[worn|carried]", desc = "look at items Oven doesn't know yet (both when left off)",
+    { name = "learn", args = "[worn|carried|eqdb]", desc = "look at items Oven doesn't know yet (worn and carried when left off; eqdb: every result of your last eqdb search)",
       run = function(r)
         local w = r:lower()
+        if w ~= "" and ("eqdb"):sub(1, #w) == w then return M.eqdbLearn() end
         if w ~= "" and ("worn"):sub(1, #w) == w then return M.learn("") end
         if w ~= "" and (("carried"):sub(1, #w) == w or w == "inv") then return M.learnInv() end
         M.learnThen = function() M.learnInv() end
