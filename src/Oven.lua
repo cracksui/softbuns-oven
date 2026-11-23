@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.82.0"
+M.version = "1.83.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6796,13 +6796,13 @@ function M.upgradeLines(width, all, role, src, maxLvl)
     section()
   end
   if shown == 0 and not maxLvl then
-    out[#out + 1] = { { C.dim, src == "eqdb" and "no eqdb result Oven has looked at beats what you wear (for this build, at your level) - search eqdb, then sbo eq learn eqdb"
+    out[#out + 1] = { { C.dim, src == "eqdb" and "no eqdb result Oven has looked at beats what you wear (for this build, at your level)"
       or all and "nothing Oven has seen beats what you wear (for this build, at your level)"
       or "nothing you carry beats what you wear (for this build, at your level)" } }
   end
   out[#out + 1] = {}
   if all then
-    out[#out + 1] = { { C.dim, "everything you've looked at, anywhere · sbo upgrades for only what you carry" } }
+    out[#out + 1] = { { C.dim, "everything you've looked at, anywhere, and eqdb results · sbo upgrades for only what you carry" } }
   else
     out[#out + 1] = { { C.dim, "what you carry (as of your last i" .. (M.cfg.carried.at and (", " .. M.shortDur(os.time() - M.cfg.carried.at) .. " ago") or "")
       .. ") and have looked at · sbo upgrades all for everything you've seen · sbo eq learn carried" } }
@@ -6951,12 +6951,16 @@ function M.eqdbOffer()
     M.eqdbNoLinksSaid = true
     return M.say("Oven didn't get eqdb's links from Mudlet (its mxp.send event), so it can't look the results up - is MXP on? (Mudlet: Settings › Special options)")
   end
-  if n == 0 or not M.cfg.enabled then return end
+  if n == 0 then return end
+  -- every result goes into the item database by itself - unless you're fighting or Oven is already looking
+  -- at items: then a link to do it after
+  if not M.fighting() and not M.learnQueue and not M.learning then return M.eqdbLearn(true) end
+  if not M.cfg.enabled then return end
   pcall(function()
     cecho("main", "<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> ")
     cechoLink("main", "<oven_key>[add these " .. n .. " items to Oven's item database]",
       function() M.eqdbLearn() end, "sbo eq learn eqdb: look at each one quietly", true)
-    cecho("main", "<oven_dim>  then sbo eq upgrades eqdb<reset>\n")
+    echo("main", "\n")
   end)
 end
 
@@ -6971,7 +6975,7 @@ end
 
 -- sbo eq learn eqdb: look at every result of the last eqdb list (check eqlookup), quietly - and any eqdb
 -- item read before Oven understood the whole page
-function M.eqdbLearn()
+function M.eqdbLearn(auto)
   local hits = M.eqdbHits or {}
   local stale = {}
   for _, r in ipairs(M.dbRows([[SELECT name FROM items WHERE data LIKE '%%["eqdb"]=%%']]) or {}) do
@@ -6993,12 +6997,15 @@ function M.eqdbLearn()
   for _, it in ipairs(stale) do
     if not queued[it.eqdb] then q[#q + 1] = { name = it.name, cmd = "check eqlookup " .. it.eqdb, eqdb = it.eqdb }; queued[it.eqdb] = true end
   end
-  if #q == 0 then return M.say("all " .. known .. " eqdb results are already in Oven's item database - sbo eq upgrades eqdb") end
+  if #q == 0 then
+    if auto then return end
+    return M.say("all " .. known .. " eqdb results are already in Oven's item database - sbo upg all <max level> to compare")
+  end
   M.learnStats = { ok = 0, fail = 0 }
+  if auto then M.say("adding " .. #q .. " eqdb result" .. (#q == 1 and "" or "s") .. " to Oven's item database…") end
   M.learnStart(q, "eqdb result", function()
-    M.learnReport(known > 0 and (" (" .. known .. " already known)") or "")
-    M.say("sbo eq upgrades eqdb: the best of them for each slot you wear")
-  end)
+    M.learnReport((known > 0 and (" (" .. known .. " already known)") or "") .. " · sbo upg all <max level>: what's better than what you wear")
+  end, auto)
 end
 
 -- one line of eqdb's reply: true if it was handled (nothing more to do with it)
@@ -18519,7 +18526,7 @@ M.CMDS = {
         return legacy("compare " .. r)
       end },
     { name = "compare against", args = "[{item}]", desc = "compare every look to one item; no item: stop", listOnly = true },
-    { name = "upgrades", args = "[all|eqdb] [offense|defense|casting|utility] [{max level}]|{n}", desc = "best upgrade per slot (all: anything seen; eqdb: from eqdb searches only; a role: by that role only; a max level after all/eqdb/a role: what you can wear now, then up to that level in its own section; n alone: compare it)",
+    { name = "upgrades", args = "[all] [offense|defense|casting|utility] [{max level}]|{n}", desc = "best upgrade per slot (all: anything seen, eqdb results included; a role: by that role only; a max level after all or a role: what you can wear now, then up to that level in its own section; n alone: compare it)",
       run = function(r)
         if tonumber(r) then return legacy("upgrades compare " .. r) end
         return legacy("upgrades " .. r)
