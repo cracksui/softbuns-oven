@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.81.3"
+M.version = "1.81.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -19507,26 +19507,66 @@ function M.rawUrl(file)
   return "https://raw.githubusercontent.com/" .. M.REPO .. "/" .. (M.updSha or M.BRANCH) .. "/" .. file
 end
 function M.apiUrl() return "https://github.com/" .. M.REPO .. ".git/info/refs?service=git-upload-pack" end
--- the same file of the same commit from jsDelivr (a public CDN serving GitHub repos): used when a download from
+-- the same file of the same commit from GitHub's API (api.github.com): used when a download from
 -- raw.githubusercontent.com doesn't finish (a Mudlet up for days was seen stuck on that one host while
--- github.com still answered); after that, for the rest of the session, jsDelivr first
-function M.cdnUrl(file) return "https://cdn.jsdelivr.net/gh/" .. M.REPO .. "@" .. M.updSha .. "/" .. file end
-M.UPD_FALLBACK = 15   -- seconds without an answer before trying jsDelivr
+-- github.com still answered); after that, for the rest of the session, the API first. Its answer is JSON
+-- with the file in base64. (60 requests an hour without logging in: one or two per check is well inside it.)
+function M.apiFileUrl(file) return "https://api.github.com/repos/" .. M.REPO .. "/contents/" .. file .. "?ref=" .. M.updSha end
+M.UPD_FALLBACK = 15   -- seconds without an answer before trying the API
 
--- step 2 and 3: VERSION, then the package - from GitHub, or jsDelivr when GitHub doesn't answer
-function M.updGet(key, viaCdn)
-  local file = key == "version" and "VERSION" or "Oven.mpackage"
-  viaCdn = viaCdn and M.updSha ~= nil
-  M.updWant = key
-  if viaCdn then
-    M.updCdnTried = key
-    return downloadFile(M.dl[key .. "Cdn"], M.cdnUrl(file))
+function M.b64decode(s)
+  if not M.B64 then
+    M.B64 = {}
+    local cs = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    for i = 1, 64 do M.B64[cs:byte(i)] = i - 1 end
   end
-  M.updCdnTried = nil
+  local B64 = M.B64
+  s = s:gsub("[^%w%+/]", "")
+  local out, n = {}, 0
+  local chunk = {}
+  for i = 1, #s - 3, 4 do
+    local a, b, c, d = B64[s:byte(i)], B64[s:byte(i + 1)], B64[s:byte(i + 2)], B64[s:byte(i + 3)]
+    local v = a * 262144 + b * 4096 + c * 64 + d
+    chunk[#chunk + 1] = string.char(math.floor(v / 65536), math.floor(v / 256) % 256, v % 256)
+    if #chunk >= 4096 then n = n + 1; out[n] = table.concat(chunk); chunk = {} end
+  end
+  local rest = #s % 4
+  if rest >= 2 then
+    local i = #s - rest + 1
+    local a, b, c = B64[s:byte(i)], B64[s:byte(i + 1)], rest == 3 and B64[s:byte(i + 2)] or 0
+    local v = a * 262144 + b * 4096 + c * 64
+    chunk[#chunk + 1] = string.char(math.floor(v / 65536)) .. (rest == 3 and string.char(math.floor(v / 256) % 256) or "")
+  end
+  n = n + 1; out[n] = table.concat(chunk)
+  return table.concat(out)
+end
+
+-- the API's answer -> the file itself (written where GitHub's download would have put it); false if it isn't one
+function M.apiUnpack(jsonFile, dest)
+  local f = io.open(jsonFile, "rb"); local body = f and f:read("*a") or ""; if f then f:close() end
+  local enc = body:match('"encoding"%s*:%s*"(%w+)"')
+  local content = body:match('"content"%s*:%s*"(.-)"')
+  if enc ~= "base64" or not content or content == "" then return false end
+  local out = io.open(dest, "wb")
+  if not out then return false end
+  out:write(M.b64decode((content:gsub("\\n", "")))); out:close()
+  return true
+end
+
+-- step 2 and 3: VERSION, then the package - from GitHub's raw files, or its API when those don't answer
+function M.updGet(key, viaApi)
+  local file = key == "version" and "VERSION" or "Oven.mpackage"
+  viaApi = viaApi and M.updSha ~= nil
+  M.updWant = key
+  if viaApi then
+    M.updApiTried = key
+    return downloadFile(M.dl[key .. "Api"], M.apiFileUrl(file))
+  end
+  M.updApiTried = nil
   downloadFile(M.dl[key], M.rawUrl(file))
   local mine = M.pendingAt
   tempTimer(M.UPD_FALLBACK, function()
-    if M.pending and M.pendingAt == mine and M.updWant == key and M.updCdnTried ~= key and M.updSha then
+    if M.pending and M.pendingAt == mine and M.updWant == key and M.updApiTried ~= key and M.updSha then
       M.updGet(key, true)
     end
   end)
@@ -19534,12 +19574,12 @@ end
 
 -- step 1 of every check: find the latest commit, then fetch VERSION from it
 function M.fetchVersion()
-  M.updSha, M.updWant, M.updCdnTried = nil, nil, nil
+  M.updSha, M.updWant, M.updApiTried = nil, nil, nil
   downloadFile(M.dl.api, M.apiUrl())
 end
 M.dl = { version = getMudletHomeDir() .. "/oven_latest_version.txt", pkg = getMudletHomeDir() .. "/oven_latest.mpackage",
          api = getMudletHomeDir() .. "/oven_latest_refs.txt",
-         versionCdn = getMudletHomeDir() .. "/oven_latest_version_cdn.txt", pkgCdn = getMudletHomeDir() .. "/oven_latest_cdn.mpackage" }
+         versionApi = getMudletHomeDir() .. "/oven_latest_version_api.json", pkgApi = getMudletHomeDir() .. "/oven_latest_pkg_api.json" }
 
 local function newer(a, b)  -- is version a newer than b?
   local function parts(v) local t = {} for n in tostring(v):gmatch("%d+") do t[#t + 1] = tonumber(n) end return t end
@@ -19710,19 +19750,23 @@ function M.onDownload(event, file, err)
   if not which then return end
   local mode = M.pending
   if not mode then return end  -- nothing of ours in flight
-  local key = which:gsub("Cdn$", "")
-  local viaCdn = key ~= which
-  -- a late answer for a step already done (GitHub answering after jsDelivr did): nothing to do
+  local key = which:gsub("Api$", "")
+  local viaApi = key ~= which
+  -- a late answer for a step already done (the raw file arriving after the API's did): nothing to do
   if key ~= "api" and M.updWant and key ~= M.updWant then return end
-  if key ~= "api" and not viaCdn and M.updCdnTried == key then
-    if event == "sysDownloadError" then return end   -- jsDelivr is on it
-    M.updCdnTried = nil                             -- GitHub got there first after all
+  if key ~= "api" and not viaApi and M.updApiTried == key then
+    if event == "sysDownloadError" then return end   -- the API is on it
+    M.updApiTried = nil                             -- the raw file got there first after all
   end
-  if key ~= "api" and event == "sysDownloadError" and not viaCdn and M.updSha then
-    return M.updGet(key, true)   -- GitHub refused: the same file from jsDelivr
+  if key ~= "api" and event == "sysDownloadError" and not viaApi and M.updSha then
+    return M.updGet(key, true)   -- refused: the same file from the API
   end
-  if viaCdn and event ~= "sysDownloadError" then M.updCdn = true end
-  if key == "version" then file = M.dl[which] elseif key == "pkg" then file = M.dl[which] end
+  if viaApi and event ~= "sysDownloadError" then
+    -- the file is inside the API's answer
+    if not M.apiUnpack(M.dl[which], M.dl[key]) then event = "sysDownloadError"; err = "GitHub's API didn't send the file"
+    else M.updApi = true end
+  end
+  if key == "version" or key == "pkg" then file = M.dl[key] end
   if file == M.dl.api then
     -- latest commit id; on any problem fall back to the branch address
     if event ~= "sysDownloadError" then
@@ -19731,7 +19775,7 @@ function M.onDownload(event, file, err)
       local hex = body:match("(%x+) refs/heads/" .. M.BRANCH .. "%f[%z%s]") or body:match("(%x+) refs/heads/" .. M.BRANCH .. "$")
       M.updSha = (hex and #hex >= 40) and hex:sub(-40) or nil
     end
-    M.updGet("version", M.updCdn)
+    M.updGet("version", M.updApi)
     return
   end
   if event == "sysDownloadError" then
@@ -19756,7 +19800,7 @@ function M.onDownload(event, file, err)
       M.updState = { state = "ok" }; pcall(M.drawBar)
     elseif newer(latest, M.version) or mode == "force" then
       M.notify(mode == "auto" and ("new version v" .. latest .. " - updating automatically…") or ("downloading v" .. latest .. "…"))
-      M.updGet("pkg", M.updCdn)
+      M.updGet("pkg", M.updApi)
     else
       M.pending = nil
       M.notify("you already have the latest version (v" .. M.version .. ")")

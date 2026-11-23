@@ -953,30 +953,50 @@ def update_check_never_sticks():
 
 
 @test
-def update_falls_back_to_cdn():
-    # GitHub's raw host never answers: after a short wait the same file of the same commit comes from jsDelivr,
-    # and the rest of the session goes there first
+def update_falls_back_to_api():
+    # GitHub's raw host never answers: after a short wait the same file of the same commit comes from GitHub's
+    # API (JSON, the file in base64), and the rest of the session goes there first
+    import base64, json
     o = Oven()
+    home = o.L.globals().OVEN_TEST_HOME
+    pkg = open(os.path.join(ROOT, "Oven.mpackage"), "rb").read() if os.path.exists(os.path.join(ROOT, "Oven.mpackage")) else bytes(range(256)) * 50
+    def api_json(data):
+        b = base64.b64encode(data).decode()
+        return json.dumps({"name": "x", "content": "\n".join(b[k:k + 60] for k in range(0, len(b), 60)) + "\n", "encoding": "base64"})
+    open(os.path.join(home, "v.json"), "w").write(api_json(b"99.0.0\n"))
+    open(os.path.join(home, "p.json"), "w").write(api_json(pkg))
     o.lua("""sbo.REPO = 'x/y'; sbo.cfg.updateCheck = true; sbo.cfg.autoUpdate = true
       DL = {}; downloadFile = function(f, u) DL[#DL+1] = { f, u } end
       INSTALLED = nil; sbo.installFrom = function(p) INSTALLED = p end
+      local function cp(a, b) local f = io.open(OVEN_TEST_HOME .. "/" .. a, "rb"); local d = f:read("*a"); f:close()
+        local g = io.open(b, "wb"); g:write(d); g:close() end
+      CP = cp
       sbo.checkForUpdate()""")
     sha = "a" * 40
     o.lua("local f = io.open(sbo.dl.api, 'w'); f:write('003d%s refs/heads/main\\n'); f:close(); sbo.onDownload('sysDownloadDone', sbo.dl.api)" % sha)
-    eq(o.ev("DL[#DL][2]"), "https://raw.githubusercontent.com/x/y/%s/VERSION" % sha, "GitHub first")
+    eq(o.ev("DL[#DL][2]"), "https://raw.githubusercontent.com/x/y/%s/VERSION" % sha, "raw file first")
     o.L.execute("runTimers()")
-    eq(o.ev("DL[#DL][2]"), "https://cdn.jsdelivr.net/gh/x/y@%s/VERSION" % sha, "no answer: jsDelivr")
-    o.lua("local f = io.open(sbo.dl.versionCdn, 'w'); f:write('99.0.0'); f:close(); sbo.onDownload('sysDownloadDone', sbo.dl.versionCdn)")
-    eq(o.ev("DL[#DL][2]"), "https://cdn.jsdelivr.net/gh/x/y@%s/Oven.mpackage" % sha, "the package from jsDelivr too")
-    o.lua("sbo.onDownload('sysDownloadDone', sbo.dl.version)")   # GitHub's late answer: ignored
+    eq(o.ev("DL[#DL][2]"), "https://api.github.com/repos/x/y/contents/VERSION?ref=%s" % sha, "no answer: the API")
+    o.lua("CP('v.json', sbo.dl.versionApi); sbo.onDownload('sysDownloadDone', sbo.dl.versionApi)")
+    eq(o.ev("DL[#DL][2]"), "https://api.github.com/repos/x/y/contents/Oven.mpackage?ref=%s" % sha, "the package from the API too")
+    o.lua("sbo.onDownload('sysDownloadDone', sbo.dl.version)")   # the raw file's late answer: ignored
     eq(o.ev("#DL"), 4, "nothing more fetched")
-    o.lua("sbo.onDownload('sysDownloadDone', sbo.dl.pkgCdn)")
-    eq(o.ev("INSTALLED"), o.ev("sbo.dl.pkgCdn"), "installed")
-    # GitHub refusing outright: jsDelivr at once
-    o.lua("sbo.updCdn = nil; DL = {}; sbo.checkForUpdate()")
+    o.lua("CP('p.json', sbo.dl.pkgApi); sbo.onDownload('sysDownloadDone', sbo.dl.pkgApi)")
+    eq(o.ev("INSTALLED"), o.ev("sbo.dl.pkg"), "installed")
+    eq(open(o.ev("sbo.dl.pkg"), "rb").read() == pkg, True, "the package byte for byte")
+    # refused outright: the API at once
+    o.lua("sbo.updApi = nil; DL = {}; sbo.checkForUpdate()")
     o.lua("local f = io.open(sbo.dl.api, 'w'); f:write('003d%s refs/heads/main\\n'); f:close(); sbo.onDownload('sysDownloadDone', sbo.dl.api)" % sha)
     o.lua("sbo.onDownload('sysDownloadError', 'timeout', sbo.dl.version)")
-    eq(o.ev("DL[#DL][2]"), "https://cdn.jsdelivr.net/gh/x/y@%s/VERSION" % sha, "an error: jsDelivr")
+    eq(o.ev("DL[#DL][2]"), "https://api.github.com/repos/x/y/contents/VERSION?ref=%s" % sha, "an error: the API")
+    # the API saying no (rate limit): the check ends, nothing installed
+    o.lua("local f = io.open(sbo.dl.versionApi, 'w'); f:write('{\"message\":\"API rate limit exceeded\"}'); f:close(); INSTALLED = nil; sbo.onDownload('sysDownloadDone', sbo.dl.versionApi)")
+    eq(o.ev("sbo.pending"), None, "ended")
+    eq(o.ev("INSTALLED"), None, "nothing installed")
+    for n in (0, 1, 2, 3, 4, 5, 255, 256, 257):
+        data = bytes((k * 7) % 256 for k in range(n))
+        o.L.globals().ENC = base64.b64encode(data).decode()
+        eq(o.ev("(sbo.b64decode(ENC):gsub('.', function(c) return string.format('%02x', c:byte()) end))"), data.hex(), "base64 of %d bytes" % n)
 
 
 @test
