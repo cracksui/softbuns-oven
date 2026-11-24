@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.94.2"
+M.version = "1.94.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -19756,7 +19756,7 @@ M.SETTINGS = {
     function(v) M.cfg.tripRest = (v == "on"); M.saveSettings()
       say("sbo go " .. (v == "on" and "rests when your stamina won't last the next run or walk" or "doesn't rest for stamina (a run cut short by exhaustion: it plans on from there)")) end,
     "rest when stamina is short" },
-  { "go.stamina.walk", "Travel", "number", function() return M.stCostText("walk") end, function(v) M.stCostSet("walk", v) end, "stamina a room walking (default: learned)" },
+  { "go.stamina.walk", "Travel", "number", function() return M.stCostText("walk") end, function(v) M.stCostSet("walk", v) end, "stamina/room walking (default: learned)" },
   { "go.stamina.run", "Travel", "number", function() return M.stCostText("run") end, function(v) M.stCostSet("run", v) end, "running" },
   { "go.stamina.walklev", "Travel", "number", function() return M.stCostText("walk+lev") end, function(v) M.stCostSet("walk+lev", v) end, "walking, levitating" },
   { "go.stamina.runlev", "Travel", "number", function() return M.stCostText("run+lev") end, function(v) M.stCostSet("run+lev", v) end, "running, levitating" },
