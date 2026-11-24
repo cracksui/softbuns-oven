@@ -2958,6 +2958,24 @@ def gohall_refused_plans_again():
 
 
 @test
+def mount_left_marked():
+    # dismount / hitch: the room is marked (lit, bookmark "mount"); mount again: the mark goes
+    o = Oven()
+    o.lua("""sbo.cfg.promptPattern = "<%d+hp"; roomExists = function() return true end
+      LIT = {}; highlightRoom = function(id) LIT[id] = true end; unHighlightRoom = function(id) LIT[id] = nil end
+      sbo.currentRoom = function() return 27888 end""")
+    o.feed("You dismount from a tame dragon.", "You hitch a tame dragon to a weathered hitching post.", "<270hp 550sp 401st>")
+    eq(o.ev("sbo.cfg.mountLeft.room"), 27888, "marked")
+    eq(o.ev("sbo.cfg.mountLeft.hitched"), True, "hitched")
+    eq(o.ev("LIT[27888]"), True, "lit on the map")
+    eq(o.rows("SELECT room FROM marks WHERE name = 'mount'")[0]["room"], 27888, "bookmark: sbo go mount")
+    o.feed("You mount a tame dragon, and start riding him.", "<270hp 550sp 401st>")
+    eq(o.ev("sbo.cfg.mountLeft"), None, "mounted: gone")
+    eq(o.ev("LIT[27888]"), None, "no longer lit")
+    eq(len(o.rows("SELECT room FROM marks WHERE name = 'mount'")), 0, "bookmark gone")
+
+
+@test
 def every_setting_is_listed():
     # sbo config lists every setting (each one's group is among the groups shown); sbo config go lists the go ones
     o = Oven()

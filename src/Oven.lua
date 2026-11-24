@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.94.3"
+M.version = "1.95.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13294,6 +13294,7 @@ function M.onLineWork()
   end
   if line:find("takes your payment and hands you", 1, true) then pcall(M.noteBought, line) end
   if line:find("too low a level to wear it", 1, true) then pcall(M.noteWearLevel, line) end
+  if line:match("^You dismount from ") or line:match("^You hitch ") or line:match("^You mount .-, and start riding") then pcall(M.mountLine, line) end
   if M.travel then pcall(M.travelLine, line) end
   if M.eqdbAt and not cap then
     local okE, done = pcall(M.eqdbLine, line)
@@ -16739,6 +16740,40 @@ end
 -- sbo go <what>: run to the nearest room that has it - an NPC tag or name ([Trainer], [Shop],
 -- "cleric"), a room tag ([Library]), or failing those a room name; or a room number
 -- Bookmarks: name the room you're in, then `sbo go <name>` takes you back
+-- where you left your mount: "You dismount from a tame dragon." / "You hitch a tame dragon to a weathered
+-- hitching post." mark the room (lit up amber on the map, and the bookmark "mount": sbo go mount);
+-- "You mount a tame dragon, and start riding him." takes the mark away
+function M.mountLine(l)
+  local t = trim(l)
+  local hitched = t:match("^You hitch (.-) to .-%.$")
+  local off = hitched or t:match("^You dismount from (.-)%.$")
+  if off then
+    local id = M.currentRoom()
+    if not id then return end
+    M.cfg.mountLeft = { room = id, name = off, hitched = hitched ~= nil, at = os.time() }
+    M.saveSettings()
+    M.dbx("INSERT OR REPLACE INTO marks (name, room, t) VALUES ('mount', %s, %s)", id, os.time())
+    pcall(M.mapLearned)
+    pcall(M.mountLight)
+    return
+  end
+  if t:match("^You mount .-, and start riding") and M.cfg.mountLeft then
+    M.cfg.mountLeft = nil
+    M.saveSettings()
+    M.dbx("DELETE FROM marks WHERE name = 'mount'")
+    pcall(M.mountLight)
+  end
+end
+-- the room lit up (amber) while your mount waits there
+function M.mountLight()
+  if M.mountLit and M.mountLit ~= (M.cfg.mountLeft or {}).room then pcall(unHighlightRoom, M.mountLit); M.mountLit = nil end
+  local L = M.cfg.mountLeft
+  if L and L.room and roomExists(L.room) then
+    pcall(highlightRoom, L.room, 255, 170, 40, 255, 220, 120, 1.2, 230, 80)
+    M.mountLit = L.room
+  end
+end
+
 function M.markRoom(name)
   name = trim(name or ""):lower()
   local id = M.currentRoom()
@@ -20523,5 +20558,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight) end)
 pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end
