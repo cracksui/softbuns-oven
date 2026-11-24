@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.85.3"
+M.version = "1.85.4"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6320,12 +6320,14 @@ end
 -- stats with no formula, the parts of stats the model only half covers (agility's dodging,
 -- strength's damage), and what items do (spells, skills, procs, sets)
 local HALF = { agility = 0.5, strength = 0.8 }
+-- stats the model covers in part: what's left out, said with the name
+M.EST_LABEL = { agility = "agility (dodging; its to-hit is counted)", strength = "strength (damage; its to-hit is counted)" }
 function M.estimatePoints(old, new, w, m)
   local pts, names = 0, {}
   for _, e in ipairs((m or {}).estimates or {}) do
     local k, dv = e[1], e[2]
     local wt = M.statWeight(w, k) * (HALF[k] or 1)
-    if wt ~= 0 then pts = pts + dv * wt; names[#names + 1] = k end
+    if wt ~= 0 then pts = pts + dv * wt; names[#names + 1] = M.EST_LABEL[k] or k end
   end
   local ea, eb = old and M.itemEffects(old) or {}, M.itemEffects(new)
   local keys = {}
