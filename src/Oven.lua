@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.91.0"
+M.version = "1.92.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -17887,8 +17887,8 @@ function M.travelStart(plan, target, legNo)
     local T = M.travel
     T.stage, T.boardStep, T.rideFrom = "boarding", 1, getRoomArea(M.mapRoom or 0)
     M.travelBoard()
-    -- it didn't take you (a no-recall room, another plane, the clan's rules): stop
-    tempTimer(10, function() if M.travel == T then M.travel = nil; say("travel: " .. L.board[1] .. " didn't take you anywhere - stopped") end end)
+    -- it didn't take you (cross-zone, a no-recall room, another plane, the clan's rules): another way, else stop
+    tempTimer(10, function() if M.travel == T then M.travelFallback(L.board[1] .. " didn't take you anywhere") end end)
     return
   end
   local function atShop()
@@ -17897,7 +17897,7 @@ function M.travelStart(plan, target, legNo)
     if L.noBuy then
       T.stage, T.boardStep, T.rideFrom = "boarding", 1, getRoomArea(M.mapRoom or 0)
       M.travelBoard()
-      tempTimer(12, function() if M.travel == T then M.travel = nil; say("travel: " .. L.board[1] .. " didn't take you anywhere - stopped") end end)
+      tempTimer(12, function() if M.travel == T then M.travelFallback(L.board[1] .. " didn't take you anywhere") end end)
       return
     end
     T.stage = "buying"
@@ -17912,11 +17912,26 @@ function M.travelStart(plan, target, legNo)
   M.walkStep()
 end
 
+-- a ride that didn't work, on a trip: plan again from here without it (the trip has it marked used);
+-- not on a trip: stop
+function M.travelFallback(why)
+  M.travel = nil
+  if M.trip then
+    say("travel: " .. why .. " - trying another way")
+    return tempTimer(0.5, function() if M.trip then M.tripContinue() end end)
+  end
+  say("travel: " .. why .. " - stopped")
+end
+
 -- the game's lines while travelling: bought → board; refused → stop
 function M.travelLine(l)
   local T = M.travel
   if not T then return end
   local t = trim(l)
+  -- "Magical transport to your clan hall from this location is considered cross-zone."
+  if (T.stage == "boarding" or T.stage == "riding") and t:find("considered cross-zone", 1, true) then
+    return M.travelFallback("clan gohall won't go from here (cross-zone)")
+  end
   if T.stage == "buying" then
     if t:find("takes your payment and hands you", 1, true) then
       T.stage, T.boardStep = "boarding", 1

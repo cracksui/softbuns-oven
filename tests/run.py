@@ -2939,6 +2939,25 @@ def quiet_reply_once():
 
 
 @test
+def gohall_refused_plans_again():
+    # clan gohall cross-zone on a trip: plan again from here without it, instead of stopping
+    o = Oven()
+    o.lua("""sbo.cfg.promptPattern = "<%d+hp"; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      CONT = 0; sbo.tripContinue = function() CONT = CONT + 1 end
+      sbo.trip = { target = 5, used = { clan = true }, legs = 1 }
+      sbo.travel = { stage = "boarding", link = { kind = "clan", anywhere = true, board = { "clan gohall" } }, target = 5 }""")
+    o.feed("Magical transport to your clan hall from this location is considered cross-zone.", "To recall cross-zone, type CLAN GOHALL CROSSZONE.", "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("CONT"), 1, "planned again")
+    eq(o.ev("sbo.travel"), None, "the gohall step dropped")
+    assert any("trying another way" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    # not on a trip: just stops
+    o.lua("sbo.trip = nil; SAYS = {}; sbo.travel = { stage = 'boarding', link = { kind = 'clan', anywhere = true, board = { 'clan gohall' } }, target = 5 }")
+    o.feed("Magical transport to your clan hall from this location is considered cross-zone.")
+    assert any("stopped" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+
+
+@test
 def trip_stamina():
     # sbo go: what a room costs is learned from your stamina as you move; short of it before a run, Oven rests
     # until there's enough, stands and goes on; a run cut short by exhaustion: rest, then plan on
