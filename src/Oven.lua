@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.87.0"
+M.version = "1.88.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3322,7 +3322,15 @@ local function questCardHtml(id, Q)
           acts[#html] = { id = id, n = ph.n }
         end
         if first then
-          -- where the next step is, when Oven can place it
+          -- where the next step is: the room the game names for it first (green), always; what Oven
+          -- works out comes after it, as the next best thing
+          local gameRoom = M.gmcpQuestRoom(id, ph.n)
+          if gameRoom then
+            local nm = getRoomName(gameRoom) or ("#" .. gameRoom)
+            add("   " .. span(C.dim, "→ ") .. span(C.plus, nm) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>"
+              .. "&nbsp;&nbsp;" .. span(C.dim, "quest room"), ulen(nm) + 21)
+            acts[#html] = { id = id, n = ph.n }
+          end
           -- a delivery: where to get it and where to take it, each its own link
           local okD, dRoom, dWhy, getRoom, _, carrying = pcall(M.questDeliverTarget, ph, id)
           if okD and ph.text:match("deliver .- to ") then
@@ -3344,15 +3352,14 @@ local function questCardHtml(id, Q)
               add("   " .. span(C.dim, "→ " .. who .. " · not seen yet"), ulen(who) + 16)
             end
           else
-          local ok, room, why = pcall(M.questTarget, ph, id)
-          if ok and room then
-            -- green: the room the game named for this step; orange: one Oven found (an NPC seen,
-            -- where you've killed it, a room by that name on the map) - a good guess, not certain
-            local exact = why == M.QUEST_ROOM_EXACT
+          -- orange: one Oven found (a shop selling it, an NPC seen, where you've killed it, a room by that name)
+          -- - a good guess, not certain; under the game's room when there is one
+          local ok, room, why = pcall(M.questGuess, ph, id)
+          if ok and room and room ~= gameRoom then
             local nm = getRoomName(room) or ("#" .. room)
-            add("   " .. span(C.dim, "→ ") .. span(exact and C.plus or C.flag, nm) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>",
-              ulen(nm) + 10)
-            acts[#html] = { id = id, n = ph.n }
+            add("   " .. span(C.dim, "→ ") .. span(C.flag, nm) .. "&nbsp;&nbsp;<u>" .. span(C.slot, "go ▸") .. "</u>"
+              .. (gameRoom and ("&nbsp;&nbsp;" .. span(C.dim, "also")) or ""), ulen(nm) + (gameRoom and 16 or 10))
+            acts[#html] = { id = id, n = ph.n, guess = gameRoom and true or nil }
           end
           end
         end
@@ -3803,6 +3810,7 @@ function M.questAct(a)
     end
     if a.master then return M.questGoMaster(a.id) end
     if a.get or a.deliver then return M.questGoStep(a.id, a.n, a.get and "get" or "deliver") end
+    if a.guess then return M.questGoStep(a.id, a.n, "guess") end
     if a.hint then return M.questHudClick(a.id) end   -- the card's own click: opens or folds the hint
     if a.turnIn then
       if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return M.say("not in the game - nothing sent") end
@@ -4085,9 +4093,21 @@ function M.shopSelling(item, wantArea)
   return best.id, best.label
 end
 
+-- where a step is: the room the game's quest log names for it, always first; else what Oven works out
 function M.questTarget(ph, qid)
   if not ph or not ph.text then return end
-  -- an item to get that a shop you know sells (exactly that item): that shop, before anything else
+  if qid and ph.n then
+    local r = M.gmcpQuestRoom(qid, ph.n)
+    if r then return r, M.QUEST_ROOM_EXACT end
+  end
+  return M.questGuess(ph, qid)
+end
+
+-- what Oven works out for a step (second to the game's room): a shop selling the item, who a delivery is
+-- for, an NPC seen, where you've killed it, a room by that name
+function M.questGuess(ph, qid)
+  if not ph or not ph.text then return end
+  -- an item to get that a shop you know sells (exactly that item): that shop
   local item = stepItem(ph.text)
   -- a delivery you have the item for: the recipient, not the shop
   if item and ph.text:match("deliver .- to ") then
@@ -4107,11 +4127,6 @@ function M.questTarget(ph, qid)
     end
     local okS, room, label = pcall(M.shopSelling, item, stepArea)
     if okS and room then return room, label end
-  end
-  -- the game's quest log names the room for many steps
-  if qid and ph.n then
-    local r = M.gmcpQuestRoom(qid, ph.n)
-    if r then return r, M.QUEST_ROOM_EXACT end
   end
   local ck = ph.text .. "|" .. tostring(ph.area)
   local c = M.questTargetCache[ck]
@@ -4272,7 +4287,12 @@ function M.questGoStep(id, n, which)
   if not ph then return M.say("quest " .. id .. " has no step " .. tostring(n)) end
   local room, why
   local okD, dRoom, dWhy, getRoom, getWhy, carrying = pcall(M.questDeliverTarget, ph, tostring(id))
-  if okD and ph.text:match("deliver .- to ") then
+  local gameRoom = M.gmcpQuestRoom(tostring(id), ph.n)
+  if gameRoom and not which then
+    room, why = gameRoom, M.QUEST_ROOM_EXACT
+  elseif which == "guess" then
+    room, why = M.questGuess(ph, tostring(id))
+  elseif okD and ph.text:match("deliver .- to ") then
     if which == "get" or (not which and not carrying and getRoom) then room, why = getRoom, getWhy
     else room, why = dRoom, dWhy end
     if not room then

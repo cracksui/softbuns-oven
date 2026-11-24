@@ -854,7 +854,7 @@ def quest_steps_are_links():
       sbo.quests['77'] = { name = 'Lemon Run', total = 2, done = 1, phases = {
         { n = 1, text = 'Speak with the abbot', done = true }, { n = 2, text = 'Bring a lemon to the abbot' } } }
       ROOMS = { [1] = 100, [2] = 200 }
-      sbo.questTarget = function(ph) return ROOMS[ph.n], 'abbot' end
+      sbo.questTarget = function(ph) return ROOMS[ph.n], 'abbot' end; sbo.questGuess = sbo.questTarget
       roomExists = function() return true end; getRoomName = function(id) return 'room ' .. id end
       getPath = function() return false end
       WALKS = {}; sbo.mapWalkTo = function(id) WALKS[#WALKS+1] = id end""")
@@ -3962,7 +3962,7 @@ def formatting_off_no_compare():
 
 
 @test
-def quest_go_prefers_a_shop_with_the_item():
+def quest_go_game_room_first_then_shop():
     o = Oven()
     o.lua("""roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
       getRoomArea = function() return 1 end; getRoomAreaName = function() return "Rune" end
@@ -3978,10 +3978,28 @@ def quest_go_prefers_a_shop_with_the_item():
     o.lua("""sbo.questTargetCache = {}
       sbo.dbx("INSERT INTO shops (room, name, last) VALUES (300, 'Randol''s Fine Wines', 1)")
       sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last, currency) VALUES (300, 1, 'A bottle of Sepharian white wine', 1, '5', 500, 1, 'gold')")""")
-    room = o.ev(f"(sbo.questTarget({ph}, '2682'))")
-    eq(room, 300, "the shop that sells it")
-    why = o.lua(f"local _, w = sbo.questTarget({ph}, '2682') return w")
+    # the game's room stays first (user, 1.88.0); the shop is what Oven works out - second
+    eq(o.ev(f"(sbo.questTarget({ph}, '2682'))"), 62538, "the game's room first, always")
+    room = o.ev(f"(sbo.questGuess({ph}, '2682'))")
+    eq(room, 300, "the shop that sells it: second")
+    why = o.lua(f"local _, w = sbo.questGuess({ph}, '2682') return w")
     assert "Randol" in why and "Sepharian" in why, why
+    # no room from the game: the shop
+    o.lua("gmcp.char = { quests = {} }; sbo.questTargetCache = {}")
+    eq(o.ev(f"(sbo.questTarget({ph}, '2682'))"), 300, "no game room: the shop")
+    # the quest panel: the game's room first (always shown), Oven's find under it, both links
+    o.lua("""gmcp.char = { quests = { q2682 = { quest_info = { vnum = 2682 }, goals = { { phase_number = 4, room_target = 62538 } } } } }
+      sbo.questTargetCache = {}
+      sbo.quests['2682'] = { name = 'Wine', total = 4, done = 3, phases = { { n = 4, text = 'Recover and Keep a bottle of Sepharian white wine' } } }
+      local h, _, a = sbo.questCardHtml('2682', sbo.quests['2682'])
+      HTML = table.concat(h, "\\n"); GUESS = 0; for _, v in pairs(a) do if v.guess then GUESS = GUESS + 1 end end""")
+    html = o.ev("HTML")
+    assert html.index("Room 62538") < html.index("Room 300") and "quest room" in html and "also" in html, html
+    eq(o.ev("GUESS"), 1, "Oven's find is its own link")
+    o.lua("WALK = nil; sbo.goTo = function(r) WALK = r end; sbo.questGoStep('2682', 4, 'guess')")
+    eq(o.ev("WALK"), 300, "and goes to it")
+    o.lua("sbo.questGoStep('2682', 4)")
+    eq(o.ev("WALK"), 62538, "the step itself: the game's room")
 
 
 @test
