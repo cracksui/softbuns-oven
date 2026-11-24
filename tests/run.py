@@ -3505,6 +3505,15 @@ def set_bonus_in_upgrades():
     eq(o.ev("sbo.items['some recruit boots'].set.off"), 145, "the set kept, off from 145")
     o.lua('S, G, L, U = sbo.setDelta(sbo.items["a recruit helm"], sbo.items["a plain cap"])')
     eq(o.ev("#S + #G + #L + #U"), 0, "the helm's set is off too")
+    # a piece Oven had no set for (only another piece's page lists it): its page without the set turns it off too
+    o2 = Oven()
+    o2.L.globals().PAGE = o2.L.table_from(page)
+    o2.lua('''sbo.cfg.char = { total = 145 }; local h = sbo.parseItem(PAGE); h.set.minLevel, h.set.maxLevel, h.set.rangeRead = nil, nil, nil; sbo.remember(h)
+      sbo.remember(sbo.parseItem({ "Item 'some recruit boots' is type armor, alignment 0, made of steel (in (new) condition),", "has keywords 'boots', equipped on the feet.", "Armor resistance is 5." }))
+      sbo.eqNames = { "a recruit helm", "some recruit boots" }
+      S, G, L, U = sbo.setDelta(sbo.items["a recruit helm"], { name = "a cap", worn = "over the head", affects = {} })''')
+    eq(o2.ev("sbo.items['some recruit boots'].set and sbo.items['some recruit boots'].set.off"), 145, "the boots' page: the set is off")
+    eq(o2.ev("#S + #G + #L + #U"), 0, "so the helm's is too")
 
 
 @test

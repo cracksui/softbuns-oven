@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.85.1"
+M.version = "1.85.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5259,7 +5259,11 @@ function M.remember(it)
   -- the page had a set before and has none now: the game leaves a set out once you're past its levels -
   -- kept, marked as off from this level
   local had = rawget(M.items, it.name)
-  if had and had.set and had.set.name and not copy.set and copy.worn then
+  -- (or an item another piece's page lists as part of its set)
+  local hadSet = had and had.set and had.set.name and had.set
+  if not hadSet and not copy.set and copy.worn and not M.fromEqdb(copy) then pcall(M.setRange, { name = "" }); hadSet = (M.setPieces or {})[it.name] end
+  if hadSet and not copy.set and copy.worn then
+    had = { set = hadSet }
     local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
     if lvl then
       copy.set = {}
@@ -6359,11 +6363,12 @@ end
 function M.setRange(set)
   if not set or not set.name then return nil end
   if not M.setRanges then
-    M.setRanges = {}
+    M.setRanges, M.setPieces = {}, {}
     for _, r in ipairs(M.dbRows([[SELECT name FROM items WHERE data LIKE '%%["set"]=%%']]) or {}) do
       local it = M.items[r.name]
       local S = it and it.set
       if S and S.name then
+        for _, pc in ipairs(S.pieces or {}) do if pc.name then M.setPieces[pc.name] = M.setPieces[pc.name] or S end end
         local cur = M.setRanges[S.name] or {}
         if S.minLevel then cur.lo, cur.hi = S.minLevel, S.maxLevel
         elseif S.rangeRead and not cur.lo then cur.lo, cur.hi = 0, math.huge end
