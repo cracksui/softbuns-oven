@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.95.0"
+M.version = "1.96.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -175,6 +175,10 @@ local SCHEMA = {
   "CREATE TABLE IF NOT EXISTS room_flags (room INTEGER PRIMARY KEY, tags TEXT, last INTEGER)",
   "CREATE TABLE IF NOT EXISTS room_enters (room INTEGER, cmd TEXT, dest INTEGER, last INTEGER, PRIMARY KEY (room, cmd))",
   "CREATE TABLE IF NOT EXISTS marks (name TEXT PRIMARY KEY, room INTEGER, t INTEGER)",
+  -- ways learned as you go: a wilds room and the area room a step (or a command) takes you to
+  "CREATE TABLE IF NOT EXISTS entrances (wild INTEGER, room INTEGER, cmd TEXT, map TEXT, x INTEGER, y INTEGER, t INTEGER, PRIMARY KEY (wild, room))",
+  -- moves the game refused in the wilds (a wall, deep water): room and direction
+  "CREATE TABLE IF NOT EXISTS wild_blocked (room INTEGER, dir TEXT, t INTEGER, PRIMARY KEY (room, dir))",
   -- signposts: the room it stands in, the post's name and its run destinations ("rune=south;towerofart=south")
   -- shops: what each shop's list showed last time (shop list / shop i), by the room it's in
   "CREATE TABLE IF NOT EXISTS shops (room INTEGER PRIMARY KEY, name TEXT, last INTEGER)",
@@ -10754,6 +10758,7 @@ function M.gmcpHandlersList()
     registerAnonymousEventHandler("gmcp.char.cast_finished", function() pcall(M.onGmcpCastFinished) end),
     registerAnonymousEventHandler("mxp.send", function() pcall(M.onMxpSend) end),
     registerAnonymousEventHandler("gmcp.room.info", function() pcall(M.stLearnRoom) end),
+    registerAnonymousEventHandler("gmcp.room.info", function() pcall(M.wayRoom) end),
     registerAnonymousEventHandler("gmcp.char.affect_application_msg", function() pcall(M.onGmcpAffect) end),
     registerAnonymousEventHandler("gmcp.char.lasttargeted", function() pcall(M.onGmcpTarget) end),
   }
@@ -10842,6 +10847,7 @@ function M.userIdle(secs)
 end
 
 function M.onSend(_, cmd)
+  M.lastCmd = { cmd = trim(tostring(cmd or "")), at = now(), room = M.currentRoom and M.currentRoom() or M.mapRoom }
   local own = M.ownCmds and M.ownCmds[cmd]
   M.typedSend = not (own and own > 0)
   if own and own > 0 then M.ownCmds[cmd] = (own > 1) and (own - 1) or nil
@@ -13295,6 +13301,8 @@ function M.onLineWork()
   if line:find("takes your payment and hands you", 1, true) then pcall(M.noteBought, line) end
   if line:find("too low a level to wear it", 1, true) then pcall(M.noteWearLevel, line) end
   if line:match("^You dismount from ") or line:match("^You hitch ") or line:match("^You mount .-, and start riding") then pcall(M.mountLine, line) end
+  if line:find("cannot move in that direction", 1, true) then pcall(M.moveRefused, line) end
+  if line:match("^You attempt to open the %a+ %a+, but it is locked%.") then pcall(M.doorLocked, line) end
   if M.travel then pcall(M.travelLine, line) end
   if M.eqdbAt and not cap then
     local okE, done = pcall(M.eqdbLine, line)
@@ -17331,6 +17339,137 @@ function M.compassTo(x, y, tx, ty)
   return COMPASS[(dx > 0 and 1 or (dx < 0 and -1 or 0)) .. "," .. (dy > 0 and 1 or (dy < 0 and -1 or 0))]
 end
 
+---------------------------------------------------------------------------
+-- Ways learned as you go (sbo go uses them):
+--  · a command that isn't a direction and takes you to another room ("enter mirror", a spoken password,
+--    "climb rope"): a special exit on the map, so walks and trips can use it (and send it)
+--  · a step between the wilds and an area: the area's way in from that spot of the wilds (table entrances)
+--  · a move the game refuses in the wilds: that room and direction, walked around after (table wild_blocked)
+--  · a locked door: that exit locked on the map until you go through it again
+---------------------------------------------------------------------------
+M.WAY_DIRS = { n = 1, s = 1, e = 1, w = 1, ne = 1, nw = 1, se = 1, sw = 1, u = 1, d = 1, up = 1, down = 1,
+  north = 1, south = 1, east = 1, west = 1, northeast = 1, northwest = 1, southeast = 1, southwest = 1 }
+-- commands that move you but aren't a way from one room to the next
+M.WAY_NOT = { "give", "buy", "shop", "track", "mount", "dismount", "hitch", "recall", "cast", "clan", "quest", "sbo",
+  "oven", "run", "where", "look", "l", "scan", "sca", "sleep", "sl", "wake", "stand", "rest", "flee", "follow",
+  "kill", "k", "kick", "get", "drop", "put", "wear", "remove", "eq", "i", "inventory", "score", "aff", "prac",
+  "train", "c", "gohall", "portal", "transfer", "summon", "goto", "travel" }
+function M.wayCommand(cmd)
+  cmd = trim(tostring(cmd or "")):lower()
+  if cmd == "" or cmd:find(";", 1, true) or M.WAY_DIRS[cmd] then return nil end
+  local verb = cmd:match("^(%S+)")
+  for _, v in ipairs(M.WAY_NOT) do if verb == v then return nil end end
+  if cmd:match("^cast%s") or cmd:match("^'") then return nil end
+  return cmd
+end
+M.WILD_STEP = { n = { 0, -1 }, s = { 0, 1 }, e = { 1, 0 }, w = { -1, 0 }, ne = { 1, -1 }, nw = { -1, -1 }, se = { 1, 1 }, sw = { -1, 1 } }
+function M.wayRoom()
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  local id = type(info) == "table" and tonumber(info.num) or nil
+  if not id or id <= 0 then return end
+  local prev = M.wayPrev
+  M.wayPrev = { room = id, wild = tostring(info.wilds) == "true" or M.isWildRoom(id) }
+  if not prev or prev.room == id then return end
+  local C = M.lastCmd
+  if not C or now() - C.at > 4 or C.room ~= prev.room then return end
+  local cmd = trim(C.cmd):lower()
+  if M.travel or (M.running and M.running.started) then return end   -- (a ride, a run: not a way from here)
+  -- a locked exit you've just gone through: open again
+  local dirShort = ({ north = "n", south = "s", east = "e", west = "w", northeast = "ne", northwest = "nw",
+    southeast = "se", southwest = "sw", up = "u", down = "d" })[cmd] or cmd
+  if M.WAY_DIRS[cmd] and roomExists(prev.room) then pcall(lockExit, prev.room, dirShort, false) end
+  -- between the wilds and an area: its way in (or out) from that spot
+  local here = M.wayPrev
+  if prev.wild ~= here.wild then
+    local wild, room = prev.wild and prev.room or id, prev.wild and id or prev.room
+    local p = M.worldPos and M.worldPos(wild)
+    if p and roomExists(room) and not M.isWildRoom(room) then
+      local fromWild = prev.wild
+      -- the command from the wilds side: what you typed going in; going out, the way back isn't known
+      local way = fromWild and cmd or nil
+      local old = M.dbRow("SELECT cmd FROM entrances WHERE wild = %s AND room = %s", wild, room)
+      if not old or (way and old.cmd ~= way) then
+        M.dbx("INSERT OR REPLACE INTO entrances (wild, room, cmd, map, x, y, t) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+          wild, room, way or (old and old.cmd) or "", p.map, p.x, p.y, os.time())
+        M.entranceRows = nil
+        if not old then M.say(string.format("learned a way into %s: from the wilds at %d,%d%s - sbo go uses it",
+          (getRoomAreaName(getRoomArea(room)) or getRoomName(room) or ("#" .. room)), p.x, p.y, way and way ~= "" and ("  (" .. way .. ")") or "")) end
+      end
+    end
+  end
+  -- a command that's not a direction: a special exit on the map (both rooms on it, not one already)
+  local way = M.wayCommand(cmd)
+  if way and roomExists(prev.room) and roomExists(id) then
+    local have = false
+    for c, to in pairs(getSpecialExitsSwap and (getSpecialExitsSwap(prev.room) or {}) or {}) do
+      if tostring(c):lower() == way then have = true end
+    end
+    if not have then
+      local okA = pcall(addSpecialExit, prev.room, id, way)
+      if okA then
+        M.say(string.format("learned a way: '%s' from %s to %s - sbo go uses it (sbo map to see it)", way,
+          getRoomName(prev.room) or ("#" .. prev.room), getRoomName(id) or ("#" .. id)))
+        pcall(M.mapLearned)
+      end
+    end
+  end
+end
+
+-- the game refused a move: in the wilds, that room and direction are remembered (walked around after)
+function M.moveRefused()
+  local C = M.lastCmd
+  if not C or now() - C.at > 4 then return end
+  local d = C.cmd:lower()
+  d = ({ north = "n", south = "s", east = "e", west = "w", northeast = "ne", northwest = "nw", southeast = "se", southwest = "sw" })[d] or d
+  if not M.WILD_STEP[d] or not C.room or not M.isWildRoom(C.room) then return end
+  M.dbx("INSERT OR REPLACE INTO wild_blocked (room, dir, t) VALUES (%s, %s, %s)", C.room, d, os.time())
+  M.wildBlockedCache = nil
+  -- a trip walking the wilds: another way, at once
+  local T = M.travel
+  if T and (T.stage == "toSign" or T.stage == "toCast") and T.lastDir == d then
+    T.refused = (T.refused or 0) + 1
+    tempTimer(0.3, function()
+      if M.travel ~= T then return end
+      if T.stage == "toSign" then M.travelSignStep() else M.travelCastStep() end
+    end)
+  end
+end
+function M.wildBlocked(room, dir)
+  if not M.wildBlockedCache then
+    M.wildBlockedCache = {}
+    for _, r in ipairs(M.dbRows("SELECT room, dir FROM wild_blocked")) do M.wildBlockedCache[tostring(r.room) .. ":" .. r.dir] = true end
+  end
+  return M.wildBlockedCache[tostring(room) .. ":" .. dir] == true
+end
+-- the next step through the wilds from (x, y) in room toward (tx, ty): the straight way unless it's been refused
+-- here; else the open neighbour nearest the goal that this walk hasn't stood on yet (T.seen)
+function M.wildStep(room, x, y, tx, ty, T)
+  T.seen = T.seen or {}
+  T.seen[x .. "," .. y] = true
+  local best, bd
+  for d, v in pairs(M.WILD_STEP) do
+    local nx, ny = x + v[1], y + v[2]
+    if not M.wildBlocked(room, d) and not T.seen[nx .. "," .. ny] then
+      local dist = math.max(math.abs(tx - nx), math.abs(ty - ny)) + (math.abs(tx - nx) + math.abs(ty - ny)) * 0.01
+      if not bd or dist < bd then best, bd = d, dist end
+    end
+  end
+  return best
+end
+
+-- "You attempt to open the north door, but it is locked.": that exit locked on the map (routes avoid it)
+function M.doorLocked(l)
+  local word, what = l:match("^You attempt to open the (%a+) (%a+), but it is locked")
+  local d = ({ north = "n", south = "s", east = "e", west = "w", northeast = "ne", northwest = "nw", southeast = "se",
+    southwest = "sw", up = "u", down = "d" })[word or ""]
+  local room = M.mapRoom
+  if not d or not room or not roomExists(room) then return end
+  if pcall(lockExit, room, d, true) then
+    M.say(string.format("the %s %s here is locked - routes go around it until you've been through it", word, what))
+    if M.walk then M.walk = nil; M.notifyWalk("stopped: a locked " .. what .. " - sbo go again for another way") end
+  end
+end
+
 -- a recall from a room (where you stand, or where a ride lands): for each signpost worth it, the walk out
 -- and the cost on from it - the best { link, walk, cost (to the target) }
 M.RECALL_TRY = 5   -- signposts offered to the search (the nearest few by a quick estimate)
@@ -17389,6 +17528,30 @@ function M.wildSignLinks(room)
     out[#out + 1] = { kind = "wildwalk", sign = S, board = {}, cost = 0, noBuy = true, walkOut = d, land = S.room,
       areaId = getRoomArea(S.room), dest = (M.signLabel and M.signLabel(S.room)) or ("#" .. S.room),
       dir = M.compassTo(p.x, p.y, S.x, S.y), shopName = "", key = "wildwalk:" .. S.room }
+  end
+  return out
+end
+
+-- the ways into the target's area learned from the wilds (table entrances), as links: from a spot of the wilds
+-- (where you stand, or a signpost near the way in) a walk there through the wilds, then the step or command in
+function M.entranceLinks(from, target)
+  local out = {}
+  local ta = target and roomExists(target) and getRoomArea(target)
+  local p = M.worldPos and M.worldPos(from)
+  if not ta or not p then return out end
+  if not M.entranceRows then M.entranceRows = M.dbRows("SELECT wild, room, cmd, map, x, y FROM entrances WHERE cmd != ''") end
+  for _, e in ipairs(M.entranceRows) do
+    local room = tonumber(e.room)
+    if room and roomExists(room) and getRoomArea(room) == ta and e.map == p.map and tonumber(e.wild) ~= from then
+      local ex, ey = tonumber(e.x), tonumber(e.y)
+      local d = math.max(math.abs(ex - p.x), math.abs(ey - p.y))
+      if d <= M.WILD_SIGN_MAX then
+        out[#out + 1] = { kind = "wildwalk", sign = { room = tonumber(e.wild), x = ex, y = ey, map = e.map }, board = {}, cost = 0,
+          noBuy = true, walkOut = d, land = room, areaId = ta, enter = e.cmd,
+          dest = getRoomAreaName(ta) or getRoomName(room) or ("#" .. room), dir = M.compassTo(p.x, p.y, ex, ey), shopName = "",
+          key = "entrance:" .. e.wild .. ">" .. room .. "@" .. tostring(from) }
+      end
+    end
   end
   return out
 end
@@ -17564,6 +17727,17 @@ function M.tripEdges(here, target, used)
       add({ from = here, to = w.land, cmd = TRIP .. w.key, link = w, weight = w.walkOut + 2 })
     end
   end
+  -- learned ways into the target's area from the wilds: from here (in the wilds) and from the signposts near them
+  do
+    local froms = {}
+    if M.isWildRoom(here) and roomExists(here) then froms[#froms + 1] = here end
+    for _, S in ipairs(M.signpostPoints()) do if roomExists(S.room) then froms[#froms + 1] = S.room end end
+    for _, f in ipairs(froms) do
+      for _, w in ipairs(M.entranceLinks(f, target)) do
+        if not used[w.key] then add({ from = f, to = w.land, cmd = TRIP .. w.key, link = w, weight = w.walkOut + 4 }) end
+      end
+    end
+  end
   -- (standing in the clan hall: out, east, north or south, and recall)
   local inHall = tonumber(M.cfg.clanHall) == here
   -- no other way (an island, a ship, a place the map can't walk out of): recall where you stand - to the
@@ -17615,6 +17789,13 @@ function M.tripPlan(here, target, used)
       starts = M.clanRecallCandidates(target)
     else
       for _, c in ipairs(M.recallCandidates(here, target)) do starts[#starts + 1] = c end
+      -- (in the wilds, off the map: a walk to a signpost near, or to a learned way into the target's area)
+      if M.isWildRoom(here) and not (used or {}).wildwalk then
+        for _, w in ipairs(M.wildSignLinks(here)) do starts[#starts + 1] = { k = w.walkOut + 2, link = w, walk = true } end
+      end
+      for _, w in ipairs(M.entranceLinks(here, target)) do
+        if not (used or {})[w.key] then starts[#starts + 1] = { k = w.walkOut + 4, link = w, walk = true } end
+      end
       local ch = not (used or {}).clan and M.recallReady() and M.clanHallLink()
       if ch then
         for _, c in ipairs(M.clanRecallCandidates(target)) do
@@ -17630,7 +17811,7 @@ function M.tripPlan(here, target, used)
       if roomExists(c.link.land) then
         local u = {}
         for k, v in pairs(used or {}) do u[k] = v end
-        u.recall, u.recallHere, u.clan = true, true, true
+        if c.walk then u.wildwalk, u.recallHere = true, true else u.recall, u.recallHere, u.clan = true, true, true end
         local sub = c.link.land == target and { segs = {}, gold = 0, rides = 0, runs = 0, walked = 0, wild = 0 }
           or M.tripPlanOnce(c.link.land, target, u)
         if sub then
@@ -18071,8 +18252,9 @@ function M.travelCastStep()
     T.stage, T.boardStep, T.castRoom = "boarding", 1, M.mapRoom
     return M.travelBoard()
   end
-  local d = L.clanRoute and L.clanRoute.dir or M.compassTo(x, y, S.x, S.y)
+  local d = L.clanRoute and L.clanRoute.dir or M.wildStep(M.mapRoom or tonumber(info.num), x, y, S.x, S.y, T)
   if not d then return stop("lost the way") end
+  T.lastDir = d
   go(d)
 end
 
@@ -18085,16 +18267,33 @@ function M.travelSignStep()
   local function stop(why) M.travel = nil; M.trip = nil; say("travel: " .. why .. " - stopped") end
   local info = M.gmcpGet and M.gmcpGet("room.info")
   local x, y = type(info) == "table" and tonumber(info.coord and info.coord.x), type(info) == "table" and tonumber(info.coord and info.coord.y)
+  -- a way into an area (learned): in once you're inside
+  local entrance = T.link.enter ~= nil
+  if entrance and M.mapRoom == T.link.land then
+    M.travel = nil
+    say("travel: in " .. T.link.dest .. " - on from here")
+    return tempTimer(0.5, function() if M.trip then M.tripContinue() else M.goTo(T.target) end end)
+  end
   if M.mapRoom == S.room or (x == S.x and y == S.y) then
+    if entrance then
+      if T.entered then return stop("the way in (" .. T.link.enter .. ") didn't take you in") end
+      T.entered = true
+      local mine = T
+      M.sendOwn(T.link.enter, false)
+      tempTimer(6, function() if M.travel == mine and M.mapRoom ~= mine.link.land then stop("the way in (" .. mine.link.enter .. ") didn't take you in") end end)
+      return
+    end
     M.travel = nil
     say("travel: at the " .. T.link.dest .. " - on from here")
     return tempTimer(0.5, function() if M.trip then M.tripContinue() else M.goTo(T.target) end end)
   end
   T.steps = T.steps + 1
-  if T.steps > (T.link.walkOut or 0) + 30 then return stop("couldn't get to the " .. T.link.dest) end
+  if T.steps > (T.link.walkOut or 0) * 2 + 30 then return stop("couldn't get to the " .. T.link.dest) end
   if not x then return stop("lost the way (no coordinates here)") end
-  local d = M.compassTo(x, y, S.x, S.y)
-  if not d then return stop("lost the way") end
+  -- straight there, around any move refused before (a wall, deep water)
+  local d = M.wildStep(M.mapRoom or (info and tonumber(info.num)), x, y, S.x, S.y, T)
+  if not d then return stop("no way on toward the " .. T.link.dest .. " (every way from here refused)") end
+  T.lastDir = d
   local mine, n = T, T.steps
   M.sendOwn(d, false)
   tempTimer(6, function() if M.travel == mine and mine.steps == n then stop("no way " .. d .. " (blocked?)") end end)

@@ -2958,6 +2958,63 @@ def gohall_refused_plans_again():
 
 
 @test
+def ways_learned():
+    # a command that moves you (not a direction): a special exit on the map; a step from the wilds into an area:
+    # its way in; a move refused in the wilds: walked around after; a locked door: that exit locked on the map
+    o = Oven()
+    o.lua("""sbo.cfg.promptPattern = "<%d+hp"; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      MAPPED = { [100] = 1, [101] = 1, [200] = 2 }
+      roomExists = function(id) return MAPPED[id] ~= nil end
+      getRoomArea = function(id) return MAPPED[id] end
+      getRoomAreaName = function(a) return a == 2 and "The Proving Grounds" or "Rune" end
+      getRoomName = function(id) return "Room " .. id end
+      SPECIAL = {}; addSpecialExit = function(a, b, c) SPECIAL[a] = SPECIAL[a] or {}; SPECIAL[a][c] = b end
+      getSpecialExitsSwap = function(a) return SPECIAL[a] or {} end
+      LOCKED = {}; lockExit = function(r, d, on) LOCKED[r .. d] = on or nil end
+      sbo.worldPos = function(r) if r >= 1000000 then local d = r - 1060834; return { map = "Alyria", x = d % 2300, y = math.floor(d / 2300) } end end
+      function AT(room, wilds) gmcp.room = { info = { num = tostring(room), wilds = wilds and "true" or "false" } }; sbo.currentRoom = function() return room end; sbo.mapRoom = room; handlers["gmcp.room.info"]("gmcp.room.info") end""")
+    o.lua("AT(100); sbo.onSend(nil, 'enter mirror'); AT(101)")
+    eq(o.ev("SPECIAL[100]['enter mirror']"), 101, "enter mirror: a special exit")
+    assert any("learned a way: 'enter mirror'" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    o.lua("SAYS = {}; AT(100); sbo.onSend(nil, 'look'); AT(101)")
+    eq(o.ev("SPECIAL[100]['look']"), None, "not every command")
+    # from the wilds into an area: its way in
+    wild = 1060834 + 686 * 2300 + 1328
+    o.lua(f"AT({wild}, true); sbo.onSend(nil, 'n'); AT(200)")
+    row = o.rows("SELECT wild, room, cmd, x, y FROM entrances")[0]
+    eq((row["wild"], row["room"], row["cmd"], row["x"], row["y"]), (wild, 200, "n", 1328, 686), "the way in")
+    near = 1060834 + 690 * 2300 + 1330
+    o.lua(f"LINKS = sbo.entranceLinks({near}, 200)")
+    eq(o.ev("LINKS[1] and LINKS[1].land"), 200, "offered to the planner")
+    eq(o.ev("LINKS[1].enter"), "n", "with the step in")
+    # refused in the wilds: remembered, and the next step goes around it
+    o.lua(f"AT({near}, true); sbo.onSend(nil, 'n')")
+    o.feed("You cannot move in that direction.")
+    eq(o.ev(f"sbo.wildBlocked({near}, 'n')"), True, "remembered")
+    o.lua("T = {}")
+    d = o.ev(f"sbo.wildStep({near}, 1330, 690, 1330, 600, T)")
+    assert d in ("ne", "nw"), d
+    # a locked door
+    o.lua("AT(100); sbo.onSend(nil, 'n')")
+    o.feed("You attempt to open the north door, but it is locked.")
+    eq(o.ev("LOCKED['100n']"), True, "locked on the map")
+    o.lua("AT(100); sbo.onSend(nil, 'n'); AT(101)")
+    eq(o.ev("LOCKED['100n']"), None, "been through it: open again")
+    # a trip through a learned way in: to the spot, then the step in, then on
+    o.lua(f"""SENT = {{}}; send = function(c) SENT[#SENT+1] = c end
+      sbo.trip = {{ target = 200, used = {{}}, legs = 1 }}; CONT = 0; sbo.tripContinue = function() CONT = CONT + 1 end
+      gmcp.room = {{ info = {{ num = "{wild + 1}", wilds = "true", coord = {{ x = 1329, y = 686, name = "Alyria" }} }} }}; sbo.mapRoom = {wild + 1}
+      sbo.travelStart({{ legs = {{ {{ link = LINKS[1] }} }} }}, 200, 1)""")
+    eq(o.ev("SENT[#SENT]"), "w", "toward the spot")
+    o.lua(f"""gmcp.room = {{ info = {{ num = "{wild}", wilds = "true", coord = {{ x = 1328, y = 686, name = "Alyria" }} }} }}; sbo.mapRoom = {wild}
+      sbo.travelSignStep()""")
+    eq(o.ev("SENT[#SENT]"), "n", "at the spot: the step in")
+    o.lua("gmcp.room = { info = { num = '200', wilds = 'false' } }; sbo.mapRoom = 200; sbo.travelOnRoom(200)")
+    o.L.execute("runTimers()")
+    eq(o.ev("CONT"), 1, "inside: the trip goes on")
+
+
+@test
 def mount_left_marked():
     # dismount / hitch: the room is marked (lit, bookmark "mount"); mount again: the mark goes
     o = Oven()
