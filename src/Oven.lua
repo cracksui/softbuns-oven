@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.96.1"
+M.version = "1.97.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6904,6 +6904,54 @@ function M.carriedItems()
   return out
 end
 
+-- can you use it? the page's requirements ("*Your race must be equal to ogre to use this item.", kept as
+-- "Requires" lines): race, class (any of your classes), alignment, attributes; a set place ("current location")
+-- means not for wearing about. Level is left to the upgrade list's own levels. Returns ok, why
+function M.itemUsable(it)
+  local c = M.cfg.char or {}
+  for _, x in ipairs(it and it.extra or {}) do
+    if x[1] == "Requires" then
+      local text = ""
+      for _, sg in ipairs(x[2] or {}) do text = text .. tostring(sg[2]) end
+      text = trim(text):lower()
+      local what, op, val = text:match("^(.-) (something other than) (.+)$")
+      if not what then what, op, val = text:match("^(.-) (less than or equal to) (.+)$") end
+      if not what then what, op, val = text:match("^(.-) (greater than or equal to) (.+)$") end
+      if not what then what, op, val = text:match("^(.-) (equal to) (.+)$") end
+      if not what then what, op, val = text:match("^(.-) (less than) (.+)$") end
+      if not what then what, op, val = text:match("^(.-) (greater than) (.+)$") end
+      if what then
+        local have
+        if what == "race" then have = c.race and c.race:lower()
+        elseif what == "class" then
+          -- any class you have
+          local mine = {}
+          for _, cl in ipairs(c.path or {}) do mine[cl:lower()] = true end
+          if c.class then mine[c.class:lower()] = true end
+          if next(mine) then
+            if op == "equal to" and not mine[val] then return false, val .. " only" end
+            if op == "something other than" and mine[val] then return false, "not for a " .. val end
+          end
+        elseif what == "current location" then return false, "only in " .. val
+        elseif what == "alignment" then have = tonumber(((M.gmcpGet and M.gmcpGet("char.status")) or {}).align)
+        elseif what ~= "level" then have = tonumber(((c.stats or {})[what] or {}).cur) end
+        if have ~= nil and what ~= "class" then
+          local n = tonumber(val)
+          local ok = true
+          if op == "equal to" then ok = (n and have == n) or (not n and tostring(have) == val)
+          elseif op == "something other than" then ok = not ((n and have == n) or (not n and tostring(have) == val))
+          elseif n and op == "less than or equal to" then ok = have <= n
+          elseif n and op == "greater than or equal to" then ok = have >= n
+          elseif n and op == "less than" then ok = have < n
+          elseif n and op == "greater than" then ok = have > n end
+          if not ok then return false, (what == "race" and op == "equal to") and (val .. " only") or (what .. " " .. op .. " " .. val) end
+        end
+      end
+    end
+  end
+  return true
+end
+
 function M.upgradeLines(width, all, role, src, maxLvl)
   local bname, w = M.activeBuild()
   local myLvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
@@ -6979,6 +7027,9 @@ function M.upgradeLines(width, all, role, src, maxLvl)
       local rl = tonumber(r.level)
       local tooHigh = (hi and rl and rl > hi) or (lo and (not rl or rl <= lo))
       local fromSrc = src ~= "eqdb" or M.fromEqdb(M.items[r.name])
+      -- not for you (another race or class, a set place…): left out
+      local okU, usable = pcall(M.itemUsable, M.items[r.name])
+      if okU and usable == false then fromSrc = false end
       if not isWorn[r.name] and not used[r.name] and not tooHigh and fromSrc and (all or carried[r.name]) then
         if useModel then
           local v, m = M.upgradeValue(cur, M.items[r.name], w, role)

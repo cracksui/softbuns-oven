@@ -3788,6 +3788,24 @@ def spell_you_already_have_adds_nothing():
 
 
 @test
+def items_you_cant_use():
+    # the page's requirements: another race or class, a set place, too little of an attribute - not for you
+    o = Oven()
+    o.lua("""sbo.cfg.char = { race = "sahuagin", class = "rogue", path = { "monk", "barbarian", "rogue" },
+        stats = { strength = { cur = 22 } } }
+      local function it(...) local ex = {} for _, t in ipairs({...}) do ex[#ex+1] = { "Requires", { { "oven_item", t } } } end return { name = "x", extra = ex } end
+      function U(...) local ok, why = sbo.itemUsable(it(...)) return tostring(ok) .. "|" .. tostring(why) end""")
+    eq(o.ev("U('class equal to barbarian', 'race equal to ogre')"), "false|ogre only", "splints: ogre only")
+    eq(o.ev("U('class equal to barbarian')"), "true|nil", "a class you have")
+    eq(o.ev("U('class equal to ranger')"), "false|ranger only", "one you don't")
+    eq(o.ev("U('race something other than dwarf')"), "true|nil", "not a dwarf")
+    eq(o.ev("U('race something other than sahuagin')"), "false|race something other than sahuagin", "not for you")
+    eq(o.ev("U('current location equal to old dragon clan hall  (enforced)')"), "false|only in old dragon clan hall  (enforced)", "a set place")
+    eq(o.ev("U('strength greater than or equal to 25')"), "false|strength greater than or equal to 25", "too weak")
+    eq(o.ev("U('level less than or equal to 210')"), "true|nil", "level: the list's own levels")
+
+
+@test
 def upgrades_from_what_you_carry():
     o = Oven()
     o.lua('''
