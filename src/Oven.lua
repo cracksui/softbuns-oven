@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.94.1"
+M.version = "1.94.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -17794,12 +17794,12 @@ function M.stPerRoom(k)
   if c and c.n >= 5 then return c.avg end
 end
 M.ST_KINDS = { { "walk", "walk" }, { "run", "run" }, { "walklev", "walk+lev" }, { "runlev", "run+lev" } }
+-- short, for sbo config: "3.8" learned, "2 set" yours, "-" not learned yet
 function M.stCostText(k)
   local fixed = tonumber((M.cfg.stFixed or {})[k])
+  if fixed then return tostring(fixed) .. " set" end
   local c = (M.cfg.stCost or {})[k]
-  local learned = c and string.format("%.1f a room, from %d moves", c.avg, c.n) or "not learned yet"
-  if fixed then return tostring(fixed) .. " (yours; learned: " .. learned .. "; default to go back)" end
-  return "learned (" .. learned .. ")"
+  return c and string.format("%.1f", c.avg) or "-"
 end
 function M.stCostSet(k, v)
   v = trim(tostring(v or "")):lower()
@@ -19754,11 +19754,12 @@ M.SETTINGS = {
   { "map", "Map panel", BOOL, function() return onoff(M.cfg.map) end, function(v) legacy("map " .. v) end },
   { "go.rest", "Travel", BOOL, function() return onoff(M.cfg.tripRest ~= false) end,
     function(v) M.cfg.tripRest = (v == "on"); M.saveSettings()
-      say("sbo go " .. (v == "on" and "rests when your stamina won't last the next run or walk" or "doesn't rest for stamina (a run cut short by exhaustion: it plans on from there)")) end },
-  { "go.stamina.walk", "Travel", "number", function() return M.stCostText("walk") end, function(v) M.stCostSet("walk", v) end },
-  { "go.stamina.run", "Travel", "number", function() return M.stCostText("run") end, function(v) M.stCostSet("run", v) end },
-  { "go.stamina.walklev", "Travel", "number", function() return M.stCostText("walk+lev") end, function(v) M.stCostSet("walk+lev", v) end },
-  { "go.stamina.runlev", "Travel", "number", function() return M.stCostText("run+lev") end, function(v) M.stCostSet("run+lev", v) end },
+      say("sbo go " .. (v == "on" and "rests when your stamina won't last the next run or walk" or "doesn't rest for stamina (a run cut short by exhaustion: it plans on from there)")) end,
+    "rest when stamina is short" },
+  { "go.stamina.walk", "Travel", "number", function() return M.stCostText("walk") end, function(v) M.stCostSet("walk", v) end, "stamina a room walking (default: learned)" },
+  { "go.stamina.run", "Travel", "number", function() return M.stCostText("run") end, function(v) M.stCostSet("run", v) end, "running" },
+  { "go.stamina.walklev", "Travel", "number", function() return M.stCostText("walk+lev") end, function(v) M.stCostSet("walk+lev", v) end, "walking, levitating" },
+  { "go.stamina.runlev", "Travel", "number", function() return M.stCostText("run+lev") end, function(v) M.stCostSet("run+lev", v) end, "running, levitating" },
   { "go.goldmargin", "Travel", "number", function() return tostring(M.tripGoldMargin()) end,
     function(v)
       local n = tonumber(v)
@@ -19766,7 +19767,7 @@ M.SETTINGS = {
       M.cfg.tripGoldMargin = n; M.saveSettings()
       say(n == 0 and "paid rides (worm, balloons) are taken whenever they're quicker"
         or string.format("paid rides are taken only when they save at least %d steps", n))
-    end },
+    end, "steps a paid ride must save" },
   { "map.panel", "Map panel", BOOL, function() return onoff(M.cfg.mapPanel) end, function(v) legacy("map panel " .. v) end },
   { "map.colours", "Map panel", { "natural", "ascii", "game" }, function() return M.worldColourMode() end,
     function(v)
@@ -19854,7 +19855,7 @@ function M.config(r)
     return M.configList(name)
   end
   if v == "" then
-    return say(string.format("%s is %s  (sbo config %s %s)", s[1], s[4](), s[1], valuesText(s)))
+    return say(string.format("%s is %s  (sbo config %s %s)%s", s[1], s[4](), s[1], valuesText(s), s[6] and (" - " .. s[6]) or ""))
   end
   if type(s[3]) == "table" then
     local val = pick((function() local l = {} for _, x in ipairs(s[3]) do l[#l + 1] = { name = x } end return l end)(), v)
@@ -19891,7 +19892,7 @@ function M.configList(only)
       end
       local cur = s[4]()
       out[#out + 1] = { { C.key, "  " .. pad(s[1], kw + 2) }, { (cur == "on") and C.plus or ((cur == "off") and C.dim or C.num), pad(cur, 10) },
-                        { C.dim, valuesText(s) } }
+                        { C.dim, valuesText(s) .. (s[6] and ("  " .. s[6]) or "") } }
       -- (no one-click link for formatting: too big a switch to flip by a stray click)
       if s[3] == BOOL and s[1] ~= "formatting" then
         local key = s[1]

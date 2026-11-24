@@ -3036,10 +3036,10 @@ def trip_stamina():
     o.lua("sbo.affNow = function() return nil end")
     eq(o.ev("sbo.stNeed('walk', 100)"), 480, "not: 4 a room")
     # the numbers, shown and set in sbo config
-    assert "4.0 a room, from 9 moves" in o.ev("sbo.stCostText('walk')"), o.ev("sbo.stCostText('walk')")
+    eq(o.ev("sbo.stCostText('walk')"), "4.0", "learned, shown short")
     o.lua("sbo.config('go.stamina.walk 2')")
     eq(o.ev("sbo.stNeed('walk', 100)"), 250, "yours: 2 a room")
-    assert o.ev("sbo.stCostText('walk')").startswith("2 (yours"), o.ev("sbo.stCostText('walk')")
+    eq(o.ev("sbo.stCostText('walk')"), "2 set", "yours")
     o.lua("sbo.config('go.stamina.walk default')")
     eq(o.ev("sbo.stNeed('walk', 100)"), 480, "default: learned again")
 
