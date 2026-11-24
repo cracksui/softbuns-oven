@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.90.2"
+M.version = "1.91.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10753,6 +10753,7 @@ function M.gmcpHandlersList()
     registerAnonymousEventHandler("gmcp.char.worth", function() pcall(M.onGmcpWorth) end),
     registerAnonymousEventHandler("gmcp.char.cast_finished", function() pcall(M.onGmcpCastFinished) end),
     registerAnonymousEventHandler("mxp.send", function() pcall(M.onMxpSend) end),
+    registerAnonymousEventHandler("gmcp.room.info", function() pcall(M.stLearnRoom) end),
     registerAnonymousEventHandler("gmcp.char.affect_application_msg", function() pcall(M.onGmcpAffect) end),
     registerAnonymousEventHandler("gmcp.char.lasttargeted", function() pcall(M.onGmcpTarget) end),
   }
@@ -13379,7 +13380,7 @@ function M.onLineWork()
   if M.rideTicket and line:find("slams into the ground", 1, true) then pcall(M.rideLine, line) end
   local mount = line:match("^%s*%(Mount:%s*(%d+)%s*st%)%s*$")
   if mount then
-    M.mountPending = tonumber(mount)
+    M.mountPending, M.mountSeenAt = tonumber(mount), now()
     if M.cfg.bar then deleteLine() end
     return
   end
@@ -16475,6 +16476,11 @@ function M.runStopped(atSign)
   end
   -- part of a trip: plan on from here
   if R.trip and M.trip == R.trip then
+    if R.exhausted and here ~= R.target then
+      -- out of stamina: rest until there's enough to go on, then plan on from here
+      local T = M.trip
+      return M.stRest(M.stMax() and math.floor(M.stMax() * 0.9) or nil, function() if M.trip == T then M.tripContinue() end end)
+    end
     if not (atSign and R.started) and here ~= R.target then
       M.trip = nil
       return M.notifyWalk("stopped: the run was cut short" .. (here and (" at #" .. here) or "") .. " - sbo go again to go on")
@@ -16503,6 +16509,7 @@ M.addBlockReader("signpost_runs", "*", function(b)
       -- on foot "You start running."; mounted "You start traveling with a winged gryphon."
       if t == "You start running." or t:match("^You start traveling with ") then R.started = true end
       if t == "That only works in the wilds!" then M.runFailed("only works in the wilds") end
+      if t:match("^Exhausted, this looks like as good a place as any to stop and rest") then R.exhausted = true end
       if t == "You stop running." or t:match("^You stop traveling") or t:match("^Your travels? .-comes? to an? %a+%.$")
          or t:match("^Your travels? .-ends?%.$") then
         M.runStopped(atSign)
@@ -17733,6 +17740,72 @@ end
 
 -- going: walk (runs and all) to the first ride, take it, then plan again from wherever it landed - until
 -- the rest is on foot. Each ride once a trip (a landing that's off can't send you round again)
+---------------------------------------------------------------------------
+-- Stamina on trips: what a room costs on foot and running is learned from your stamina (GMCP char.vitals)
+-- as you move (not while riding a mount: it's the mount's then). Before a run, or the walk to one, Oven
+-- checks you have enough; if not it rests (rest), waits until you do, stands and goes on.
+---------------------------------------------------------------------------
+function M.stNow() local v = M.gmcpGet and M.gmcpGet("char.vitals"); return type(v) == "table" and tonumber(v.st) or nil end
+function M.stMax() return tonumber((M.cfg.maxes or {}).st) end
+function M.mounted() return M.mountSeenAt ~= nil and now() - M.mountSeenAt < 20 end
+-- a room change: what it cost (into a running average per kind: walk, run)
+function M.stLearnRoom()
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  local id = type(info) == "table" and tonumber(info.num) or nil
+  local st = M.stNow()
+  local prev = M.stPrev
+  M.stPrev = { room = id, st = st, run = M.running and M.running.started or false }
+  if not (prev and id and st and prev.st) or prev.room == id or M.mounted() or M.stResting then return end
+  local drop = prev.st - st
+  if drop <= 0 or drop > 200 then return end   -- regained, or something else took it
+  local kind = (prev.run and M.running and M.running.started) and "run" or "walk"
+  M.cfg.stCost = M.cfg.stCost or {}
+  local c = M.cfg.stCost[kind] or { avg = drop, n = 0 }
+  c.n = c.n + 1
+  c.avg = c.avg + (drop - c.avg) / math.min(c.n, 50)
+  M.cfg.stCost[kind] = c
+end
+-- stamina a leg needs (nil: not learned yet, or riding - the mount's own)
+function M.stNeed(kind, rooms)
+  if M.mounted() or not rooms or rooms <= 0 then return nil end
+  local c = (M.cfg.stCost or {})[kind]
+  if not c or c.n < 5 then return nil end
+  return math.ceil(rooms * c.avg * 1.15) + 20   -- a margin: terrain differs
+end
+function M.stRunRooms(from, to)
+  local a, b = M.worldPos and M.worldPos(from), M.worldPos and M.worldPos(to)
+  if not (a and b and a.map == b.map) then return nil end
+  return math.ceil(math.max(math.abs(a.x - b.x), math.abs(a.y - b.y)) * M.RUN_WINDING)
+end
+-- rest until you have `need` stamina (at most your maximum), then stand and do fn
+function M.stRest(need, fn)
+  local mx = M.stMax()
+  need = need and mx and math.min(need, mx) or need or mx
+  if not need then return fn() end
+  if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return say("not in the game - nothing sent") end
+  M.notifyWalk(string.format("resting: %d stamina needed, you have %d - going on once there's enough (sbo stop to stop)", need, M.stNow() or 0))
+  M.stResting = { need = need, fn = fn, at = now(), best = M.stNow() or 0, bestAt = now() }
+  local R = M.stResting
+  M.sendOwn("rest", false)
+  local function tick()
+    if M.stResting ~= R then return end
+    local st = M.stNow() or 0
+    if st > R.best then R.best, R.bestAt = st, now() end
+    if st >= R.need then
+      M.stResting = nil
+      M.sendOwn("stand", false)
+      return tempTimer(1, function() R.fn() end)
+    end
+    if now() - R.bestAt > 60 then
+      M.stResting = nil
+      M.trip = nil
+      return M.notifyWalk("stopped: stamina isn't coming back while resting here - sbo go again when you're ready")
+    end
+    tempTimer(3, tick)
+  end
+  tempTimer(3, tick)
+end
+
 function M.tripStart(target)
   M.trip = { target = target, used = {}, legs = 0 }
   M.tripContinue()
@@ -17754,12 +17827,27 @@ function M.tripContinue()
   T.ride = first
   if here == first.from then return M.tripRide() end
   T.waitAt = first.from
+  -- the walk there: enough stamina for it? if not: rest first
+  local steps = (getPath(here, first.from) and #speedWalkDir) or 0
+  local need = M.stNeed("walk", steps)
+  if need and (M.stNow() or 0) < need and not T.stWalkOk then
+    return M.stRest(need, function() if M.trip == T then T.stWalkOk = true; T.legs = T.legs - 1; M.tripContinue() end end)
+  end
+  T.stWalkOk = nil
   M.mapWalkTo(first.from, true)
 end
 function M.tripRide()
   local T = M.trip
   if not T or not T.ride then return end
   local sg = T.ride
+  if sg.kind == "run" and not T.stOk then
+    -- enough stamina for the run? if not: rest first
+    local need = M.stNeed("run", M.stRunRooms(sg.from or M.mapRoom, sg.to))
+    if need and (M.stNow() or 0) < need then
+      return M.stRest(need, function() if M.trip == T then T.stOk = true; M.tripRide() end end)
+    end
+  end
+  T.stOk = nil
   T.ride, T.waitAt = nil, nil
   if sg.kind == "run" then
     M.runStart(sg.name, sg.to)
@@ -19370,6 +19458,7 @@ function M.stopAll()
     what[#what + 1] = "looking at items"
   end
   if M.pickupPending then M.pickupPending = nil; what[#what + 1] = "looking at picked-up items" end
+  if M.stResting then M.stResting = nil; what[#what + 1] = "resting for the trip (you're still resting - stand when you like)" end
   if #what == 0 then return say("nothing to stop") end
   say("stopped " .. table.concat(what, " and ") .. (M.running and " (a signpost run goes on until it stops)" or ""))
 end

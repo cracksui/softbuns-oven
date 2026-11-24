@@ -2939,6 +2939,58 @@ def quiet_reply_once():
 
 
 @test
+def trip_stamina():
+    # sbo go: what a room costs is learned from your stamina as you move; short of it before a run, Oven rests
+    # until there's enough, stands and goes on; a run cut short by exhaustion: rest, then plan on
+    o = Oven()
+    o.lua("""sbo.cfg.promptPattern = "<%d+hp"; SENT = {}; send = function(c) SENT[#SENT+1] = c end
+      sbo.inGame = function() return true end; sbo.cfg.maxes = { st = 1000 }
+      NOTES = {}; sbo.notifyWalk = function(m) NOTES[#NOTES+1] = m end""")
+    def at(room, st):
+        o.set_gmcp("char.vitals", "{ st = %d }" % st)
+        o.set_gmcp("room.info", '{ num = "%d" }' % room)
+        o.lua("handlers['gmcp.room.info']('gmcp.room.info')")
+    st = 900
+    for r in range(1, 10):
+        st -= 4; at(r, st)
+    eq(round(o.ev("sbo.cfg.stCost.walk.avg")), 4, "walking: 4 a room")
+    o.lua("sbo.running = { started = true, name = 'x' }")
+    for r in range(10, 20):
+        st -= 2; at(r, st)
+    o.lua("sbo.running = nil")
+    eq(round(o.ev("sbo.cfg.stCost.run.avg")), 2, "running: 2 a room")
+    # a run of ~200 rooms needs ~480; with 100: rest first
+    o.lua("""sbo.stRunRooms = function() return 200 end
+      RAN = nil; sbo.runStart = function(n, t) RAN = n end
+      sbo.trip = { target = 5, used = {}, legs = 1, ride = { kind = 'run', name = 'sigil', from = 1, to = 2 } }""")
+    o.set_gmcp("char.vitals", "{ st = 100 }")
+    o.lua("SENT = {}; sbo.tripRide()")
+    eq(list(o.ev("SENT").values()), ["rest"], "short: rest")
+    eq(o.ev("RAN"), None, "not run yet")
+    o.set_gmcp("char.vitals", "{ st = 600 }")
+    o.L.execute("runTimers()")
+    eq(list(o.ev("SENT").values()), ["rest", "stand"], "enough: stand")
+    eq(o.ev("RAN"), "sigil", "and run")
+    # enough already: straight on
+    o.lua("RAN = nil; SENT = {}; sbo.trip = { target = 5, used = {}, legs = 1, ride = { kind = 'run', name = 'sigil', from = 1, to = 2 } }; sbo.tripRide()")
+    eq((o.ev("RAN"), len(o.ev("SENT") or {})), ("sigil", 0), "no rest needed")
+    # not learned yet: no check
+    o.lua("sbo.cfg.stCost = nil; RAN = nil; SENT = {}")
+    o.set_gmcp("char.vitals", "{ st = 10 }")
+    o.lua("sbo.trip = { target = 5, used = {}, legs = 1, ride = { kind = 'run', name = 'sigil', from = 1, to = 2 } }; sbo.tripRide()")
+    eq(o.ev("RAN"), "sigil", "costs unknown: goes")
+    # cut short by exhaustion mid-run: rest, then plan on
+    o.lua("""CONT = 0; sbo.tripContinue = function() CONT = CONT + 1 end; SENT = {}
+      sbo.trip = { target = 5, used = {}, legs = 1 }; sbo.mapRoom = 3
+      sbo.running = { name = 'sigil', target = 5, started = true, trip = sbo.trip, exhausted = true }
+      sbo.runStopped(false)""")
+    eq(list(o.ev("SENT").values()), ["rest"], "exhausted: rest")
+    o.set_gmcp("char.vitals", "{ st = 950 }")
+    o.L.execute("runTimers()")
+    eq((list(o.ev("SENT").values()), o.ev("CONT")), (["rest", "stand"], 1), "rested: on from here")
+
+
+@test
 def traveling_sellers():
     o = Oven()
     o.lua('''roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
