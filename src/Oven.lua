@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.85.4"
+M.version = "1.86.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5274,6 +5274,7 @@ function M.remember(it)
   if copy.set and copy.set.name then M.setRanges = nil end   -- worked out again when next needed
   rawset(M.items, it.name, copy)
   M.storeItem(copy)
+  pcall(M.spellHelpNeed, copy)
   for i = #M.recent, 1, -1 do if M.recent[i] == it.name then table.remove(M.recent, i) end end
   M.recent[#M.recent + 1] = it.name
   while #M.recent > 40 do table.remove(M.recent, 1) end
@@ -5908,6 +5909,45 @@ function M.spellAffects(name)
   name = (name or ""):lower()
   return (M.cfg.spellAffects or {})[name] or M.SPELL_AFFECTS[name]
 end
+-- a spell an item casts that Oven doesn't know yet: its help page is read quietly, once you've been idle a few
+-- seconds (not fighting, nothing else being read) - each spell once (cfg.spellHelpChecked)
+function M.spellHelpNeed(it)
+  if type(it) ~= "table" then return end
+  local okE, eff = pcall(M.itemEffects, it)
+  if not okE or type(eff) ~= "table" then return end
+  local checked = M.cfg.spellHelpChecked or {}
+  M.spellQueue = M.spellQueue or {}
+  for k in pairs(eff) do
+    local sp = type(k) == "string" and k:match("^spell:(.+)$")
+    if sp and sp ~= "" and not M.spellAffects(sp) and not checked[sp] then
+      local dup = false
+      for _, q in ipairs(M.spellQueue) do if q == sp then dup = true end end
+      if not dup then M.spellQueue[#M.spellQueue + 1] = sp end
+    end
+  end
+  if #M.spellQueue > 0 and not M.spellTimer then
+    M.spellTimer = tempTimer(4, function() pcall(M.spellHelpTick) end, true)
+  end
+end
+function M.spellHelpTick()
+  local q = M.spellQueue or {}
+  if #q == 0 then
+    if M.spellTimer then killTimer(M.spellTimer); M.spellTimer = nil end
+    return
+  end
+  if M.cap or M.learning or M.learnQueue or M.quietNext or M.walk or M.running or M.fighting()
+     or not M.inGame(M.lastStatusPrompt or M.lastPromptText) or not M.userIdle(5) then return end
+  local sp = table.remove(q, 1)
+  M.cfg.spellHelpChecked = M.cfg.spellHelpChecked or {}
+  M.cfg.spellHelpChecked[sp] = true
+  M.saveSettings()
+  M.quietly("help " .. sp, "help", function(lines)
+    if not lines then return end
+    pcall(M.noteSpellHelp, lines); pcall(M.noteAbilityHelp, lines)
+    if M.spellAffects(sp) then M.dataChanged() end   -- the page on show (upgrades…) counts it now
+  end)
+end
+
 function M.noteSpellHelp(lines)
   local name
   for _, l in ipairs(lines or {}) do
@@ -6431,6 +6471,7 @@ function M.setDelta(old, new)
 end
 
 function M.upgradeValue(old, new, w, role)
+  pcall(M.spellHelpNeed, new)
   -- the set bonuses the swap turns on or off count like the item's own stats
   local sStats, sGain, sLose, sUnknown = M.setDelta(old, new)
   local newEff = new

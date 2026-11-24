@@ -3464,6 +3464,31 @@ def upgrades_up_to_a_level():
 
 
 @test
+def unknown_item_spell_help_read():
+    # an item casting a spell Oven doesn't know: its help page is read quietly once you're idle, and counts after
+    o = Oven()
+    o.lua('sbo.cfg.promptPattern = "<%d+hp"; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end')
+    o.lua(GAME)
+    o.lua("""REPLY["help stone skin"] = { "[1600 ] STONE SKIN", "*Earth spell (40% complexity)",
+        "*When you stone skin, you will apply +5 ar for 20 minutes]" }
+      sbo.lastStatusPrompt = "<270hp 550sp 401st>"; sbo.inGame = function() return true end; sbo.lastUserCmdAt = -1000""")
+    o.lua("""sbo.remember(sbo.parseItem({ "Item 'the lieutenant's gauntlets' is type armor, alignment 0, made of leather (in (new) condition),[EQDB]",
+        "has keywords 'gauntlets', equipped on the hands.", "Armor resistance is 9.", "Casts the level 80 spell, 'stone skin'. {Med. Freq}" }))""")
+    eq(o.ev("sbo.spellQueue[1]"), "stone skin", "queued")
+    o.lua("SENT = {}; sbo.spellHelpTick()")
+    eq(list(o.ev("SENT").values()), ["help stone skin"], "read quietly")
+    o.L.execute("runTimers()")
+    eq(o.ev("sbo.spellAffects('stone skin') and sbo.spellAffects('stone skin').ar"), 5, "learned: +5 ar")
+    eq(o.ev("sbo.cfg.spellHelpChecked['stone skin']"), True, "and not asked again")
+    o.lua("SENT = {}; sbo.spellHelpNeed(sbo.items[\"the lieutenant's gauntlets\"]); sbo.spellHelpTick()")
+    eq(len(o.ev("SENT") or {}), 0, "known now: nothing sent")
+    # typing, or a fight: waits
+    o.lua("sbo.cfg.spellHelpChecked = {}; sbo.cfg.spellAffects = {}; sbo.spellQueue = { 'float' }; SENT = {}; sbo.lastUserCmdAt = os.time()")
+    o.lua("local n = sbo.userIdle; sbo.userIdle = function() return false end; sbo.spellHelpTick(); sbo.userIdle = n")
+    eq(len(o.ev("SENT") or {}), 0, "you're typing: waits")
+
+
+@test
 def set_bonus_in_upgrades():
     # a set's level range is read; inside it, the bonuses a swap turns off count (+60 hp) or are named
     # (sanctuary); outside it, nothing; range unknown: said so
