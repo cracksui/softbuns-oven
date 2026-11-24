@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.86.0"
+M.version = "1.86.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5961,6 +5961,13 @@ function M.noteSpellHelp(lines)
       M.cfg.spellAffects[k][stat] = tonumber(v)
       M.saveSettings()
     end
+  end
+  -- read (by you or by Oven): not looked up again, numbers or not
+  local key = name and trim(name):lower()
+  if key and key ~= "" then
+    M.cfg.spellHelpChecked = M.cfg.spellHelpChecked or {}
+    if not M.cfg.spellHelpChecked[key] then M.cfg.spellHelpChecked[key] = true; M.saveSettings() end
+    for i = #(M.spellQueue or {}), 1, -1 do if M.spellQueue[i] == key then table.remove(M.spellQueue, i) end end
   end
 end
 
@@ -13546,6 +13553,7 @@ function M.finish(reason)
       if cap.kind == "affects" then pcall(M.noteAff, cap.plain) end
       if cap.kind == "contents" then pcall(M.updateCarried, cap) end
       if cap.kind == "score" then pcall(M.updateMaxes, cap.plain) end
+      if cap.kind == "help" then pcall(M.noteSpellHelp, cap.plain); pcall(M.noteAbilityHelp, cap.plain) end
       if cap.kind == "item" then   -- remembered only: no comparison shown (sbo on brings it back)
         pcall(function() local it = M.parseItem(cap.plain); if it and it.name then M.remember(it) end end)
       end

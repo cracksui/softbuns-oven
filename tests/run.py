@@ -3486,6 +3486,14 @@ def unknown_item_spell_help_read():
     o.lua("sbo.cfg.spellHelpChecked = {}; sbo.cfg.spellAffects = {}; sbo.spellQueue = { 'float' }; SENT = {}; sbo.lastUserCmdAt = os.time()")
     o.lua("local n = sbo.userIdle; sbo.userIdle = function() return false end; sbo.spellHelpTick(); sbo.userIdle = n")
     eq(len(o.ev("SENT") or {}), 0, "you're typing: waits")
+    # you read a page yourself (formatting off, too): learned, and not looked up again
+    o.lua("sbo.cfg.spellHelpChecked = {}; sbo.spellQueue = { 'float' }; sbo.cfg.enabled = false")
+    o.lua("sbo.onSend(nil, 'help float')")
+    o.feed("[1518 ] FLOAT", "*Air spell (20% complexity)", "*When you float, you will apply +1 mount-speed for 10 minutes]", "<270hp 550sp 401st>")
+    o.L.execute("runTimers()")
+    eq(o.ev("sbo.spellAffects('float') and sbo.spellAffects('float')['mount-speed']"), 1, "read with formatting off")
+    eq(o.ev("sbo.cfg.spellHelpChecked['float']"), True, "marked as read")
+    eq(o.ev("#sbo.spellQueue"), 0, "taken off the queue")
 
 
 @test
