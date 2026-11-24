@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.85.2"
+M.version = "1.85.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6362,7 +6362,7 @@ end
 -- (pieces looked at before Oven read ranges)
 function M.setRange(set)
   if not set or not set.name then return nil end
-  if not M.setRanges then
+  if not M.setRanges or not M.setPieces then   -- (both: an update mid-session may have left only the first)
     M.setRanges, M.setPieces = {}, {}
     for _, r in ipairs(M.dbRows([[SELECT name FROM items WHERE data LIKE '%%["set"]=%%']]) or {}) do
       local it = M.items[r.name]
