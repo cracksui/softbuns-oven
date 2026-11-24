@@ -4000,6 +4000,15 @@ def quest_go_game_room_first_then_shop():
     eq(o.ev("WALK"), 300, "and goes to it")
     o.lua("sbo.questGoStep('2682', 4)")
     eq(o.ev("WALK"), 62538, "the step itself: the game's room")
+    # finished steps keep the game's room in view, even once the game no longer sends it
+    o.lua("""gmcp.char = { quests = { q2682 = { quest_info = { vnum = 2682, name = 'Wine' }, goals = {
+        { phase_number = 3, room_target = 777, phase_complete = true }, { phase_number = 4, room_target = 62538 } } } } }
+      sbo.onGmcpQuests()
+      gmcp.char = { quests = {} }
+      sbo.quests['2682'].phases = { { n = 3, text = 'Speak with the vintner', done = true }, { n = 4, text = 'Recover and Keep a bottle of Sepharian white wine' } }
+      local h = sbo.questCardHtml('2682', sbo.quests['2682']); HTML = table.concat(h, "\\n")""")
+    html = o.ev("HTML")
+    assert "Room 777" in html and html.index("Room 777") < html.index("Room 62538"), html
 
 
 @test

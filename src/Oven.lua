@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.88.0"
+M.version = "1.89.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3312,6 +3312,13 @@ local function questCardHtml(id, Q)
         local label = M.phaseLabel(ph)
         for _, l in ipairs(hudWrap(label, HUD_WRAP, ulen(tostring(ph.n)) + 2)) do
           add("   " .. span(C.dim, l), ulen(l) + 3)
+          acts[#html] = { id = id, n = ph.n }
+        end
+        -- the room the game named for it stays visible too
+        local gr = M.gmcpQuestRoom(id, ph.n)
+        if gr then
+          local nm = getRoomName(gr) or ("#" .. gr)
+          add("     " .. span(C.dim, "→ " .. nm) .. "&nbsp;&nbsp;<u>" .. span(C.dim, "go ▸") .. "</u>", ulen(nm) + 12)
           acts[#html] = { id = id, n = ph.n }
         end
       else
@@ -10266,14 +10273,18 @@ end
 function M.gmcpQuestRoom(qid, n)
   local q = G("char.quests")
   q = type(q) == "table" and (q["q" .. tostring(qid)] or q[tostring(qid)]) or nil
-  if type(q) ~= "table" or type(q.goals) ~= "table" then return end
-  for _, g in ipairs(q.goals) do
-    if tonumber(g.phase_number) == tonumber(n) then
-      local r = tonumber(g.room_target)
-      if r and r > 0 then return r end
-      return
+  if type(q) == "table" and type(q.goals) == "table" then
+    for _, g in ipairs(q.goals) do
+      if tonumber(g.phase_number) == tonumber(n) then
+        local r = tonumber(g.room_target)
+        if r and r > 0 then return r end
+      end
     end
   end
+  -- the room the game named for it before (kept with the quest)
+  local Q = M.quests and M.quests[tostring(qid)]
+  local kept = Q and Q.gameRooms and Q.gameRooms[tonumber(n)]
+  if kept and kept > 0 then return kept end
 end
 
 -- room.info flags ("safe, indoors, no-npcs, reinforced, library"); nil when GMCP isn't about this room
@@ -10331,6 +10342,14 @@ function M.onGmcpQuests()
       end
       -- each step: done or not, and its text once it's no longer hidden
       if not info.abandoned and type(q.goals) == "table" then
+        -- each step's room, kept: a finished step still links to it if the game stops naming it
+        for _, g in ipairs(q.goals) do
+          local n, r = tonumber(g.phase_number), tonumber(g.room_target)
+          if n and r and r > 0 then
+            Q.gameRooms = Q.gameRooms or {}
+            if Q.gameRooms[n] ~= r then Q.gameRooms[n] = r; changed = true end
+          end
+        end
         M.questGmcpAt[id] = os.time()
         if M.questGoals(id, Q, q.goals) then changed = true end
       end
