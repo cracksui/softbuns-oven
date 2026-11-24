@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.90.1"
+M.version = "1.90.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -3559,10 +3559,8 @@ function M.markOffer(plain)
   local pinned = (M.cfg.markPins or {})[markKey(Mk.name)]
   pcall(function()
     cecho("main", "<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> ")
-    pcall(setUnderline, "main", true)
     cechoLink("main", "<oven_key>[" .. (pinned and "update it on" or "pin it to") .. " the quest panel]",
       function() M.markPinData(Mk) end, "put the mark of " .. Mk.name .. " on the quest panel", true)
-    pcall(setUnderline, "main", false)
     echo("main", "\n")
   end)
 end
@@ -4414,14 +4412,15 @@ local function render(win, lines)
         if color_table and not color_table[col] then col = "white" end
         fg(win, col)
       end
-      if lk and s[2]:match("%S") then
-        -- clickable: underlined (its leading spaces aren't)
-        local lead, rest = s[2]:match("^( *)(.*)$")
-        if lead ~= "" then echo(win, lead) end
+      local txt = s[2]
+      local pre, goTxt = txt:match("^(%s*)(go ▸)%s*$")
+      if lk and goTxt then
+        -- the line's "go ▸" is the link (underlined, as everywhere else)
+        if pre ~= "" then echo(win, pre) end
         pcall(setUnderline, win, true)
-        echoLink(win, rest, lk[1], lk[2] or "", true)
+        echoLink(win, goTxt, lk[1], lk[2] or "", true)
         pcall(setUnderline, win, false)
-      else echo(win, s[2]) end
+      else echo(win, txt) end
     end
     resetFormat(win)
     echo(win, "\n")
@@ -4601,11 +4600,8 @@ function M.pageShow(pg, lines, fmt, links, rowLinks)
     rowN[i] = #parts
     for _, w in ipairs(parts) do
       local h = (w == "") and "" or decho2html(w)
-      -- a clickable line is underlined (leading spaces left plain)
-      if linked[i] and h ~= "" then
-        local lead = w:gsub("<%d+,%d+,%d+>", ""):match("^( *)") or ""
-        h = (#lead > 0 and string.rep(" ", #lead) or "") .. "<u>" .. decho2html((w:gsub("^((<%d+,%d+,%d+>)*) +", "%1"))) .. "</u>"
-      end
+      -- a clickable line: its "go ▸" is the link, underlined like everywhere else
+      if linked[i] then h = h:gsub("go ▸", "<u>go ▸</u>") end
       html[#html + 1] = h
       nLines = nLines + 1
     end
@@ -4660,7 +4656,7 @@ function M.pageShow(pg, lines, fmt, links, rowLinks)
       pg.links[i] = lab
     end
     lab:setStyleSheet(string.format([[
-      QLabel { background-color: black; color: ]] .. M.hex("slot") .. [[; padding-left: 6px; text-decoration: underline;
+      QLabel { background-color: black; color: ]] .. M.hex("slot") .. [[; padding-left: 6px;
                font-family: '%s', monospace; font-size: %dpt; }
       QLabel::hover { color: ]] .. M.hex("item") .. [[; text-decoration: underline; }]], font, size))
     pcall(function() lab:setCursor("PointingHand") end)
@@ -7220,10 +7216,8 @@ function M.eqdbOffer()
   if not M.cfg.enabled then return end
   pcall(function()
     cecho("main", "<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> ")
-    pcall(setUnderline, "main", true)
     cechoLink("main", "<oven_key>[add these " .. n .. " items to Oven's item database]",
       function() M.eqdbLearn() end, "sbo eq learn eqdb: look at each one quietly", true)
-    pcall(setUnderline, "main", false)
     echo("main", "\n")
   end)
 end
@@ -12886,11 +12880,7 @@ function M.notesWatch()
 end
 
 local function noteLink(text, fn, hint)
-  local ok = pcall(function()
-    pcall(function() M.notesConsole:setUnderline(true) end)   -- clickable: underlined
-    M.notesConsole:dechoLink(text, fn, hint, true)
-    pcall(function() M.notesConsole:setUnderline(false) end)
-  end)
+  local ok = pcall(function() M.notesConsole:dechoLink(text, fn, hint, true) end)
   if not ok then pcall(function() M.notesConsole:decho(text) end) end
 end
 
@@ -19316,8 +19306,10 @@ function M.itemFind(q)
     any = true
     local r = x.r
     local first = #out + 1
+    local canGo = x.id and roomExists(x.id)
     kvLine(out, k == 1 and "Sold at" or "", kw, { { C.item, r.item }, { C.num, "  " .. M.commaNum(tonumber(r.cost) or 0) .. " " .. r.currency },
-      { C.dim, "  ·  " .. (r.name or "a shop") .. " · " .. where(x.id) .. (x.steps < 99999 and string.format("  (%d steps)", x.steps) or "") } }, width)
+      { C.dim, "  ·  " .. (r.name or "a shop") .. " · " .. where(x.id) .. (x.steps < 99999 and string.format("  (%d steps)", x.steps) or "") },
+      canGo and { C.slot, "  go ▸" } or { C.dim, "" } }, width)
     local id = x.id
     if id and roomExists(id) then
       local go = { function() M.mapWalkTo(id) end, "go to " .. (r.name or ("#" .. id)) }
@@ -19332,7 +19324,8 @@ function M.itemFind(q)
     local id = tonumber(r.room)
     local first = #out + 1
     kvLine(out, k == 1 and "Picked up" or "", kw, { { C.item, r.item }, { C.dim, "  " .. (r.who == "you" and "" or (r.who .. " · ")) ..
-      (r.src and ("from " .. r.src .. " · ") or "") .. (id and where(id) or "room unknown") .. "  " .. M.shortDur(os.time() - (tonumber(r.t) or os.time())) .. " ago" } }, width)
+      (r.src and ("from " .. r.src .. " · ") or "") .. (id and where(id) or "room unknown") .. "  " .. M.shortDur(os.time() - (tonumber(r.t) or os.time())) .. " ago" },
+      (id and roomExists(id)) and { C.slot, "  go ▸" } or { C.dim, "" } }, width)
     if id and roomExists(id) then
       local go = { function() M.mapWalkTo(id) end, "go to where " .. r.item .. " was picked up" }
       for i = first, #out do out[i].link = go end

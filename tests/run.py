@@ -3574,7 +3574,13 @@ def item_rows_go_to_their_room():
     # the Inspector: a see-through label over each linked row; a click walks there
     o.lua("for k = 1, %d do WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Row' .. k].click({ button = 'LeftButton' }) end" % rows)
     eq(sorted(set(o.ev("WALKS").values())), [300, 400], "each row goes to its room")
-    # the main screen (mirror): the row's text is a link
+    # only the "go ▸" is underlined (as on the quest panel), not the whole row
+    html = o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html")
+    eq(html.count("<u>"), rows and html.count("<u>go ▸</u>"), "only go ▸ underlined")
+    assert html.count("<u>go ▸</u>") >= 2, html
+    # the main screen (mirror): its "go ▸" is the link, nothing else on the row
+    links = [l[1] for l in o.ev("ECHOLINKS").values()]
+    assert links and all(t == "go ▸" for t in [x[1] for x in o.ev("ECHOLINKS").values()]), links
     o.lua("WALKS = {}; for _, l in ipairs(ECHOLINKS) do if type(l[2]) == 'function' then l[2]() end end")
     assert 300 in o.ev("WALKS").values(), list(o.ev("WALKS").values())
 
