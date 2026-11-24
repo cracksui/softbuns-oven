@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.92.0"
+M.version = "1.93.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16477,8 +16477,9 @@ function M.runStopped(atSign)
   -- part of a trip: plan on from here
   if R.trip and M.trip == R.trip then
     if R.exhausted and here ~= R.target then
-      -- out of stamina: rest until there's enough to go on, then plan on from here
+      -- out of stamina: rest until there's enough to go on, then plan on from here (go.rest off: just plan on)
       local T = M.trip
+      if M.cfg.tripRest == false then return tempTimer(0.5, function() if M.trip == T then M.tripContinue() end end) end
       return M.stRest(M.stMax() and math.floor(M.stMax() * 0.9) or nil, function() if M.trip == T then M.tripContinue() end end)
     end
     if not (atSign and R.started) and here ~= R.target then
@@ -17758,17 +17759,28 @@ function M.stLearnRoom()
   if not (prev and id and st and prev.st) or prev.room == id or M.mounted() or M.stResting then return end
   local drop = prev.st - st
   if drop <= 0 or drop > 200 then return end   -- regained, or something else took it
-  local kind = (prev.run and M.running and M.running.started) and "run" or "walk"
+  local kind = ((prev.run and M.running and M.running.started) and "run" or "walk") .. (M.stLevitating() and "+lev" or "")
   M.cfg.stCost = M.cfg.stCost or {}
   local c = M.cfg.stCost[kind] or { avg = drop, n = 0 }
   c.n = c.n + 1
   c.avg = c.avg + (drop - c.avg) / math.min(c.n, 50)
   M.cfg.stCost[kind] = c
 end
--- stamina a leg needs (nil: not learned yet, or riding - the mount's own)
+-- floating (levitation, float, fly - as aff last said): moving costs differ, so they're learned apart
+function M.stLevitating()
+  local A = M.affNow and M.affNow()
+  for name in pairs(A and A.spells or {}) do
+    if name:find("levitat", 1, true) or name:find("float", 1, true) or name:find("fly", 1, true) then return true end
+  end
+  return false
+end
+-- stamina a leg needs (nil: not learned yet, or riding - the mount's own, or sbo config go.rest off). The
+-- learned cost is what a room took net of what you regained on the way, as you are now (floating or not)
 function M.stNeed(kind, rooms)
-  if M.mounted() or not rooms or rooms <= 0 then return nil end
-  local c = (M.cfg.stCost or {})[kind]
+  if M.cfg.tripRest == false or M.mounted() or not rooms or rooms <= 0 then return nil end
+  local costs = M.cfg.stCost or {}
+  local c = M.stLevitating() and costs[kind .. "+lev"] or nil
+  if not c or c.n < 5 then c = costs[kind] end
   if not c or c.n < 5 then return nil end
   return math.ceil(rooms * c.avg * 1.15) + 20   -- a margin: terrain differs
 end
@@ -19713,6 +19725,9 @@ M.SETTINGS = {
   { "quest.side", "Quest panel", { "left", "right" }, function() return M.cfg.questHudSide or "right" end, function(v) legacy("quest hud " .. v) end },
   { "quest.opacity", "Quest panel", "number", function() return tostring(M.cfg.questHudOpacity or 100) end, function(v) legacy("quest hud opacity " .. v) end },
   { "map", "Map panel", BOOL, function() return onoff(M.cfg.map) end, function(v) legacy("map " .. v) end },
+  { "go.rest", "Travel", BOOL, function() return onoff(M.cfg.tripRest ~= false) end,
+    function(v) M.cfg.tripRest = (v == "on"); M.saveSettings()
+      say("sbo go " .. (v == "on" and "rests when your stamina won't last the next run or walk" or "doesn't rest for stamina (a run cut short by exhaustion: it plans on from there)")) end },
   { "go.goldmargin", "Travel", "number", function() return tostring(M.tripGoldMargin()) end,
     function(v)
       local n = tonumber(v)

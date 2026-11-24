@@ -3007,6 +3007,21 @@ def trip_stamina():
     o.set_gmcp("char.vitals", "{ st = 950 }")
     o.L.execute("runTimers()")
     eq((list(o.ev("SENT").values()), o.ev("CONT")), (["rest", "stand"], 1), "rested: on from here")
+    # sbo config go.rest off: no rest - a run cut short just plans on
+    o.lua("""sbo.config('go.rest off'); CONT = 0; SENT = {}
+      sbo.trip = { target = 5, used = {}, legs = 1 }
+      sbo.running = { name = 'sigil', target = 5, started = true, trip = sbo.trip, exhausted = true }
+      sbo.runStopped(false)""")
+    o.L.execute("runTimers()")
+    eq((len(o.ev("SENT") or {}), o.ev("CONT")), (0, 1), "go.rest off: no rest, on from here")
+    eq(o.ev("sbo.stNeed('run', 200)"), None, "and no stamina check")
+    o.lua("sbo.config('go.rest on')")
+    # floating: its own costs, once learned
+    o.lua("""sbo.cfg.stCost = { walk = { avg = 4, n = 9 }, ["walk+lev"] = { avg = 1, n = 9 } }
+      sbo.affNow = function() return { spells = { levitation = true }, mods = {} } end""")
+    eq(o.ev("sbo.stNeed('walk', 100)"), 135, "levitating: its own cost (1 a room)")
+    o.lua("sbo.affNow = function() return nil end")
+    eq(o.ev("sbo.stNeed('walk', 100)"), 480, "not: 4 a room")
 
 
 @test
