@@ -2979,10 +2979,20 @@ def ways_learned():
     assert any("learned a way: 'enter mirror'" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
     o.lua("SAYS = {}; AT(100); sbo.onSend(nil, 'look'); AT(101)")
     eq(o.ev("SPECIAL[100]['look']"), None, "not every command")
+    # one of Oven's own commands (an eqdb lookup) as you walk: not a way
+    o.lua("AT(101); sbo.ownCmds = { ['check eqlookup abc'] = 1 }; sbo.onSend(nil, 'check eqlookup abc'); AT(100)")
+    eq(o.ev("SPECIAL[101] and SPECIAL[101]['check eqlookup abc']"), None, "Oven's own lookup: not learned")
+    # and ones learned before are taken off the map, once
+    o.lua("""SPECIAL[100]['check eqlookup e599'] = 101
+      getRooms = function() return { [100] = 'Room 100', [101] = 'Room 101' } end
+      removeSpecialExit = function(id, c) SPECIAL[id][c] = nil end
+      sbo.cfg.wayCleanup1 = nil; sbo.wayCleanup()""")
+    eq(o.ev("SPECIAL[100]['check eqlookup e599']"), None, "cleaned up")
+    eq(o.ev("SPECIAL[100]['enter mirror']"), 101, "real ways kept")
     # from the wilds into an area: its way in
     wild = 1060834 + 686 * 2300 + 1328
     o.lua(f"AT({wild}, true); sbo.onSend(nil, 'n'); AT(200)")
-    row = o.rows("SELECT wild, room, cmd, x, y FROM entrances")[0]
+    row = o.rows("SELECT wild, room, cmd, x, y FROM entrances WHERE room = 200")[0]
     eq((row["wild"], row["room"], row["cmd"], row["x"], row["y"]), (wild, 200, "n", 1328, 686), "the way in")
     near = 1060834 + 690 * 2300 + 1330
     o.lua(f"LINKS = sbo.entranceLinks({near}, 200)")

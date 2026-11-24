@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.0"
+M.version = "1.99.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11018,8 +11018,11 @@ function M.userIdle(secs)
 end
 
 function M.onSend(_, cmd)
-  M.lastCmd = { cmd = trim(tostring(cmd or "")), at = now(), room = M.currentRoom and M.currentRoom() or M.mapRoom }
   local own = M.ownCmds and M.ownCmds[cmd]
+  -- what you typed last (Oven's own commands - lookups, a walk's steps - aren't yours: not learned as ways)
+  if not (own and own > 0) then
+    M.lastCmd = { cmd = trim(tostring(cmd or "")), at = now(), room = M.currentRoom and M.currentRoom() or M.mapRoom }
+  end
   M.typedSend = not (own and own > 0)
   if own and own > 0 then M.ownCmds[cmd] = (own > 1) and (own - 1) or nil
   else
@@ -17524,7 +17527,8 @@ M.WAY_DIRS = { n = 1, s = 1, e = 1, w = 1, ne = 1, nw = 1, se = 1, sw = 1, u = 1
 M.WAY_NOT = { "give", "buy", "shop", "track", "mount", "dismount", "hitch", "recall", "cast", "clan", "quest", "sbo",
   "oven", "run", "where", "look", "l", "scan", "sca", "sleep", "sl", "wake", "stand", "rest", "flee", "follow",
   "kill", "k", "kick", "get", "drop", "put", "wear", "remove", "eq", "i", "inventory", "score", "aff", "prac",
-  "train", "c", "gohall", "portal", "transfer", "summon", "goto", "travel" }
+  "train", "c", "gohall", "portal", "transfer", "summon", "goto", "travel", "check", "eqdb", "help", "tell",
+  "who", "where", "time", "save", "quit", "open", "close", "unlock", "lock" }
 function M.wayCommand(cmd)
   cmd = trim(tostring(cmd or "")):lower()
   if cmd == "" or cmd:find(";", 1, true) or M.WAY_DIRS[cmd] then return nil end
@@ -17584,6 +17588,28 @@ function M.wayRoom()
       end
     end
   end
+end
+
+-- once (1.99.1): special exits learned from commands that aren't ways (Oven's own eqdb lookups, help…) taken off the map
+function M.wayCleanup()
+  if M.cfg.wayCleanup1 then return end
+  M.cfg.wayCleanup1 = true
+  M.saveSettings()
+  local okR, rooms = pcall(getRooms)
+  if not okR or type(rooms) ~= "table" then return end
+  local n = 0
+  for id in pairs(rooms) do
+    local okS, ex = pcall(getSpecialExitsSwap, id)
+    if okS and type(ex) == "table" then
+      for c in pairs(ex) do
+        local cmd = tostring(c)
+        if not cmd:find("^oven%-trip:") and not M.wayCommand(cmd) and not M.WAY_DIRS[cmd:lower()] and cmd:lower():match("^check ") then
+          if pcall(removeSpecialExit, id, cmd) then n = n + 1 end
+        end
+      end
+    end
+  end
+  if n > 0 then M.say(string.format("took %d wrongly learned way%s off the map (eqdb lookups)", n, n == 1 and "" or "s")); pcall(M.mapLearned) end
 end
 
 -- the game refused a move: in the wilds, that room and direction are remembered (walked around after)
@@ -20934,5 +20960,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup) end)
 pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end
