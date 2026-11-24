@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.85.0"
+M.version = "1.85.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1764,7 +1764,8 @@ function M.parseItem(raw)
     -- items from the set.", its pieces ("- Item 'a standard issue sword'", the ones you wear marked otherwise),
     -- and what wearing enough of them gives ("Affects knowledge by 1 (Requires 10 items).")
     elseif t:match("^This is part of the '.-' set%.?$") then
-      it.set = { name = t:match("^This is part of the '(.-)' set"), pieces = {}, bonus = {} }
+      -- rangeRead: read by an Oven that knows ranges - no range line then means the set works at every level
+      it.set = { name = t:match("^This is part of the '(.-)' set"), pieces = {}, bonus = {}, rangeRead = true }
       inRelics = false; lastKnown = i
     elseif it.set and t:match("^Requires level range of %d+ to %d+ to activate") then
       -- the set works only for these levels (the game leaves the set out of the page once you're past them)
@@ -5255,10 +5256,18 @@ function M.remember(it)
     if k ~= "desc" and k ~= "other" and k ~= "header" and k ~= "relics" then copy[k] = v end
   end
   copy.seen = os.time()
-  if copy.set and copy.set.name and copy.set.minLevel then
-    M.setRanges = M.setRanges or {}
-    M.setRanges[copy.set.name] = { copy.set.minLevel, copy.set.maxLevel }
+  -- the page had a set before and has none now: the game leaves a set out once you're past its levels -
+  -- kept, marked as off from this level
+  local had = rawget(M.items, it.name)
+  if had and had.set and had.set.name and not copy.set and copy.worn then
+    local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
+    if lvl then
+      copy.set = {}
+      for k, v in pairs(had.set) do copy.set[k] = v end
+      copy.set.off = lvl
+    end
   end
+  if copy.set and copy.set.name then M.setRanges = nil end   -- worked out again when next needed
   rawset(M.items, it.name, copy)
   M.storeItem(copy)
   for i = #M.recent, 1, -1 do if M.recent[i] == it.name then table.remove(M.recent, i) end end
@@ -6344,19 +6353,32 @@ end
 -- effective hp, casting: spell points, recovery: hp/sp regen), times your lean for it (1 unless you
 -- set one). What has no formula is listed beside it, and doesn't move the ranking.
 -- role: only that role's change
--- a set's level range: from any piece Oven has looked at since it reads them (nil: not known yet)
+-- a set's level range, from any piece of it Oven knows: lo, hi (a range line), or 0, math.huge (no range line:
+-- every level), or "off" (a page left the set out at your level or below - you're past it); nil: not known
+-- (pieces looked at before Oven read ranges)
 function M.setRange(set)
   if not set or not set.name then return nil end
-  if set.minLevel then return set.minLevel, set.maxLevel end
   if not M.setRanges then
     M.setRanges = {}
-    for _, r in ipairs(M.dbRows([[SELECT name FROM items WHERE data LIKE '%%["minLevel"]=%%']]) or {}) do
+    for _, r in ipairs(M.dbRows([[SELECT name FROM items WHERE data LIKE '%%["set"]=%%']]) or {}) do
       local it = M.items[r.name]
-      if it and it.set and it.set.name and it.set.minLevel then M.setRanges[it.set.name] = { it.set.minLevel, it.set.maxLevel } end
+      local S = it and it.set
+      if S and S.name then
+        local cur = M.setRanges[S.name] or {}
+        if S.minLevel then cur.lo, cur.hi = S.minLevel, S.maxLevel
+        elseif S.rangeRead and not cur.lo then cur.lo, cur.hi = 0, math.huge end
+        if S.off and (not cur.off or S.off < cur.off) then cur.off = S.off end
+        M.setRanges[S.name] = cur
+      end
     end
   end
-  local r = M.setRanges[set.name]
-  if r then return r[1], r[2] end
+  local r = M.setRanges[set.name] or {}
+  local lo, hi = set.minLevel or r.lo, set.maxLevel or r.hi
+  if not lo and set.rangeRead then lo, hi = 0, math.huge end
+  local off = set.off or r.off
+  local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
+  if off and lvl and lvl >= off and not (lo and hi ~= math.huge) then return "off" end
+  return lo, hi
 end
 
 -- what swapping old for new does to your sets: pieces counted from what you wear now, bonuses only inside the
@@ -6365,19 +6387,20 @@ end
 function M.setDelta(old, new)
   local stats, gained, lost, unknown = {}, {}, {}, {}
   local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
-  local sets, seen = {}, {}
+  local sets, seen, carrier = {}, {}, {}
   for _, it in ipairs({ old or {}, new or {} }) do
     local S = it.set
-    if S and S.name and not seen[S.name] and S.bonus and #S.bonus > 0 then seen[S.name] = true; sets[#sets + 1] = S end
+    if S and S.name and not seen[S.name] and S.bonus and #S.bonus > 0 then seen[S.name] = true; sets[#sets + 1] = S; carrier[S] = it.name end
   end
   local wearing = {}
   for _, n in ipairs(M.eqNames or {}) do wearing[n] = (wearing[n] or 0) + 1 end
   for _, S in ipairs(sets) do
     local lo, hi = M.setRange(S)
+    if lo == "off" then lo, hi = 0, -1 end
     local inSet = {}
     for _, p in ipairs(S.pieces or {}) do if p.name then inSet[p.name] = true end end
     if not lo then
-      unknown[#unknown + 1] = S.name
+      unknown[#unknown + 1] = carrier[S] or S.name
     elseif lvl and lvl >= lo and lvl <= hi then
       local before = 0
       for n, c in pairs(wearing) do if inSet[n] then before = before + c end end
@@ -6417,7 +6440,7 @@ function M.upgradeValue(old, new, w, role)
   -- set bonuses are worked out above: only what has no number is left to judge
   local kept = {}
   for _, n in ipairs(names) do if n ~= "set-bonus" then kept[#kept + 1] = n end end
-  for _, sn in ipairs(sUnknown) do kept[#kept + 1] = "set-bonus (look at a " .. sn .. " piece again)" end
+  for _, sn in ipairs(sUnknown) do kept[#kept + 1] = "set bonus (look at " .. sn .. " again)" end
   names = kept
   m.estNames = names
   m.setStats, m.setGain, m.setLose = sStats, sGain, sLose
@@ -6943,6 +6966,7 @@ function M.itemFeatures(it)
     -- a set you're past (or not yet at) the levels of does nothing: not worth naming
     local lo, hi = M.setRange(it.set)
     local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
+    if lo == "off" then lo, hi = 0, -1 end
     if not (lo and lvl and (lvl < lo or lvl > hi)) then f["set:" .. it.set.name] = "set: " .. it.set.name end
   end
   return f

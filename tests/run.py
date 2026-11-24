@@ -3493,8 +3493,18 @@ def set_bonus_in_upgrades():
     assert o.ev("V130 < V145"), (o.ev("V130"), o.ev("V145"))
     assert "set-bonus" not in " ".join(o.ev("M145.estNames").values()), "not listed as not calculated"
     # a piece saved before ranges were read: said so
-    o.lua('sbo.setRanges = {}; sbo.items["a recruit helm"].set.minLevel = nil; S, G, L, U = sbo.setDelta(sbo.items["a recruit helm"], sbo.items["a plain cap"])')
-    eq(o.ev("U[1]"), "Recruit's Attire", "range unknown")
+    o.lua('for _, n in ipairs({"a recruit helm", "some recruit boots"}) do local S = sbo.items[n].set; S.minLevel, S.maxLevel, S.rangeRead = nil, nil, nil end')
+    o.lua('sbo.setRanges = nil; S, G, L, U = sbo.setDelta(sbo.items["a recruit helm"], sbo.items["a plain cap"])')
+    eq(o.ev("U[1]"), "a recruit helm", "range unknown: the item to look at")
+    # a page with no range line (read now): every level
+    o.lua('sbo.items["a recruit helm"].set.rangeRead = true; sbo.setRanges = nil; S, G, L, U = sbo.setDelta(sbo.items["a recruit helm"], sbo.items["a plain cap"])')
+    eq(o.ev("#U .. ' ' .. #S"), "0 1", "no range: always on")
+    # looked at again at 145 and the set is gone from the page: off from now on, for every piece of it
+    o.lua('sbo.items["some recruit boots"].set.rangeRead = nil; sbo.items["a recruit helm"].set.rangeRead = nil')
+    o.lua('local b = sbo.parseItem({ "Item \'some recruit boots\' is type armor, alignment 0, made of steel (in (new) condition),", "has keywords \'boots\', equipped on the feet.", "Armor resistance is 5." }); sbo.remember(b)')
+    eq(o.ev("sbo.items['some recruit boots'].set.off"), 145, "the set kept, off from 145")
+    o.lua('S, G, L, U = sbo.setDelta(sbo.items["a recruit helm"], sbo.items["a plain cap"])')
+    eq(o.ev("#S + #G + #L + #U"), 0, "the helm's set is off too")
 
 
 @test
