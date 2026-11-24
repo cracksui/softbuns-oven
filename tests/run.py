@@ -2958,6 +2958,19 @@ def gohall_refused_plans_again():
 
 
 @test
+def every_setting_is_listed():
+    # sbo config lists every setting (each one's group is among the groups shown); sbo config go lists the go ones
+    o = Oven()
+    missing = o.ev("""(function() local g = {} for _, x in ipairs(sbo.SETTING_GROUPS) do g[x] = true end
+      local out = {} for _, s in ipairs(sbo.SETTINGS) do if not g[s[2]] then out[#out+1] = s[1] .. " (" .. s[2] .. ")" end end
+      return table.concat(out, ", ") end)()""")
+    eq(missing, "", "settings in no listed group")
+    o.lua("sbo.cfg.window = true; sbo.config('go')")
+    page = "\n".join("".join(seg[2] for seg in r.values()) for r in o.ev("sbo.viewHist[#sbo.viewHist].lines").values())
+    assert "go.rest" in page and "go.stamina.walk" in page and "go.goldmargin" in page, page
+
+
+@test
 def trip_stamina():
     # sbo go: what a room costs is learned from your stamina as you move; short of it before a run, Oven rests
     # until there's enough, stands and goes on; a run cut short by exhaustion: rest, then plan on

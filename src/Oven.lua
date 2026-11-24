@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.94.0"
+M.version = "1.94.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -19809,7 +19809,7 @@ M.SETTINGS = {
 M.SETTING_RENAMED = { ["mirror.inspector"] = "inspector.mirror", ["mirror.help"] = "help.mirror", ["mirror.log"] = "log.mirror",
   ["mirror.chat"] = "chat.mirror", ["gear.autocompare"] = "eq.autocompare", ["gear.pickuplook"] = "eq.pickuplook" }
 M.SETTING_GROUPS = { "Display", "Inspector tab", "Help tab", "Log tab", "Chat tab", "Quest panel", "Map panel",
-  "Prompt bar", "Combat bar", "Equipment", "Updates and debug" }
+  "Prompt bar", "Combat bar", "Equipment", "Travel", "Updates and debug" }
 
 -- a setting by its name or any start of each part: "bar.w" = bar.width, "q.op" = quest.opacity
 function M.settingFind(q)
@@ -19843,6 +19843,8 @@ function M.config(r)
   local name, v = r:match("^(%S+)%s*(.-)$")
   local s, hits = M.settingFind(name)
   if not s then
+    -- several start that way ("sbo config go"): list them
+    if hits and #hits > 1 and v == "" and not name:find(".", 1, true) then return M.configList(name) end
     if hits and #hits > 1 then
       local n = {}
       for _, h in ipairs(hits) do n[#n + 1] = h[1] end
