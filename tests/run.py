@@ -2973,7 +2973,7 @@ def ways_learned():
       getSpecialExitsSwap = function(a) return SPECIAL[a] or {} end
       LOCKED = {}; lockExit = function(r, d, on) LOCKED[r .. d] = on or nil end
       sbo.worldPos = function(r) if r >= 1000000 then local d = r - 1060834; return { map = "Alyria", x = d % 2300, y = math.floor(d / 2300) } end end
-      function AT(room, wilds) gmcp.room = { info = { num = tostring(room), wilds = wilds and "true" or "false" } }; sbo.currentRoom = function() return room end; sbo.mapRoom = room; handlers["gmcp.room.info"]("gmcp.room.info") end""")
+      function AT(room, wilds) gmcp.room = { info = { num = tostring(room), wilds = wilds and "true" or "false" } }; sbo.currentRoom = function() return room end; sbo.mapRoom = room; handlers["gmcp.room.info"]("gmcp.room.info"); runTimers() end""")
     o.lua("AT(100); sbo.onSend(nil, 'enter mirror'); AT(101)")
     eq(o.ev("SPECIAL[100]['enter mirror']"), 101, "enter mirror: a special exit")
     assert any("learned a way: 'enter mirror'" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
@@ -3023,6 +3023,12 @@ def ways_learned():
     o.lua("gmcp.room = { info = { num = '200', wilds = 'false' } }; sbo.mapRoom = 200; sbo.travelOnRoom(200)")
     o.L.execute("runTimers()")
     eq(o.ev("CONT"), 1, "inside: the trip goes on")
+    # following someone: your last command didn't move you - not learned
+    o.lua("AT(100); sbo.onSend(nil, 'say hello')")
+    o.lua("gmcp.room = { info = { num = '101', wilds = 'false' } }; sbo.currentRoom = function() return 101 end; handlers['gmcp.room.info']('gmcp.room.info')")
+    o.feed("Visage drifts east.", "You follow Visage.")
+    o.L.execute("runTimers()")
+    eq(o.ev("SPECIAL[100]['say hello']"), None, "following: not a way")
 
 
 @test

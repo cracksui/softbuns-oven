@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.1"
+M.version = "1.99.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13476,6 +13476,7 @@ function M.onLineWork()
   if line:find("too low a level to wear it", 1, true) then pcall(M.noteWearLevel, line) end
   if line:match("^You dismount from ") or line:match("^You hitch ") or line:match("^You mount .-, and start riding") then pcall(M.mountLine, line) end
   if line:find("cannot move in that direction", 1, true) then pcall(M.moveRefused, line) end
+  if line:match("^You follow .-%.$") then M.followAt = now() end
   if line:match("^You attempt to open the %a+ %a+, but it is locked%.") then pcall(M.doorLocked, line) end
   if M.travel then pcall(M.travelLine, line) end
   if M.eqdbAt and not cap then
@@ -17553,8 +17554,17 @@ function M.wayRoom()
   local dirShort = ({ north = "n", south = "s", east = "e", west = "w", northeast = "ne", northwest = "nw",
     southeast = "se", southwest = "sw", up = "u", down = "d" })[cmd] or cmd
   if M.WAY_DIRS[cmd] and roomExists(prev.room) then pcall(lockExit, prev.room, dirShort, false) end
-  -- between the wilds and an area: its way in (or out) from that spot
+  -- the rest a moment later: a move that came from following someone ("You follow Visage." comes with the
+  -- new room's text, after GMCP's room) isn't a way you took
+  local movedAt = now()
   local here = M.wayPrev
+  tempTimer(0.6, function()
+    if M.followAt and M.followAt >= movedAt - 1 then return end
+    pcall(M.wayLearn, prev, here, id, cmd)
+  end)
+end
+function M.wayLearn(prev, here, id, cmd)
+  -- between the wilds and an area: its way in (or out) from that spot
   if prev.wild ~= here.wild then
     local wild, room = prev.wild and prev.room or id, prev.wild and id or prev.room
     local p = M.worldPos and M.worldPos(wild)
