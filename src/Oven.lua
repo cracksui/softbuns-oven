@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.97.0"
+M.version = "1.97.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7222,6 +7222,27 @@ function M.upgradeDiff(cur, best, w)
     if x.d > 0 then gain[#gain + 1] = { text = t } else lose[#lose + 1] = { text = t } end
   end
   local fa, fb = M.itemFeatures(cur), M.itemFeatures(best)
+  -- a spell: what it gives (from its help), or that you have it anyway (from other gear, or aff)
+  local elsewhere = M.spellsElsewhere and M.spellsElsewhere(cur) or {}
+  local function spellNote(t)
+    for k, v in pairs(t) do
+      local sp = k:match("^casts:(.+)$")
+      if sp then
+        local key = sp:lower():gsub("^'", ""):gsub("'.*$", "")
+        if elsewhere[key] then t[k] = v .. " (you have it already)"
+        else
+          local aff = M.spellAffects(key)
+          if aff then
+            local bits = {}
+            for stat, n in pairs(aff) do bits[#bits + 1] = (n >= 0 and "+" or "") .. fmt(n) .. " " .. stat end
+            table.sort(bits)
+            if #bits > 0 then t[k] = v .. " (" .. table.concat(bits, ", ") .. ")" end
+          end
+        end
+      end
+    end
+  end
+  spellNote(fa); spellNote(fb)
   local function sorted(t) local l = {} for k, v in pairs(t) do l[#l + 1] = { k = k, v = v } end table.sort(l, function(x, y) return x.k < y.k end) return l end
   for _, e in ipairs(sorted(fb)) do if fa[e.k] ~= e.v then gain[#gain + 1] = { text = e.v, effect = true } end end
   for _, e in ipairs(sorted(fa)) do if fb[e.k] ~= e.v then lose[#lose + 1] = { text = e.v, effect = true } end end

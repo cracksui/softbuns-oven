@@ -702,7 +702,7 @@ def upgrade_gains_and_losses():
     gain, lose = o.ev("function() return sbo.upgradeDiff(OLD, NEW, select(2, sbo.activeBuild())) end")()
     g = [x.text for x in gain.values()]; l = [x.text for x in lose.values()]
     assert "+5 ar-torso" in g and "+13 hp" in g and "parry 100%" in g, g
-    assert "−2 accuracy" in l and "casts sanctuary" in l, l
+    assert "−2 accuracy" in l and "casts sanctuary (+3 damage-to-evil-prcnt, +3 healed-by-others-prcnt)" in l, l   # what it gives, from its help
     # AR: "Affects ar" covers every location; an item's own AR only where it's worn (ar-torso), a share of it
     o.lua("sbo.cfg.arLoc = { head = 5, torso = 16, arms = 14, legs = 18, tail = 5 }")
     eq(o.ev("sbo.itemStats({ ar = '10', worn = 'on the legs' })['ar-legs']"), 10, "a legs item's AR is legs AR")
