@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.98.0"
+M.version = "1.99.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -18589,10 +18589,12 @@ function M.creditKillExp(n)
   M.lastKill = nil
 end
 
-local function killTable(out, title, book, width, limit)
+local function killTable(out, title, book, width, limit, by)
   local rows = {}
   for _, e in pairs(book or {}) do rows[#rows + 1] = e end
   table.sort(rows, function(a, b)
+    if by == "recent" and (a.last or 0) ~= (b.last or 0) then return (a.last or 0) > (b.last or 0) end
+    if by == "exp" and (a.exp or 0) ~= (b.exp or 0) then return (a.exp or 0) > (b.exp or 0) end
     if a.count ~= b.count then return a.count > b.count end
     return a.name:lower() < b.name:lower()
   end)
@@ -18616,14 +18618,14 @@ local function killTable(out, title, book, width, limit)
   end
 end
 
-function M.killLines(width, all)
-  local out = { header("kills", "", width, "Kills") }
-  killTable(out, "This session", M.sess.killBook, width, all and nil or 25)
+function M.killLines(width, all, by)
+  local out = { header("kills", "", width, "Kills" .. (by == "recent" and "  (latest first)" or (by == "exp" and "  (most exp first)" or ""))) }
+  killTable(out, "This session", M.sess.killBook, width, all and nil or 25, by)
   local book = {}
   for _, r in ipairs(M.dbRows("SELECT key, MAX(name) AS name, SUM(n) AS count, SUM(exp) AS exp, MAX(t) AS last FROM kills GROUP BY key")) do
     book[r.key] = { name = r.name, count = tonumber(r.count) or 0, exp = tonumber(r.exp) or 0, last = tonumber(r.last) }
   end
-  killTable(out, "All time", book, width, all and nil or 25)
+  killTable(out, "All time", book, width, all and nil or 25, by)
   return out
 end
 
@@ -19174,7 +19176,10 @@ function M.legacyCommand(args)
   elseif a == "kills" then
     if b == "reset" then M.sess.killBook = {}; return say("this session's kill list cleared")
     elseif b == "clear" then M.dbx("DELETE FROM kills"); return say("all-time kill list cleared") end
-    M.logOut(function(w) return M.killLines(w, b == "all") end)
+    -- "all", and a sort: recent (latest first), exp; else by count
+    local all = b:match("^all") ~= nil
+    local by = b:match("rec") and "recent" or (b:match("exp") and "exp" or nil)
+    M.logOut(function(w) return M.killLines(w, all, by) end)
     return
   elseif a == "quest" or a == "quests" then
     local sub, val = b:match("^(%S*)%s*(.-)$")
@@ -19451,7 +19456,8 @@ M.CMDS = {
     { name = "clear", desc = "empty its history", run = L("clear") },
   } },
   { name = "log", desc = "the Log tab: kills, loot, deaths and this session", run = L("session"), subs = {
-    { name = "kills", desc = "what you've killed, with counts and exp", run = L("kills all") },
+    { name = "kills", args = "[recent|exp]", desc = "what you've killed, with counts and exp (recent: latest first; exp: most exp first)",
+      run = function(r) return legacy("kills all " .. (r or "")) end },
     { name = "loot", args = "[{text}]", desc = "what was picked up and where; text searches it",
       run = function(r) return legacy("loot all " .. r) end },
     { name = "deaths", desc = "your last deaths, with what led up to them", run = L("deaths") },

@@ -3819,6 +3819,20 @@ def spell_you_already_have_adds_nothing():
 
 
 @test
+def kills_sorted():
+    # sbo log kills recent: latest first; exp: most exp first; plain: most kills first
+    o = Oven()
+    o.lua("""sbo.dbx("INSERT INTO kills (t, key, name, n, exp) VALUES (100, 'a rat', 'a rat', 5, 10)")
+      sbo.dbx("INSERT INTO kills (t, key, name, n, exp) VALUES (300, 'a bat', 'a bat', 1, 50)")
+      sbo.dbx("INSERT INTO kills (t, key, name, n, exp) VALUES (200, 'a cat', 'a cat', 2, 90)")
+      function ORDER(by) local t = {} for _, r in ipairs(sbo.killLines(100, true, by)) do local x = "" for _, sg in ipairs(r) do x = x .. sg[2] end
+        local n = x:match("^  (a %a+)") if n then t[#t+1] = n end end return table.concat(t, ",") end""")
+    eq(o.ev("ORDER(nil)"), "a rat,a cat,a bat", "by count")
+    eq(o.ev("ORDER('recent')"), "a bat,a cat,a rat", "latest first")
+    eq(o.ev("ORDER('exp')"), "a cat,a bat,a rat", "most exp first")
+
+
+@test
 def items_you_cant_use():
     # the page's requirements: another race or class, a set place, too little of an attribute - not for you
     o = Oven()
