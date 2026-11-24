@@ -3814,7 +3814,12 @@ def items_you_cant_use():
     eq(o.ev("U('race something other than sahuagin')"), "false|race something other than sahuagin", "not for you")
     eq(o.ev("U('current location equal to old dragon clan hall  (enforced)')"), "false|only in old dragon clan hall  (enforced)", "a set place")
     eq(o.ev("U('strength greater than or equal to 25')"), "false|strength greater than or equal to 25", "too weak")
-    eq(o.ev("U('level less than or equal to 210')"), "true|nil", "level: the list's own levels")
+    o.lua("sbo.cfg.char.total = 151")
+    eq(o.ev("U('level less than or equal to 210')"), "true|nil", "under a most")
+    eq(o.ev("U('level less than or equal to 130')"), "false|level less than or equal to 130", "past a most")
+    eq(o.ev("U('level greater than or equal to 175')"), "true|nil", "a least: the list's own level sections")
+    o.lua("WRAPS = { name = 'wraps', extra = { { 'Requires', { { 'white', 'Mark of Ferocity equal to True' } } }, { 'Max level', { { 'cyan', '60' }, { 'dim_grey', '  (Enforced)' } } } } }")
+    eq(o.ev("select(2, sbo.itemUsable(WRAPS))"), "max level 60", "Max level 60: not at 151")
 
 
 @test

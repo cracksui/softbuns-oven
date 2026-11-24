@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.97.2"
+M.version = "1.97.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6926,7 +6926,13 @@ end
 -- means not for wearing about. Level is left to the upgrade list's own levels. Returns ok, why
 function M.itemUsable(it)
   local c = M.cfg.char or {}
+  local lvl = tonumber(c.total or c.level)
   for _, x in ipairs(it and it.extra or {}) do
+    -- "Max level 60 (Enforced)": past it, not for you (your total level)
+    if x[1] == "Max level" and lvl then
+      local mx = tonumber(tostring(((x[2] or {})[1] or {})[2] or ""):match("(%d+)"))
+      if mx and lvl > mx then return false, "max level " .. mx end
+    end
     if x[1] == "Requires" then
       local text = ""
       for _, sg in ipairs(x[2] or {}) do text = text .. tostring(sg[2]) end
@@ -6951,7 +6957,10 @@ function M.itemUsable(it)
           end
         elseif what == "current location" then return false, "only in " .. val
         elseif what == "alignment" then have = tonumber(((M.gmcpGet and M.gmcpGet("char.status")) or {}).align)
-        elseif what ~= "level" then have = tonumber(((c.stats or {})[what] or {}).cur) end
+        elseif what == "level" then
+          -- a most (level ≤ 210): your total level; a least is left to the list's own level sections
+          if op:match("^less than") then have = lvl end
+        else have = tonumber(((c.stats or {})[what] or {}).cur) end
         if have ~= nil and what ~= "class" then
           local n = tonumber(val)
           local ok = true
