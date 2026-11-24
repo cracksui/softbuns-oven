@@ -3767,6 +3767,18 @@ def item_rows_go_to_their_room():
 
 
 @test
+def spell_strength_from_aff():
+    # what aff shows a spell giving you (haste at level 122: +12) is used over the help page's +10
+    o = Oven()
+    eq(o.ev("sbo.spellAffects('haste')['attack-speed']"), 10, "before: the help page's")
+    o.lua("""sbo.noteAff({ "You are affected by the following:",
+      "Spell:      haste                       - Level 122, modifies attack-speed         by    12.",
+      "Spell:      shield                      - Level  54, modifies ar                   by     3." })""")
+    eq(o.ev("sbo.spellAffects('haste')['attack-speed']"), 12, "aff's: +12")
+    eq(o.ev("sbo.spellAffects('shield').ar"), 3, "and others too")
+
+
+@test
 def spell_you_already_have_adds_nothing():
     # an item casting haste when another worn item already hastes you: no extra attacks (spells don't stack)
     o = Oven()

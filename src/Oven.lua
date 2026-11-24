@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.97.1"
+M.version = "1.97.2"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5984,7 +5984,8 @@ M.SPELL_AFFECTS = {
 }
 function M.spellAffects(name)
   name = (name or ""):lower()
-  return (M.cfg.spellAffects or {})[name] or M.SPELL_AFFECTS[name]
+  -- as aff last showed it on you, else its help page, else the built-in figure
+  return (M.cfg.spellAffAff or {})[name] or (M.cfg.spellAffects or {})[name] or M.SPELL_AFFECTS[name]
 end
 -- a spell an item casts that Oven doesn't know yet: its help page is read quietly, once you've been idle a few
 -- seconds (not fighting, nothing else being read) - each spell once (cfg.spellHelpChecked)
@@ -6167,11 +6168,27 @@ function M.noteAff(lines)
       any = true
       if src:lower() ~= "racial" then
         A.spells[name:lower()] = true
-        if what ~= "none" then A.mods[what] = (A.mods[what] or 0) + tonumber(by) end
+        if what ~= "none" then
+          A.mods[what] = (A.mods[what] or 0) + tonumber(by)
+          -- what a spell really gives you (haste at level 122: +12 attack-speed), over its help page's figure
+          if src:lower() == "spell" then
+            A.byspell = A.byspell or {}
+            A.byspell[name:lower()] = A.byspell[name:lower()] or {}
+            A.byspell[name:lower()][what] = (A.byspell[name:lower()][what] or 0) + tonumber(by)
+          end
+        end
       end
     end
   end
-  if any then M.aff = A; pcall(M.dataChanged) end
+  if any then
+    M.aff = A
+    if A.byspell then
+      M.cfg.spellAffAff = M.cfg.spellAffAff or {}
+      for sp, mods in pairs(A.byspell) do M.cfg.spellAffAff[sp] = mods end
+      M.saveSettings()
+    end
+    pcall(M.dataChanged)
+  end
 end
 -- attack speed: what you wear adds (its own affects), and what's on you - spells your gear casts (haste), or
 -- anything else - as aff says; before aff has been read, the spells your gear casts as their help says
