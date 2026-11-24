@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.2"
+M.version = "1.99.3"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5913,7 +5913,12 @@ function M.noteCombat(raw)
     -- "Your staff will deal High bash damage…" / "With hand to hand, you will deal Low water damage…"
     local wname, wtype = t:match("^Your (.-) will deal %a+ (%a+) damage")
     if not wname then wname, wtype = t:match("^With (.-), you will deal %a+ (%a+) damage") end
-    if wname then c.weapon, c.dmgType = (wname == "hand to hand" and "fists" or wname), wtype end
+    if wname then
+      c.weapon, c.dmgType = (wname == "hand to hand" and "fists" or wname), wtype
+      -- its damage, accuracy and crit words: unarmed, your fists are the weapon a wielded one is weighed against
+      local ws = parseWeaponSummary(t)
+      c.wpn = { dmgLevel = ws.dmgLevel, accuracy = ws.accuracy, critChance = ws.critChance }
+    end
   end
   if c.damage or c.accuracy then
     pcall(M.strDmgNote, c)
@@ -5930,6 +5935,8 @@ function M.noteCombat(raw)
 end
 
 -- help 2468's weapon kinds (each its own skill)
+-- your fists, as the "weapon" in your hands when you fight unarmed (the upgrade list weighs weapons against them)
+M.FISTS = { name = "your fists", worn = "wielded as a weapon", fists = true, affects = {}, relicAffects = {} }
 M.WEAPON_KINDS = { "two-handed sword", "two-handed axe", "throwing star", "throwing knife", "throwing axe", "throwing spear",
   "magical wand", "hand cannon", "slug thrower", "hand to hand", "exotic", "sword", "dagger", "spear", "mace", "axe", "flail",
   "whip", "polearm", "bow", "dart", "hook", "lance", "pike", "halberd", "nunchaku", "staff", "scythe", "yo-yo",
@@ -6293,28 +6300,35 @@ function M.combatModel(old, new)
   local align = tonumber(((M.gmcpGet and M.gmcpGet("char.status")) or {}).align)
   if align and align >= 350 then dmg2 = dmg2 + base * d("damage-to-evil-prcnt") / 100 end
   if align and align <= -350 then dmg2 = dmg2 + base * d("damage-to-good-prcnt") / 100 end
-  -- a weapon swapped: its damage, accuracy and crit, from help 2468's values
+  -- a weapon swapped: its damage, accuracy and crit, from help 2468's values. Fighting unarmed, a weapon
+  -- replaces your fists (hand to hand's damage, accuracy and crit, as eq shows them)
   local ow, nw = old and old.weapon, new and new.weapon
+  if nw and not ow and c.weapon == "fists" and c.wpn then ow = c.wpn; old = old or M.FISTS end
   if nw or ow then
     local od, nd = ow and weaponValue("damage", ow.dmgLevel), nw and weaponValue("damage", nw.dmgLevel)
     if od and nd and (c.dmgParts or {})["weapon"] then dmg2 = dmg2 + c.dmgParts["weapon"] * (nd / od - 1) end
     local oa, na = ow and weaponValue("accuracy", ow.accuracy), nw and weaponValue("accuracy", nw.accuracy)
     if oa and na then acc2 = acc2 + (na - oa) end
-    -- your skill with the weapon (help 1747: +1/3 of the learned skill, up to 25, +3 at mastery):
-    -- a different kind of weapon means a different skill
+    -- your skill with the weapon (help 1747: +1/3 of the learned skill, up to 25, +3 at mastery, and a
+    -- wielded weapon + its skill's complexity/30): a different kind of weapon means a different skill
     local function skillAcc(it)
       if not it then return nil end
-      for _, kind in ipairs(M.WEAPON_KINDS) do
-        if M.weaponIs(it, kind) then
+      for _, kind in ipairs(it == M.FISTS and { "hand to hand" } or M.WEAPON_KINDS) do
+        if it == M.FISTS or M.weaponIs(it, kind) then
           local sk = (M.cfg.skills or {})[kind]
           local l = sk and tonumber(sk.lrnd) or 0
-          return math.min(25, l / 3) + (l >= 100 and 3 or 0), kind
+          local cx = (it ~= M.FISTS and sk and tonumber(sk.cmplx)) or 0
+          return math.min(25, l / 3) + (l >= 100 and 3 or 0) + cx / 30, kind, l
         end
       end
     end
-    local os_, ok_ = skillAcc(old)
-    local ns_, nk_ = skillAcc(new)
-    if os_ and ns_ and ok_ ~= nk_ then acc2 = acc2 + (ns_ - os_)
+    local os_, ok_, ol_ = skillAcc(old)
+    local ns_, nk_, nl_ = skillAcc(new)
+    if os_ and ns_ and ok_ ~= nk_ then
+      acc2 = acc2 + (ns_ - os_)
+      res.skill = { ok_, ol_, nk_, nl_ }
+      -- skill is part of eq's "from skill & strength" damage too; how much, no help page says
+      if ol_ ~= nl_ then res.notCalc = { "weapon skill's part of damage" } end
     elseif ow and nw and not (os_ and ns_) then res.estimates[#res.estimates + 1] = { "weapon skill (unknown kind)", 0 } end
     local oc, nc = ow and weaponValue("crit", ow.critChance), nw and weaponValue("crit", nw.critChance)
     if oc and nc then crit2 = crit2 + (nc - oc) end
@@ -6466,6 +6480,13 @@ function M.swapCategories(m)
   local function pctFmt(v) return f1(v) end
   if m.offense then
     local o, P = {}, m.offense.parts or {}
+    -- another kind of weapon: another proficiency, and how well you know it
+    local sk = m.skill
+    if sk then
+      o[#o + 1] = { C.dim, "skill " }
+      o[#o + 1] = { C.text, sk[1] .. " " .. sk[2] .. "%→" }
+      o[#o + 1] = { sk[4] > sk[2] and C.plus or (sk[4] < sk[2] and C.minus or C.text), sk[3] .. " " .. sk[4] .. "%" }
+    end
     if P.damage then arrow(o, "damage", P.damage[1], P.damage[2]) end
     if P.accuracy then arrow(o, "hit", math.max(1, math.min(98, P.accuracy[1])), math.max(1, math.min(98, P.accuracy[2])), pctFmt, "%") end
     if P.crit then arrow(o, "crit", P.crit[1], P.crit[2], pctFmt, "%") end
@@ -6664,6 +6685,7 @@ function M.upgradeValue(old, new, w, role)
   for _, n in ipairs(names) do if n ~= "set-bonus" then kept[#kept + 1] = n end end
   for _, sn in ipairs(sUnknown) do kept[#kept + 1] = "set bonus (look at " .. sn .. " again)" end
   names = kept
+  for _, n in ipairs(m.notCalc or {}) do names[#names + 1] = n end
   m.estNames = names
   m.setStats, m.setGain, m.setLose = sStats, sGain, sLose
   if role then return m[role] and m[role].pct or 0, m end
@@ -7043,10 +7065,16 @@ function M.upgradeLines(width, all, role, src, maxLvl)
     table.insert(byWorn[r.worn], r)
   end
   local wearing, isWorn = {}, {}
+  local wielding = false
   for _, n in ipairs(M.eqNames or {}) do
     isWorn[n] = true
     local it = M.items[n]
     if it and it.worn then wearing[#wearing + 1] = it end
+    if it and it.weapon then wielding = true end
+  end
+  -- fighting unarmed: weapons are weighed against your fists
+  if not wielding and ((M.cfg.char or {}).combat or {}).weapon == "fists" and #wearing > 0 then
+    wearing[#wearing + 1] = M.FISTS
   end
   -- two of a kind: only the weaker one is up for replacing
   local weakest = {}
@@ -7180,7 +7208,9 @@ function M.upgradeLines(width, all, role, src, maxLvl)
         out[#out + 1] = { { C.dim, pad("", 26) .. pad("", 10) .. "not calculated: " .. table.concat(bm.estNames, ", ") } }
       end
       local n, a, z = shown, cur.name, best
-      links[#links + 1] = { string.format("%d. compare %s → %s", n, a, z), function() M.compareNames(a, z) end }
+      if cur ~= M.FISTS then
+        links[#links + 1] = { string.format("%d. compare %s → %s", n, a, z), function() M.compareNames(a, z) end }
+      end
     end
    end
   end
@@ -19143,6 +19173,7 @@ function M.legacyCommand(args)
     if n then
       local u = (M.lastUpgrades or {})[n]
       if not u then return say("no upgrade #" .. n .. " - type sbo upgrades first") end
+      if u.cur == M.FISTS.name then return say("#" .. n .. " is weighed against your fists: sbo item " .. u.best .. " shows it") end
       return M.compareNames(u.cur, u.best)
     end
     -- sbo upgrades [all] [offense|defense|casting|utility]: everything seen, and/or by one role only

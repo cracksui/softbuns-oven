@@ -3669,6 +3669,43 @@ def upgrades_up_to_a_level():
 
 
 @test
+def weapons_against_fists():
+    # fighting unarmed: a weapon is weighed against your fists - hand to hand's damage, accuracy, crit and skill
+    # against the weapon's own and its proficiency
+    o = Oven()
+    o.lua("""sbo.cfg.skills = { ['hand to hand'] = { lrnd = 80, cmplx = 1 }, hook = { lrnd = 75, cmplx = 9 }, dagger = { lrnd = 2, cmplx = 1 } }""")
+    o.ev("sbo.noteCombat")(o.ev("function(...) return {...} end")(
+      "With hand to hand, you will deal Low water damage with Max accuracy, at Min range, with a High chance to crit for 2x damage.",
+      "132 Damage: (+102 from weapon) (+30 from skill & strength)",
+      "95 Accuracy: (+25 from weapon skill) (+45 from fists) (+11 from agility)",
+      "22% Critical Hit chance:  (+22 from hand to hand)"))
+    o.lua('''
+      sbo.cfg.maxes = { hp = 365 }; sbo.cfg.arLoc = { torso = 10 }; sbo.cfg.char.total = 50
+      local function w(n, kind, d, a, c) return { name = n, worn = "wielded as a weapon", level = 10, raw = {}, affects = {}, keywords = kind,
+        weapon = { summary = "Your " .. kind .. " will deal " .. d .. " pierce damage", dmgLevel = d, accuracy = a, critChance = c } } end
+      sbo.remember({ name = "a worn vest", worn = "on body", level = 10, affects = {}, ar = 1, raw = {} })
+      sbo.remember(w("a sharp hook", "hook", "Max", "Max", "Max"))
+      sbo.remember(w("a dull dagger", "dagger", "Max", "Max", "Max"))
+      sbo.eqNames = { "a worn vest" }''')
+    eq(o.ev("sbo.cfg.char.combat.wpn.dmgLevel"), "Low", "eq's words for your fists are kept")
+    # the hook: Max (112) damage against Low (85); same accuracy; skill 75 is still 25, + 9/30
+    dmg = o.ev("sbo.combatModel(nil, sbo.items['a sharp hook']).offense.parts.damage[2]")
+    assert abs(dmg - (132 + 102 * (112 / 85 - 1))) < 0.01, dmg
+    acc = o.ev("sbo.combatModel(nil, sbo.items['a sharp hook']).offense.parts.accuracy[2]")
+    assert abs(acc - (95 + 9 / 30)) < 0.01, acc
+    # the dagger: barely learned - 2/3 accuracy instead of 25
+    acc = o.ev("sbo.combatModel(nil, sbo.items['a dull dagger']).offense.parts.accuracy[2]")
+    assert abs(acc - (95 - 25 + 2 / 3 + 1 / 30)) < 0.01, acc
+    up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("(sbo.upgradeLines(100, true))").values())
+    assert "your fists" in up and "a sharp hook" in up, up
+    assert "hand to hand 80%→hook 75%" in up and "weapon skill's part of damage" in up, up
+    # wielding a weapon: no fists row
+    o.lua('sbo.eqNames = { "a worn vest", "a dull dagger" }')
+    up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("(sbo.upgradeLines(100, true))").values())
+    assert "your fists" not in up and "dagger 2%→hook 75%" in up, up
+
+
+@test
 def unknown_item_spell_help_read():
     # an item casting a spell Oven doesn't know: its help page is read quietly once you're idle, and counts after
     o = Oven()
