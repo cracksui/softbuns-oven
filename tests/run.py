@@ -747,7 +747,8 @@ def combat_model():
     m = o.ev("sbo.combatModel(nil, { affects = { { 'agility', '2' } } })")
     eq(m.offense.parts.accuracy[2], 56, "+2 agility = +1 accuracy ((agility+1)/2)")
     m = o.ev("sbo.combatModel(nil, { affects = { { 'agility', '20' } } })")
-    eq(m.offense.parts.accuracy[2], 59, "but only up to the maximum: 9 -> 17")
+    # gear counts past the trained maximum (score "agility 21/19", eq "+11 from agility" = (21+1)/2)
+    eq(m.offense.parts.accuracy[2], 65, "past the maximum too: 9 -> 29")
     # defense: +1 AR everywhere vs on the legs only
     all_ = o.ev("sbo.combatModel(nil, { affects = { { 'ar', '1' } } })").defense.pct
     legs = o.ev("sbo.combatModel(nil, { affects = { { 'ar-legs', '1' } } })").defense.pct
@@ -3764,6 +3765,24 @@ def item_rows_go_to_their_room():
     assert links and all(t == "go ▸" for t in [x[1] for x in o.ev("ECHOLINKS").values()]), links
     o.lua("WALKS = {}; for _, l in ipairs(ECHOLINKS) do if type(l[2]) == 'function' then l[2]() end end")
     assert 300 in o.ev("WALKS").values(), list(o.ev("WALKS").values())
+
+
+@test
+def strength_damage_learned():
+    # strength's part of damage, learned from eq reads at two strengths (same weapon and skill)
+    o = Oven()
+    o.lua("""sbo.cfg.skills = { ["hand to hand"] = { lrnd = 100 } }
+      sbo.noteCombat({ "With hand to hand, you will deal Low water damage with Max accuracy, at Min range.",
+        "131 Damage: (+102 from weapon) (+29 from skill & strength)", "94 Accuracy: (+4 from strength)" })""")
+    eq(o.ev("sbo.cfg.strDmg.k"), None, "one strength: not yet")
+    o.lua("""sbo.noteCombat({ "With hand to hand, you will deal Low water damage with Max accuracy, at Min range.",
+        "133 Damage: (+102 from weapon) (+31 from skill & strength)", "95 Accuracy: (+5 from strength)" })""")
+    eq(round(o.ev("sbo.cfg.strDmg.k"), 4), round(2 / 102, 4), "one more strength: 2 more on 102")
+    # in a swap: +1 strength = +2 damage
+    o.lua("""sbo.cfg.char.stats = { strength = { cur = 25, max = 22 } }
+      sbo.cfg.maxes = { hp = 365, sp = 875 }
+      M1 = sbo.combatModel(nil, { affects = { { 'strength', '1' } } })""")
+    eq(round(o.ev("M1.offense.parts.damage[2]") - o.ev("M1.offense.parts.damage[1]"), 1), 2.0, "+1 strength: +2 damage")
 
 
 @test

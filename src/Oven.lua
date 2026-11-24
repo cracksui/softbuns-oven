@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.97.3"
+M.version = "1.98.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5916,6 +5916,7 @@ function M.noteCombat(raw)
     if wname then c.weapon, c.dmgType = (wname == "hand to hand" and "fists" or wname), wtype end
   end
   if c.damage or c.accuracy then
+    pcall(M.strDmgNote, c)
     M.cfg.char = M.cfg.char or {}
     -- each weapon's reading kept, so the build page can show the others too
     if c.weapon and c.damage and c.accuracy then
@@ -5966,13 +5967,13 @@ local function modelStats(it, noSpells)
   return s
 end
 
--- attribute after a change: what score shows now, minus what the old item gave, plus the new one,
--- never past the maximum (gear beyond it does nothing)
+-- attribute after a change: what score shows now, minus what the old item gave, plus the new one. Gear goes
+-- past the trained maximum and counts (score "agility 21/19", eq "+11 from agility" = (21+1)/2)
 local function attrAfter(stat, d)
   local st = ((M.cfg.char or {}).stats or {})[stat]
   if not st or not st.cur then return nil, nil end
   local now = st.cur
-  local after = math.max(0, math.min(st.max or 999, now + d))
+  local after = math.max(0, now + d)
   return now, after
 end
 
@@ -6204,6 +6205,38 @@ function M.wornAttackSpeed()
   return sp
 end
 
+-- strength's part of melee damage: eq gives "(+29 from skill & strength)" beside "(+102 from weapon)". With
+-- the same weapon and skill, how that part (as a share of the weapon's) moves with strength is learned from
+-- your eq reads: k = the share one point of strength adds. Strength at each read: eq's "+4 from strength"
+-- (accuracy, over 20) when it's there, else score's
+function M.strDmgNote(c)
+  local w = c.dmgParts and c.dmgParts["weapon"]
+  local ss = c.dmgParts and c.dmgParts["skill & strength"]
+  if not (w and ss and w > 0 and c.weapon) then return end
+  local accStr = c.accParts and c.accParts["strength"]
+  local str = (accStr and accStr > 0) and (20 + accStr) or tonumber((((M.cfg.char or {}).stats or {}).strength or {}).cur)
+  if not str then return end
+  local kind = c.weapon == "fists" and "hand to hand" or c.weapon
+  local sk = tonumber((((M.cfg.skills or {})[kind]) or {}).lrnd) or -1
+  M.cfg.strDmg = M.cfg.strDmg or { samples = {} }
+  local S = M.cfg.strDmg.samples
+  local last = S[#S]
+  if last and last.w == w and last.ss == ss and last.str == str and last.weapon == c.weapon then return end
+  S[#S + 1] = { w = w, ss = ss, str = str, weapon = c.weapon, sk = sk, at = os.time() }
+  while #S > 60 do table.remove(S, 1) end
+  -- pairs with the same weapon and skill but a different strength
+  local sum, n = 0, 0
+  for i = 1, #S do
+    for j = i + 1, #S do
+      local a, b = S[i], S[j]
+      if a.weapon == b.weapon and a.sk == b.sk and a.w == b.w and a.str ~= b.str then
+        sum = sum + ((b.ss / b.w) - (a.ss / a.w)) / (b.str - a.str); n = n + 1
+      end
+    end
+  end
+  if n > 0 then M.cfg.strDmg.k, M.cfg.strDmg.n = sum / n, n end
+end
+
 -- the model: what swapping `old` (may be nil) for `new` does. Returns
 -- { offense = {pct, now, after, notes}, defense = {...}, casting = {...}, estimates = {…} } or nil, why
 -- spells on you from something other than `old`: another worn item casting it, or (aff) something else -
@@ -6250,6 +6283,12 @@ function M.combatModel(old, new)
   -- flat damage and damage-prcnt (help 1920: "your melee damage, as a percentage of your base damage")
   local base = (c.dmgParts or {})["weapon"] or dmg
   dmg2 = dmg2 + d("damage") + base * d("damage-prcnt") / 100
+  -- strength's damage, once learned from your eq reads (M.strDmgNote)
+  local kStr = M.cfg.strDmg and M.cfg.strDmg.k
+  if kStr and d("strength") ~= 0 then
+    local sNow, sAfter = attrAfter("strength", d("strength"))
+    if sNow then dmg2 = dmg2 + base * kStr * (sAfter - sNow) end
+  end
   -- help 1920: damage-to-evil-prcnt "if you are good and your opponent is evil" (and to-good, the other way)
   local align = tonumber(((M.gmcpGet and M.gmcpGet("char.status")) or {}).align)
   if align and align >= 350 then dmg2 = dmg2 + base * d("damage-to-evil-prcnt") / 100 end
@@ -6385,6 +6424,7 @@ function M.combatModel(old, new)
   -- what has no formula yet: listed, and scored with the weights (marked ~ where shown)
   -- (agility and strength are only partly covered: their dodging and damage are estimated, at HALF)
   local known = { damage = 1, ["damage-prcnt"] = 1, accuracy = 1, luck = 1, personality = 1,
+                  strength = (M.cfg.strDmg and M.cfg.strDmg.k) and 1 or nil,
                   wisdom = 1, ["crit-chance"] = 1, hp = 1, ar = 1, ["spell-points"] = 1, ["attack-speed"] = 1,
                   ["damage-to-evil-prcnt"] = 1, ["damage-to-good-prcnt"] = 1,
                   ["hp-regen"] = 1, ["hp-regen-prcnt"] = 1, ["hp-regen-max"] = 1, ["sp-regen"] = 1, ["sp-regen-prcnt"] = 1,
