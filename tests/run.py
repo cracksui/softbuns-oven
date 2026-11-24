@@ -3456,6 +3456,13 @@ def upgrades_up_to_a_level():
     # the command reads the level; a number alone still compares
     o.lua('SEEN = nil; local u = sbo.upgradeLines; sbo.upgradeLines = function(w, a, r, s, m) SEEN = m; return u(w, a, r, s, m) end; sbo.command("eq upgrades eqdb 175")')
     eq(o.ev("SEEN"), 175, "sbo eq upgrades eqdb 175")
+    # the game's rule, learned from its refusal: wearable up to 5 above your level
+    o.lua('sbo.remember({ name = "a near vest", worn = "on body", level = 146, affects = { { "accuracy", "6" } }, ar = 1, raw = {}, eqdb = "h4" })')
+    assert "a near vest" not in o.ev("UP(175)").split("Up to level")[0], "margin unknown: not yet"
+    o.feed("A book of lottery tickets is level 241; you are too low a level to wear it until you reach level 236.")
+    eq(o.ev("sbo.cfg.wearMargin"), 5, "learned: 5")
+    now = o.ev("UP(175)").split("Up to level")[0]
+    assert "a near vest" in now and "up to level 147: your 142 + 5" in now, now
     # the lean: set, shown in the title; an unknown role lists the real ones
     o.lua('SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end; sbo.command("eq build role defense 1.5")')
     assert "defense ×1.5" in o.ev("UP(nil)").split("\n")[0], o.ev("UP(nil)").split("\n")[0]

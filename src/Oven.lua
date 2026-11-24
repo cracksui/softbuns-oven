@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.86.1"
+M.version = "1.87.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6796,7 +6796,8 @@ end
 
 function M.upgradeLines(width, all, role, src, maxLvl)
   local bname, w = M.activeBuild()
-  local lvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
+  local myLvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
+  local lvl = M.wearMax(myLvl)   -- the game lets you wear items a few levels above yours
   if not (maxLvl and lvl and maxLvl > lvl) then maxLvl = nil end
   local leanTxt = ""
   do local mx = M.roleMix()
@@ -6959,7 +6960,8 @@ function M.upgradeLines(width, all, role, src, maxLvl)
   end
   if maxLvl then
     -- sbo upgrades eqdb 175: what you can wear now, then what's worth aiming for up to that level
-    out[#out + 1] = { { C.title, "Wearable now" }, { C.dim, "  (items up to your level, " .. lvl .. ")" } }
+    out[#out + 1] = { { C.title, "Wearable now" }, { C.dim, "  (items up to level " .. lvl
+      .. ((lvl ~= myLvl) and (": your " .. myLvl .. " + " .. (lvl - myLvl)) or ", your level") .. ")" } }
     local before = shown
     section()
     if shown == before then out[#out + 1] = { { C.dim, "   nothing beats what you wear yet" } } end
@@ -13205,6 +13207,7 @@ function M.onLineWork()
     pcall(M.worldMapLine, line, d)
   end
   if line:find("takes your payment and hands you", 1, true) then pcall(M.noteBought, line) end
+  if line:find("too low a level to wear it", 1, true) then pcall(M.noteWearLevel, line) end
   if M.travel then pcall(M.travelLine, line) end
   if M.eqdbAt and not cap then
     local okE, done = pcall(M.eqdbLine, line)
@@ -17343,6 +17346,37 @@ function M.rideLine(l)
   if t and here then M.rideLandNote(t.kind, t.dest, here); M.rideTicket = nil end
 end
 -- the recordings, once: each token bought, then where the worm came down
+-- how far above your level you can wear things, from the game's own refusal: "A book of lottery tickets is level
+-- 241; you are too low a level to wear it until you reach level 236." (item level - that level)
+function M.noteWearLevel(l)
+  local il, reach = tostring(l or ""):match("is level (%d+); you are too low a level to wear it until you reach level (%d+)")
+  if not il then return false end
+  local m = tonumber(il) - tonumber(reach)
+  if m >= 0 and m ~= M.cfg.wearMargin then M.cfg.wearMargin = m; M.saveSettings(); M.dataChanged() end
+  return true
+end
+-- the highest item level you can wear now (your level when the margin isn't known yet)
+function M.wearMax(lvl)
+  lvl = lvl or tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
+  return lvl and (lvl + (tonumber(M.cfg.wearMargin) or 0)) or nil
+end
+-- once: the margin from earlier recordings
+function M.wearMarginImport()
+  if M.cfg.wearMargin or M.cfg.wearMarginImported then return end
+  M.cfg.wearMarginImported = true
+  for _, f in ipairs({ "oven_record.txt", "oven_record.old.txt", "oven_samples.txt" }) do
+    local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
+    if fh then
+      for l in fh:lines() do
+        if l:find("too low a level to wear it", 1, true) and M.noteWearLevel(l) then break end
+      end
+      fh:close()
+    end
+    if M.cfg.wearMargin then break end
+  end
+  M.saveSettings()
+end
+
 function M.rideLandImport()
   if M.cfg.rideLandsImported then return 0 end
   M.cfg.rideLandsImported = true
@@ -20238,5 +20272,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport) end)
 pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end
