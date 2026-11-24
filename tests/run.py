@@ -3557,6 +3557,29 @@ def set_bonus_in_upgrades():
 
 
 @test
+def item_rows_go_to_their_room():
+    # sbo item: a row with a room (sold at, picked up) is itself a link there - in the Inspector and on the main screen
+    o = Oven()
+    o.lua("""roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
+      getRoomArea = function() return 1 end; getRoomAreaName = function() return "Rune" end
+      getPath = function() return false end
+      WALKS = {}; sbo.mapWalkTo = function(id) WALKS[#WALKS+1] = id end
+      sbo.dbx("INSERT INTO shops (room, name, last) VALUES (300, 'Randol''s Fine Wines', 1)")
+      sbo.dbx("INSERT INTO shop_items (room, no, item, level, amount, cost, last, currency) VALUES (300, 1, 'A bottle of white wine', 1, '5', 500, 1, 'gold')")
+      sbo.dbx("INSERT INTO loot (t, who, item, src, n, room) VALUES (1, 'you', 'a white wine cork', 'a crate', 1, 400)")
+      sbo.cfg.window = true; ECHOLINKS = {}
+      sbo.command("item white")""")
+    rows = o.ev("(function() local n = 0 for _, l in ipairs(sbo.viewHist[#sbo.viewHist].lines) do if l.link then n = n + 1 end end return n end)()")
+    assert rows >= 2, rows
+    # the Inspector: a see-through label over each linked row; a click walks there
+    o.lua("for k = 1, %d do WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Row' .. k].click({ button = 'LeftButton' }) end" % rows)
+    eq(sorted(set(o.ev("WALKS").values())), [300, 400], "each row goes to its room")
+    # the main screen (mirror): the row's text is a link
+    o.lua("WALKS = {}; for _, l in ipairs(ECHOLINKS) do if type(l[2]) == 'function' then l[2]() end end")
+    assert 300 in o.ev("WALKS").values(), list(o.ev("WALKS").values())
+
+
+@test
 def upgrades_from_what_you_carry():
     o = Oven()
     o.lua('''

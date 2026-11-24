@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.89.0"
+M.version = "1.90.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4403,6 +4403,7 @@ end
 
 local function render(win, lines)
   for _, segs in ipairs(lines) do
+    local lk = type(segs.link) == "table" and segs.link or nil
     for _, s in ipairs(segs) do
       local col = s[1]
       if type(col) == "table" then
@@ -4411,7 +4412,7 @@ local function render(win, lines)
         if color_table and not color_table[col] then col = "white" end
         fg(win, col)
       end
-      echo(win, s[2])
+      if lk and s[2] ~= "" then echoLink(win, s[2], lk[1], lk[2] or "", true) else echo(win, s[2]) end
     end
     resetFormat(win)
     echo(win, "\n")
@@ -4479,7 +4480,7 @@ local function buildPage(pg)
   pg.backdrop:setStyleSheet("background-color: black;")
   pg.label = Geyser.Label:new({ name = base .. "Label", x = 0, y = 0, width = "100%", height = 40 }, pg.scroll)
   pg.label:setStyleSheet(pageStyle)
-  pg.links = {}
+  pg.links, pg.rows = {}, {}
   return true
 end
 
@@ -4574,15 +4575,20 @@ function M.wrapDecho(d, cols)
 end
 
 -- lines: decho ("decho") or cecho ("cecho") strings; links: { {text, function}, ... }
-function M.pageShow(pg, lines, fmt, links)
+-- rowLinks: { { line = index into lines, fn, hint } } - those lines are clickable where they stand
+function M.pageShow(pg, lines, fmt, links, rowLinks)
   local font, size, cw, ch = pageFont()
   local cols = M.pageCols(pg)
   -- wrap here (keeping colours) so the page has an exact number of lines and
   -- Qt doesn't wrap on its own: then the measured height is exact too
   local html, nLines = {}, 0
-  for _, l in ipairs(lines) do
+  local rowAt, rowN = {}, {}
+  for i, l in ipairs(lines) do
     if fmt == "cecho" then l = M.cechoToDecho(l) end
-    for _, w in ipairs(M.wrapDecho(l, cols)) do
+    rowAt[i] = nLines
+    local parts = M.wrapDecho(l, cols)
+    rowN[i] = #parts
+    for _, w in ipairs(parts) do
       html[#html + 1] = (w == "") and "" or decho2html(w)
       nLines = nLines + 1
     end
@@ -4605,6 +4611,29 @@ function M.pageShow(pg, lines, fmt, links)
   local rowH = math.ceil(lineH)
   links = links or {}
   pg.label:resize(nil, pageH)
+  -- a clickable line in the page: a see-through label over it (lit up when the mouse is on it)
+  local textH = (okH and tonumber(hintH) and hintH > 12 and nLines > 0) and ((hintH - 12) / nLines) or lineH
+  pg.rows = pg.rows or {}
+  for k, rl in ipairs(rowLinks or {}) do
+    local at, n = rowAt[rl.line], rowN[rl.line]
+    if at and n and n > 0 then
+      local lab = pg.rows[k]
+      if not lab then
+        lab = Geyser.Label:new({ name = pg.prefix .. pg.flip .. "Row" .. k, x = 0, y = 0, width = "100%", height = 20 }, pg.scroll)
+        pg.rows[k] = lab
+      end
+      lab:setStyleSheet("QLabel { background-color: rgba(0,0,0,0); } QLabel::hover { background-color: rgba(255,255,255,28); }")
+      pcall(function() lab:setCursor("PointingHand") end)
+      if rl.hint then pcall(function() lab:setToolTip(rl.hint) end) end
+      lab:echo("")
+      local fn = rl.fn
+      lab:setClickCallback(function() M.lastUserCmdAt = now(); fn() end)
+      lab:move(0, math.floor(6 + at * textH))
+      lab:resize("100%", math.ceil(n * textH))
+      lab:show()
+    end
+  end
+  for k = #(rowLinks or {}) + 1, #pg.rows do pg.rows[k]:hide() end
   -- clickable lines under the page (labels can't hold links, so each is its own label)
   local linkY = pageH
   for i, ln in ipairs(links) do
@@ -5111,7 +5140,11 @@ function M.viewShow()
     links[#links + 1] = { "newer ▶  (" .. (#h - pos) .. " more)", function() M.viewPos = pos + 1; M.viewShow() end }
   end
   local prev = M.cfg.tabs and tabBegin("view")
-  M.pageShow(M.viewPg, segsToDecho(e.lines), "decho", links)
+  local rowLinks = {}
+  for i, segs in ipairs(e.lines or {}) do
+    if type(segs.link) == "table" then rowLinks[#rowLinks + 1] = { line = i, fn = segs.link[1], hint = segs.link[2] } end
+  end
+  M.pageShow(M.viewPg, segsToDecho(e.lines), "decho", links, rowLinks)
   if M.cfg.tabs then tabEnd("view", prev) end
   if M.raiseQuestHud then M.raiseQuestHud() end
 end
@@ -19259,19 +19292,29 @@ function M.itemFind(q)
     if k > 8 then kvLine(out, "", kw, { { C.dim, string.format("… and %d more (sbo map shops %s)", #sold - 8, q) } }, width); break end
     any = true
     local r = x.r
+    local first = #out + 1
     kvLine(out, k == 1 and "Sold at" or "", kw, { { C.item, r.item }, { C.num, "  " .. M.commaNum(tonumber(r.cost) or 0) .. " " .. r.currency },
       { C.dim, "  ·  " .. (r.name or "a shop") .. " · " .. where(x.id) .. (x.steps < 99999 and string.format("  (%d steps)", x.steps) or "") } }, width)
     local id = x.id
-    if id and roomExists(id) then links[#links + 1] = { "go to " .. (r.name or ("#" .. id)) .. " (" .. r.item .. ")", function() M.mapWalkTo(id) end } end
+    if id and roomExists(id) then
+      local go = { function() M.mapWalkTo(id) end, "go to " .. (r.name or ("#" .. id)) }
+      for i = first, #out do out[i].link = go end
+      links[#links + 1] = { "go to " .. (r.name or ("#" .. id)) .. " (" .. r.item .. ")", go[1] }
+    end
   end
   -- picked up: the latest few
   local got = M.dbRows("SELECT t, who, item, src, room FROM loot WHERE instr(lower(item), %s) > 0 ORDER BY id DESC LIMIT 6", ql)
   for k, r in ipairs(got) do
     any = true
     local id = tonumber(r.room)
+    local first = #out + 1
     kvLine(out, k == 1 and "Picked up" or "", kw, { { C.item, r.item }, { C.dim, "  " .. (r.who == "you" and "" or (r.who .. " · ")) ..
       (r.src and ("from " .. r.src .. " · ") or "") .. (id and where(id) or "room unknown") .. "  " .. M.shortDur(os.time() - (tonumber(r.t) or os.time())) .. " ago" } }, width)
-    if id and roomExists(id) then links[#links + 1] = { "go to where " .. r.item .. " was picked up", function() M.mapWalkTo(id) end } end
+    if id and roomExists(id) then
+      local go = { function() M.mapWalkTo(id) end, "go to where " .. r.item .. " was picked up" }
+      for i = first, #out do out[i].link = go end
+      links[#links + 1] = { go[2], go[1] }
+    end
   end
   -- quests that ask for it
   local qrow = 0

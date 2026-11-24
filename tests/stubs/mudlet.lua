@@ -48,7 +48,7 @@ function isPrompt() return promptFlag end
 function debugc(s) print(s) end
 Adjustable={Container={new=function() return {show=function() end,hide=function() end} end}}
 Geyser={MiniConsole={new=function() return {} end}}
-function echoLink(w,t,c,h) io.write("{LINK "..t.." -> "..c.."}") end
+function echoLink(w,t,c,h) ECHOLINKS = ECHOLINKS or {}; ECHOLINKS[#ECHOLINKS+1] = { t, c }; io.write("{LINK "..t.." -> "..tostring(c).."}") end
 function getMainWindowSize() return 1600,900 end
 function setBorderBottom(h) print("[setBorderBottom "..h.."]") end
 function calcFontSize() return 8,16 end
