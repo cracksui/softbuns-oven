@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.93.0"
+M.version = "1.94.0"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -17778,12 +17778,39 @@ end
 -- learned cost is what a room took net of what you regained on the way, as you are now (floating or not)
 function M.stNeed(kind, rooms)
   if M.cfg.tripRest == false or M.mounted() or not rooms or rooms <= 0 then return nil end
-  local costs = M.cfg.stCost or {}
-  local c = M.stLevitating() and costs[kind .. "+lev"] or nil
-  if not c or c.n < 5 then c = costs[kind] end
-  if not c or c.n < 5 then return nil end
+  local k = M.stLevitating() and (kind .. "+lev") or kind
+  local per = M.stPerRoom(k)
+  if not per and k ~= kind then per = M.stPerRoom(kind) end
+  if not per then return nil end
+  local c = { avg = per }
   return math.ceil(rooms * c.avg * 1.15) + 20   -- a margin: terrain differs
 end
+-- stamina a room costs: yours if you set it (sbo config go.stamina.walk 3; default: back to learned), else
+-- learned (after 5 moves)
+function M.stPerRoom(k)
+  local fixed = tonumber((M.cfg.stFixed or {})[k])
+  if fixed then return fixed end
+  local c = (M.cfg.stCost or {})[k]
+  if c and c.n >= 5 then return c.avg end
+end
+M.ST_KINDS = { { "walk", "walk" }, { "run", "run" }, { "walklev", "walk+lev" }, { "runlev", "run+lev" } }
+function M.stCostText(k)
+  local fixed = tonumber((M.cfg.stFixed or {})[k])
+  local c = (M.cfg.stCost or {})[k]
+  local learned = c and string.format("%.1f a room, from %d moves", c.avg, c.n) or "not learned yet"
+  if fixed then return tostring(fixed) .. " (yours; learned: " .. learned .. "; default to go back)" end
+  return "learned (" .. learned .. ")"
+end
+function M.stCostSet(k, v)
+  v = trim(tostring(v or "")):lower()
+  M.cfg.stFixed = M.cfg.stFixed or {}
+  if v == "auto" or v == "" then M.cfg.stFixed[k] = nil
+  elseif tonumber(v) and tonumber(v) >= 0 then M.cfg.stFixed[k] = tonumber(v)
+  else return M.say("a number of stamina a room, or default (what Oven learns)") end
+  M.saveSettings()
+  M.say(k .. ": " .. M.stCostText(k))
+end
+
 function M.stRunRooms(from, to)
   local a, b = M.worldPos and M.worldPos(from), M.worldPos and M.worldPos(to)
   if not (a and b and a.map == b.map) then return nil end
@@ -19728,6 +19755,10 @@ M.SETTINGS = {
   { "go.rest", "Travel", BOOL, function() return onoff(M.cfg.tripRest ~= false) end,
     function(v) M.cfg.tripRest = (v == "on"); M.saveSettings()
       say("sbo go " .. (v == "on" and "rests when your stamina won't last the next run or walk" or "doesn't rest for stamina (a run cut short by exhaustion: it plans on from there)")) end },
+  { "go.stamina.walk", "Travel", "number", function() return M.stCostText("walk") end, function(v) M.stCostSet("walk", v) end },
+  { "go.stamina.run", "Travel", "number", function() return M.stCostText("run") end, function(v) M.stCostSet("run", v) end },
+  { "go.stamina.walklev", "Travel", "number", function() return M.stCostText("walk+lev") end, function(v) M.stCostSet("walk+lev", v) end },
+  { "go.stamina.runlev", "Travel", "number", function() return M.stCostText("run+lev") end, function(v) M.stCostSet("run+lev", v) end },
   { "go.goldmargin", "Travel", "number", function() return tostring(M.tripGoldMargin()) end,
     function(v)
       local n = tonumber(v)
