@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.96.0"
+M.version = "1.96.1"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6189,10 +6189,39 @@ end
 
 -- the model: what swapping `old` (may be nil) for `new` does. Returns
 -- { offense = {pct, now, after, notes}, defense = {...}, casting = {...}, estimates = {…} } or nil, why
+-- spells on you from something other than `old`: another worn item casting it, or (aff) something else -
+-- a spell doesn't stack with itself, so an item casting one of these adds nothing (and losing `old` loses nothing)
+function M.spellsElsewhere(old)
+  local on = {}
+  for _, nm in ipairs(M.eqNames or {}) do
+    local it = M.items[nm]
+    if it and not (old and nm == old.name) then
+      for k in pairs(M.itemEffects(it)) do local sp = k:match("^spell:(.+)$"); if sp then on[sp] = true end end
+    end
+  end
+  local A = M.affNow and M.affNow()
+  local oldCasts = {}
+  for k in pairs(old and M.itemEffects(old) or {}) do local sp = k:match("^spell:(.+)$"); if sp then oldCasts[sp] = true end end
+  for sp in pairs(A and A.spells or {}) do if not oldCasts[sp] then on[sp] = true end end
+  return on
+end
+-- an item's stats with the spells you'd have anyway left out
+function M.modelStatsSwap(it, elsewhere)
+  local st = modelStats(it)
+  if not it then return st end
+  for k in pairs(M.itemEffects(it)) do
+    local sp = k:match("^spell:(.+)$")
+    local aff = sp and elsewhere[sp] and M.spellAffects(sp)
+    if aff then for stat, n in pairs(aff) do st[stat] = (st[stat] or 0) - n end end
+  end
+  return st
+end
+
 function M.combatModel(old, new)
   local c = (M.cfg.char or {}).combat
   if not c or not c.damage or not c.accuracy then return nil, "type eq once: Oven starts from the numbers it shows" end
-  local a, b = modelStats(old), modelStats(new)
+  local elsewhere = M.spellsElsewhere(old)
+  local a, b = M.modelStatsSwap(old, elsewhere), M.modelStatsSwap(new, elsewhere)
   local function d(k) return (b[k] or 0) - (a[k] or 0) end
   local res = { estimates = {} }
 
@@ -6405,12 +6434,16 @@ function M.swapCategories(m)
     end
   end
   local r = {}
-  if m.hpRegen then arrow(r, "hp/tick", m.hpRegen.now, m.hpRegen.after) end
-  if m.spRegen then arrow(r, "sp/tick", m.spRegen.now, m.spRegen.after) end
-  if #r > 0 then
-    if m.recovery then pct(r, m.recovery.pct) end
-    out[#out + 1] = { "Recovery", r }
+  -- each with its own change (not the two averaged)
+  local function regen(label, R)
+    if not R then return end
+    local n = #r
+    arrow(r, label, R.now, R.after)
+    if #r > n then pct(r, R.pct) end
   end
+  regen("hp/tick", m.hpRegen)
+  regen("sp/tick", m.spRegen)
+  if #r > 0 then out[#out + 1] = { "Recovery", r } end
   if m.casting then
     local c = {}
     arrow(c, "spell points", m.casting.now, m.casting.after)

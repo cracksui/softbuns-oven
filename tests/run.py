@@ -3767,6 +3767,27 @@ def item_rows_go_to_their_room():
 
 
 @test
+def spell_you_already_have_adds_nothing():
+    # an item casting haste when another worn item already hastes you: no extra attacks (spells don't stack)
+    o = Oven()
+    o.lua('''
+      sbo.noteCombat({ "57 Damage: (+46 from weapon)", "55 Accuracy: (+16 from weapon)", "31% Critical Hit chance:" })
+      sbo.cfg.maxes = { hp = 365, sp = 875 }
+      local function caster(n) return { name = n, worn = "around the neck", level = 1, affects = {}, raw = {},
+        extra = { { "Casts", { { "oven_slot", "'haste'" }, { "oven_dim", "  level " }, { "oven_num", "40" } } } } } end
+      sbo.remember(caster("a holy symbol"))
+      sbo.remember({ name = "a pendant", worn = "around the neck", level = 1, affects = {}, raw = {} })
+      sbo.remember(caster("a tornado amulet"))
+      sbo.affNow = function() return nil end
+      sbo.eqNames = { "a holy symbol", "a pendant" }
+      M1 = sbo.combatModel(sbo.items["a pendant"], sbo.items["a tornado amulet"])
+      sbo.eqNames = { "a pendant" }
+      M2 = sbo.combatModel(sbo.items["a pendant"], sbo.items["a tornado amulet"])''')
+    eq(o.ev("M1.offense.parts.attacks[1] == M1.offense.parts.attacks[2]"), True, "already hasted: no change")
+    eq(o.ev("M2.offense.parts.attacks[2] > M2.offense.parts.attacks[1]"), True, "not hasted: more attacks")
+
+
+@test
 def upgrades_from_what_you_carry():
     o = Oven()
     o.lua('''
