@@ -5179,6 +5179,14 @@ def top_bar():
     import re as _re
     bottom = _re.sub("<[^>]+>", "", bottom)
     assert "Mail" in top and "L57" in top and "xp/min" in top, top
+    # where you are: the room's number; outside, its coordinates too
+    o.set_gmcp("room.info", '{ num = 23335, coord = { id = -1, x = -1, y = -1 } }')
+    eq(o.ev("(function() local t = {} for _, x in ipairs(sbo.roomSegs()) do t[#t+1] = x[2] end return table.concat(t) end)()"), "#23335", "a room")
+    o.set_gmcp("room.info", '{ num = 2105636, coord = { id = 0, x = 812, y = 433 }, wilds = "true" }')
+    eq(o.ev("(function() local t = {} for _, x in ipairs(sbo.roomSegs()) do t[#t+1] = x[2] end return table.concat(t) end)()"), "#2105636 · 812,433", "outside")
+    o.lua("sbo.drawBar()")
+    top = o.ev("(function() local t = {} for _, x in ipairs(sbo.topBarSegs or {}) do t[#t+1] = x[2] end return table.concat(t) end)()")
+    assert "#2105636 · 812,433" in top, top
     o.lua("sbo.expRate = function() return 376436.6 end")
     segs = o.ev("(function() local t = {} for _, x in ipairs(sbo.sessionSegs()) do t[#t+1] = x[2] end return table.concat(t) end)()")
     assert "6,273 xp/min" in segs and "xp/hr" not in segs, segs

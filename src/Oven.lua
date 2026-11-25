@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.15"
+M.version = "1.99.16"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10174,6 +10174,22 @@ function M.shortDur(sec)
 end
 
 -- full:  "1h 18m · k/d: 25/1 · 25000 xp/hr"      short: "25000 xp/hr"
+-- the room you're in, for the top line: "#23335", outside "#2105636 · 812,433" (GMCP room.info)
+function M.roomSegs()
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  if type(info) ~= "table" then return {} end
+  local segs = {}
+  local num = tonumber(info.num)
+  if num and num > 0 then segs[#segs + 1] = { C.num, "#" .. num } end
+  local c = type(info.coord) == "table" and info.coord or {}
+  local x, y = tonumber(c.x), tonumber(c.y)
+  if x and y and x >= 0 and y >= 0 then
+    if #segs > 0 then segs[#segs + 1] = { C.dim, " · " } end
+    segs[#segs + 1] = { C.num, x .. "," .. y }
+  end
+  return segs
+end
+
 function M.sessionSegs()
   local S = M.sess
   local dot = { C.dim, " · " }
@@ -10432,6 +10448,9 @@ function M.drawBar()
   -- the top line: flags, the quest timer, level and exp, the session
   if top then
     if #topSegs > 0 then topSegs[#topSegs] = { C.dim, "   │ " } end
+    -- where you are: the room's number, and outside its coordinates - whatever GMCP gives for it
+    local rs = M.roomSegs()
+    if #rs > 0 then addAll(topSegs, rs); topSegs[#topSegs + 1] = { C.dim, "   │ " } end
     addAll(topSegs, tail)
     if M.cfg.barSession then
       if #tail > 0 then topSegs[#topSegs + 1] = { C.dim, "   │ " } end
