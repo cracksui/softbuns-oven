@@ -3700,7 +3700,7 @@ def weapons_against_fists():
     up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("(sbo.upgradeLines(100, true))").values())
     assert "your fists" in up and "a sharp hook" in up, up
     assert "a sharp hook  (lv 10)" in up and "your fists  (lv 50)" in up, up
-    assert "type water→pierce" in up, up
+    assert "weapon hand to hand 80%→hook 75%  damage type water→pierce" in up, up
     assert "hand to hand 80%→hook 75%" in up and "weapon skill's part of damage" in up, up
     # the item's page measured what you'd deal with it: those parts are used (skill and strength included)
     o.lua("""sbo.cfg.skills['two-handed axe'] = { lrnd = 42, cmplx = 1 }; sbo.cfg.skills.axe = { lrnd = 5 }

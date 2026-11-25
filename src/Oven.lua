@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.9"
+M.version = "1.99.10"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6368,9 +6368,10 @@ function M.combatModel(old, new)
     end
     local os_, ok_, ol_ = skillAcc(old)
     local ns_, nk_, nl_ = skillAcc(new)
+    -- the weapon types (and how well you know each), shown even when they're the same
+    if os_ and ns_ then res.skill = { ok_, ol_, nk_, nl_ } end
     if os_ and ns_ and ok_ ~= nk_ then
       if not aMeasured then acc2 = acc2 + (ns_ - os_) end
-      res.skill = { ok_, ol_, nk_, nl_ }
       -- skill is part of eq's "from skill & strength" damage too; how much, no help page says (the item's
       -- page shows it: then it's counted above)
       if ol_ ~= nl_ and not measured then res.notCalc = { "weapon skill's part of damage" } end
@@ -6532,17 +6533,21 @@ function M.swapCategories(m)
   if m.offense then
     local o, P = {}, m.offense.parts or {}
     -- another kind of weapon: another proficiency, and how well you know it
-    local dt = m.dmgType
-    if dt then
-      o[#o + 1] = { C.dim, "type " }
-      o[#o + 1] = { C.text, dt[1] == dt[2] and dt[1] or (dt[1] .. "→" .. dt[2]) }
-      o[#o + 1] = { C.dim, "  " }
-    end
+    -- the weapon type (with your skill in it), then the damage type it deals
     local sk = m.skill
     if sk then
-      o[#o + 1] = { C.dim, "skill " }
-      o[#o + 1] = { C.text, sk[1] .. " " .. sk[2] .. "%→" }
-      o[#o + 1] = { sk[4] > sk[2] and C.plus or (sk[4] < sk[2] and C.minus or C.text), sk[3] .. " " .. sk[4] .. "%" }
+      o[#o + 1] = { C.dim, "weapon " }
+      if sk[1] == sk[3] then o[#o + 1] = { C.text, sk[3] .. " " .. sk[4] .. "%" }
+      else
+        o[#o + 1] = { C.text, sk[1] .. " " .. sk[2] .. "%→" }
+        o[#o + 1] = { sk[4] > sk[2] and C.plus or (sk[4] < sk[2] and C.minus or C.text), sk[3] .. " " .. sk[4] .. "%" }
+      end
+      o[#o + 1] = { C.dim, "  " }
+    end
+    local dt = m.dmgType
+    if dt then
+      o[#o + 1] = { C.dim, "damage type " }
+      o[#o + 1] = { C.text, dt[1] == dt[2] and dt[1] or (dt[1] .. "→" .. dt[2]) }
     end
     if P.damage then arrow(o, "damage", P.damage[1], P.damage[2]) end
     if P.accuracy then arrow(o, "hit", math.max(1, math.min(98, P.accuracy[1])), math.max(1, math.min(98, P.accuracy[2])), pctFmt, "%") end
