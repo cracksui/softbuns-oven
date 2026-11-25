@@ -3646,6 +3646,7 @@ def upgrades_up_to_a_level():
       function UP(mx) local t = {} for _, r in ipairs(sbo.upgradeLines(100, true, nil, "eqdb", mx)) do local x = {} for _, seg in ipairs(r) do x[#x+1] = seg[2] end t[#t+1] = table.concat(x) end return table.concat(t, "\\n") end''')
     plain = o.ev("UP(nil)")
     assert "a fine vest" in plain and "a great vest" not in plain, plain
+    assert "a worn vest  level 100" in plain and "a fine vest  level 140" in plain, plain
     up = o.ev("UP(175)")
     now, later = up.split("Up to level 175")
     assert "Wearable now" in now and "a fine vest" in now and "a great vest" not in now, up
@@ -3698,6 +3699,7 @@ def weapons_against_fists():
     assert abs(acc - (95 - 25 + 2 / 3 + 1 / 30)) < 0.01, acc
     up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("(sbo.upgradeLines(100, true))").values())
     assert "your fists" in up and "a sharp hook" in up, up
+    assert "a sharp hook  level 10" in up and "your fists  level" not in up, up
     assert "hand to hand 80%→hook 75%" in up and "weapon skill's part of damage" in up, up
     # wielding a weapon: no fists row
     o.lua('sbo.eqNames = { "a worn vest", "a dull dagger" }')
