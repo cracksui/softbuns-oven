@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.16"
+M.version = "1.99.17"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11173,6 +11173,7 @@ end
 
 function M.onSend(_, cmd)
   local own = M.ownCmds and M.ownCmds[cmd]
+  pcall(M.stepWatch, cmd)
   -- what you typed last (Oven's own commands - lookups, a walk's steps - aren't yours: not learned as ways)
   if not (own and own > 0) then
     M.lastCmd = { cmd = trim(tostring(cmd or "")), at = now(), room = M.currentRoom and M.currentRoom() or M.mapRoom }
@@ -17702,7 +17703,39 @@ function M.wayCommand(cmd)
   return cmd
 end
 M.WILD_STEP = { n = { 0, -1 }, s = { 0, 1 }, e = { 1, 0 }, w = { -1, 0 }, ne = { 1, -1 }, nw = { -1, -1 }, se = { 1, 1 }, sw = { -1, 1 } }
+-- a step that goes nowhere (a guard, a riddle, a door…): sent a direction, still in the same room a moment
+-- later. Kept a while: if a command then takes you where that direction leads, the direction is blocked
+M.DIR_LONG = { n = "north", s = "south", e = "east", w = "west", ne = "northeast", nw = "northwest",
+  se = "southeast", sw = "southwest", u = "up", d = "down" }
+function M.stepWatch(cmd)
+  local c = trim(tostring(cmd or "")):lower()
+  if not M.WAY_DIRS[c] then return end
+  local from, seq = M.mapRoom, M.roomSeq or 0
+  if not from then return end
+  tempTimer(2.5, function()
+    if M.mapRoom == from and (M.roomSeq or 0) == seq then
+      M.stepBlocked = { room = from, dir = M.DIR_LONG[c] or c, at = now() }
+    end
+  end)
+end
+-- the blocked step from `room`, if the way `cmd` just took you (to `id`) is where it leads: locked on the map
+-- (routes then use the command - 'sayto kalied e' - instead)
+function M.stepBlockLearn(room, id, cmd)
+  local B = M.stepBlocked
+  if not (B and B.room == room and now() - B.at < 300) then return end
+  local okE, ex = pcall(getRoomExits, room)
+  if not (okE and type(ex) == "table" and tonumber(ex[B.dir]) == id) then return end
+  M.stepBlocked = nil
+  local short
+  for k, v in pairs(M.DIR_LONG) do if v == B.dir then short = k end end
+  if pcall(lockExit, room, short or B.dir, true) then
+    M.say(string.format("%s from %s is blocked - sbo go uses '%s' there instead", B.dir,
+      getRoomName(room) or ("#" .. room), cmd))
+    pcall(M.mapLearned)
+  end
+end
 function M.wayRoom()
+  M.roomSeq = (M.roomSeq or 0) + 1
   local info = M.gmcpGet and M.gmcpGet("room.info")
   local id = type(info) == "table" and tonumber(info.num) or nil
   if not id or id <= 0 then return end
@@ -17760,6 +17793,8 @@ function M.wayLearn(prev, here, id, cmd)
         pcall(M.mapLearned)
       end
     end
+    -- a direction that wouldn't take you there a moment ago: blocked (the command is the way)
+    pcall(M.stepBlockLearn, prev.room, id, way)
   end
 end
 

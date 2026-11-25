@@ -3048,6 +3048,20 @@ def ways_learned():
     o.lua("gmcp.room = { info = { num = '200', wilds = 'false' } }; sbo.mapRoom = 200; sbo.travelOnRoom(200)")
     o.L.execute("runTimers()")
     eq(o.ev("CONT"), 1, "inside: the trip goes on")
+    # a step that goes nowhere (Kalied's riddle), then a command that takes you where it leads: the direction
+    # is locked on the map, so routes use the command
+    o.lua("""EXITS = { [100] = { east = 101 } }; getRoomExits = function(r) return EXITS[r] or {} end
+      LOCKED = {}; SPECIAL = {}; SAYS = {}
+      AT(100); sbo.onSend(nil, 'e'); runTimers()""")
+    eq(o.ev("sbo.stepBlocked and sbo.stepBlocked.dir"), "east", "east went nowhere")
+    o.lua("sbo.onSend(nil, 'sayto kalied e'); AT(101)")
+    eq(o.ev("SPECIAL[100]['sayto kalied e']"), 101, "the answer: a way")
+    eq(o.ev("LOCKED['100e']"), True, "east locked")
+    assert any("east from Room 100 is blocked" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    # a command somewhere else after a blocked step: nothing locked
+    o.lua("""EXITS[101] = { west = 100 }; LOCKED = {}
+      AT(101); sbo.onSend(nil, 'w'); runTimers(); sbo.onSend(nil, 'enter mirror'); AT(200)""")
+    eq(o.ev("LOCKED['101w']"), None, "the command went elsewhere: west not locked")
     # following someone: your last command didn't move you - not learned
     o.lua("AT(100); sbo.onSend(nil, 'say hello')")
     o.lua("gmcp.room = { info = { num = '101', wilds = 'false' } }; sbo.currentRoom = function() return 101 end; handlers['gmcp.room.info']('gmcp.room.info')")
