@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.8"
+M.version = "1.99.9"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6375,6 +6375,8 @@ function M.combatModel(old, new)
       -- page shows it: then it's counted above)
       if ol_ ~= nl_ and not measured then res.notCalc = { "weapon skill's part of damage" } end
     elseif ow and nw and not (os_ and ns_) then res.estimates[#res.estimates + 1] = { "weapon skill (unknown kind)", 0 } end
+    -- damage type (water, bash, slash…): what you hit with now (eq) and with it - always shown
+    res.dmgType = { (cw and c.dmgType) or (ow and ow.dmgType) or "?", nw and (nw.dmgType or tostring(nw.summary or ""):match("deal %a+ ([%a%-]+) damage")) or "?" }
     -- crit: the page's "7% Critical Hit chance" is yours with it, in place of eq's now
     if np.crit and cw then crit2 = crit2 - crit + np.crit
     else
@@ -6530,6 +6532,12 @@ function M.swapCategories(m)
   if m.offense then
     local o, P = {}, m.offense.parts or {}
     -- another kind of weapon: another proficiency, and how well you know it
+    local dt = m.dmgType
+    if dt then
+      o[#o + 1] = { C.dim, "type " }
+      o[#o + 1] = { C.text, dt[1] == dt[2] and dt[1] or (dt[1] .. "→" .. dt[2]) }
+      o[#o + 1] = { C.dim, "  " }
+    end
     local sk = m.skill
     if sk then
       o[#o + 1] = { C.dim, "skill " }
