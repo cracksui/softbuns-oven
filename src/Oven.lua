@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.20"
+M.version = "1.99.21"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -15466,6 +15466,7 @@ RGB.friend, RGB.route, RGB.run = bgr(60, 230, 240), bgr(255, 230, 30), bgr(255, 
 RGB.found, RGB.sign = bgr(255, 60, 200), bgr(170, 90, 255)
 RGB.under = bgr(60, 150, 255)   -- a route's part on the layer below (or above)
 RGB.water = bgr(30, 120, 230)   -- the waterways (sailable-bridge passages) you've been through
+RGB.place = bgr(255, 140, 200)   -- a place you've been into that the game's map doesn't show (an iceberg out at sea)
 
 -- muted: mostly grey and darker, a hint of the colour left - so highlights stand out. The maps have only a few
 -- hundred colours, so each is worked out once
@@ -15636,6 +15637,30 @@ function M.worldDrawNow()
           local x, y = k:match("^(%d+),(%d+)$")
           if x then M.worldPaint(rows, outW, tonumber(x), tonumber(y), sz, RGB.water) end
         end
+      end
+    end
+  end
+  -- places you've been into that the map doesn't show itself: a spot the same colour as all round it (a town
+  -- is its own pixel on the map already)
+  local function px(x, y)
+    if x < 0 or y < 0 or x >= img.w or y >= img.h then return nil end
+    local o = img.off + (img.h - 1 - y) * img.row + x * 3 + 1
+    return img.data:sub(o, o + 2)
+  end
+  local drawn = {}
+  for _, t in ipairs(M.worldTowns()) do
+    local k = t.x .. "," .. t.y
+    if t.map == mapName and not t.entry and not drawn[k] then
+      drawn[k] = true
+      local c, plain = px(t.x, t.y), true
+      for dy = -1, 1 do for dx = -1, 1 do
+        local n = px(t.x + dx, t.y + dy)
+        if n and n ~= c then plain = false end
+      end end
+      if plain then
+        local sz = math.max(zoom, 3)
+        M.worldPaint(rows, outW, t.x, t.y, sz + 2, RGB.black)
+        M.worldPaint(rows, outW, t.x, t.y, sz, RGB.place)
       end
     end
   end
@@ -15812,23 +15837,23 @@ function M.worldRelease()
 end
 
 -- the towns on the world map: each area's place (GMCP puts all of a town's rooms on one spot of the wilds), and
--- the spots of the wilds its learned ways in start from - { map, x, y, name }, rebuilt when a new place is kept
+-- the spots of the wilds its learned ways in start from - { map, x, y, name, entry }, rebuilt when a new place is kept
 function M.worldTowns()
   if M.worldTownList then return M.worldTownList end
   local list, seen = {}, {}
-  local function add(map, x, y, room)
+  local function add(map, x, y, room, entry)
     room, x, y = tonumber(room), tonumber(x), tonumber(y)
     if not (room and x and y and map) or not roomExists(room) or M.isWildRoom(room) then return end
     local a = getRoomArea(room)
-    local name = a and getRoomAreaName(a)
-    if type(name) ~= "string" or name == "" then return end
+    local ok, name = pcall(getRoomAreaName, a)
+    if not ok or type(name) ~= "string" or name == "" then return end
     local k = map .. ":" .. x .. "," .. y .. ":" .. name
     if seen[k] then return end
     seen[k] = true
-    list[#list + 1] = { map = map, x = x, y = y, name = name }
+    list[#list + 1] = { map = map, x = x, y = y, name = name, entry = entry }
   end
   for _, r in ipairs(M.dbRows("SELECT room, map, x, y FROM room_xy")) do add(r.map, r.x, r.y, r.room) end
-  for _, r in ipairs(M.dbRows("SELECT room, map, x, y FROM entrances")) do add(r.map, r.x, r.y, r.room) end
+  for _, r in ipairs(M.dbRows("SELECT room, map, x, y FROM entrances")) do add(r.map, r.x, r.y, r.room, true) end
   M.worldTownList = list
   return list
 end

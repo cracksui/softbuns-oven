@@ -1327,12 +1327,21 @@ def world_map():
       sbo.worldWasWild = false; sbo.worldOnRoom(); runTimers()""")
     eq(o.ev("sbo.mapMode"), "world", "into the wilds: World")
     css = o.ev("WIDGETS.ovenWorldMap.css") or ""
-    assert "border-image" in css and "oven_world_" in css, css
+    assert "border-image" in css and "oven_world_" in css, (css, o.ev("sbo.worldDrawErr"))
     o.lua("""gmcp.room.info = { num = '5001', wilds = 'false', coord = { name = 'Alyria', x = 2, y = 1 } }; sbo.worldOnRoom(); runTimers()""")
     eq(o.ev("sbo.mapMode"), "local", "back in town: Local")
     # the button switches by hand
     o.lua("sbo.mapSetMode('world')")
     eq((o.ev("sbo.mapMode"), o.ev("WIDGETS.ovenWorldMap.shown")), ("world", True), "switched")
+    # a place you've been into that the bitmap doesn't show (5001 at 2,1 - plain green) gets a marker; one on its
+    # own pixel of the map (the blue 7,2) doesn't; nor does the spot a way in starts from
+    o.lua("""sbo.worldNote({ num = '6001', wilds = 'false', coord = { name = 'Alyria', x = 7, y = 2 } })
+      sbo.dbx("INSERT OR REPLACE INTO entrances (wild, room, cmd, map, x, y, t) VALUES (1, 5001, 'n', 'Alyria', 4, 4, 0)")
+      sbo.worldTownList = nil; getRoomAreaName = function(a) return a == 7 and 'The Iceberg' or 'Rune' end
+      PAINTS = {}; local paint = sbo.worldPaint
+      sbo.worldPaint = function(rows, w, x, y, sz, col) if col == string.char(200, 140, 255) then PAINTS[#PAINTS+1] = x .. ',' .. y end return paint(rows, w, x, y, sz, col) end
+      sbo.worldDrawNow()""")
+    eq(list(o.ev("PAINTS").values()), ["2,1"], "only the place the map doesn't show")
     # zoom and drag
     o.lua("sbo.worldZoom(1)")
     eq(o.ev("sbo.worldV.zoomI"), 6, "zoomed in")
@@ -5512,7 +5521,7 @@ def main():
             print(f"  ok    {t.__name__}" + (f"  ({note})" if note else ""))
         except Exception as e:
             failed += 1
-            print(f"  FAIL  {t.__name__}: {e}")
+            print(f"  FAIL  {t.__name__}: {e!r}")
             if not isinstance(e, AssertionError):
                 traceback.print_exc()
     print(f"{failed} failed" if failed else "all passed")
