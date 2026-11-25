@@ -3726,6 +3726,16 @@ def weapons_against_fists():
       sbo.cfg.char.combat.wpn = nil
       M_ = sbo.combatModel(sbo.FISTS, sbo.items['a heavy battleaxe'])""")
     eq(o.ev("M_.offense.parts.crit[2]"), 7, "22% with fists, 7% with it")
+    # one weapon type: sbo upgrades all two-handed axe - only those, its best even when it's worse (▼)
+    o.lua("""SEEN = nil; sbo.viewLive = function(f) SEEN = f(100) end
+      sbo.eqNames = { "a worn vest" }; sbo.command("upgrades all two-handed axes")""")
+    up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("SEEN").values())
+    assert "two-handed axes only" in up and "a heavy battleaxe" in up and "a sharp hook" not in up, up
+    assert "Offense ▼" in up, up
+    o.lua('sbo.command("upgrades all hook")')
+    up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("SEEN").values())
+    assert "hooks only" in up and "a sharp hook" in up and "battleaxe" not in up and "dagger" not in up, up
+    eq(o.ev("sbo.weaponKind(sbo.items['a heavy battleaxe'])"), "two-handed axe", "the page's word, not 'axe'")
     # wielding a weapon: no fists row
     o.lua('sbo.eqNames = { "a worn vest", "a dull dagger" }')
     up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("(sbo.upgradeLines(100, true))").values())

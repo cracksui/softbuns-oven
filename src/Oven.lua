@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.10"
+M.version = "1.99.11"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5953,6 +5953,14 @@ function M.weaponParts(w)
   end
   return r
 end
+-- a weapon's type: the page's own word ("Your two-handed axe will deal"), else its damage type or keywords
+function M.weaponKind(it)
+  if not (it and it.weapon) then return nil end
+  local nm = tostring(it.weapon.name or (it.weapon.summary or ""):match("^Your (.-) will deal") or ""):lower()
+  for _, k in ipairs(M.WEAPON_KINDS) do if k == nm then return k end end
+  for _, k in ipairs(M.WEAPON_KINDS) do if M.weaponIs(it, k) then return k end end
+  return nil
+end
 -- help 2468's weapon kinds (each its own skill)
 -- your fists, as the "weapon" in your hands when you fight unarmed (the upgrade list weighs weapons against them)
 M.FISTS = { name = "your fists", worn = "wielded as a weapon", fists = true, affects = {}, relicAffects = {} }
@@ -7102,7 +7110,7 @@ function M.itemUsable(it)
   return true
 end
 
-function M.upgradeLines(width, all, role, src, maxLvl)
+function M.upgradeLines(width, all, role, src, maxLvl, kind)
   local bname, w = M.activeBuild()
   local myLvl = tonumber((M.cfg.char or {}).total or (M.cfg.char or {}).level)
   local lvl = M.wearMax(myLvl)   -- the game lets you wear items a few levels above yours
@@ -7112,7 +7120,7 @@ function M.upgradeLines(width, all, role, src, maxLvl)
     for _, r in ipairs({ "offense", "defense" }) do if mx[r] ~= 1 then leanTxt = leanTxt .. ", " .. r .. " ×" .. mx[r] end end end
   local out = { header("gear", "", width, "Upgrades  (" .. bname .. " build" .. leanTxt .. (role and (", " .. role .. " only") or "")
     .. (src == "eqdb" and ", from eqdb searches" or (all and ", everything seen" or ""))
-    .. (maxLvl and (", up to level " .. maxLvl) or "") .. ")") }
+    .. (maxLvl and (", up to level " .. maxLvl) or "") .. (kind and (", " .. kind .. "s only") or "") .. ")") }
   -- by one role: an item's score in that role alone
   local score = function(it) return M.gearScore(it, w) end
   if role then score = function(it) return it and (math.floor(M.roleScores(it, w)[role] * 10 + 0.5) / 10) or nil end end
@@ -7186,10 +7194,13 @@ function M.upgradeLines(width, all, role, src, maxLvl)
       -- not for you (another race or class, a set place…): left out
       local okU, usable = pcall(M.itemUsable, M.items[r.name])
       if okU and usable == false then fromSrc = false end
+      -- sbo upgrades all mace: only that weapon type
+      if kind and M.weaponKind(M.items[r.name]) ~= kind then fromSrc = false end
       if not isWorn[r.name] and not used[r.name] and not tooHigh and fromSrc and (all or carried[r.name]) then
         if useModel then
           local v, m = M.upgradeValue(cur, M.items[r.name], w, role)
-          if v and v > 0.05 and (not bs or v > bs) then best, bs, bm = r.name, v, m end
+          -- one weapon type asked for: its best, even if it doesn't beat what you have (shown ▼)
+          if v and (v > 0.05 or kind) and (not bs or v > bs) then best, bs, bm = r.name, v, m end
         else
           local s = score(M.items[r.name])
           if s and s > cs and (not bs or s > bs) then best, bs = r.name, s end
@@ -19246,15 +19257,23 @@ function M.legacyCommand(args)
       if u.cur == M.FISTS.name then return say("#" .. n .. " is weighed against your fists: sbo item " .. u.best .. " shows it") end
       return M.compareNames(u.cur, u.best)
     end
-    -- sbo upgrades [all] [offense|defense|casting|utility]: everything seen, and/or by one role only
+    -- sbo upgrades [all] [offense|defense|casting|utility] [weapon type]: everything seen, by one role,
+    -- only one weapon type ("two-handed axe" before "axe")
     local all, role, src = false, nil, nil
+    local kind
+    local lb = " " .. b:lower() .. " "
+    for _, k in ipairs(M.WEAPON_KINDS) do
+      local at = lb:find(" " .. k:gsub("%-", "%%-") .. "s? ")
+      if at and (not kind or #k > #kind) then kind = k end
+    end
+    if kind then b = trim((lb:gsub(" " .. kind:gsub("%-", "%%-") .. "s? ", " ", 1))) end
     local maxLvl = tonumber(b:match("(%d+)"))   -- sbo upgrades eqdb 175: up to that level, in its own section
     for word in b:lower():gmatch("%a+") do
       if word == "all" then all = true
       elseif word == "eqdb" then all, src = true, "eqdb"
       else for _, r in ipairs(M.ROLES) do if r:sub(1, #word) == word and #word >= 3 then role = r end end end
     end
-    M.viewLive(function(w) return M.upgradeLines(w, all, role, src, maxLvl) end)
+    M.viewLive(function(w) return M.upgradeLines(w, all, role, src, maxLvl, kind) end)
     return
   elseif a == "mark" then if b == "" then return M.listMarks() end return M.markRoom(b)
   elseif a == "marks" then return M.listMarks()
