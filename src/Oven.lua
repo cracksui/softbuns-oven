@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.17"
+M.version = "1.99.18"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13668,6 +13668,7 @@ function M.onLineWork()
   if isPromptLine() then
     local pl = M.parsePrompt(line)
     if #pl.vals > 0 or pl.ship then M.lastStatusPrompt = line end
+    pcall(M.stepPrompt)
   end
   pcall(M.noteRoomLine, line)
   pcall(M.noteKillContext, line)
@@ -17703,20 +17704,24 @@ function M.wayCommand(cmd)
   return cmd
 end
 M.WILD_STEP = { n = { 0, -1 }, s = { 0, 1 }, e = { 1, 0 }, w = { -1, 0 }, ne = { 1, -1 }, nw = { -1, -1 }, se = { 1, 1 }, sw = { -1, 1 } }
--- a step that goes nowhere (a guard, a riddle, a door…): sent a direction, still in the same room a moment
--- later. Kept a while: if a command then takes you where that direction leads, the direction is blocked
+-- a step that goes nowhere (a guard, a riddle, a door…): sent a direction, and its reply ended (the prompt)
+-- with you in the same room - a step that moves you brings the new room before its prompt. Kept a while: if a
+-- command then takes you where that direction leads, the direction is blocked
 M.DIR_LONG = { n = "north", s = "south", e = "east", w = "west", ne = "northeast", nw = "northwest",
   se = "southeast", sw = "southwest", u = "up", d = "down" }
 function M.stepWatch(cmd)
   local c = trim(tostring(cmd or "")):lower()
   if not M.WAY_DIRS[c] then return end
-  local from, seq = M.mapRoom, M.roomSeq or 0
-  if not from then return end
-  tempTimer(2.5, function()
-    if M.mapRoom == from and (M.roomSeq or 0) == seq then
-      M.stepBlocked = { room = from, dir = M.DIR_LONG[c] or c, at = now() }
-    end
-  end)
+  if not M.mapRoom then return end
+  M.stepPending = { room = M.mapRoom, seq = M.roomSeq or 0, dir = M.DIR_LONG[c] or c }
+end
+function M.stepPrompt()
+  local P = M.stepPending
+  if not P then return end
+  M.stepPending = nil
+  if M.mapRoom == P.room and (M.roomSeq or 0) == P.seq then
+    M.stepBlocked = { room = P.room, dir = P.dir, at = now() }
+  end
 end
 -- the blocked step from `room`, if the way `cmd` just took you (to `id`) is where it leads: locked on the map
 -- (routes then use the command - 'sayto kalied e' - instead)

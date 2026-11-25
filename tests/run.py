@@ -3052,15 +3052,23 @@ def ways_learned():
     # is locked on the map, so routes use the command
     o.lua("""EXITS = { [100] = { east = 101 } }; getRoomExits = function(r) return EXITS[r] or {} end
       LOCKED = {}; SPECIAL = {}; SAYS = {}
-      AT(100); sbo.onSend(nil, 'e'); runTimers()""")
-    eq(o.ev("sbo.stepBlocked and sbo.stepBlocked.dir"), "east", "east went nowhere")
+      AT(100); sbo.onSend(nil, 'e')""")
+    eq(o.ev("sbo.stepBlocked"), None, "not before its reply has ended")
+    o.feed("Kalied blocks your way, asking a riddle.", "<1209hp 1300sp 1300st>")
+    eq(o.ev("sbo.stepBlocked and sbo.stepBlocked.dir"), "east", "the prompt came, same room: east went nowhere")
     o.lua("sbo.onSend(nil, 'sayto kalied e'); AT(101)")
     eq(o.ev("SPECIAL[100]['sayto kalied e']"), 101, "the answer: a way")
     eq(o.ev("LOCKED['100e']"), True, "east locked")
     assert any("east from Room 100 is blocked" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    # a step that moves you: the room comes before its prompt - not blocked
+    o.lua("sbo.stepBlocked = nil; AT(100); sbo.onSend(nil, 'e'); AT(101)")
+    o.feed("<1209hp 1300sp 1300st>")
+    eq(o.ev("sbo.stepBlocked"), None, "moved: not blocked")
     # a command somewhere else after a blocked step: nothing locked
     o.lua("""EXITS[101] = { west = 100 }; LOCKED = {}
-      AT(101); sbo.onSend(nil, 'w'); runTimers(); sbo.onSend(nil, 'enter mirror'); AT(200)""")
+      AT(101); sbo.onSend(nil, 'w')""")
+    o.feed("<1209hp 1300sp 1300st>")
+    o.lua("sbo.onSend(nil, 'enter mirror'); AT(200)")
     eq(o.ev("LOCKED['101w']"), None, "the command went elsewhere: west not locked")
     # following someone: your last command didn't move you - not learned
     o.lua("AT(100); sbo.onSend(nil, 'say hello')")
