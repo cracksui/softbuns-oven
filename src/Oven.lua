@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.4"
+M.version = "1.99.5"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7156,8 +7156,10 @@ function M.upgradeLines(width, all, role, src, maxLvl)
         row = { { C.dim, pad("", 24) .. "→ " }, { C.item, best }, { C.plus, "  " .. bs .. string.format("  (+%s)", math.floor((bs - cs) * 10 + 0.5) / 10) } }
       end
       -- both items' levels: what you wear, what would replace it
-      if cur.level then table.insert(out[#out], { C.num, "  level " .. cur.level }) end
-      if bestIt and bestIt.level then row[#row + 1] = { C.num, "  level " .. bestIt.level } end
+      -- your fists are your own level
+      local curLvl = cur.level or (cur == M.FISTS and myLvl)
+      if curLvl then table.insert(out[#out], { C.dim, "  (lv " .. curLvl .. ")" }) end
+      if bestIt and bestIt.level then row[#row + 1] = { C.dim, "  (lv " .. bestIt.level .. ")" } end
       local where = carried and carried[best]
       if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where }
       elseif M.fromEqdb(bestIt) then row[#row + 1] = { C.dim, "  (eqdb)" } end
