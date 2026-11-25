@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.7"
+M.version = "1.99.8"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5937,11 +5937,12 @@ function M.noteCombat(raw)
   end
 end
 
--- a weapon page's measured parts: { damage = { weapon = 134, ["skill & strength"] = -13 }, accuracy = {…} }
+-- a weapon page's measured parts: { damage = { weapon = 134, ["skill & strength"] = -13 }, accuracy = {…}, crit = 7 }
 function M.weaponParts(w)
   local r = {}
   for _, st in ipairs((w or {}).stats or {}) do
     local key = tostring(st[1] or ""):lower()
+    if key:match("^critical hit chance") then r.crit = tonumber((tostring(st[2]):gsub("%%", ""))) end
     if key == "damage" or key == "accuracy" then
       r[key] = {}
       for _, p in ipairs(st[3] or {}) do
@@ -6374,8 +6375,12 @@ function M.combatModel(old, new)
       -- page shows it: then it's counted above)
       if ol_ ~= nl_ and not measured then res.notCalc = { "weapon skill's part of damage" } end
     elseif ow and nw and not (os_ and ns_) then res.estimates[#res.estimates + 1] = { "weapon skill (unknown kind)", 0 } end
-    local oc, nc = ow and weaponValue("crit", ow.critChance), nw and weaponValue("crit", nw.critChance)
-    if oc and nc then crit2 = crit2 + (nc - oc) end
+    -- crit: the page's "7% Critical Hit chance" is yours with it, in place of eq's now
+    if np.crit and cw then crit2 = crit2 - crit + np.crit
+    else
+      local oc, nc = ow and weaponValue("crit", ow.critChance), nw and weaponValue("crit", nw.critChance)
+      if oc and nc then crit2 = crit2 + (nc - oc) end
+    end
   end
   -- accuracy (help 1747): 2/3 of gear accuracy; (agility+1)/2; ((luck+2)/4); (personality+5)/10;
   -- strength and wisdom above 20

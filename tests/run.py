@@ -3720,6 +3720,11 @@ def weapons_against_fists():
     eq(o.ev("M_.defense.hp[2]"), 415, "{Always} is")
     gain = o.ev("function() local g = sbo.upgradeDiff(sbo.FISTS, sbo.items['a heavy battleaxe'], {}) local t = {} for _, x in ipairs(g) do t[#t+1] = x.text end return table.concat(t, ',') end")()
     assert "may roll 125 damage (high freq)" in gain and "+125 damage" not in gain and "+50 hp" in gain, gain
+    # crit from the page too, even before eq's weapon words were saved
+    o.lua("""sbo.items['a heavy battleaxe'].weapon.stats[3] = { "Critical Hit chance", "7%", { { "+7", "two-handed-axe" } } }
+      sbo.cfg.char.combat.wpn = nil
+      M_ = sbo.combatModel(sbo.FISTS, sbo.items['a heavy battleaxe'])""")
+    eq(o.ev("M_.offense.parts.crit[2]"), 7, "22% with fists, 7% with it")
     # wielding a weapon: no fists row
     o.lua('sbo.eqNames = { "a worn vest", "a dull dagger" }')
     up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("(sbo.upgradeLines(100, true))").values())
