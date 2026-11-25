@@ -3713,6 +3713,13 @@ def weapons_against_fists():
     eq(o.ev("M_.offense.parts.accuracy[2]"), 76, "95 - (25 + 45) + (13 + 38)")
     eq(o.ev("M_.skill[3]"), "two-handed axe", "the page's own kind, not 'axe' from its keywords")
     eq(o.ev("M_.notCalc"), None, "skill's part of damage: measured")
+    # eqdb's "{High Freq}" bonuses: some copies roll them - shown as such, not counted
+    o.lua("""sbo.items['a heavy battleaxe'].affects = { { "damage", "125", 1, "High Freq" }, { "hp", "50", 2, "Always" } }
+      M_ = sbo.combatModel(sbo.FISTS, sbo.items['a heavy battleaxe'])""")
+    eq(o.ev("M_.offense.parts.damage[2]"), 121, "the +125 isn't counted")
+    eq(o.ev("M_.defense.hp[2]"), 415, "{Always} is")
+    gain = o.ev("function() local g = sbo.upgradeDiff(sbo.FISTS, sbo.items['a heavy battleaxe'], {}) local t = {} for _, x in ipairs(g) do t[#t+1] = x.text end return table.concat(t, ',') end")()
+    assert "may roll 125 damage (high freq)" in gain and "+125 damage" not in gain and "+50 hp" in gain, gain
     # wielding a weapon: no fists row
     o.lua('sbo.eqNames = { "a worn vest", "a dull dagger" }')
     up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("(sbo.upgradeLines(100, true))").values())

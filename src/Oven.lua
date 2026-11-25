@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.6"
+M.version = "1.99.7"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5752,13 +5752,16 @@ function M.statWeight(w, stat)
   return v or 0
 end
 
+-- an eqdb page's "{High Freq}" / "{Med. Freq}" affect: one some copies roll, not every copy has
+-- ("{Always}" ones do) - shown, not counted
+function M.mayRoll(a) return a[4] ~= nil and a[4] ~= "Always" end
 -- an item's stats as { stat = value }: affects, relic affects, AR, and a weapon's ratings
 function M.itemStats(it)
   local s = {}
   for _, list in ipairs({ it.affects or {}, it.relicAffects or {} }) do
     for _, a in ipairs(list) do
       local v = tonumber((tostring(a[2] or ""):gsub(",", "")))
-      if a[1] and v then s[a[1]] = (s[a[1]] or 0) + v end
+      if a[1] and v and not M.mayRoll(a) then s[a[1]] = (s[a[1]] or 0) + v end
     end
   end
   -- "Affects ar by N" covers every location; an item's own "Armor resistance is N" covers where
@@ -5972,7 +5975,7 @@ local function modelStats(it, noSpells)
   for _, list in ipairs({ it.affects or {}, it.relicAffects or {} }) do
     for _, a in ipairs(list) do
       local v = tonumber((tostring(a[2] or ""):gsub(",", "")))
-      if a[1] and v then s[a[1]] = (s[a[1]] or 0) + v end
+      if a[1] and v and not M.mayRoll(a) then s[a[1]] = (s[a[1]] or 0) + v end
     end
   end
   if tonumber(it.ar) and tonumber(it.ar) ~= 0 then
@@ -7361,6 +7364,10 @@ function M.upgradeDiff(cur, best, w)
     local label = x.k:match("^weapon%-") and (x.k .. " rating") or x.k
     local t = (x.d > 0 and "+" or "−") .. fmt(math.abs(x.d)) .. " " .. label
     if x.d > 0 then gain[#gain + 1] = { text = t } else lose[#lose + 1] = { text = t } end
+  end
+  -- what the new item may roll (eqdb's "High Freq"…): not counted, so not a gain
+  for _, x in ipairs((best or {}).affects or {}) do
+    if M.mayRoll(x) then gain[#gain + 1] = { text = "may roll " .. x[2] .. " " .. x[1] .. " (" .. x[4]:lower() .. ")", effect = true } end
   end
   local fa, fb = M.itemFeatures(cur), M.itemFeatures(best)
   -- a spell: what it gives (from its help), or that you have it anyway (from other gear, or aff)
