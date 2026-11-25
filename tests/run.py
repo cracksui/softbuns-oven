@@ -3110,6 +3110,12 @@ def trip_stamina():
     # enough already: straight on
     o.lua("RAN = nil; SENT = {}; sbo.trip = { target = 5, used = {}, legs = 1, ride = { kind = 'run', name = 'sigil', from = 1, to = 2 } }; sbo.tripRide()")
     eq((o.ev("RAN"), len(o.ev("SENT") or {})), ("sigil", 0), "no rest needed")
+    # more than the run needs than you have, but over half your stamina: go (a run that runs out stops, and rests there)
+    o.lua("sbo.stRunRooms = function() return 650 end; RAN = nil; SENT = {}; sbo.trip = { target = 5, used = {}, legs = 1, ride = { kind = 'run', name = 'sigil', from = 1, to = 2 } }")
+    o.set_gmcp("char.vitals", "{ st = 700 }")
+    o.lua("sbo.tripRide()")
+    eq((o.ev("RAN"), len(o.ev("SENT") or {})), ("sigil", 0), "700 of 1000: no rest first")
+    o.lua("sbo.stRunRooms = function() return 200 end")
     # not learned yet: no check
     o.lua("sbo.cfg.stCost = nil; RAN = nil; SENT = {}")
     o.set_gmcp("char.vitals", "{ st = 10 }")

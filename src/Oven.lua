@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.13"
+M.version = "1.99.14"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16799,7 +16799,8 @@ function M.runStopped(atSign)
       -- out of stamina: rest until there's enough to go on, then plan on from here (go.rest off: just plan on)
       local T = M.trip
       if M.cfg.tripRest == false then return tempTimer(0.5, function() if M.trip == T then M.tripContinue() end end) end
-      return M.stRest(M.stMax() and math.floor(M.stMax() * 0.9) or nil, function() if M.trip == T then M.tripContinue() end end)
+      return M.stRest(M.stMax() and math.floor(M.stMax() * 0.9) or nil, function() if M.trip == T then M.tripContinue() end end,
+        "- out of stamina partway through the run")
     end
     if not (atSign and R.started) and here ~= R.target then
       M.trip = nil
@@ -18375,12 +18376,20 @@ function M.stRunRooms(from, to)
   return math.ceil(math.max(math.abs(a.x - b.x), math.abs(a.y - b.y)) * M.RUN_WINDING)
 end
 -- rest until you have `need` stamina (at most your maximum), then stand and do fn
-function M.stRest(need, fn)
+-- short of stamina for a leg, enough to be worth resting first: under what it needs and under half your
+-- maximum (with more, you go - a run that runs out stops "Exhausted…", and Oven rests there)
+function M.stShort(need)
+  local st, mx = M.stNow() or 0, M.stMax()
+  return need ~= nil and st < need and (not mx or st < mx / 2)
+end
+-- `what`: the leg it's for ("before the run to lasler"), in the message
+function M.stRest(need, fn, what)
   local mx = M.stMax()
   need = need and mx and math.min(need, mx) or need or mx
   if not need then return fn() end
   if not M.inGame(M.lastStatusPrompt or M.lastPromptText) then return say("not in the game - nothing sent") end
-  M.notifyWalk(string.format("resting: %d stamina needed, you have %d - going on once there's enough (sbo stop to stop)", need, M.stNow() or 0))
+  say(string.format("resting%s: %d stamina needed, you have %d - going on once there's enough (sbo stop to stop)",
+    what and (" " .. what) or "", need, M.stNow() or 0))
   M.stResting = { need = need, fn = fn, at = now(), best = M.stNow() or 0, bestAt = now() }
   local R = M.stResting
   M.sendOwn("rest", false)
@@ -18427,8 +18436,10 @@ function M.tripContinue()
   -- the walk there: enough stamina for it? if not: rest first
   local steps = (getPath(here, first.from) and #speedWalkDir) or 0
   local need = M.stNeed("walk", steps)
-  if need and (M.stNow() or 0) < need and not T.stWalkOk then
-    return M.stRest(need, function() if M.trip == T then T.stWalkOk = true; T.legs = T.legs - 1; M.tripContinue() end end)
+  if M.stShort(need) and not T.stWalkOk then
+    local name = roomExists(first.from) and getRoomName(first.from) or ("#" .. first.from)
+    return M.stRest(need, function() if M.trip == T then T.stWalkOk = true; T.legs = T.legs - 1; M.tripContinue() end end,
+      "before the walk to " .. name)
   end
   T.stWalkOk = nil
   M.mapWalkTo(first.from, true)
@@ -18440,8 +18451,8 @@ function M.tripRide()
   if sg.kind == "run" and not T.stOk then
     -- enough stamina for the run? if not: rest first
     local need = M.stNeed("run", M.stRunRooms(sg.from or M.mapRoom, sg.to))
-    if need and (M.stNow() or 0) < need then
-      return M.stRest(need, function() if M.trip == T then T.stOk = true; M.tripRide() end end)
+    if M.stShort(need) then
+      return M.stRest(need, function() if M.trip == T then T.stOk = true; M.tripRide() end end, "before the run to " .. sg.name)
     end
   end
   T.stOk = nil
