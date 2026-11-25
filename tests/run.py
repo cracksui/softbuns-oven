@@ -4277,6 +4277,16 @@ def quest_hint_paragraphs_and_folding():
     lay = o.lua('local raw = {} for _, l in ipairs(LINES) do raw[#raw+1] = l end local out = sbo.formatters.quest(raw, 100) local t = {} for _, r in ipairs(out) do for _, g in ipairs(r) do t[#t+1] = tostring(g[2] or "") end t[#t+1] = "\\n" end return table.concat(t)')
     assert "a velocity token" in lay and "a dusty curious coin" in lay, lay
     assert "Time left" in lay and "8h" in lay, lay
+    # a link to look the quest up on annwn.info (searched by name: its numbers aren't the game's)
+    links = [l[1] for l in o.ev("sbo.pendingLinks").values()]
+    assert "look it up on annwn.info" in links, links
+    eq(o.ev("sbo.questLookupUrl(\"Bob's Quest - Part 2!\")"),
+       "https://annwn.info/quest/search/?search=quest&keyword=Bob%27s+Quest+-+Part+2%21&sort=questname", "the name, escaped")
+    o.lua("LINKS = {}; cechoLink = function(w, t, f, h) LINKS[#LINKS+1] = t; F = f end; OPENED = nil; openUrl = function(u) OPENED = u end")
+    o.lua("sbo.questLookupOffer({ \"This quest [1640] is called 'Distance Education',\" })")
+    assert "annwn.info" in o.ev("LINKS[1]"), o.ev("LINKS[1]")
+    o.lua("F()")
+    eq(o.ev("OPENED"), "https://annwn.info/quest/search/?search=quest&keyword=Distance+Education&sort=questname", "opens the search")
 
 
 @test

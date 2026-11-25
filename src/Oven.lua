@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.22"
+M.version = "1.99.23"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2965,6 +2965,28 @@ local function nextPhase(Q)
   for _, p in ipairs(Q.phases or {}) do if not p.done then return p end end
 end
 
+-- a quest on annwn.info (a clan's site with walkthroughs): searched by name - its own quest numbers aren't the game's
+function M.questLookupUrl(name)
+  name = trim(tostring(name or ""))
+  if name == "" then return nil end
+  local q = name:gsub("[^%w%-%._~ ]", function(c) return string.format("%%%02X", c:byte()) end):gsub(" +", "+")
+  return "https://annwn.info/quest/search/?search=quest&keyword=" .. q .. "&sort=questname"
+end
+
+-- under a quest's details in the main window: the link to look it up
+function M.questLookupOffer(plain)
+  for _, l in ipairs(plain or {}) do
+    local name = trim(l):match("^This quest %[%d+%] is called '(.*)'[,%.]?%s*$")
+    local url = name and M.questLookupUrl(name)
+    if url then
+      cecho("main", "<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> ")
+      cechoLink("main", "<oven_key>[look it up on annwn.info]", function() openUrl(url) end, "search annwn.info for '" .. name .. "'", true)
+      echo("main", "\n")
+      return url
+    end
+  end
+end
+
 function M.formatters.quest(raw, width)
   local q = M.parseQuests(raw, M.curDecho)
   if q.none then M.rememberQuests(q, M.questReplyBare) end
@@ -3048,6 +3070,8 @@ function M.formatters.quest(raw, width)
     local pinned = M.cfg.questPins and M.cfg.questPins[id]
     links[#links + 1] = { (pinned and "unpin" or "pin") .. " to the quest tracker",
       function() M.questPin(id, not (M.cfg.questPins and M.cfg.questPins[id])) end }
+    local url = M.questLookupUrl(d.name)
+    if url then links[#links + 1] = { "look it up on annwn.info", function() openUrl(url) end } end
   end
   for _, o in ipairs(q.other) do
     if type(o) == "table" then out[#out + 1] = M.runsExact(o[2], o[1]) or { { C.dim, o[1] } }
@@ -14034,6 +14058,7 @@ function M.finish(reason)
       else
         for _, d in ipairs(cap.decho) do decho("main", d .. "\n") end
       end
+      if cap.kind == "quest" and not windowOnly then pcall(M.questLookupOffer, cap.plain) end
       if promptDecho then decho("main", promptDecho) end
       if heldPrompt then decho("main", heldPrompt) end
     end
