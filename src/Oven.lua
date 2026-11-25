@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.11"
+M.version = "1.99.12"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -7231,8 +7231,17 @@ function M.upgradeLines(width, all, role, src, maxLvl, kind)
       -- both items' levels: what you wear, what would replace it
       -- your fists are your own level
       local curLvl = cur.level or (cur == M.FISTS and myLvl)
-      if curLvl then table.insert(out[#out], { C.dim, "  (lv " .. curLvl .. ")" }) end
-      if bestIt and bestIt.level then row[#row + 1] = { C.dim, "  (lv " .. bestIt.level .. ")" } end
+      -- level, and the piece's own armor (its "Armor resistance", where it's worn)
+      local function tag(lv, it)
+        local ar = tonumber(it and it.ar)
+        local t = {}
+        if lv then t[#t + 1] = "lv " .. lv end
+        if ar and ar ~= 0 then t[#t + 1] = "ar " .. ar end
+        return #t > 0 and ("  (" .. table.concat(t, " · ") .. ")") or nil
+      end
+      local tc, tb = tag(curLvl, cur), tag(bestIt and bestIt.level, bestIt)
+      if tc then table.insert(out[#out], { C.dim, tc }) end
+      if tb then row[#row + 1] = { C.dim, tb } end
       local where = carried and carried[best]
       if where and where ~= "" then row[#row + 1] = { C.dim, "  in " .. where }
       elseif M.fromEqdb(bestIt) then row[#row + 1] = { C.dim, "  (eqdb)" } end

@@ -3646,11 +3646,11 @@ def upgrades_up_to_a_level():
       function UP(mx) local t = {} for _, r in ipairs(sbo.upgradeLines(100, true, nil, "eqdb", mx)) do local x = {} for _, seg in ipairs(r) do x[#x+1] = seg[2] end t[#t+1] = table.concat(x) end return table.concat(t, "\\n") end''')
     plain = o.ev("UP(nil)")
     assert "a fine vest" in plain and "a great vest" not in plain, plain
-    assert "a worn vest  (lv 100)" in plain and "a fine vest  (lv 140)" in plain, plain
+    assert "a worn vest  (lv 100 · ar 1)" in plain and "a fine vest  (lv 140 · ar 1)" in plain, plain
     up = o.ev("UP(175)")
     now, later = up.split("Up to level 175")
     assert "Wearable now" in now and "a fine vest" in now and "a great vest" not in now, up
-    assert "a great vest" in later and "(lv 170)" in later and "a far vest" not in later, up
+    assert "a great vest" in later and "(lv 170 · ar 1)" in later and "a far vest" not in later, up
     assert "up to level 175" in up.split("\n")[0], up
     # the command reads the level; a number alone still compares
     o.lua('SEEN = nil; local u = sbo.upgradeLines; sbo.upgradeLines = function(w, a, r, s, m) SEEN = m; return u(w, a, r, s, m) end; sbo.command("eq upgrades eqdb 175")')
