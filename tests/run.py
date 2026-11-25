@@ -1107,6 +1107,34 @@ def world_map_follows_through_a_portal():
 
 
 @test
+def world_map_names_towns():
+    o = Oven()
+    o.lua("""roomExists = function() return true end; sbo.isWildRoom = function(id) return tonumber(id) > 1000000 end
+      getRoomArea = function(id) return tonumber(id) < 200 and 1 or 2 end
+      getRoomAreaName = function(a) return a == 1 and "Towne of Rune" or "Xaventry" end
+      sbo.worldNote({ num = '101', wilds = 'false', coord = { name = 'Alyria', x = 435, y = 1226 } })
+      sbo.worldNote({ num = '102', wilds = 'false', coord = { name = 'Alyria', x = 435, y = 1226 } })
+      sbo.worldNote({ num = '301', wilds = 'false', coord = { name = 'Alyria', x = 1619, y = 540 } })""")
+    eq(o.ev("sbo.worldTownAt('Alyria', 435, 1226, 4)"), "Towne of Rune", "on its spot")
+    eq(o.ev("sbo.worldTownAt('Alyria', 437, 1227, 4)"), "Towne of Rune", "a few pixels off")
+    eq(o.ev("sbo.worldTownAt('Alyria', 445, 1226, 4)"), None, "too far at ×4")
+    eq(o.ev("sbo.worldTownAt('Alyria', 445, 1226, 0.5)"), "Towne of Rune", "zoomed out, further counts")
+    eq(o.ev("sbo.worldTownAt('Faerie Plane', 435, 1226, 4)"), None, "another map")
+    o.lua("sbo.worldNote({ num = '302', wilds = 'false', coord = { name = 'Alyria', x = 1700, y = 600 } })")
+    eq(o.ev("sbo.worldTownAt('Alyria', 1700, 600, 4)"), "Xaventry", "a new place counts at once")
+    # hovering names it in the footer; a click puts it before the spot
+    o.lua("""ST = {}; sbo.mapSearchStatus = { echo = function(_, t) ST[#ST+1] = t end }; sbo.mapMode = 'world'
+      sbo.worldView = { x0 = 430, y0 = 1220, zoom = 4 }; sbo.worldV = { zoomI = 7, map = 'Alyria' }
+      sbo.worldMove({ x = 20, y = 24 })""")
+    assert "Towne of Rune" in o.ev("ST[#ST]"), o.ev("ST[#ST]")
+    o.lua("sbo.worldMove({ x = 200, y = 200 })")
+    assert "Towne of Rune" not in (o.ev("ST[#ST]") or ""), o.ev("ST[#ST]")
+    o.lua("""getMousePosition = function() return 50, 50 end
+      sbo.worldPress({ button = 'LeftButton', x = 20, y = 24 }); sbo.worldRelease()""")
+    assert "Towne of Rune · 435,1226" in o.ev("ST[#ST]"), o.ev("ST[#ST]")
+
+
+@test
 def world_waterways():
     o = Oven()
     home = o.L.globals().OVEN_TEST_HOME

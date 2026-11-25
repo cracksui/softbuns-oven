@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.19"
+M.version = "1.99.20"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14410,10 +14410,10 @@ function M.createMapPanel()
   M.worldLabel = Geyser.Label:new({ name = "ovenWorldMap", x = 0, y = 0, width = "100%", height = "100%" }, stack)
   M.worldLabel:setClickCallback(function(ev) M.worldPress(ev) end)
   M.worldLabel:setReleaseCallback(function(ev) M.worldRelease(ev) end)
-  M.worldLabel:setMoveCallback(function() M.worldMove() end)
+  M.worldLabel:setMoveCallback(function(ev) M.worldMove(ev) end)
   pcall(function() M.worldLabel:setWheelCallback(function(ev) M.worldWheel(ev) end) end)
   pcall(function() M.worldLabel:setCursor("OpenHand") end)
-  pcall(function() M.worldLabel:setToolTip("drag to move · wheel or −/+ to zoom · ◎ follows you · click a spot for its place and terrain") end)
+  pcall(function() M.worldLabel:setToolTip("drag to move · wheel or −/+ to zoom · ◎ follows you · point at a town for its name · click a spot for its place and terrain") end)
   local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info
   local startWild = type(info) == "table" and tostring(info.wilds) == "true"
   M.mapSetMode(M.cfg.mapWorldAuto ~= false and (startWild and "world" or "local") or (M.cfg.mapMode or "local"), true)
@@ -14609,6 +14609,7 @@ function M.worldNote(info)
     if not k or k.x ~= x or k.y ~= y then
       M.worldRoomXY[num] = { map = name, x = x, y = y }
       M.dbx("INSERT OR REPLACE INTO room_xy (room, map, x, y) VALUES (%s, %s, %s, %s)", num, name, x, y)
+      M.worldTownList = nil
     end
   end
 end
@@ -15773,9 +15774,9 @@ function M.worldPress(ev)
   if M.worldPoll then killTimer(M.worldPoll) end
   M.worldPoll = tempTimer(0.05, function() if M.worldDrag then M.worldMove() else killTimer(M.worldPoll); M.worldPoll = nil end end, true)
 end
-function M.worldMove()
+function M.worldMove(ev)
   local d = M.worldDrag
-  if not d then return end
+  if not d then return M.worldHover(ev) end
   local ok, mx, my = pcall(getMousePosition)
   if not ok or not mx then return end
   local dx, dy = mx - d.mx, my - d.my
@@ -15803,8 +15804,64 @@ function M.worldRelease()
     local b, g, r = img.data:byte(o, o + 2)
     terrain = r and W().terrain[string.format("%02x%02x%02x", r, g, b)]
   end
+  local town = M.worldTownAt(v.map or "Alyria", sx, sy, vw.zoom)
+  M.worldHovered = town
   if M.mapSearchStatus then
-    M.mapSearchStatus:echo(string.format("<span style=\"color:" .. M.hex("text") .. ";\">%d,%d%s</span>", sx, sy, terrain and (" · " .. terrain) or ""))
+    M.mapSearchStatus:echo(string.format("<span style=\"color:" .. M.hex("text") .. ";\">%s%d,%d%s</span>", town and (town .. " · ") or "", sx, sy, terrain and (" · " .. terrain) or ""))
+  end
+end
+
+-- the towns on the world map: each area's place (GMCP puts all of a town's rooms on one spot of the wilds), and
+-- the spots of the wilds its learned ways in start from - { map, x, y, name }, rebuilt when a new place is kept
+function M.worldTowns()
+  if M.worldTownList then return M.worldTownList end
+  local list, seen = {}, {}
+  local function add(map, x, y, room)
+    room, x, y = tonumber(room), tonumber(x), tonumber(y)
+    if not (room and x and y and map) or not roomExists(room) or M.isWildRoom(room) then return end
+    local a = getRoomArea(room)
+    local name = a and getRoomAreaName(a)
+    if type(name) ~= "string" or name == "" then return end
+    local k = map .. ":" .. x .. "," .. y .. ":" .. name
+    if seen[k] then return end
+    seen[k] = true
+    list[#list + 1] = { map = map, x = x, y = y, name = name }
+  end
+  for _, r in ipairs(M.dbRows("SELECT room, map, x, y FROM room_xy")) do add(r.map, r.x, r.y, r.room) end
+  for _, r in ipairs(M.dbRows("SELECT room, map, x, y FROM entrances")) do add(r.map, r.x, r.y, r.room) end
+  M.worldTownList = list
+  return list
+end
+-- the town at (or nearest to, within a few screen pixels of) a spot: its name(s), or nil
+function M.worldTownAt(map, x, y, zoom)
+  local reach = math.max(2, math.ceil(10 / math.max(tonumber(zoom) or 1, 0.01)))
+  local best, names
+  for _, t in ipairs(M.worldTowns()) do
+    if t.map == map then
+      local dd = math.max(math.abs(t.x - x), math.abs(t.y - y))
+      if dd <= reach then
+        if not best or dd < best then best, names = dd, { t.name }
+        elseif dd == best and not table.contains(names, t.name) then names[#names + 1] = t.name end
+      end
+    end
+  end
+  return names and table.concat(names, " / ") or nil
+end
+-- the mouse over the map (not dragging): a town under it is named in the footer
+function M.worldHover(ev)
+  local vw = M.worldView
+  if type(ev) ~= "table" or not vw or M.mapMode ~= "world" or M.mapSearchQuery or not M.mapSearchStatus then return end
+  local ex, ey = tonumber(ev.x), tonumber(ev.y)
+  if not (ex and ey) then return end
+  local map = V().map or "Alyria"
+  local sx, sy = math.floor(vw.x0 + ex / vw.zoom), math.floor(vw.y0 + ey / vw.zoom)
+  local town = M.worldTownAt(map, sx, sy, vw.zoom)
+  if town == M.worldHovered then return end
+  M.worldHovered = town
+  if town then
+    M.mapSearchStatus:echo(string.format("<span style=\"color:" .. M.hex("text") .. ";\">%s</span> <span style=\"color:" .. M.hex("dim") .. ";\">%d,%d</span>", town, sx, sy))
+  else
+    M.worldDrawStatus()
   end
 end
 
@@ -17781,6 +17838,7 @@ function M.wayLearn(prev, here, id, cmd)
       if not old or (way and old.cmd ~= way) then
         M.dbx("INSERT OR REPLACE INTO entrances (wild, room, cmd, map, x, y, t) VALUES (%s, %s, %s, %s, %s, %s, %s)",
           wild, room, way or (old and old.cmd) or "", p.map, p.x, p.y, os.time())
+        M.worldTownList = nil
         M.entranceRows = nil
         if not old then M.say(string.format("learned a way into %s: from the wilds at %d,%d%s - sbo go uses it",
           (getRoomAreaName(getRoomArea(room)) or getRoomName(room) or ("#" .. room)), p.x, p.y, way and way ~= "" and ("  (" .. way .. ")") or "")) end
