@@ -849,6 +849,18 @@ def melee_by_weapon():
 
 
 @test
+def no_quests_clears_panel():
+    # "You aren't currently on any quests.": every quest off the panel; pinned marks stay
+    o = Oven()
+    o.lua("""sbo.quests['77'] = { name = 'Lemon Run', total = 2, done = 1, active = true }
+      sbo.cfg.questPins = { ['77'] = true, ['88'] = true }; sbo.cfg.markPins = { home = { at = 1 } }
+      sbo.formatters.quest({ "You aren't currently on any quests." }, 100)""")
+    eq(o.ev("next(sbo.quests)"), None, "quests forgotten")
+    eq(o.ev("next(sbo.cfg.questPins)"), None, "quest pins gone")
+    eq(o.ev("sbo.cfg.markPins.home.at"), 1, "marks stay")
+
+
+@test
 def quest_steps_are_links():
     o = Oven()
     o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end

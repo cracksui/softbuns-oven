@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.12"
+M.version = "1.99.13"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2820,7 +2820,10 @@ function M.parseQuests(raw, decho)
       detail.upTo = detail.rewardText:match("^Up to") ~= nil
     end
   end
-  return { list = list, detail = detail, other = other }
+  -- "You aren't currently on any quests.": none at all
+  local none = false
+  for _, l in ipairs(raw) do if trim(l):match("^You aren't currently on any quests?%.?$") then none = true end end
+  return { list = list, detail = detail, other = other, none = none }
 end
 
 -- a quest you're doing (again): what's left from an earlier time through - complete, turned in, who to
@@ -2854,6 +2857,17 @@ end
 -- keep what we learn about quests, for the tracker
 function M.rememberQuests(q, bare)
   local now = os.time()
+  -- on no quests: every quest comes off the panel (pinned marks stay)
+  if q.none then
+    local ids = {}
+    for id in pairs(M.quests) do ids[#ids + 1] = id end
+    for id in pairs(M.cfg.questPins or {}) do ids[#ids + 1] = id end
+    for _, id in ipairs(ids) do M.questForget(id) end
+    M.cfg.quests = M.quests
+    M.saveSettings()
+    M.drawQuestTracker()
+    return
+  end
   -- a plain "quest info" lists your quests - or, with only one, shows that one in full
   local list = q.list
   if #list == 0 and bare and q.detail and q.detail.id then
@@ -2952,6 +2966,7 @@ end
 
 function M.formatters.quest(raw, width)
   local q = M.parseQuests(raw, M.curDecho)
+  if q.none then M.rememberQuests(q, M.questReplyBare) end
   if #q.list == 0 and not q.detail then return M.formatters.generic(raw, width) end
   M.rememberQuests(q, M.questReplyBare)
   local out = {}
