@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.18"
+M.version = "1.99.19"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11177,6 +11177,9 @@ function M.onSend(_, cmd)
   -- what you typed last (Oven's own commands - lookups, a walk's steps - aren't yours: not learned as ways)
   if not (own and own > 0) then
     M.lastCmd = { cmd = trim(tostring(cmd or "")), at = now(), room = M.currentRoom and M.currentRoom() or M.mapRoom }
+  elseif M.WAY_DIRS[trim(tostring(cmd or "")):lower()] or M.walk or M.travel or M.running then
+    -- a step of Oven's own (a walk, a ride, a run): a move after it is Oven's, not your last command's
+    M.lastCmd = nil
   end
   M.typedSend = not (own and own > 0)
   if own and own > 0 then M.ownCmds[cmd] = (own > 1) and (own - 1) or nil
@@ -17694,7 +17697,8 @@ M.WAY_NOT = { "give", "buy", "shop", "track", "mount", "dismount", "hitch", "rec
   "oven", "run", "where", "look", "l", "scan", "sca", "sleep", "sl", "wake", "stand", "rest", "flee", "follow",
   "kill", "k", "kick", "get", "drop", "put", "wear", "remove", "eq", "i", "inventory", "score", "aff", "prac",
   "train", "c", "gohall", "portal", "transfer", "summon", "goto", "travel", "check", "eqdb", "help", "tell",
-  "who", "where", "time", "save", "quit", "open", "close", "unlock", "lock" }
+  "who", "where", "time", "save", "quit", "open", "close", "unlock", "lock",
+  "backstab", "bs", "murder", "hit", "bash", "steal", "kill" }
 function M.wayCommand(cmd)
   cmd = trim(tostring(cmd or "")):lower()
   if cmd == "" or cmd:find(";", 1, true) or M.WAY_DIRS[cmd] then return nil end
@@ -17804,9 +17808,11 @@ function M.wayLearn(prev, here, id, cmd)
 end
 
 -- once (1.99.1): special exits learned from commands that aren't ways (Oven's own eqdb lookups, help…) taken off the map
+-- fighting commands: never a way (a backstab sent as a walk moved you, before 1.99.19)
+M.WAY_FIGHT = { backstab = true, bs = true, murder = true, hit = true, bash = true, steal = true, kill = true }
 function M.wayCleanup()
-  if M.cfg.wayCleanup1 then return end
-  M.cfg.wayCleanup1 = true
+  if M.cfg.wayCleanup2 then return end
+  M.cfg.wayCleanup1, M.cfg.wayCleanup2 = true, true
   M.saveSettings()
   local okR, rooms = pcall(getRooms)
   if not okR or type(rooms) ~= "table" then return end
@@ -17816,13 +17822,15 @@ function M.wayCleanup()
     if okS and type(ex) == "table" then
       for c in pairs(ex) do
         local cmd = tostring(c)
-        if not cmd:find("^oven%-trip:") and not M.wayCommand(cmd) and not M.WAY_DIRS[cmd:lower()] and cmd:lower():match("^check ") then
+        local verb = cmd:lower():match("^(%S+)")
+        if not cmd:find("^oven%-trip:") and not M.wayCommand(cmd) and not M.WAY_DIRS[cmd:lower()]
+           and (verb == "check" or M.WAY_FIGHT[verb]) then
           if pcall(removeSpecialExit, id, cmd) then n = n + 1 end
         end
       end
     end
   end
-  if n > 0 then M.say(string.format("took %d wrongly learned way%s off the map (eqdb lookups)", n, n == 1 and "" or "s")); pcall(M.mapLearned) end
+  if n > 0 then M.say(string.format("took %d wrongly learned way%s off the map (eqdb lookups, backstabs)", n, n == 1 and "" or "s")); pcall(M.mapLearned) end
 end
 
 -- the game refused a move: in the wilds, that room and direction are remembered (walked around after)
@@ -21151,6 +21159,8 @@ function M.init()
   M.panelsWatch()
   M.questClock()
   M.whereLearnStart()
+  -- wrongly learned ways off the map, once (a little after start: the map is loaded by then)
+  tempTimer(10, function() pcall(M.wayCleanup) end)
   pcall(M.goSuggestRefresh)
   M.handlers[#M.handlers + 1] = registerAnonymousEventHandler("AdjustableContainerRepositionFinish", function(...)
     M.onPanelMoved(...)

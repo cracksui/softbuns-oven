@@ -3004,15 +3004,21 @@ def ways_learned():
     assert any("learned a way: 'enter mirror'" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
     o.lua("SAYS = {}; AT(100); sbo.onSend(nil, 'look'); AT(101)")
     eq(o.ev("SPECIAL[100]['look']"), None, "not every command")
+    # a command of yours (a backstab trigger), then a step of Oven's own walk moves you: the walk's, not a way
+    o.lua("AT(100); sbo.onSend(nil, 'sayto bob hi'); sbo.ownCmds = { w = 1 }; sbo.onSend(nil, 'w'); AT(101)")
+    eq(o.ev("SPECIAL[100]['sayto bob hi']"), None, "Oven's walk step moved you: not learned")
+    o.lua("AT(100); sbo.onSend(nil, 'backstab commoner'); AT(101)")
+    eq(o.ev("SPECIAL[100]['backstab commoner']"), None, "a backstab is never a way")
     # one of Oven's own commands (an eqdb lookup) as you walk: not a way
     o.lua("AT(101); sbo.ownCmds = { ['check eqlookup abc'] = 1 }; sbo.onSend(nil, 'check eqlookup abc'); AT(100)")
     eq(o.ev("SPECIAL[101] and SPECIAL[101]['check eqlookup abc']"), None, "Oven's own lookup: not learned")
     # and ones learned before are taken off the map, once
-    o.lua("""SPECIAL[100]['check eqlookup e599'] = 101
+    o.lua("""SPECIAL[100]['check eqlookup e599'] = 101; SPECIAL[100]['backstab commoner'] = 101
       getRooms = function() return { [100] = 'Room 100', [101] = 'Room 101' } end
       removeSpecialExit = function(id, c) SPECIAL[id][c] = nil end
-      sbo.cfg.wayCleanup1 = nil; sbo.wayCleanup()""")
+      sbo.cfg.wayCleanup1 = nil; sbo.cfg.wayCleanup2 = nil; sbo.wayCleanup()""")
     eq(o.ev("SPECIAL[100]['check eqlookup e599']"), None, "cleaned up")
+    eq(o.ev("SPECIAL[100]['backstab commoner']"), None, "a backstab learned before: cleaned up")
     eq(o.ev("SPECIAL[100]['enter mirror']"), 101, "real ways kept")
     # from the wilds into an area: its way in
     wild = 1060834 + 686 * 2300 + 1328
