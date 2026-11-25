@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.5"
+M.version = "1.99.6"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5619,7 +5619,7 @@ end
 local function weaponIs(it, kind)
   local wp = it.weapon or {}
   if (wp.dmgType or ""):lower() == kind then return true end
-  local noun = (wp.summary or ""):match("^Your (%a+) will deal")
+  local noun = (wp.summary or ""):match("^Your (.-) will deal")   -- "two-handed axe"
   if noun and noun:lower() == kind then return true end
   for word in (it.keywords or ""):lower():gmatch("%S+") do if word == kind then return true end end
   return false
@@ -5934,6 +5934,21 @@ function M.noteCombat(raw)
   end
 end
 
+-- a weapon page's measured parts: { damage = { weapon = 134, ["skill & strength"] = -13 }, accuracy = {…} }
+function M.weaponParts(w)
+  local r = {}
+  for _, st in ipairs((w or {}).stats or {}) do
+    local key = tostring(st[1] or ""):lower()
+    if key == "damage" or key == "accuracy" then
+      r[key] = {}
+      for _, p in ipairs(st[3] or {}) do
+        local n = tonumber((tostring(p[1]):gsub("^%+%-", "-"):gsub("^%+", "")))
+        if n then r[key][p[2]] = (r[key][p[2]] or 0) + n end
+      end
+    end
+  end
+  return r
+end
 -- help 2468's weapon kinds (each its own skill)
 -- your fists, as the "weapon" in your hands when you fight unarmed (the upgrade list weighs weapons against them)
 M.FISTS = { name = "your fists", worn = "wielded as a weapon", fists = true, affects = {}, relicAffects = {} }
@@ -6305,15 +6320,40 @@ function M.combatModel(old, new)
   local ow, nw = old and old.weapon, new and new.weapon
   if nw and not ow and c.weapon == "fists" and c.wpn then ow = c.wpn; old = old or M.FISTS end
   if nw or ow then
-    local od, nd = ow and weaponValue("damage", ow.dmgLevel), nw and weaponValue("damage", nw.dmgLevel)
-    if od and nd and (c.dmgParts or {})["weapon"] then dmg2 = dmg2 + c.dmgParts["weapon"] * (nd / od - 1) end
-    local oa, na = ow and weaponValue("accuracy", ow.accuracy), nw and weaponValue("accuracy", nw.accuracy)
-    if oa and na then acc2 = acc2 + (na - oa) end
+    -- the item's page says what you'd deal with it ("121 Damage: (+134 from weapon) (+-13 from skill &
+    -- strength)", "76 Accuracy: (+13 from weapon skill) (+38 from weapon)"): those parts, in place of what
+    -- you wield now (eq's), are the swap - weapon, skill and strength all measured by the game
+    local np = M.weaponParts(nw)
+    local dP, aP = c.dmgParts or {}, c.accParts or {}
+    -- eq's numbers are for what's in your hands now: your fists, or the weapon you wield
+    local cw = ow == c.wpn
+    for _, n in ipairs(M.eqNames or {}) do if old and n == old.name then cw = true end end
+    local measured = np.damage and np.damage["weapon"] and np.damage["skill & strength"] and dP["weapon"] and dP["skill & strength"] and cw
+    if measured then
+      dmg2 = dmg2 - dP["weapon"] - dP["skill & strength"] + np.damage["weapon"] + np.damage["skill & strength"]
+    else
+      local od, nd = ow and weaponValue("damage", ow.dmgLevel), nw and weaponValue("damage", nw.dmgLevel)
+      if od and nd and dP["weapon"] then dmg2 = dmg2 + dP["weapon"] * (nd / od - 1) end
+    end
+    local aMeasured = np.accuracy and np.accuracy["weapon"] and np.accuracy["weapon skill"] and cw
+      and aP["weapon skill"] and (aP["weapon"] or aP["fists"])
+    if aMeasured then
+      acc2 = acc2 - aP["weapon skill"] - (aP["weapon"] or aP["fists"]) + np.accuracy["weapon"] + np.accuracy["weapon skill"]
+    else
+      local oa, na = ow and weaponValue("accuracy", ow.accuracy), nw and weaponValue("accuracy", nw.accuracy)
+      if oa and na then acc2 = acc2 + (na - oa) end
+    end
     -- your skill with the weapon (help 1747: +1/3 of the learned skill, up to 25, +3 at mastery, and a
     -- wielded weapon + its skill's complexity/30): a different kind of weapon means a different skill
     local function skillAcc(it)
       if not it then return nil end
-      for _, kind in ipairs(it == M.FISTS and { "hand to hand" } or M.WEAPON_KINDS) do
+      local kinds = M.WEAPON_KINDS
+      if it == M.FISTS then kinds = { "hand to hand" }
+      elseif it.weapon and it.weapon.name then
+        -- the page's own word first ("Your two-handed axe will deal"): its keywords also say "axe"
+        for _, k in ipairs(M.WEAPON_KINDS) do if k == it.weapon.name:lower() then kinds = { k }; break end end
+      end
+      for _, kind in ipairs(kinds) do
         if it == M.FISTS or M.weaponIs(it, kind) then
           local sk = (M.cfg.skills or {})[kind]
           local l = sk and tonumber(sk.lrnd) or 0
@@ -6325,10 +6365,11 @@ function M.combatModel(old, new)
     local os_, ok_, ol_ = skillAcc(old)
     local ns_, nk_, nl_ = skillAcc(new)
     if os_ and ns_ and ok_ ~= nk_ then
-      acc2 = acc2 + (ns_ - os_)
+      if not aMeasured then acc2 = acc2 + (ns_ - os_) end
       res.skill = { ok_, ol_, nk_, nl_ }
-      -- skill is part of eq's "from skill & strength" damage too; how much, no help page says
-      if ol_ ~= nl_ then res.notCalc = { "weapon skill's part of damage" } end
+      -- skill is part of eq's "from skill & strength" damage too; how much, no help page says (the item's
+      -- page shows it: then it's counted above)
+      if ol_ ~= nl_ and not measured then res.notCalc = { "weapon skill's part of damage" } end
     elseif ow and nw and not (os_ and ns_) then res.estimates[#res.estimates + 1] = { "weapon skill (unknown kind)", 0 } end
     local oc, nc = ow and weaponValue("crit", ow.critChance), nw and weaponValue("crit", nw.critChance)
     if oc and nc then crit2 = crit2 + (nc - oc) end

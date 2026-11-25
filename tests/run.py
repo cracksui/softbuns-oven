@@ -3701,6 +3701,18 @@ def weapons_against_fists():
     assert "your fists" in up and "a sharp hook" in up, up
     assert "a sharp hook  (lv 10)" in up and "your fists  (lv 50)" in up, up
     assert "hand to hand 80%→hook 75%" in up and "weapon skill's part of damage" in up, up
+    # the item's page measured what you'd deal with it: those parts are used (skill and strength included)
+    o.lua("""sbo.cfg.skills['two-handed axe'] = { lrnd = 42, cmplx = 1 }; sbo.cfg.skills.axe = { lrnd = 5 }
+      sbo.remember({ name = "a heavy battleaxe", worn = "wielded as a weapon", level = 10, raw = {}, affects = {},
+        keywords = "heavy battleaxe two-handed axe", weapon = { name = "two-handed axe",
+          summary = "Your two-handed axe will deal Max slash damage", dmgLevel = "Max", accuracy = "High", critChance = "Low",
+          stats = { { "Damage", "121", { { "+134", "weapon" }, { "-13", "skill & strength" } } },
+                    { "Accuracy", "76", { { "+13", "weapon skill" }, { "+38", "weapon" } } } } } })
+      M_ = sbo.combatModel(sbo.FISTS, sbo.items['a heavy battleaxe'])""")
+    eq(o.ev("M_.offense.parts.damage[2]"), 121, "fists 132 - (102 + 30) + (134 - 13)")
+    eq(o.ev("M_.offense.parts.accuracy[2]"), 76, "95 - (25 + 45) + (13 + 38)")
+    eq(o.ev("M_.skill[3]"), "two-handed axe", "the page's own kind, not 'axe' from its keywords")
+    eq(o.ev("M_.notCalc"), None, "skill's part of damage: measured")
     # wielding a weapon: no fists row
     o.lua('sbo.eqNames = { "a worn vest", "a dull dagger" }')
     up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("(sbo.upgradeLines(100, true))").values())
