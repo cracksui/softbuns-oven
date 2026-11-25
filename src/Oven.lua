@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.21"
+M.version = "1.99.22"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -218,6 +218,7 @@ local SCHEMA_ADD = {
   "ALTER TABLE kills ADD COLUMN race TEXT",
   "ALTER TABLE deaths ADD COLUMN killer TEXT",    -- 0.24.0: what you were fighting
   "ALTER TABLE shop_items ADD COLUMN currency TEXT", -- 0.59.0: "gold", "rewardunits", …
+  "ALTER TABLE room_xy ADD COLUMN zone TEXT",     -- 1.99.22: the place's name (GMCP's zone): the world map names it
 }
 
 function M.dbOpen()
@@ -14606,9 +14607,11 @@ function M.worldNote(info)
   else
     M.worldRoomXY = M.worldRoomXY or {}
     local k = M.worldRoomXY[num]
-    if not k or k.x ~= x or k.y ~= y then
-      M.worldRoomXY[num] = { map = name, x = x, y = y }
-      M.dbx("INSERT OR REPLACE INTO room_xy (room, map, x, y) VALUES (%s, %s, %s, %s)", num, name, x, y)
+    local zone = info.zone ~= "" and info.zone or nil
+    if not k or k.x ~= x or k.y ~= y or (zone and k.zone ~= zone) then
+      M.worldRoomXY[num] = { map = name, x = x, y = y, zone = zone }
+      M.roomXYZone()
+      M.dbx("INSERT OR REPLACE INTO room_xy (room, map, x, y, zone) VALUES (%s, %s, %s, %s, %s)", num, name, x, y, zone)
       M.worldTownList = nil
     end
   end
@@ -15836,23 +15839,70 @@ function M.worldRelease()
   end
 end
 
+-- room_xy's zone column (added by dbOpen; this covers a database already open when Oven was updated in place)
+function M.roomXYZone()
+  if M.roomXYZoneOk then return end
+  M.roomXYZoneOk = true
+  local conn = M.dbOpen()
+  if conn then pcall(function() conn:execute("ALTER TABLE room_xy ADD COLUMN zone TEXT") end) end
+end
+-- the names of places kept before 1.99.22 (room_xy had none): GMCP's zone for each, from the recordings - once
+function M.worldZoneImport()
+  if M.cfg.worldZones1 then return 0 end
+  M.roomXYZone()
+  local n = 0
+  for _, f in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
+    local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
+    if fh then
+      for l in fh:lines() do
+        if l:sub(1, 15) == "@gmcp room.info" and l:find('["wilds"]="false"', 1, true) then
+          local num, zone = tonumber(l:match('%["num"%]="(%d+)"')), l:match('%["zone"%]="([^"]+)"')
+          local map = l:match('%["coord"%]=%b{}')
+          local mname = map and map:match('%["name"%]="([^"]*)"')
+          local x, y = map and tonumber(map:match('%["x"%]=(%d+)')), map and tonumber(map:match('%["y"%]=(%d+)'))
+          if num and zone and mname and x and y then
+            M.dbx("INSERT OR IGNORE INTO room_xy (room, map, x, y) VALUES (%s, %s, %s, %s)", num, mname, x, y)
+            M.dbx("UPDATE room_xy SET zone = %s WHERE room = %s AND zone IS NULL", zone, num)
+            n = n + 1
+          end
+        end
+      end
+      fh:close()
+    end
+  end
+  M.cfg.worldZones1 = true
+  M.saveSettings()
+  M.worldTownList, M.worldRoomXY = nil, nil
+  if M.mapMode == "world" then M.worldDraw() end
+  return n
+end
+
 -- the towns on the world map: each area's place (GMCP puts all of a town's rooms on one spot of the wilds), and
--- the spots of the wilds its learned ways in start from - { map, x, y, name, entry }, rebuilt when a new place is kept
+-- the spots of the wilds its learned ways in start from - { map, x, y, name, entry }, rebuilt when a new place is kept.
+-- Named by its area on your map, else by the name GMCP gave it (a place the game's map doesn't have - an iceberg -
+-- is only on Oven's temporary map while you're in it)
 function M.worldTowns()
   if M.worldTownList then return M.worldTownList end
-  local list, seen = {}, {}
+  M.roomXYZone()
+  local list, seen, zones = {}, {}, {}
+  local xy = M.dbRows("SELECT room, map, x, y, zone FROM room_xy")
+  for _, r in ipairs(xy) do if r.zone and r.zone ~= "" then zones[tonumber(r.room)] = r.zone end end
   local function add(map, x, y, room, entry)
     room, x, y = tonumber(room), tonumber(x), tonumber(y)
-    if not (room and x and y and map) or not roomExists(room) or M.isWildRoom(room) then return end
-    local a = getRoomArea(room)
-    local ok, name = pcall(getRoomAreaName, a)
-    if not ok or type(name) ~= "string" or name == "" then return end
+    if not (room and x and y and map) or M.isWildRoom(room) then return end
+    local name
+    if roomExists(room) then
+      local ok, n = pcall(getRoomAreaName, getRoomArea(room))
+      if ok and type(n) == "string" then name = n:gsub("^Oven: ", "") end   -- (a temporary map's area)
+    end
+    if not name or name == "" then name = zones[room] end
+    if type(name) ~= "string" or name == "" then return end
     local k = map .. ":" .. x .. "," .. y .. ":" .. name
     if seen[k] then return end
     seen[k] = true
     list[#list + 1] = { map = map, x = x, y = y, name = name, entry = entry }
   end
-  for _, r in ipairs(M.dbRows("SELECT room, map, x, y FROM room_xy")) do add(r.map, r.x, r.y, r.room) end
+  for _, r in ipairs(xy) do add(r.map, r.x, r.y, r.room) end
   for _, r in ipairs(M.dbRows("SELECT room, map, x, y FROM entrances")) do add(r.map, r.x, r.y, r.room, true) end
   M.worldTownList = list
   return list
@@ -15960,6 +16010,13 @@ function M.worldSearch(q)
   local ql = q:lower()
   for _, row in ipairs(M.dbRows("SELECT room, sign, dests FROM signposts WHERE exact = 1")) do
     if (row.sign or ""):lower():find(ql, 1, true) or (row.dests or ""):lower():find(ql, 1, true) then add(row.room) end
+  end
+  -- a place by name (one the game's map doesn't have too: an iceberg)
+  for _, t in ipairs(M.worldTowns()) do
+    if not t.entry and t.name:lower():find(ql, 1, true) then
+      local r = M.dbRow("SELECT room FROM room_xy WHERE map = %s AND x = %s AND y = %s LIMIT 1", t.map, t.x, t.y)
+      if r then add(r.room) end
+    end
   end
   -- an area by name: where Oven knows it is
   for name, a in pairs(getAreaTable and getAreaTable() or {}) do
@@ -21285,5 +21342,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport) end)
 pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end

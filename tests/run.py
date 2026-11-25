@@ -1132,6 +1132,23 @@ def world_map_names_towns():
     o.lua("""getMousePosition = function() return 50, 50 end
       sbo.worldPress({ button = 'LeftButton', x = 20, y = 24 }); sbo.worldRelease()""")
     assert "Towne of Rune · 435,1226" in o.ev("ST[#ST]"), o.ev("ST[#ST]")
+    # a place the game's map doesn't have (only on Oven's temporary map while you were in it): named by GMCP's zone
+    o.lua("""roomExists = function(id) return tonumber(id) < 900000 end
+      sbo.worldNote({ num = '917755', zone = 'The Iceberg', wilds = 'false', coord = { name = 'Alyria', x = 2044, y = 150 } })""")
+    eq(o.ev("sbo.worldTownAt('Alyria', 2044, 150, 4)"), "The Iceberg", "named after it's gone from the map")
+    # and found by a search
+    o.lua("sbo.worldFit = function(f) FIT = f end; sbo.worldDraw = function() end")
+    eq(o.ev("sbo.worldSearch('iceberg')"), 1, "search finds it")
+    # places kept before names were: named from the recordings, once
+    home = o.L.globals().OVEN_TEST_HOME
+    open(home + "/oven_record.txt", "w").write(
+        '@gmcp room.info = {["num"]="917734",["zone"]="The Iceberg",["coord"]={["id"]=1,["x"]=2050,["name"]="Alyria",["y"]=160},["wilds"]="false"}\n'
+        '@gmcp room.info = {["num"]="1410178",["zone"]="Alyria",["coord"]={["x"]=2044,["name"]="Alyria",["y"]=151},["wilds"]="true"}\n')
+    o.lua("sbo.dbx('INSERT OR REPLACE INTO room_xy (room, map, x, y) VALUES (917734, \\'Alyria\\', 2050, 160)')")
+    eq(o.ev("sbo.worldTownAt('Alyria', 2050, 160, 4)"), None, "no name yet")
+    eq(o.ev("sbo.worldZoneImport()"), 1, "one place room from the recording")
+    eq(o.ev("sbo.worldTownAt('Alyria', 2050, 160, 4)"), "The Iceberg", "named")
+    eq(o.ev("sbo.worldZoneImport()"), 0, "once")
 
 
 @test
