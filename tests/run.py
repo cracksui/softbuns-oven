@@ -861,6 +861,19 @@ def no_quests_clears_panel():
 
 
 @test
+def where_none_around_here():
+    # an area with no features: "None around here." is not three features
+    o = Oven()
+    n = o.ev("""function() local a, f = sbo.readWhere({ "Where is what? Features that Shady Road might contain include:",
+      "   None around here.", "When you do find what you're looking for, you might also try WHERE IS <feature> TRACK" }, "x")
+      return #f end""")()
+    eq(n, 0, "no features")
+    n = o.ev("""function() local a, f = sbo.readWhere({ "Where is what? Features that Towne of Rune might contain include:",
+      "   bank   food", "When you do find what you're looking for" }, "x") return #f end""")()
+    eq(n, 2, "a real list still read")
+
+
+@test
 def quest_steps_are_links():
     o = Oven()
     o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end

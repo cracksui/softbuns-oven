@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.14"
+M.version = "1.99.15"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11918,6 +11918,7 @@ function M.readWhere(lines, area)
     local a = t:match("^Where is what%? Features that (.-) might contain")
     if a then inList, listArea = true, a
     elseif t:match("^When you do find") then inList = false
+    elseif inList and t:match("^None around here") then inList = false   -- an area with no features
     elseif inList and t ~= "" then
       for f in t:gmatch("%S+") do features[#features + 1] = f:lower() end
     end
@@ -12019,6 +12020,13 @@ function M.whereLearnTick()
   if not area or area == "" then return end
   local p = M.lastStatusPrompt
   if M.busyWhy(p) or not M.userIdle(3) then return end
+  -- once: "None around here." was read as three features before 1.99.15
+  if not M.cfg.whereCleanup1 then
+    M.dbx("DELETE FROM where_features WHERE feature IN ('none', 'around', 'here.')")
+    M.dbx("DELETE FROM where_rooms WHERE feature IN ('none', 'around', 'here.')")
+    M.cfg.whereCleanup1 = true
+    M.saveSettings()
+  end
   local list = M.dbRows("SELECT feature FROM where_features WHERE area = %s", area)
   if #list == 0 then
     M.whereAsked = M.whereAsked or {}
