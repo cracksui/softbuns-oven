@@ -5441,6 +5441,9 @@ def map_header_shows_the_find():
     eq(o.ev("HEAD"), "Alyrian Underworld", "another map on show: its name")
     o.lua("sbo.worldV = { follow = true, map = 'Alyria' }; sbo.drawMapHeader()")
     eq(o.ev("HEAD"), "Square  ·  Rune  ·  #1", "following you: yours")
+    # the room map on the find, switched to the world map: it opens there, marked
+    o.lua("sbo.mapMode = 'local'; sbo.centerOn(2); sbo.worldDraw = function() end; sbo.mapSetMode('world')")
+    eq((o.ev("sbo.worldV.map"), o.ev("sbo.worldV.cx"), o.ev("sbo.worldV.follow"), o.ev("sbo.worldFound[1]")), ("Alyrian Underworld", 5, False, 2), "the world map, on the find")
 
 
 @test

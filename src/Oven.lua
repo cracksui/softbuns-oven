@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.53"
+M.version = "1.99.54"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16077,6 +16077,17 @@ end
 ---------------------------------------------------------------- the switch
 function M.mapSetMode(mode, auto)
   if mode ~= "world" then mode = "local" end
+  -- the room map showing somewhere else (a search's find): the world map opens there, marked - where in the world
+  -- that place is, and what's round it
+  if mode == "world" and not auto and M.mapMode ~= "world" then
+    local okO, other = pcall(M.mapShownOther)
+    local p = okO and other and M.worldPos(other)
+    if p then
+      local v = V()
+      v.map, v.follow, v.cx, v.cy = p.map, false, p.x, p.y
+      M.worldFound = { other }
+    end
+  end
   M.mapMode = mode
   if not auto then M.cfg.mapMode = mode; M.saveSettings() end
   if M.worldLabel then
