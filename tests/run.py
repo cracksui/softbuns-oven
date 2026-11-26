@@ -5358,7 +5358,8 @@ def recall_from_recall_list():
     o = Oven()
     o.lua("""T0 = os.time(); os.time = function() return T0 end; sbo.cfg.recallReadyAt = nil
       MAPSTUB({ [10] = {}, [500] = { n = 501 }, [501] = {}, [600] = {} })
-      getRoomArea = function(id) return tonumber(id) < 600 and 1 or 2 end; getRoomAreaName = function(a) return a == 1 and 'Maldra Keep' or 'Elsewhere' end
+      getRoomArea = function(id) id = tonumber(id) if id == 10 then return 3 end return id < 600 and 1 or 2 end
+      getRoomAreaName = function(a) return a == 1 and 'Maldra Keep' or (a == 3 and 'Far Away' or 'Elsewhere') end
       getRoomName = function(id) return id == 500 and 'Sanctuary' or ('room ' .. id) end
       searchRoom = function(q) if q == 'Sanctuary' then return { [500] = 'Sanctuary' } end return {} end
       sbo.travelLinks = function() return {} end; sbo.signposts = function() return {} end; sbo.cfg.clanHall = nil
@@ -5372,6 +5373,10 @@ def recall_from_recall_list():
     kinds = lambda: [l.kind for l in o.ev("P.legs").values()]
     o.lua("P = sbo.planTrip(10, { 501 }, {})")
     eq(kinds(), ["recall", "walk"], "recall to the sanctuary, then on")
+    # a recall point in the place you're already in: not used (only a walk saved, and recall gone for 10 minutes)
+    o.lua("sbo.mapRoom = 499; MAP_EXITS[499] = { n = 500 }; sbo.roomGraphCache = nil; sbo.recallReading.room = 499; P = sbo.planTrip(499, { 501 }, {})")
+    eq([l.kind for l in o.ev("P.legs").values()], ["walk"], "walked, not recalled")
+    o.lua("sbo.mapRoom = 10; sbo.recallReading.room = 10")
     # read somewhere else: not used here
     o.lua("sbo.recallReading.room = 11; P = sbo.planTrip(10, { 501 }, {})")
     eq(o.ev("P"), None, "no reading here: no recall")

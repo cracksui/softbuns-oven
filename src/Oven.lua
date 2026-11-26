@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.36"
+M.version = "1.99.37"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -19036,7 +19036,9 @@ function M.planTripOnce(here, targets, used)
   local R = M.recallReading
   if not used.recall and M.recallReady() and R and R.room == here and os.time() - R.at <= M.RECALL_READ_FRESH then
     local land = M.recallPointRoom(R)
-    if land and land ~= here then edge(here, land, M.TRIP_W_RECALL * typical, { kind = "recall", name = R.name }) end
+    -- (not to a point in the place you're in: a walk there is all it would save, and recall's gone for 10 minutes)
+    local samePlace = land and M.placeKey(land) ~= nil and M.placeKey(land) == M.placeKey(here)
+    if land and land ~= here and not samePlace then edge(here, land, M.TRIP_W_RECALL * typical, { kind = "recall", name = R.name }) end
   end
   local hall = tonumber(M.cfg.clanHall)
   if hall and not used.clan and hall ~= here then edge(here, hall, M.TRIP_W_CLAN * typical, { kind = "clan" }) end
