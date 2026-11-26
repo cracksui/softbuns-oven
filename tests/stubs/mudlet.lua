@@ -191,6 +191,7 @@ function MAPSTUB(exits)
   local LONG = { n = "north", s = "south", e = "east", w = "west", ne = "northeast", nw = "northwest", se = "southeast",
     sw = "southwest", u = "up", d = "down", ["in"] = "in", out = "out" }
   MAP_EXITS = exits
+  roomExists = roomExists or function(id) return MAP_EXITS[tonumber(id)] ~= nil end
   getRooms = function() local t = {} for id in pairs(MAP_EXITS) do t[id] = "room " .. id end return t end
   getRoomExits = function(id) local t = {} for d, to in pairs(MAP_EXITS[tonumber(id)] or {}) do if LONG[d] then t[LONG[d]] = to end end return t end
   getSpecialExitsSwap = function(id) local t = {} for d, to in pairs(MAP_EXITS[tonumber(id)] or {}) do if not LONG[d] then t[d] = to end end return t end

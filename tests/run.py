@@ -45,6 +45,8 @@ class Oven:
         self.L.execute(src)
         # as if the session's alias list had been read (game_aliases tests that part)
         self.L.execute("sbo.cfg.samples = false; sbo.aliasesAsked = true")
+        # (recall cooling down: a trip doesn't ask recall list first - the recall tests set it ready)
+        self.L.execute("sbo.cfg.recallReadyAt = os.time() + 10^9")
         self.sbo = self.L.globals().sbo
 
     def lua(self, code):
@@ -1840,78 +1842,30 @@ def travel_by_ganuk():
     text = "\n".join(o.ev("LOGS").values())
     assert "Iron Worm to Lowangen - 3,625 gold" in text and "4 steps to room 16091" in text and "balloon to New Rigel - 2,500 gold" in text, text
     assert "costs 6,125 gold in all" in text, text
-    # the clan hall, walk out until Mandrake Woods' signpost is the nearest, recall, run to Rune
+    # clan gohall: to the hall, out of it into the wilds, the run to Rune - and in the hall, recall list first
     o.lua("""CHAIN(6, { 384334 }, 'x'); CHAIN(3, { 1900988 }, 'x'); CHAIN(3, { 1500000 }, 'x'); CHAIN(1, { 10490, 10491, 10495 }, 'e')
+      CHAIN(3, { 1558194 }, 'x'); EX[384334] = { { 'n', 1558194 } }
       sbo.cfg.clanHall = 384334
-      POS = { [384334] = { map = 'Alyria', x = 560, y = 216 }, [1900988] = { map = 'Alyria', x = 654, y = 365 }, [1500000] = { map = 'Alyria', x = 560, y = 150 } }
+      POS = { [384334] = { map = 'Alyria', x = 560, y = 216 }, [1558194] = { map = 'Alyria', x = 560, y = 215 }, [1900988] = { map = 'Alyria', x = 654, y = 365 }, [1500000] = { map = 'Alyria', x = 560, y = 150 } }
       sbo.worldPos = function(r) return POS[tonumber(r)] end
       sbo.signposts = function() return { { room = 1900988, dests = { rune = 'south' } }, { room = 1500000, dests = { civmar = 'north' } } } end
       sbo.cfg.runs = { names = { rune = {} }, ends = { rune = 10490 }, endsFixed = 1 }
       sbo.runForArea = function(id) return getRoomArea(id) == 1 and 'rune' or nil end
       sbo.signLabel = function(r) return r == 1900988 and 'signpost on the Shadow Road' or 'signpost near the hall' end
-      sbo.mapRoom = 600; LOGS = {}; SENT = {}; sbo.mapWalkTo = function(id) WALKED = id end""")
+      sbo.mapGatesCache = nil; sbo.mapRoom = 600; LOGS = {}; SENT = {}""")
     o.lua("sbo.goTo(10495)")
     text = "\n".join(o.ev("LOGS").values())
-    for want in ["clan gohall to Megaleios Clan Hall", "out of the hall, 5 east, about 60 south", "recall to the signpost on the Shadow Road", "run rune to the", "about 2 steps on to room 10495", "the trip is free"]:
+    for want in ["clan gohall to your clan hall", "n out into the wilds", "run rune to the", "about 2 steps on to room 10495"]:
         assert want in text, (want, text)
     o.lua("sbo.goAnswer('y'); runTimers()")
     eq(o.ev("SENT[#SENT]"), "clan gohall", "first the hall")
-    o.lua("""gmcp.room = { info = { num = '384334', wilds = 'false', exits = { n = '1558194' }, coord = { name = 'Alyria', x = 560, y = 216 } } }
-      sbo.mapRoom = 384334; sbo.travelOnRoom(384334); runTimers()""")
-    eq(o.ev("SENT[#SENT]"), "n", "out of the hall")
-    steps = o.ev("""(function()
-      local x, y, n = 560, 216, 0
-      local D = { n = {0,-1}, s = {0,1}, e = {1,0}, w = {-1,0}, ne = {1,-1}, nw = {-1,-1}, se = {1,1}, sw = {-1,1} }
-      while D[SENT[#SENT]] and n < 300 do
-        local d = D[SENT[#SENT]]
-        if n > 0 then x, y = x + d[1], y + d[2] end
-        n = n + 1
-        gmcp.room = { info = { num = tostring(2000000 + n), wilds = 'true', coord = { name = 'Alyria', x = x, y = y } } }
-        sbo.mapRoom = 2000000 + n; sbo.travelCastStep()
-      end
-      return n
-    end)()""")
-    assert 10 < steps < 150, steps
-    walked = [x for x in o.ev("SENT").values() if x in ("n", "s", "e", "w", "se", "sw", "ne", "nw")]
-    eq((walked[:7], set(walked[7:])), (["n", "e", "e", "e", "e", "e", "s"], {"s"}), "out, 5 east, then south")
-    eq(o.ev("SENT[#SENT]"), "cast 'word of recall'", "recall once it's the nearest")
-    o.lua("runTimers(); WALKED = nil; sbo.mapRoom = 1900988; sbo.travelOnRoom(1900988); runTimers()")
-    eq(o.ev("SENT[#SENT]"), "run rune", "recalled at the signpost: the run")
-    o.lua("sbo.running.started = true; sbo.mapRoom = 10490; sbo.runStopped(true); runTimers()")
-    eq(o.ev("WALK.path[#WALK.path]"), 10495, "the run's over: the last steps on foot")
-    o.lua("ARRIVE(10495)")
-    eq(o.ev("sbo.trip"), None, "there")
-    # a room of the wilds that isn't on the map (just outside the hall): planned from where it is - never "no route"
-    o.lua("""sbo.travel = nil; sbo.trip = nil; POS[1595001] = { map = 'Alyria', x = 567, y = 232 }
-      gmcp.room = { info = { num = '1595001', wilds = 'true', coord = { name = 'Alyria', x = 567, y = 232 } } }
-      sbo.mapRoom = 1595001; LOGS = {}; SENT = {}""")
-    eq(o.ev("roomExists(1595001)"), False, "not on the map")
-    o.lua("sbo.goTo(10495)")
-    text = "\n".join(o.ev("LOGS").values())
-    assert "no route" not in text and "recall to the signpost on the Shadow Road" in text and "run rune" in text and "y to go" in text, text
-    o.lua("sbo.goAnswer('y'); runTimers()")
-    first = o.ev("SENT[1]")
-    assert first in ("s", "se", "e", "clan gohall"), (first, list(o.ev("SENT").values()))
-    # a recall point that's already the nearest outside the hall: still 30 rooms (north) before recalling
-    cands = o.lua("""local c = sbo.clanRecallCandidates(10495) local o = {}
-      for _, x in ipairs(c) do o[#o+1] = x.link.recall.room .. ':' .. x.link.clanRoute.dir .. x.link.clanRoute.n end return table.concat(o, ',')""")
-    assert "1500000:n30" in cands, cands
-    o.lua("""SENT = {}; sbo.trip = nil; sbo.travel = { stage = 'toCast', steps = 0, link = sbo.clanRecallCandidates(10495)[2].link }
-      if sbo.travel.link.recall.room ~= 1500000 then sbo.travel.link = sbo.clanRecallCandidates(10495)[1].link end""")
-    o.ev("""(function()
-      local x, y, n = 560, 216, 0
-      local D = { n = {0,-1}, s = {0,1}, e = {1,0} }
-      gmcp.room = { info = { num = '1558194', wilds = 'true', coord = { name = 'Alyria', x = x, y = y } } }
-      sbo.travelCastStep()
-      while D[SENT[#SENT]] and n < 300 do
-        local d = D[SENT[#SENT]]; x, y = x + d[1], y + d[2]; n = n + 1
-        gmcp.room = { info = { num = tostring(2100000 + n), wilds = 'true', coord = { name = 'Alyria', x = x, y = y } } }
-        sbo.travelCastStep()
-      end
-    end)()""")
-    walked2 = list(o.ev("SENT").values())
-    eq((walked2[:5], walked2[5:-1]), (["e"] * 5, ["n"] * 30), "5 east, 30 north, even though it was the nearest already")
-    eq(walked2[-1], "cast 'word of recall'", "then recall")
+    o.lua("""sbo.cfg.recallReadyAt = nil
+      gmcp.room = { info = { num = '384334', wilds = 'false', exits = { n = '1558194' }, coord = { name = 'Alyria', x = 560, y = 216 } } }
+      sbo.mapRoomId = function() return 384334 end; sbo.onRoom(); runTimers()""")
+    eq(o.ev("SENT[#SENT]"), "recall list", "in the hall: where recall goes from there")
+    o.lua("""sbo.recallListLines({ '[1 ] Nearest recall point (Nowhere Known)', '* Your default recall point is: #1: "x".' }); runTimers()""")
+    eq(o.ev("SENT[#SENT]"), "n", "a point Oven can't place: out of the hall instead")
+    o.lua("sbo.cfg.recallReadyAt = os.time() + 10^9; sbo.dirWalk = nil; sbo.trip = nil")
     # in the wilds, nowhere on the map joined to anything: first straight to the nearest signpost, the trip on
     # from there (its run)
     o.lua("""sbo.mapWalkTo = REALWALK; sbo.trip = nil; sbo.travel = nil; sbo.cfg.clanHall = nil
@@ -1948,32 +1902,13 @@ def travel_by_ganuk():
       sbo.cfg.runs = { names = { rune = {} }, ends = { rune = 10490 }, endsFixed = 1 }
       gmcp.room = { info = { num = '917741', wilds = 'false', exits = { n = '917742' }, coord = { name = 'Alyria', x = 655, y = 366 } } }
       sbo.mapRoom = 917741; LOGS = {}; SENT = {}""")
-    o.lua("sbo.goTo(10495)")
+    o.lua("""sbo.cfg.clanHall = nil; sbo.cfg.recallReadyAt = nil; sbo.cfg.recallPoints = { ['Sanctuary of the Road'] = 1900988 }
+      sbo.recallReading = { room = 917741, at = os.time(), name = 'Sanctuary of the Road' }; sbo.goTo(10495)""")
     text = "\n".join(o.ev("LOGS").values())
-    assert "recall to the signpost on the Shadow Road" in text and "run rune" in text and "y to go" in text and "no route" not in text, text
+    assert "recall to Sanctuary of the Road" in text and "run rune" in text and "y to go" in text, text
     o.lua("sbo.goAnswer('y'); runTimers()")
     eq(o.ev("SENT[#SENT]"), "cast 'word of recall'", "recalled where you stand")
-    # the clan hall isn't on the map (it usually isn't): still clan gohall, out, east, south, recall
-    o.lua("""sbo.trip = nil; sbo.travel = nil; AREA[384334] = nil; sbo.cfg.clanHall = 384334
-      sbo.signposts = function() return { { room = 1900988, dests = { rune = 'south' } }, { room = 1500000, dests = { civmar = 'north' } } } end
-      CHAIN(2, { 917800 }, 'x'); POS[917800] = { map = 'Alyria', x = 560, y = 230 }
-      gmcp.room = { info = { num = '917800', wilds = 'false', exits = {}, coord = { name = 'Alyria', x = 560, y = 230 } } }
-      sbo.mapRoom = 917800; LOGS = {}; SENT = {}""")
-    o.lua("sbo.goTo(10495)")
-    text = "\n".join(o.ev("LOGS").values())
-    for want in ["clan gohall to your clan hall", "out of the hall, 5 east, about 60 south", "recall to the signpost on the Shadow Road", "run rune"]:
-        assert want in text, (want, text)
-    o.lua("sbo.goAnswer('y'); runTimers()")
-    eq(o.ev("SENT[#SENT]"), "clan gohall", "the hall first")
-    o.lua("""gmcp.room = { info = { num = '384334', wilds = 'false', exits = { n = '1558194' }, coord = { name = 'Alyria', x = 560, y = 216 } } }
-      sbo.mapRoom = 384334; sbo.travelOnRoom(384334); runTimers()""")
-    eq(o.ev("SENT[#SENT]"), "n", "landed: out of the hall")
-    # standing in it: the plan starts with the walk out
-    o.lua("sbo.trip = nil; sbo.travel = nil; LOGS = {}; SENT = {}; sbo.goTo(10495)")
-    text = "\n".join(o.ev("LOGS").values())
-    assert "out of the hall, 5 east" in text and "clan gohall" not in text and "run rune" in text and "y to go" in text, text
-
-
+    o.lua("sbo.cfg.recallReadyAt = os.time() + 10^9; sbo.recallPending = nil")
 @test
 def quest_shop_in_town_first():
     o = Oven()
@@ -3344,8 +3279,7 @@ def ways_learned():
     o.set_gmcp("room.wrongdir", '{ wrongdir = "n" }')
     o.lua("handlers['gmcp.room.wrongdir']('gmcp.room.wrongdir')")
     eq(o.ev(f"sbo.wildBlocked({near}, 'n')"), True, "remembered")
-    o.lua("T = {}")
-    d = o.ev(f"sbo.wildStep({near}, 1330, 690, 1330, 600, T)")
+    d = o.ev("sbo.gridLegDirs('Alyria', 1330, 690, 1330, 680)[1]")
     assert d in ("ne", "nw"), d
     # a locked door
     o.lua("AT(100); sbo.onSend(nil, 'n')")
@@ -5398,26 +5332,50 @@ def run_cost_by_length():
 
 
 @test
-def recall_cooldown_and_priority():
+def recall_from_recall_list():
+    # where recall goes is what recall list says where you stand: planned only from there
     o = Oven()
-    o.lua("""T0 = os.time(); os.time = function() return T0 end
-      roomExists = function() return true end; getRoomArea = function() return 1 end
-      sbo.travelLinks = function() return {} end; sbo.signposts = function() return {} end; sbo.clanHallLink = function() return nil end
-      sbo.recallCandidates = function() return { { k = 0, link = { kind = 'recall', land = 500 } } } end
-      sbo.isWildRoom = function() return true end; sbo.wildSignLinks = function() return {} end""")
-    o.set_gmcp("room.info", '{ num = "2000000", wilds = "true" }')
-    n = "(function() local n = 0 for _, e in ipairs(sbo.tripEdges(2000000, 600, {})) do if e.cmd:find('recall:', 1, true) then n = n + 1 end end return n end)()"
-    eq(o.ev(n), 1, "recall offered")
-    eq(o.ev("sbo.tripEdges(2000000, 600, {})[1].weight"), 15, "recall: 15, the cheapest")
+    o.lua("""T0 = os.time(); os.time = function() return T0 end; sbo.cfg.recallReadyAt = nil
+      MAPSTUB({ [10] = {}, [500] = { n = 501 }, [501] = {}, [600] = {} })
+      getRoomArea = function(id) return tonumber(id) < 600 and 1 or 2 end; getRoomAreaName = function(a) return a == 1 and 'Maldra Keep' or 'Elsewhere' end
+      getRoomName = function(id) return id == 500 and 'Sanctuary' or ('room ' .. id) end
+      searchRoom = function(q) if q == 'Sanctuary' then return { [500] = 'Sanctuary' } end return {} end
+      sbo.travelLinks = function() return {} end; sbo.signposts = function() return {} end; sbo.cfg.clanHall = nil
+      sbo.mapRoom = 10; gmcp.room = { info = { num = '10', wilds = 'false' } }""")
+    o.feed("Available recall points:", "[1 ] Nearest recall point (Sanctuary in Maldra Keep)",
+           "[2 ] Inn      (  , The Crazy Hermit's Shack, 1 room [1300, 688]) [Available until Wed Nov 25 22:39:25 2026]",
+           '* Your default recall point is: #1: "Nearest recall point".', "<1hp 1sp 1st>")
+    o.lua("sbo.recallListLines({ 'Available recall points:', '[1 ] Nearest recall point (Sanctuary in Maldra Keep)', '* Your default recall point is: #1: \"Nearest recall point\".' })")
+    eq((o.ev("sbo.recallReading.name"), o.ev("sbo.recallReading.room")), ("Sanctuary in Maldra Keep", 10), "read, where you are")
+    eq(o.ev("sbo.recallPointRoom(sbo.recallReading)"), 500, "found on the map by its name")
+    kinds = lambda: [l.kind for l in o.ev("P.legs").values()]
+    o.lua("P = sbo.planTrip(10, { 501 }, {})")
+    eq(kinds(), ["recall", "walk"], "recall to the sanctuary, then on")
+    # read somewhere else: not used here
+    o.lua("sbo.recallReading.room = 11; P = sbo.planTrip(10, { 501 }, {})")
+    eq(o.ev("P"), None, "no reading here: no recall")
+    o.lua("sbo.recallReading.room = 10")
+    # cooling down: none
     o.feed("'Word of recall' cannot be used again for another 2min 5s.")
     eq(o.ev("sbo.cfg.recallReadyAt - T0"), 125, "the time left read")
-    eq(o.ev(n), 0, "cooling down: no recall in the plan")
-    o.lua("T0 = T0 + 126")
-    eq(o.ev(n), 1, "ready again")
+    eq(o.ev("sbo.planTrip(10, { 501 }, {})"), None, "cooling down: no recall")
+    o.lua("T0 = T0 + 126; sbo.recallReading.at = T0")
+    # sbo go: recall list asked first (the plan's more than a walk here), then the plan
+    o.lua("""SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end; LOGS = {}; sbo.log = function(m) LOGS[#LOGS+1] = m end
+      sbo.recallReading = nil; sbo.goTo(501)""")
+    eq(o.ev("SENT[1]"), "recall list", "asked where recall goes from here")
+    o.lua("sbo.recallListLines({ '[1 ] Nearest recall point (Sanctuary in Maldra Keep)', '* Your default recall point is: #1: \"x\".' })")
+    assert any("recall to Sanctuary in Maldra Keep" in l for l in o.ev("LOGS").values()), list(o.ev("LOGS").values())
+    # going: cast, landed - the point's room learned, on from there
+    o.lua("""CONT = 0; sbo.trip = { targets = { 501 }, used = {}, legs = 0 }; TC = sbo.tripContinue; sbo.tripContinue = function() CONT = CONT + 1 end
+      P = sbo.planTrip(10, { 501 }, {}); sbo.legStart(P.legs[1], sbo.trip)""")
+    eq(o.ev("SENT[#SENT]"), "cast 'word of recall'", "recall")
+    o.lua("""centerview = function() end; sbo.mapRoomId = function() return 500 end; sbo.onRoom(); runTimers()""")
+    eq((o.ev("sbo.cfg.recallPoints['Sanctuary in Maldra Keep']"), o.ev("CONT")), (500, 1), "learned, and on")
+    o.lua("sbo.tripContinue = TC")
     o.set_gmcp("char.cast_finished", '{ casting_completed = "\'word of recall\' cast successful" }')
     o.lua("sbo.onGmcpCastFinished()")
     eq(o.ev("sbo.cfg.recallReadyAt - T0"), 600, "a recall that worked: 10 minutes")
-    # the order, all else equal: recall < ride < clan gohall; runs never under 35
     assert o.ev("sbo.TRIP_W_RECALL < sbo.TRIP_W_RIDE and sbo.TRIP_W_RIDE < sbo.TRIP_W_CLAN")
 
 

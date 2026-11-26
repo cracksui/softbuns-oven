@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.34"
+M.version = "1.99.35"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11212,6 +11212,9 @@ function M.onSend(_, cmd)
     M.lastCmd = nil
   end
   M.typedSend = not (own and own > 0)
+  if trim(tostring(cmd or "")):lower() == M.RECALL_CMD and not M.recallPending and M.recallReading and M.recallReading.room == M.mapRoom then
+    M.recallPending = { from = M.mapRoom, name = M.recallReading.name, at = os.time() }
+  end
   if own and own > 0 then M.ownCmds[cmd] = (own > 1) and (own - 1) or nil
   else
     M.lastUserCmdAt = now()
@@ -14346,6 +14349,15 @@ function M.onRoom()
       M.notifyWalk("stopped: ended up somewhere unexpected")
     end
   end
+  if M.recallPending and M.recallPending.from ~= id then
+    local P = M.recallPending
+    M.recallPending = nil
+    if P.name then
+      M.cfg.recallPoints = M.cfg.recallPoints or {}
+      if M.cfg.recallPoints[P.name] ~= id then M.cfg.recallPoints[P.name] = id; M.saveSettings() end
+    end
+    if P.done then tempTimer(1, function() pcall(P.done) end) end
+  end
   if M.dirWalk and M.dirWalk.at ~= id then
     local W = M.dirWalk
     W.at = id
@@ -14368,7 +14380,7 @@ function M.walkDirs(dirs, done)
   if type(dirs) == "table" then for i, d in ipairs(dirs) do list[i] = d end
   else for d in tostring(dirs or ""):gmatch("[^,%s]+") do list[#list + 1] = d:lower() end end
   if #list == 0 then return false end
-  M.dirWalk = { dirs = list, i = 1, done = done }
+  M.dirWalk = { dirs = list, i = 1, done = done, at = M.mapRoom }
   M.dirWalkStep()
   return true
 end
@@ -14380,6 +14392,11 @@ function M.dirWalkStep()
     M.dirWalk = nil
     if W.done then pcall(W.done) end
     return
+  end
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  if M.WILD_STEP[d] and type(info) == "table" and tostring(info.wilds) == "true" and tonumber(info.num) == M.mapRoom
+      and type(info.exits) == "table" and next(info.exits) and info.exits[d] == nil then
+    return M.wrongDir(d)
   end
   W.i = W.i + 1
   local mine, i = W, W.i
@@ -17564,6 +17581,12 @@ function M.goToNow(targets)
   local okP, plan = pcall(M.planTrip, here, targets, {})
   if not okP then return say("couldn't plan the trip: " .. tostring(plan)) end
   local function nm(id) return (roomExists(id) and getRoomName(id)) or ("#" .. tostring(id)) end
+  -- (no way, or more than a walk here - below: where recall goes from here, first)
+  if not plan and M.recallToAsk({}) and not M.goRecallAsked then
+    M.goRecallAsked = true
+    return M.recallRefresh(function() M.goToNow(targets); M.goRecallAsked = nil end)
+  end
+  M.goRecallAsked = nil
   if not plan then return say("no way found to " .. nm(targets[1]) .. " - Oven can't place it on the map or the world map") end
   if #plan.legs == 0 then return say("you're already there") end
   local target = plan.legs[#plan.legs].to
@@ -17583,6 +17606,11 @@ function M.goToNow(targets)
   if stays then
     M.notifyWalk(string.format("%d step%s…", leg1.n, leg1.n == 1 and "" or "s"))
     return M.tripStart({ target })
+  end
+  -- more than a walk here: where recall goes from here, first (recall list), then planned again
+  if M.recallToAsk({}) and not M.goRecallAsked then
+    M.goRecallAsked = true
+    return M.recallRefresh(function() M.goToNow(targets); M.goRecallAsked = nil end)
   end
   for _, leg in ipairs(plan.legs) do
     if leg.kind == "gate" and (leg.age or 0) > M.WORLDGATE_FRESH and not M.goGateChecked then
@@ -17705,50 +17733,6 @@ function M.clanHallLink()
     dest = (a and M.areaNameOf(a)) or "your clan hall", cost = 0, board = { "clan gohall" }, shopName = "your clan hall" }
 end
 
--- from the clan hall, the way you go out to recall: out of the hall, 5 rooms east, then north or south
--- (south usually) until the signpost you want is the nearest (then recall goes there)
-M.CLAN_OUT_EAST = 5
-M.CLAN_OUT_MIN = 30   -- rooms north or south always walked before recalling (right by the hall it goes nowhere useful)
-function M.clanRecallCandidates(target)
-  local hall = tonumber(M.cfg.clanHall)
-  local p = hall and M.worldPos and M.worldPos(hall)
-  if not p then return {} end
-  local pts = M.signpostPoints()
-  local town = M.runForArea and M.runForArea(target)
-  local tp = M.worldPos and M.worldPos(target)
-  local sps = {}
-  for _, sp in ipairs(M.signposts()) do sps[sp.room] = sp end
-  local cands = {}
-  local x0 = p.x + M.CLAN_OUT_EAST
-  for _, S in ipairs(pts) do
-    if S.map == p.map then
-      local dy = S.y >= p.y and 1 or -1
-      for m = M.CLAN_OUT_MIN, M.RECALL_MAX_WALK do
-        local near = M.recallNearest(pts, p.map, x0, p.y + m * dy)
-        if near and near.room == S.room then
-          local k = 1 + M.CLAN_OUT_EAST + m
-          local sp = sps[S.room]
-          local est
-          if town and sp and sp.dests[town] then est = k + M.runCost(S.room, M.runData().ends[town])
-          elseif tp and tp.map == S.map then est = k + math.max(math.abs(tp.x - S.x), math.abs(tp.y - S.y))
-          else est = k + 1000 end
-          cands[#cands + 1] = { S = S, k = k, m = m, dir = dy > 0 and "s" or "n", est = est }
-          break
-        end
-      end
-    end
-  end
-  table.sort(cands, function(a, b) return a.est < b.est end)
-  local out = {}
-  for i, c in ipairs(cands) do
-    if i > M.RECALL_TRY then break end
-    out[#out + 1] = { k = c.k, link = { kind = "recall", recall = c.S, board = { M.RECALL_CMD }, cost = 0, noBuy = true, walkOut = c.k,
-      clanRoute = { east = M.CLAN_OUT_EAST, dir = c.dir, n = c.m }, dir = c.dir,
-      dest = (M.signLabel and M.signLabel(c.S.room)) or ("#" .. c.S.room), land = c.S.room, areaId = getRoomArea(c.S.room),
-      shopName = "", key = "recall" } }
-  end
-  return out
-end
 function M.clanHallNoteSend(cmd)
   local c = trim(cmd or ""):lower()
   if c:match("^cla?n?%s+goh") then M.clanGoAt = os.time() end
@@ -17778,12 +17762,8 @@ function M.clanHallImport()
   end
 end
 
--- recall: it always takes you to the nearest place with a signpost (recall list names it). So where it
--- lands is worked out from the map - the signpost nearest to where you cast it - and a trip can walk out
--- toward the signpost it wants (from the clan hall: ~70 rooms south for Mandrake Woods' road) until that
--- one is the nearest, recall, and run on from there
+-- recall: where it takes you is what recall list says where you stand (the trip planner reads it: M.recallListLines)
 M.RECALL_CMD = "cast 'word of recall'"
-M.RECALL_MAX_WALK = 120   -- rooms walked out to make a signpost the nearest - no further
 
 -- signposts you've read, with their place on the world map
 function M.signpostPoints()
@@ -17793,28 +17773,6 @@ function M.signpostPoints()
     if p then out[#out + 1] = { room = sp.room, x = p.x, y = p.y, map = p.map } end
   end
   return out
-end
-function M.recallNearest(pts, map, x, y)
-  local best, bd
-  for _, S in ipairs(pts) do
-    if S.map == map then
-      local d = (S.x - x) ^ 2 + (S.y - y) ^ 2
-      if not bd or d < bd then best, bd = S, d end
-    end
-  end
-  return best
-end
--- from (x, y), straight toward S, the rooms to walk until S is the nearest signpost (nil: never, or too far)
-function M.recallWalkTo(pts, S, map, x, y)
-  local cx, cy = x, y
-  for k = 0, M.RECALL_MAX_WALK do
-    local near = M.recallNearest(pts, map, cx, cy)
-    if near and near.room == S.room then return k, cx, cy end
-    local dx, dy = S.x - cx, S.y - cy
-    if dx == 0 and dy == 0 then return nil end
-    cx = cx + (dx > 0 and 1 or (dx < 0 and -1 or 0))
-    cy = cy + (dy > 0 and 1 or (dy < 0 and -1 or 0))
-  end
 end
 local COMPASS = { ["0,-1"] = "n", ["0,1"] = "s", ["1,0"] = "e", ["-1,0"] = "w", ["1,-1"] = "ne", ["-1,-1"] = "nw", ["1,1"] = "se", ["-1,1"] = "sw" }
 local COMPASS_WORD = { n = "north", s = "south", e = "east", w = "west", ne = "northeast", nw = "northwest", se = "southeast", sw = "southwest" }
@@ -17890,6 +17848,7 @@ function M.wayRoom()
   local info = M.gmcpGet and M.gmcpGet("room.info")
   local id = type(info) == "table" and tonumber(info.num) or nil
   if not id or id <= 0 then return end
+  pcall(M.wildExitsNote, info)
   local prev = M.wayPrev
   M.wayPrev = { room = id, wild = tostring(info.wilds) == "true" or M.isWildRoom(id), info = info }
   if not prev or prev.room == id then return end
@@ -17984,21 +17943,6 @@ function M.wildBlocked(room, dir)
   end
   return M.wildBlockedCache[tostring(room) .. ":" .. dir] == true
 end
--- the next step through the wilds from (x, y) in room toward (tx, ty): the straight way unless it's been refused
--- here; else the open neighbour nearest the goal that this walk hasn't stood on yet (T.seen)
-function M.wildStep(room, x, y, tx, ty, T)
-  T.seen = T.seen or {}
-  T.seen[x .. "," .. y] = true
-  local best, bd
-  for d, v in pairs(M.WILD_STEP) do
-    local nx, ny = x + v[1], y + v[2]
-    if not M.wildBlocked(room, d) and not T.seen[nx .. "," .. ny] then
-      local dist = math.max(math.abs(tx - nx), math.abs(ty - ny)) + (math.abs(tx - nx) + math.abs(ty - ny)) * 0.01
-      if not bd or dist < bd then best, bd = d, dist end
-    end
-  end
-  return best
-end
 
 -- "You attempt to open the north door, but it is locked.": that exit locked on the map (routes avoid it)
 function M.doorLocked(l)
@@ -18012,44 +17956,6 @@ function M.doorLocked(l)
     M.say(string.format("the %s %s here is locked - routes go around it until you've been through it", word, what))
     if M.walk then M.walk = nil; M.notifyWalk("stopped: a locked " .. what .. " - sbo go again for another way") end
   end
-end
-
--- a recall from a room (where you stand, or where a ride lands): for each signpost worth it, the walk out
--- and the cost on from it - the best { link, walk, cost (to the target) }
-M.RECALL_TRY = 5   -- signposts offered to the search (the nearest few by a quick estimate)
--- recall from a room (the wilds, or the clan hall - walked out of): the signposts worth recalling to, each
--- with the walk out that makes it the nearest - { link, k }
-function M.recallCandidates(room, target)
-  local p = M.worldPos and M.worldPos(room)
-  if not p then return {} end
-  local pts = M.signpostPoints()
-  local town = M.runForArea and M.runForArea(target)
-  local tp = M.worldPos and M.worldPos(target)
-  local sps = {}
-  for _, sp in ipairs(M.signposts()) do sps[sp.room] = sp end
-  local cands = {}
-  for _, S in ipairs(pts) do
-    if S.map == p.map then
-      local k = M.recallWalkTo(pts, S, p.map, p.x, p.y)
-      if k then
-        local sp = sps[S.room]
-        local est
-        if town and sp and sp.dests[town] then est = k + M.runCost(S.room, M.runData().ends[town])
-        elseif tp and tp.map == S.map then est = k + math.max(math.abs(tp.x - S.x), math.abs(tp.y - S.y))
-        else est = k + 1000 end
-        cands[#cands + 1] = { S = S, k = k, est = est }
-      end
-    end
-  end
-  table.sort(cands, function(a, b) return a.est < b.est end)
-  local out = {}
-  for i, c in ipairs(cands) do
-    if i > M.RECALL_TRY then break end
-    out[#out + 1] = { k = c.k, link = { kind = "recall", recall = c.S, board = { M.RECALL_CMD }, cost = 0, noBuy = true, walkOut = c.k,
-      dest = (M.signLabel and M.signLabel(c.S.room)) or ("#" .. c.S.room), land = c.S.room, areaId = getRoomArea(c.S.room),
-      dir = c.k > 0 and M.compassTo(p.x, p.y, c.S.x, c.S.y) or nil, shopName = "", key = "recall" } }
-  end
-  return out
 end
 
 ---------------------------------------------------------------------------
@@ -18216,13 +18122,13 @@ function M.recallLine(l)
   if not rest then return false end
   local m, sec = tonumber(rest:match("(%d+)%s*min")) or 0, tonumber(rest:match("(%d+)%s*s%f[%A]")) or 0
   M.recallCooling(m * 60 + sec)
-  -- refused in the middle of a trip: planned again, without it
-  local T = M.travel
-  if T and T.link and (T.link.kind == "recall" or (T.link["then"] or {}).kind == "recall") then
-    local target = T.target
-    M.travel, M.trip = nil, nil
+  -- refused in the middle of a trip: planned again from here, without it
+  local P, T = M.recallPending, M.trip
+  if P and P.name and T then
+    M.recallPending = nil
+    T.used.recall = true
     say(string.format("travel: word of recall is cooling down (%s) - planning again without it", rest))
-    if target then tempTimer(0.5, function() M.goTo(target) end) end
+    tempTimer(0.5, function() if M.trip == T then M.tripContinue() end end)
   end
   return true
 end
@@ -18348,45 +18254,7 @@ function M.tripEdges(here, target, used)
       end
     end
   end
-  local sources = {}
-  local info = M.gmcpGet and M.gmcpGet("room.info")
-  if type(info) == "table" and tostring(info.wilds) == "true" then sources[#sources + 1] = here end
-  -- (standing in the clan hall: out, east, north or south, and recall)
-  local inHall = tonumber(M.cfg.clanHall) == here
-  -- no other way (an island, a ship, a place the map can't walk out of): recall where you stand - to the
-  -- signpost nearest you now (in the wilds, a walk toward a better one first, as above)
-  local hereOnly = false
-  if used.recallHere then
-    local dup = false
-    for _, s0 in ipairs(sources) do if s0 == here then dup = true end end
-    if not dup then sources[#sources + 1] = here; hereOnly = not M.isWildRoom(here) end
-  end
-  -- clan gohall, then the walk out and recall: one step to the signpost it lands at
-  local ch = not used.clan and M.recallReady() and M.clanHallLink()
-  if (ch and not inHall and (not ch.areaId or getRoomArea(here) ~= ch.areaId)) or (inHall and M.recallReady()) then
-    for _, c in ipairs(M.clanRecallCandidates(target)) do
-      if roomExists(c.link.land) and c.link.land ~= here then
-        local link, w = c.link, c.k + M.TRIP_W_RECALL
-        if not inHall then
-          link = {}
-          for k, v in pairs(ch) do link[k] = v end
-          link.key, link["then"] = "clan", c.link
-          w = w + M.TRIP_W_CLAN
-        end
-        add({ from = here, to = c.link.land, cmd = TRIP .. (inHall and "hallrecall:" or "clan:") .. c.link.land, link = link, weight = w })
-      end
-    end
-  end
-  if not used.recall and M.recallReady() then
-    for _, src in ipairs(sources) do
-      for _, c in ipairs(M.recallCandidates(src, target)) do
-        if c.link.land ~= src and not (hereOnly and src == here and c.k > 0) then
-          add({ from = src, to = c.link.land, cmd = TRIP .. "recall:" .. src .. ":" .. c.link.land, link = c.link,
-            weight = c.k + M.TRIP_W_RECALL })
-        end
-      end
-    end
-  end
+  -- (recall and clan gohall: the planner's own links - where recall goes is what recall list says, where you are)
   return edges
 end
 
@@ -18535,6 +18403,50 @@ function M.wrongDir(dir)
 end
 M.DIR_SHORT = { north = "n", south = "s", east = "e", west = "w", northeast = "ne", northwest = "nw", southeast = "se", southwest = "sw", up = "u", down = "d" }
 
+-- a room of the wilds: the directions it has no exit for (GMCP's exits) kept as moves that can't be made there
+function M.wildExitsNote(info)
+  if type(info) ~= "table" or tostring(info.wilds) ~= "true" or type(info.exits) ~= "table" then return end
+  local room = tonumber(info.num)
+  local any = false
+  for d in pairs(M.WILD_STEP) do if info.exits[d] then any = true end end
+  if not room or not any then return end
+  local added = false
+  for d in pairs(M.WILD_STEP) do
+    if not info.exits[d] and not M.wildBlocked(room, d) then
+      M.dbx("INSERT OR REPLACE INTO wild_blocked (room, dir, t) VALUES (%s, %s, %s)", room, d, os.time())
+      M.wildBlockedCache[tostring(room) .. ":" .. d] = true
+      added = true
+    end
+  end
+  if added then M.gridBlockedCache = nil end
+  return added
+end
+
+-- the same from the recordings, once: every room of the wilds you've stood in
+function M.wildExitsImport()
+  if M.cfg.wildExits1 then return 0 end
+  local n = 0
+  for _, f in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
+    local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
+    if fh then
+      for l in fh:lines() do
+        if l:sub(1, 15) == "@gmcp room.info" and l:find('["wilds"]="true"', 1, true) then
+          local ex = l:match('%["exits"%]=(%b{})')
+          if ex then
+            local exits = {}
+            for d, v in ex:gmatch('%["(%a+)"%]="(%d+)"') do exits[d] = v end
+            if M.wildExitsNote({ num = l:match('%["num"%]="(%d+)"'), wilds = "true", exits = exits }) then n = n + 1 end
+          end
+        end
+      end
+      fh:close()
+    end
+  end
+  M.cfg.wildExits1 = true
+  M.saveSettings()
+  return n
+end
+
 -- a map's cells as costs: cost(i) for cell i (= y × width + x) - stamina, or nil where it's left out. Without the
 -- map's picture (not downloaded yet: the world map's view fetches it) every cell costs the typical step
 M.WORLD_SIZE = { w = 2300, h = 1500 }
@@ -18544,20 +18456,18 @@ function M.gridCosts(mapName)
     local a0, b0 = M.terrainCosts()
     local typ = M.terrainTypical(a0, b0)
     local fake = { w = M.WORLD_SIZE.w, h = M.WORLD_SIZE.h }
-    local blocked0 = M.gridBlocked(mapName, fake)
-    return { cost = function(i) if blocked0[i] then return nil end return typ end, w = fake.w, h = fake.h, minCost = typ, typical = typ }
+    return { cost = function() return typ end, w = fake.w, h = fake.h, minCost = typ, typical = typ, moves = M.gridBlocked(mapName, fake) }
   end
   local a, b = M.terrainCosts()
   local typical = M.terrainTypical(a, b)
   local W = M.cfg.world or {}
   local terr, refused = W.terrain or {}, W.refused or {}
   local byColour = {}
-  local blocked = M.gridBlocked(mapName, img)
+  local moves = M.gridBlocked(mapName, img)
   local data, w, h, row, off = img.data, img.w, img.h, img.row, img.off
   local minCost = typical
   for name, e in pairs(a) do if name ~= "@run" and (e.n or 0) >= 2 and e.avg < minCost then minCost = math.max(0.2, e.avg) end end
   local function cost(i)
-    if blocked[i] then return nil end
     local x = i % w
     local y = (i - x) / w
     local o = off + (h - 1 - y) * row + x * 3 + 1
@@ -18573,9 +18483,11 @@ function M.gridCosts(mapName)
     end
     return c or nil
   end
-  return { cost = cost, w = w, h = h, img = img, minCost = minCost, typical = typical }
+  return { cost = cost, w = w, h = h, img = img, minCost = minCost, typical = typical, moves = moves }
 end
--- cells a move was refused into (wild_blocked: room and direction)
+-- moves that can't be made (wild_blocked: a room and a direction - refused, or no exit that way): keyed
+-- cell × 8 + the direction's place in M.GRID_DX / M.GRID_DY
+M.GRID_DIR = { n = 1, s = 2, e = 3, w = 4, ne = 5, nw = 6, se = 7, sw = 8 }
 function M.gridBlocked(mapName, img)
   M.gridBlockedCache = M.gridBlockedCache or {}
   local B = M.gridBlockedCache[mapName]
@@ -18583,8 +18495,8 @@ function M.gridBlocked(mapName, img)
   B = {}
   for _, r in ipairs(M.dbRows("SELECT room, dir FROM wild_blocked")) do
     local p = M.worldPos(tonumber(r.room))
-    local s = M.WILD_STEP[r.dir]
-    if p and s and p.map == mapName then B[(p.y + s[2]) * img.w + (p.x + s[1])] = true end
+    local k = M.GRID_DIR[r.dir]
+    if p and k and p.map == mapName then B[(p.y * img.w + p.x) * 8 + k - 1] = true end
   end
   M.gridBlockedCache[mapName] = B
   return B
@@ -18594,7 +18506,7 @@ end
 -- possible), 8 neighbours. Returns its cost and the cells (from first), or nil
 M.GRID_DX = { 0, 0, 1, -1, 1, -1, 1, -1 }
 M.GRID_DY = { -1, 1, 0, 0, -1, -1, 1, 1 }
-function M.astar(w, h, cost, from, to, minCost, maxNodes)
+function M.astar(w, h, cost, from, to, minCost, maxNodes, moves)
   local tx = to % w
   local ty = (to - tx) / w
   local g, came, closed, f = { [from] = 0 }, {}, {}, {}
@@ -18631,7 +18543,7 @@ function M.astar(w, h, cost, from, to, minCost, maxNodes)
       local y = (cur - x) / w
       for d = 1, 8 do
         local nx, ny = x + DX[d], y + DY[d]
-        if nx >= 0 and ny >= 0 and nx < w and ny < h then
+        if nx >= 0 and ny >= 0 and nx < w and ny < h and not (moves and moves[cur * 8 + d - 1]) then
           local ni = ny * w + nx
           if not closed[ni] then
             local cc = cost(ni)
@@ -18664,7 +18576,7 @@ function M.gridCoarse(mapName, G)
   -- (whole stamina points: a cost that moves a little as it's learned doesn't rebuild it)
   for k, v in pairs(M.cfg.stTerrain or {}) do for name, e in pairs(v) do if (e.n or 0) >= 2 then sig[#sig + 1] = k .. name .. string.format("%.0f", e.avg) end end end
   table.sort(sig)
-  local key = table.concat(sig, ",") .. "|" .. tostring(M.gridBlockedCache and M.gridBlockedCache[mapName] and "b" or "") .. #M.dbRows("SELECT room FROM wild_blocked")
+  local key = table.concat(sig, ",")
   M.gridCoarseCache = M.gridCoarseCache or {}
   local C = M.gridCoarseCache[mapName]
   if C and C.key == key then return C end
@@ -18700,7 +18612,8 @@ function M.gridLegCost(mapName, x0, y0, x1, y1, G)
   local cost = M.astar(C.w, C.h, function(i) return cells[i] or nil end, a, b, G.minCost * B, 200000)
   return cost
 end
--- the cells of that walk, as directions: the coarse way, then cell by cell from block to block along it
+-- the cells of that walk, as directions: searched cell by cell inside the coarse way (its blocks, and the blocks
+-- beside them) - the cheapest cells there, a road beside a mountain taken
 function M.gridLegDirs(mapName, x0, y0, x1, y1, maxDirs)
   local G = M.gridCosts(mapName)
   if not G then return nil end
@@ -18710,43 +18623,34 @@ function M.gridLegDirs(mapName, x0, y0, x1, y1, maxDirs)
   local b = math.floor(y1 / B) * C.w + math.floor(x1 / B)
   local cells = C.cells
   local _, way = M.astar(C.w, C.h, function(i) return cells[i] or nil end, a, b, G.minCost * B, 200000)
-  if not way then return nil end
-  -- the waypoints: a passable cell near the middle of every second block, then the goal itself
-  local pts = {}
-  for k = 3, #way - 1, 2 do
-    local ci = way[k]
-    local cx, cy = ci % C.w, (ci - ci % C.w) / C.w
-    local best
-    for r = 0, B / 2 do
-      for dy = -r, r do
-        for dx = -r, r do
-          local x, y = cx * B + B / 2 + dx, cy * B + B / 2 + dy
-          if not best and x >= 0 and y >= 0 and x < w and y < G.h and G.cost(y * w + x) then best = y * w + x end
-        end
+  -- (no way inside it - a wall the blocks don't show: wider, then the whole map)
+  local seg
+  for _, r in ipairs({ 1, 4, false }) do
+    local cost = G.cost
+    if r then
+      local inWay = {}
+      for _, ci in ipairs(way or { a, b }) do
+        local cx, cy = ci % C.w, (ci - ci % C.w) / C.w
+        for dy = -r, r do for dx = -r, r do inWay[(cy + dy) * C.w + (cx + dx)] = true end end
       end
-      if best then break end
+      cost = function(i)
+        local x = i % w
+        if not inWay[math.floor(((i - x) / w) / B) * C.w + math.floor(x / B)] then return nil end
+        return G.cost(i)
+      end
     end
-    if best then pts[#pts + 1] = best end
+    _, seg = M.astar(w, G.h, cost, y0 * w + x0, y1 * w + x1, G.minCost, 400000, G.moves)
+    if seg then break end
   end
-  pts[#pts + 1] = y1 * w + x1
-  local dirs, cur = {}, y0 * w + x0
+  if not seg then return nil end
   local names = {}
   for d, v in pairs(M.WILD_STEP) do names[v[1] .. "," .. v[2]] = d end
-  local k = 1
-  while k <= #pts and (not maxDirs or #dirs < maxDirs) do
-    local _, seg = M.astar(w, G.h, G.cost, cur, pts[k], G.minCost, 40000)
-    if seg then
-      for j = 2, #seg do
-        local p, q = seg[j - 1], seg[j]
-        dirs[#dirs + 1] = names[(q % w - p % w) .. "," .. ((q - q % w) / w - (p - p % w) / w)]
-      end
-      cur = pts[k]
-    elseif k == #pts then
-      return #dirs > 0 and dirs or nil
-    end
-    k = k + 1
+  local dirs = {}
+  for j = 2, #seg do
+    if maxDirs and #dirs >= maxDirs then break end
+    local p, q = seg[j - 1], seg[j]
+    dirs[#dirs + 1] = names[(q % w - p % w) .. "," .. ((q - q % w) / w - (p - p % w) / w)]
   end
-  if maxDirs and #dirs > maxDirs then for j = #dirs, maxDirs + 1, -1 do dirs[j] = nil end end
   return dirs
 end
 
@@ -18843,6 +18747,72 @@ function M.mapGates()
   end
   M.mapGatesCache = out
   return out
+end
+
+-- Recall: where it goes is what recall list says, where you stand - "[1 ] Nearest recall point (Sanctuary in
+-- Maldra Keep)" (the nearest from here), or a point of your own ("[2 ] Inn ( , The Crazy Hermit's Shack, 1 room
+-- [1300, 688])"); "* Your default recall point is: #1". So a trip recalls only from where you are, with recall list
+-- read there a moment before; the room each point lands you in is learned the first time (and looked for on the
+-- map by its name before that)
+M.RECALL_READ_FRESH = 120
+function M.recallListLines(lines)
+  local pts, def = {}, nil
+  for _, l in ipairs(lines or {}) do
+    local t = trim(l)
+    local n, rest = t:match("^%[%s*(%d+)%s*%]%s*(.+)$")
+    if n then
+      local near = rest:match("^Nearest recall point %((.-)%)")
+      if near then pts[tonumber(n)] = { name = near, nearest = true }
+      else
+        local inside = rest:match("%((.*)%)")
+        local x, y = (inside or ""):match("%[(%d+), (%d+)%]")
+        local parts = {}
+        for part in (inside or ""):gsub("%[.-%]", ""):gmatch("[^,]+") do part = trim(part); if part ~= "" then parts[#parts + 1] = part end end
+        pts[tonumber(n)] = { name = parts[1], x = tonumber(x), y = tonumber(y) }
+      end
+    end
+    local d = t:match("^%* Your default recall point is: #(%d+)")
+    if d then def = tonumber(d) end
+  end
+  if not def or not pts[def] then return end
+  M.recallReading = { room = M.mapRoom, at = os.time(), name = pts[def].name, nearest = pts[def].nearest, x = pts[def].x, y = pts[def].y }
+  local W = M.rlWait
+  if W then M.rlWait = nil; pcall(W.fn) end
+end
+M.addBlockReader("recall_list", "*", function(b) M.recallListLines(b.lines) end)
+-- the room a recall point lands you in: learned, else a room of that name on the map ("Sanctuary in Maldra Keep":
+-- a Sanctuary in Maldra Keep; an inn: the room by its name nearest its place)
+function M.recallPointRoom(R)
+  local known = tonumber(((M.cfg.recallPoints or {})[R.name or ""]))
+  if known then return known end
+  if not R.name then return nil end
+  local room, area = R.name:match("^(.-) in (.+)$")
+  local okS, found = pcall(searchRoom, room or R.name)
+  local best, bd
+  for id, nm in pairs(okS and type(found) == "table" and found or {}) do
+    id = tonumber(id)
+    if id and tostring(nm):lower() == (room or R.name):lower() then
+      local an = M.placeLabel(id) or ""
+      if not area or an:lower():find(area:lower(), 1, true) then
+        local p = R.x and M.worldPos(id)
+        local d = p and math.max(math.abs(p.x - R.x), math.abs(p.y - R.y)) or 0
+        if not bd or d < bd then best, bd = id, d end
+      end
+    end
+  end
+  return best
+end
+-- recall list, then fn (once it's been read, or after a few seconds)
+function M.recallRefresh(fn)
+  local W = { fn = fn }
+  M.rlWait = W
+  M.sendOwn("recall list", false)
+  tempTimer(5, function() if M.rlWait == W then M.rlWait = nil; pcall(fn) end end)
+end
+-- is recall worth asking about here: ready, not used on this trip, and not read here a moment ago
+function M.recallToAsk(used)
+  local R = M.recallReading
+  return M.recallReady() and not (used or {}).recall and not (R and R.room == M.mapRoom and os.time() - R.at <= M.RECALL_READ_FRESH)
 end
 
 -- Worldgates: two circles of stones joined for a while ("enter gate"), as the game's time command says -
@@ -19003,13 +18973,22 @@ function M.planTripOnce(here, targets, used)
   -- only when nothing else gets there: used.recallHere, the second search below)
   local okE, edges = pcall(M.tripEdges, here, targets[1], used)
   for _, e in ipairs(okE and edges or {}) do
-    if e.run and not used["run:" .. e.run .. ":" .. e.from] then
+    if e.run and not used["run:" .. e.from .. ":" .. e.run] and not used["run:" .. e.run .. ":" .. e.from] then
       local rooms = M.stRunRooms(e.from, e.to) or 0
       edge(e.from, e.to, rooms * runSt + M.PLAN_RUN_EXTRA * typical, { kind = "run", name = e.run, rooms = rooms })
     elseif not e.run then
       edge(e.from, e.to, (e.weight or M.TRAVEL_COST) * typical, { kind = "ride", link = e.link })
     end
   end
+  -- recall, from where you are: to where recall list said it goes from here; clan gohall: to your hall (planned on
+  -- from there)
+  local R = M.recallReading
+  if not used.recall and M.recallReady() and R and R.room == here and os.time() - R.at <= M.RECALL_READ_FRESH then
+    local land = M.recallPointRoom(R)
+    if land and land ~= here then edge(here, land, M.TRIP_W_RECALL * typical, { kind = "recall", name = R.name }) end
+  end
+  local hall = tonumber(M.cfg.clanHall)
+  if hall and not used.clan and hall ~= here then edge(here, hall, M.TRIP_W_CLAN * typical, { kind = "clan" }) end
   -- the worldgates, both ways
   local ga, gb, gAge = M.worldgateCells()
   if ga then
@@ -19142,6 +19121,7 @@ function M.planLines(plan, targets)
     return (roomExists(id) and getRoomName(id)) or ("#" .. id)
   end
   local function pl(k) return k == 1 and "" or "s" end
+  local via   -- (walks through the wilds one after another: one line)
   for i, leg in ipairs(plan.legs) do
     local k = leg.kind
     if k == "walk" then
@@ -19153,14 +19133,18 @@ function M.planLines(plan, targets)
         local _, arrows = (okF and f or ""):gsub(" → ", "")
         if arrows >= 2 then lines[#lines + 1] = "through " .. f end
       end
+    elseif k == "wild" and plan.legs[i + 1] and plan.legs[i + 1].kind == "wild" then
+      -- (on through the wilds: said with the next one)
+      via = { cost = (via and via.cost or 0) + leg.cost, from = via and via.from or leg.from }
     elseif k == "wild" then
-      local p, q = M.worldPos(leg.from), M.worldPos(leg.to)
+      local p, q = M.worldPos(via and via.from or leg.from), M.worldPos(leg.to)
       local d = p and q and math.max(math.abs(p.x - q.x), math.abs(p.y - q.y)) or 0
       local nxt = plan.legs[i + 1]
       local where = (nxt and (nxt.kind == "step" or nxt.kind == "unknownin") and M.placeLabel(nxt.to))
         or (M.signLabel and M.signLabel(leg.to) and ("the " .. M.signLabel(leg.to))) or ("#" .. leg.to)
       lines[#lines + 1] = string.format("about %d room%s %s through the wilds to %s (~%d stamina)", d, pl(d),
-        (p and q and M.COMPASS_WORD[M.compassTo(p.x, p.y, q.x, q.y)]) or "on", where, math.floor(leg.cost + 0.5))
+        (p and q and M.COMPASS_WORD[M.compassTo(p.x, p.y, q.x, q.y)]) or "on", where, math.floor(leg.cost + (via and via.cost or 0) + 0.5))
+      via = nil
     elseif k == "step" then
       if M.isWildRoom(leg.to) then lines[#lines + 1] = leg.cmd .. " out into the wilds"
       else lines[#lines + 1] = string.format("%s into %s", leg.cmd, select(2, M.placeOf(leg.to)) or name(leg.to)) end
@@ -19170,6 +19154,10 @@ function M.planLines(plan, targets)
         or (" to the " .. ((M.signLabel and M.signLabel(leg.to)) or ("#" .. leg.to))))
     elseif k == "whereout" then
       lines[#lines + 1] = "out the way the game gives (where is exit)"
+    elseif k == "recall" then
+      lines[#lines + 1] = string.format("recall to %s (recall list: from here)", tostring(leg.name))
+    elseif k == "clan" then
+      lines[#lines + 1] = "clan gohall to your clan hall"
     elseif k == "gate" then
       local q = M.worldPos(leg.to)
       lines[#lines + 1] = string.format("enter gate - the worldgate to %s%s", M.worldgateZone(leg.to) or "?", q and string.format(" [%d, %d]", q.x, q.y) or "")
@@ -19179,15 +19167,7 @@ function M.planLines(plan, targets)
         select(2, M.placeOf(leg.to)) or M.placeLabel(leg.to) or name(leg.to), q and string.format(" (%d,%d)", q.x, q.y) or "")
     elseif k == "ride" then
       local L = leg.link or {}
-      if L.kind == "recall" or L["then"] then
-        local R = L["then"] or L
-        if L["then"] then lines[#lines + 1] = L.board[1] .. " to " .. L.dest end
-        if R.clanRoute then
-          lines[#lines + 1] = string.format("out of the hall, %d east, about %d %s", R.clanRoute.east, R.clanRoute.n, M.COMPASS_WORD[R.clanRoute.dir])
-        elseif (R.walkOut or 0) > 0 then lines[#lines + 1] = string.format("about %d room%s %s (out of the building first, if inside)",
-          R.walkOut, pl(R.walkOut), M.COMPASS_WORD[R.dir] or "on") end
-        lines[#lines + 1] = "recall to the " .. tostring(R.dest) .. " (the nearest signpost)"
-      elseif L.anywhere then lines[#lines + 1] = L.board[1] .. " to " .. tostring(L.dest)
+      if L.anywhere then lines[#lines + 1] = L.board[1] .. " to " .. tostring(L.dest)
       else lines[#lines + 1] = string.format("%s to %s - %s gold", tostring(L.kind), tostring(L.dest), commas(L.cost or 0)) end
     end
   end
@@ -19216,6 +19196,13 @@ function M.tripContinue()
   if T.legs > 80 then M.trip = nil; return M.notifyWalk("stopped: the trip isn't getting there - sbo go again") end
   local okP, plan = pcall(M.planTrip, here, T.targets, T.used)
   if not okP then M.trip = nil; return M.notifyWalk("stopped: " .. tostring(plan)) end
+  -- (more than a walk in the place you're in: where recall goes from here, first - recall list - then planned again)
+  local only = plan and #plan.legs == 1 and plan.legs[1].kind == "walk" and M.placeKey(here) == M.placeKey(plan.legs[1].to)
+  if not only and M.recallToAsk(T.used) and T.recallAskedAt ~= here then
+    T.recallAskedAt = here
+    T.legs = T.legs - 1
+    return M.recallRefresh(function() if M.trip == T then M.tripContinue() end end)
+  end
   if not plan or not plan.legs[1] then M.trip = nil; return M.notifyWalk("stopped: no way on from here") end
   M.legStart(plan.legs[1], T)
 end
@@ -19248,6 +19235,16 @@ function M.legStart(leg, T)
     local q = M.worldPos(M.mapRoom)
     return M.notifyWalk(string.format("at %s's spot%s - its way in isn't known yet: step in (Oven learns it), then sbo go again",
       M.placeLabel(leg.to) or ("#" .. leg.to), q and string.format(" (%d,%d)", q.x, q.y) or ""))
+  elseif k == "recall" or k == "clan" then
+    if k == "recall" then T.used.recall = true else T.used.clan = true end
+    local from, name = M.mapRoom, leg.name
+    M.recallPending = { from = from, name = k == "recall" and name or nil, done = cont, at = os.time() }
+    M.sendOwn(k == "recall" and M.RECALL_CMD or "clan gohall", false)
+    local P = M.recallPending
+    tempTimer(30, function()
+      if M.recallPending == P then M.recallPending = nil; if M.trip == T then M.notifyWalk((k == "recall" and "recall" or "clan gohall") .. " didn't take you anywhere - planning again"); M.tripContinue() end end
+    end)
+    return
   elseif k == "gate" then
     local _, _, age = M.worldgateCells()
     if not age or (age > M.WORLDGATE_FRESH and not T.gateChecked) then
@@ -19426,12 +19423,6 @@ function M.travelStart(plan, target, legNo)
   if not g then return M.mapWalkTo(target) end
   local L = g.link
   M.travel = { plan = plan, leg = legNo, link = L, target = target, stage = "toShop", at = os.time() }
-  if L.kind == "recall" then
-    local T = M.travel
-    T.stage, T.steps = "toCast", 0
-    M.travelCastStep()
-    return
-  end
   if L.anywhere then
     local T = M.travel
     T.stage, T.boardStep, T.rideFrom = "boarding", 1, getRoomArea(M.mapRoom or 0)
@@ -19504,68 +19495,11 @@ function M.travelBoard()
   else tempTimer(0.8, function() M.travelBoard() end) end
 end
 
--- walking out to recall: out of any building first (an exit into the wilds), then a room at a time toward the
--- signpost until it's the nearest one; then recall
-function M.travelCastStep()
-  local T = M.travel
-  if not T or T.stage ~= "toCast" then return end
-  local L = T.link
-  local info = M.gmcpGet and M.gmcpGet("room.info")
-  if type(info) ~= "table" then return end
-  local function stop(why) M.travel = nil; say("travel: " .. why .. " - stopped") end
-  T.steps = T.steps + 1
-  if T.steps > M.RECALL_MAX_WALK + 20 then return stop("couldn't get to where recall would go the right way") end
-  local function go(dir)
-    local mine, n = T, T.steps
-    M.sendOwn(dir, false)
-    tempTimer(6, function() if M.travel == mine and mine.steps == n then stop("no way " .. dir .. " (blocked?)") end end)
-  end
-  if tostring(info.wilds) ~= "true" then
-    -- inside (the clan hall): the way out into the wilds (exits to the wilds' big room numbers)
-    for dir, num in pairs(type(info.exits) == "table" and info.exits or {}) do
-      if type(num) ~= "table" and not tostring(dir):find("_") and (tonumber(num) or 0) >= 1000000 then return go(dir) end
-    end
-    -- in a town: recall from here goes to this town's own point
-    T.stage, T.boardStep, T.castRoom = "boarding", 1, M.mapRoom
-    return M.travelBoard()
-  end
-  local x, y = tonumber(info.coord and info.coord.x), tonumber(info.coord and info.coord.y)
-  local map = info.coord and info.coord.name
-  local S = L.recall
-  local pts = M.signpostPoints()
-  -- from the clan hall: east first, then straight north or south
-  if L.clanRoute then
-    T.east = T.east or 0
-    if T.east < L.clanRoute.east then T.east = T.east + 1; return go("e") end
-    -- then at least the planned rooms north or south (never fewer than CLAN_OUT_MIN), before any recall
-    T.out = T.out or 0
-    if T.out < math.max(L.clanRoute.n or 0, M.CLAN_OUT_MIN) then T.out = T.out + 1; return go(L.clanRoute.dir) end
-  end
-  local near = x and M.recallNearest(pts, map, x, y)
-  if not x or (near and near.room == S.room) then
-    T.stage, T.boardStep, T.castRoom = "boarding", 1, M.mapRoom
-    return M.travelBoard()
-  end
-  local d = L.clanRoute and L.clanRoute.dir or M.wildStep(M.mapRoom or tonumber(info.num), x, y, S.x, S.y, T)
-  if not d then return stop("lost the way") end
-  T.lastDir = d
-  go(d)
-end
 
 -- a room change while travelling: down to Ganuk → give the token; landed elsewhere → walk on
 function M.travelOnRoom(id)
   local T = M.travel
   if not T then return end
-  if T.stage == "toCast" then return tempTimer(0.2, function() M.travelCastStep() end) end
-  if T.castRoom and (T.stage == "riding" or T.stage == "boarding") and id ~= T.castRoom then
-    M.travel = nil
-    local more = T.plan and T.plan.legs[T.leg + 1]
-    say("travel: recalled - on to " .. (getRoomName(T.target) or ("#" .. T.target)))
-    tempTimer(1, function()
-      if more then M.travelStart(T.plan, T.target, T.leg + 1) elseif M.trip then M.tripContinue() else M.mapWalkTo(T.target) end
-    end)
-    return
-  end
   if T.stage == "boarding" and T.waitRoom and id ~= T.waitRoom then
     T.waitRoom = nil
     tempTimer(0.5, function() M.travelBoard() end)
@@ -22027,5 +21961,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport); pcall(M.gateImport); pcall(M.gateCmdFix); pcall(M.terrainImport); pcall(M.zoneMapImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport); pcall(M.gateImport); pcall(M.gateCmdFix); pcall(M.terrainImport); pcall(M.zoneMapImport); pcall(M.wildExitsImport) end)
 pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end

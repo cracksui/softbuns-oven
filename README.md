@@ -143,8 +143,9 @@ way that costs the least stamina - your mount's while you ride. It joins up ever
 - **the wilds**: every room of the world map, walked by its terrain - what each terrain costs is learned from
   your stamina as you go (a road a fraction of salt water), and a move the game refuses is walked around after;
 - **gates**: where a place and the wilds meet, learned every time you cross (however you moved);
-- **signpost runs** (the cheapest way across the wilds), **rides** (Ganuk, balloons, passages), **recall**
-  and **clan gohall**.
+- **signpost runs** (the cheapest way across the wilds), **rides** (Ganuk, balloons, passages), **clan gohall**,
+  **worldgates** (where `time` says they are now) and **recall** - to where `recall list` says it goes from where
+  you stand (Oven asks it there first, and learns each recall point's room the first time it lands you in it).
 
 A walk inside the place you're in just goes; anything more is shown first, a step a line, with the stamina
 it costs (and the gold, and whether you carry enough) - `y` goes, `n` stays. A place whose way in Oven
