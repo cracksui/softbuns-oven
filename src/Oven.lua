@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.40"
+M.version = "1.99.41"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -13678,6 +13678,7 @@ function M.onLineWork()
   if line:match("^You follow .-%.$") then M.followAt = now() end
   if line:match("^You attempt to open the %a+ %a+, but it is locked%.") then pcall(M.doorLocked, line) end
   if M.travel then pcall(M.travelLine, line) end
+  if M.recallPending and line:find("considered cross-zone", 1, true) then pcall(M.gohallRefused) end
   if M.eqdbAt and not cap then
     local okE, done = pcall(M.eqdbLine, line)
     if okE and done then pcall(M.recordLine, line, false); return end
@@ -14346,7 +14347,12 @@ function M.onRoom()
       end
     elseif id ~= w.from then
       M.walk = nil
-      M.notifyWalk("stopped: ended up somewhere unexpected")
+      if M.trip then
+        local T = M.trip
+        tempTimer(0.5, function() if M.trip == T and not M.walk and not M.dirWalk then M.tripContinue() end end)
+      else
+        M.notifyWalk("stopped: ended up somewhere unexpected")
+      end
     end
   end
   if M.recallPending and M.recallPending.from ~= id then
@@ -17594,6 +17600,7 @@ function M.mapRunNow(arg, planned)
   M.goTo(ids)
 end
 M.GO_CANDIDATES = 8
+M.TRIP_SAME_ROOM = 3   -- a trip planned from one room more often than this has stopped getting anywhere
 M.GO_ASK_STEPS = 30   -- a walk from the wilds longer than this is shown and asked first
 
 -- sbo go's walk: inside your area it's walked (no signpost run); a route out of town is asked about first
@@ -18459,6 +18466,16 @@ function M.wrongDir(dir)
   local d = tostring(dir or ""):lower()
   d = M.DIR_SHORT[d] or d
   local room = M.mapRoom
+  if room and not M.isWildRoom(room) and roomExists(room) and M.DIR_OPP[d] then
+    -- (a place's room: the exit's locked on the map - routes go round it until you've been through it)
+    if pcall(lockExit, room, d, true) then M.roomGraphCache = nil end
+    if (M.walk or M.dirWalk) and M.trip then
+      M.walk, M.dirWalk = nil, nil
+      local T = M.trip
+      tempTimer(0.5, function() if M.trip == T then M.tripContinue() end end)
+    end
+    return
+  end
   if not M.WILD_STEP[d] or not room or not M.isWildRoom(room) then return end
   M.dbx("INSERT OR REPLACE INTO wild_blocked (room, dir, t) VALUES (%s, %s, %s)", room, d, os.time())
   M.wildBlockedCache, M.gridBlockedCache = nil, nil
@@ -18935,6 +18952,21 @@ function M.recallToAsk(used)
   return M.recallReady() and not (used or {}).recall and not (R and R.room == M.mapRoom and os.time() - R.at <= M.RECALL_READ_FRESH)
 end
 
+-- clan gohall refused where you are ("Magical transport to your clan hall from this location is considered
+-- cross-zone"): not planned from this zone again; the trip goes on without it
+function M.gohallRefused()
+  local P, T = M.recallPending, M.trip
+  M.recallPending = nil
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  local zone = type(info) == "table" and info.zone
+  if zone then M.cfg.clanCrossZone = M.cfg.clanCrossZone or {}; M.cfg.clanCrossZone[zone] = true; M.saveSettings() end
+  if T and P then
+    T.used.clan = true
+    M.notifyWalk("clan gohall won't go from here (cross-zone) - another way")
+    tempTimer(0.5, function() if M.trip == T then M.tripContinue() end end)
+  end
+end
+
 -- Worldgates: two circles of stones joined for a while ("enter gate"), as the game's time command says -
 -- "Worldgates in Alyria [1279, 1053], and Great Alyrian Underground [834, 499]." They change every so often: a
 -- reading's kept, and the trip planner looks again (time) before a plan that uses one when it's older than
@@ -19115,7 +19147,10 @@ function M.planTripOnce(here, targets, used)
     if land and land ~= here and not samePlace then edge(here, land, M.TRIP_W_RECALL * typical, { kind = "recall", name = R.name }) end
   end
   local hall = tonumber(M.cfg.clanHall)
-  if hall and not used.clan and hall ~= here then edge(here, hall, M.TRIP_W_CLAN * typical, { kind = "clan" }) end
+  local hz = type(info) == "table" and tonumber(info.num) == here and info.zone
+  if hall and not used.clan and hall ~= here and not (hz and (M.cfg.clanCrossZone or {})[hz]) then
+    edge(here, hall, M.TRIP_W_CLAN * typical, { kind = "clan" })
+  end
   -- the commands that have taken you from one room to another (enter portal, enter mirror - a portal to the
   -- Faerie Plane among them): not the worldgates (they move: time says where they are now)
   for _, r in ipairs(M.dbRows("SELECT room, cmd, dest FROM room_enters")) do
@@ -19351,12 +19386,22 @@ function M.tripContinue()
   end
   T.legs = T.legs + 1
   if T.legs > 80 then M.trip = nil; return M.notifyWalk("stopped: the trip isn't getting there - sbo go again") end
+  -- (planned from the same room again and again: the way from it isn't what the map says - stopped, not looped)
+  T.from = T.from or {}
+  T.from[here] = (T.from[here] or 0) + 1
+  if T.from[here] > M.TRIP_SAME_ROOM then
+    M.trip = nil
+    return M.notifyWalk(string.format("stopped: the trip keeps coming back to %s - the map's way on from there isn't working (sbo go again)",
+      (roomExists(here) and getRoomName(here)) or ("#" .. here)))
+  end
   local okP, plan = pcall(M.planTrip, here, T.targets, T.used)
   if not okP then M.trip = nil; return M.notifyWalk("stopped: " .. tostring(plan)) end
   -- (more than a walk in the place you're in: where recall goes from here, first - recall list - then planned again)
   local only = plan and #plan.legs == 1 and plan.legs[1].kind == "walk" and M.placeKey(here) == M.placeKey(plan.legs[1].to)
-  if not only and M.recallToAsk(T.used) and T.recallAskedAt ~= here then
-    T.recallAskedAt = here
+  local pk = M.placeKey(here) or here
+  T.recallAsked = T.recallAsked or {}
+  if not only and M.recallToAsk(T.used) and not T.recallAsked[pk] then
+    T.recallAsked[pk] = true
     T.legs = T.legs - 1
     return M.recallRefresh(function() if M.trip == T then M.tripContinue() end end)
   end
@@ -19369,7 +19414,10 @@ function M.tripContinue()
   M.legStart(leg, T)
 end
 function M.legStart(leg, T)
-  local function cont() if M.trip == T then M.tripContinue() end end
+  T.leg = (T.leg or 0) + 1
+  local mine = T.leg
+  M.recallPending = nil   -- (a recall or gohall still waited for: it's not this leg)
+  local function cont() if M.trip == T and T.leg == mine then M.tripContinue() end end
   local k = leg.kind
   if k == "walk" then
     local pd, pp = M.legPath(leg)

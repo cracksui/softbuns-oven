@@ -5343,7 +5343,7 @@ def run_cost_by_length():
 def run_ends_worked_out():
     # a run not made yet: where it ends worked out from what the signposts say they stand by
     o = Oven()
-    o.lua("""getAreaTable = function() return {} end; roomExists = function() return true end
+    o.lua("""getAreaTable = function() return {} end; roomExists = function() return true end; getRoomArea = function() return 1 end
       for room, sign in pairs({ [1001] = 'a weatherbeaten signpost outside the Tower of Art', [1002] = 'a weatherbeaten signpost near the Tower of Art',
           [1003] = 'a weatherbeaten signpost outside the Inn of the Twin Moons', [1004] = "a weatherbeaten signpost outside Sigil's north gate",
           [1005] = "a weatherbeaten signpost outside Sigil's south gate" }) do
@@ -5358,6 +5358,41 @@ def run_ends_worked_out():
       sbo.planTrip = function() return { legs = { { kind = 'wild', from = 1, to = 2, cost = 1 }, { kind = 'wild', from = 2, to = 3, cost = 1 }, { kind = 'run', from = 3, to = 4 } }, cost = 3 } end
       sbo.mapRoom = 1; sbo.trip = { targets = { 9 }, used = {}, legs = 0 }; sbo.tripContinue()""")
     eq((o.ev("LEG.kind"), o.ev("LEG.to")), ("wild", 3), "to the signpost the run starts at, not the one passed")
+
+
+@test
+def trips_dont_loop():
+    # what went round in circles in Atlantis (recorded 2026-11-25): a step the game refused, clan gohall refused
+    # cross-zone, an old wait starting the trip again, the same room planned from over and over
+    o = Oven()
+    o.lua("""MAPSTUB({ [18745] = { w = 18744, s = 18744 }, [18744] = { n = 18745, e = 18746 }, [18746] = {} })
+      getRoomArea = function() return 1 end; getRoomAreaName = function() return 'Atlantis' end; getRoomName = function(id) return 'room ' .. id end
+      LOCKED = {}; lockExit = function(r, d, on) LOCKED[r .. d] = on end
+      SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end; centerview = function() end
+      sbo.mapRoom = 18745; gmcp.room = { info = { num = '18745', wilds = 'false', zone = 'Atlantis' } }""")
+    # a step the game refuses in a place: locked on the map, the trip planned again
+    o.lua("CONT = 0; sbo.trip = { targets = { 18746 }, used = {}, legs = 0 }; TC = sbo.tripContinue; sbo.tripContinue = function() CONT = CONT + 1 end; sbo.walk = { dirs = { 'w' }, path = { 18744 }, step = 1 }; sbo.wrongDir('w'); runTimers()")
+    eq((o.ev("LOCKED['18745w']"), o.ev("CONT")), (True, 1), "locked, and planned again")
+    o.lua("sbo.tripContinue = TC")
+    # clan gohall refused cross-zone: not planned from that zone again, and the trip goes on without it
+    o.lua("""sbo.cfg.clanHall = 999; sbo.trip = { targets = { 18746 }, used = {}, legs = 0 }; sbo.recallPending = { from = 18745 }
+      CONT = 0; sbo.tripContinue = function() CONT = CONT + 1 end
+      sbo.gohallRefused(); runTimers()""")
+    eq((o.ev("sbo.trip.used.clan"), o.ev("sbo.cfg.clanCrossZone['Atlantis']"), o.ev("CONT")), (True, True, 1), "remembered, on without it")
+    o.lua("sbo.tripContinue = TC; P = sbo.planTrip(18745, { 18746 }, {})")
+    assert "clan" not in [l.kind for l in o.ev("P.legs").values()], "not from this zone"
+    # an old wait (a leg that's over) doesn't start the trip again
+    o.lua("""sbo.trip = { targets = { 18746 }, used = {}, legs = 0 }; CONT = 0; sbo.tripContinue = function() CONT = CONT + 1 end
+      sbo.legStart({ kind = 'clan', from = 18745, to = 999 }, sbo.trip); OLD = sbo.recallPending.done
+      sbo.legStart({ kind = 'step', cmd = 'n', from = 18744, to = 18745 }, sbo.trip); OLD()""")
+    eq(o.ev("CONT"), 0, "an old leg's wait goes nowhere")
+    o.lua("sbo.tripContinue = TC; sbo.dirWalk = nil")
+    # planned from the same room again and again: stopped, said why
+    o.lua("""LOGS = {}; sbo.log = function(m) LOGS[#LOGS+1] = m end; sbo.legStart = function() end
+      sbo.trip = { targets = { 18746 }, used = {}, legs = 0 }
+      for i = 1, 4 do if sbo.trip then sbo.tripContinue() end end""")
+    eq(o.ev("sbo.trip"), None, "stopped")
+    assert any("keeps coming back" in l for l in o.ev("LOGS").values()), list(o.ev("LOGS").values())
 
 
 @test
