@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.29"
+M.version = "1.99.30"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -17431,6 +17431,25 @@ function M.runTargets(q)
     if not any then
       local okR, rooms = pcall(getAreaRooms, a.id)
       if okR and type(rooms) == "table" then for _, id in pairs(rooms) do add(id, a.name, 0.6); break end end
+    end
+  end
+  -- a place by the name GMCP gave it, when the map's area has none (the iceberg is in the map's unnamed area):
+  -- its gates (the rooms you came in or out by), else a room of it you've been in
+  if #M.areasNamed(q) == 0 then
+    local bareQ = q:gsub("^the ", "")
+    local seen = {}
+    for _, r in ipairs(M.dbRows("SELECT room, zone FROM room_xy WHERE zone IS NOT NULL")) do
+      local z = tostring(r.zone)
+      local n = z:lower()
+      local bare = n:gsub("^the towne of ", ""):gsub("^towne of ", ""):gsub("^the city of ", ""):gsub("^the ", "")
+      local id = tonumber(r.room)
+      if (n == q or bare == bareQ) and id and roomExists(id) and not M.isWildRoom(id) and not seen[z] then
+        seen[z] = true
+        local key = M.placeOf(id)
+        local gates = key and M.gatesOf(key) or {}
+        for _, g in ipairs(gates) do add(g.room, z .. " (a way in)", 0.6) end
+        if #gates == 0 then add(id, z, 0.6) end
+      end
     end
   end
   -- the game's "where is" features Oven has found ("food" in Towne of Rune)

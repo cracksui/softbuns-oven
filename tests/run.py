@@ -1030,6 +1030,10 @@ def go_runs_to_the_signpost_nearest_first():
     eq((o.ev("P.segs[1].kind"), o.ev("P.segs[2].link.sign.x"), o.ev("P.wild")), ("run", 2044, 414), "the run first, then 414 rooms, not 1243")
     lines = list(o.ev("(sbo.tripPlanLines(P, 917745))").values())
     assert lines[0].startswith("run the north") and "The Iceberg" in lines[1], lines
+    # found by name (sbo go iceberg), though the map's area has none: its way in
+    o.lua("getAreaTable = function() return { Rigel = 7 } end")
+    eq([t.id for t in o.ev("(sbo.runTargets('iceberg'))").values()], [917755], "the iceberg's gate")
+    eq([t.id for t in o.ev("(sbo.runTargets('the iceberg'))").values()], [917755], "with 'the'")
 
 
 @test
