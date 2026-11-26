@@ -884,8 +884,15 @@ def go_feature_off_the_map():
       sbo.mapRunNow('exit')""")
     eq(o.ev("SENT[1]"), "where is exit", "asks the game")
     o.lua("""sbo.dbx("INSERT OR REPLACE INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('The Iceberg', 'exit', NULL, 917745, 'e, sw, nw, d, e, s', 1)")
-      local q = sbo.quietNext; sbo.quietNext = nil; q.fn({})""")
-    eq(o.ev("SENT[2]"), "where is exit track", "the game leads")
+      local q = sbo.quietNext; sbo.quietNext = nil; q.fn({ "You sense that exit may be located e, sw, nw, d, e, s." })""")
+    eq(o.ev("SENT[2]"), "e", "the game's path, walked (not track: slow)")
+    # each next step as soon as the last has moved you
+    o.lua("sbo.onRoomStub = true; sbo.mapRoomId = function() return 917746 end; sbo.onRoom()")
+    eq(o.ev("SENT[3]"), "sw", "next step on arrival")
+    o.lua("sbo.mapRoomId = function() return 917747 end; sbo.onRoom()")
+    eq(o.ev("SENT[4]"), "nw", "and the next")
+    o.lua("sbo.stopAll()")
+    eq(o.ev("sbo.dirWalk"), None, "sbo stop stops it")
 
 
 @test
@@ -944,6 +951,18 @@ def go_always_has_a_plan_on_foot():
     # a town with no gate known: the game leads out; a target town with none: to its spot, Oven stops there
     o.lua("sbo.dbx('DELETE FROM entrances'); sbo.entranceRows = nil; P = sbo.footPlan(10500, 61834)")
     eq((o.ev("P.segs[1].link.track"), o.ev("P.segs[1].link.unknownIn"), o.ev("P.segs[1].link.sign.x")), (True, True, 801), "always a plan")
+    # going out of a town with no gate known: where is exit, its path walked, then out the exit room's way to the wilds
+    o.lua("""SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end; sbo.mapRoom = 10500; sbo.walk = nil; sbo.quietNext = nil
+      sbo.quietly = function(cmd, kind, fn) SENT[#SENT+1] = cmd; QFN = fn end
+      gmcp.room = { info = { num = '10500', wilds = 'false', exits = { w = '10501' }, coord = { name = 'Alyria', x = 705, y = 763 } } }
+      sbo.travelStart({ legs = { { link = P.segs[1].link, walk = 0 } } }, 61834, 1)""")
+    eq(o.ev("SENT[1]"), "where is exit", "asks the way")
+    o.lua("QFN({ 'You sense that exit may be located w.' })")
+    eq(o.ev("SENT[2]"), "w", "walks it")
+    o.lua("""sbo.mapRoom = 10501; gmcp.room = { info = { num = '10501', wilds = 'false', exits = { s = WILD(704, 764) }, coord = { name = 'Alyria', x = 705, y = 763 } } }
+      centerview = function() end; sbo.mapRoomId = function() return 10501 end; sbo.onRoom()""")
+    eq(o.ev("SENT[3]"), "s", "at the exit: out into the wilds")
+    o.lua("sbo.travel = nil; sbo.dirWalk = nil")
     # the trip planner takes it when it's cheaper than any ride (here: there's none)
     o.lua("sbo.tripPlanRides = function() return nil end")
     eq(o.ev("sbo.tripPlan(10500, 61834, {}).foot"), True, "the plan on foot")

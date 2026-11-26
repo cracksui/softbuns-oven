@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.26"
+M.version = "1.99.27"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -12022,15 +12022,17 @@ function M.whereGo(q)
   for _, a in ipairs(areas) do if area and a:lower() == area:lower() then hereHas = true end end
   if hereHas or #areas == 0 or not (M.mapRoom and roomExists(M.mapRoom)) then   -- (off the map: ask here)
     if M.busyWhy(M.lastStatusPrompt) then return false end
-    M.quietly("where is " .. q, "where", function()
+    M.quietly("where is " .. q, "where", function(lines)
       local r = M.dbRow("SELECT room, dirs FROM where_rooms WHERE area = %s AND feature = %s", area or "", q)
       local onMap = M.mapRoom and roomExists(M.mapRoom)
+      local dirs = M.whereDirs(lines, q)
       if r and tonumber(r.room) and onMap then
         M.say("where is " .. q .. ": " .. ((roomExists(tonumber(r.room)) and getRoomName(tonumber(r.room))) or "") .. " #" .. r.room)
         M.mapWalkTo(tonumber(r.room))
-      elseif r and r.dirs then
-        M.say("where is " .. q .. ": " .. r.dirs .. " (off the map - letting the game lead: where is " .. q .. " track)")
-        M.sendOwn("where is " .. q .. " track", false)
+      elseif dirs then
+        -- off the map: the game's own directions, walked
+        M.say("where is " .. q .. ": " .. dirs .. " - walking it")
+        M.walkDirs(dirs, function() M.notifyWalk("arrived") end)
       else
         M.say("the game doesn't know a '" .. q .. "' in " .. (area or "this area"))
       end
@@ -14342,10 +14344,43 @@ function M.onRoom()
       M.notifyWalk("stopped: ended up somewhere unexpected")
     end
   end
+  if M.dirWalk and M.dirWalk.at ~= id then M.dirWalk.at = id; if M.dirWalk.i > 1 then M.dirWalkStep() end end
   pcall(M.shopOnArrive, id)
   if M.travel then pcall(M.travelOnRoom, id) end
   if M.trip then pcall(M.tripOnRoom, id) end
   if M.clanGoAt then pcall(M.clanHallNoteRoom, id) end
+end
+
+-- a walk by directions the game gave (where is: "e, sw, nw, d, e, s") - no map needed: the next is sent as soon
+-- as the last one has moved you; `done` when they're all walked
+function M.walkDirs(dirs, done)
+  local list = {}
+  for d in tostring(dirs or ""):gmatch("[^,%s]+") do list[#list + 1] = d:lower() end
+  if #list == 0 then return false end
+  M.dirWalk = { dirs = list, i = 1, done = done }
+  M.dirWalkStep()
+  return true
+end
+function M.dirWalkStep()
+  local W = M.dirWalk
+  if not W then return end
+  local d = W.dirs[W.i]
+  if not d then
+    M.dirWalk = nil
+    if W.done then pcall(W.done) end
+    return
+  end
+  W.i = W.i + 1
+  local mine, i = W, W.i
+  M.sendOwn(d, false)
+  tempTimer(6, function()
+    if M.dirWalk == mine and mine.i == i then M.dirWalk = nil; M.notifyWalk("stopped: no progress (blocked or a closed door?)") end
+  end)
+end
+-- the directions in a where is reply ("You sense that exit may be located e, sw, nw, d, e, s.")
+function M.whereDirs(lines, q)
+  local _, _, answers = M.readWhere(lines or {}, nil)
+  for _, a in ipairs(answers) do if not q or a.feature == q then return a.dirs end end
 end
 
 -- walk notes: a line in the game text (the prompt bar has no room to spare)
@@ -18243,7 +18278,7 @@ function M.gatesOf(area)
 end
 
 -- The trip on foot - there always is one: out of where you are (a gate of this area, or the game leading you
--- out: where is exit track), through the wilds to the target area's nearest gate and in, then on inside. With no
+-- out: where is exit, walked), through the wilds to the target area's nearest gate and in, then on inside. With no
 -- gate of the target area known yet, to its spot on the map (where its rooms are) - Oven stops there for you to
 -- step in (that crossing is learned). nil only when Oven can't place here or there on the world map.
 M.GATE_OUT_GUESS = 15   -- the walk out of an area with no gate known (the game leads), counted as this many steps
@@ -18708,7 +18743,7 @@ function M.tripPlanLines(plan, target)
           lines[#lines + 1] = (k > 0 and string.format("%d step%s to %s, then ", k, pl(k), getRoomName(L.outRoom) or ("#" .. L.outRoom)) or "")
             .. L.outDir .. " out into the wilds"
         elseif L.track then
-          lines[#lines + 1] = "out into the wilds - the game leads (where is exit track)"
+          lines[#lines + 1] = "out into the wilds - the way the game gives (where is exit)"
         end
         local w = string.format("about %d room%s %s through the wilds", L.walkOut, pl(L.walkOut), COMPASS_WORD[L.dir] or "on")
         if L.unknownIn then
@@ -19069,9 +19104,9 @@ function M.travelSignStep()
   local L = T.link
   local inWilds = type(info) == "table" and tostring(info.wilds) == "true"
   if inWilds then T.wasOut = true end
-  -- the trip on foot, inside where it starts: out first - through the gate, or the game leads (where is exit track)
+  -- the trip on foot, inside where it starts: out first - through the gate, or the game's path to the exit (where is exit)
   if L.foot and not inWilds and not T.wasOut then
-    if M.walk then return end
+    if M.walk or M.dirWalk then return end
     -- a room with an exit straight into the wilds (the exit the game led you to, or the gate): out that way
     local wildDir
     for d, v in pairs(type(info) == "table" and type(info.exits) == "table" and info.exits or {}) do
@@ -19102,12 +19137,17 @@ function M.travelSignStep()
       M.walk = { dirs = d, path = p, step = 1, thenDo = function() if M.travel == T then M.travelSignStep() end end }
       return M.walkStep()
     end
-    if not T.tracking then
+    -- no gate of this area known: the game's path to the exit (where is exit), walked; out from there
+    if T.exitAsked then return stop("followed the way to the exit, but it didn't lead out into the wilds") end
+    T.exitAsked = true
+    local mine = T
+    M.quietly("where is exit", "where", function(lines)
+      if M.travel ~= mine then return end
+      local dirs = M.whereDirs(lines, "exit")
+      if not dirs then return stop("the game didn't say where the exit is (where is exit)") end
       T.tracking = true
-      local mine = T
-      M.sendOwn("where is exit track", false)
-      tempTimer(90, function() if M.travel == mine and not mine.wasOut then stop("the game didn't lead you out (where is exit track)") end end)
-    end
+      M.walkDirs(dirs, function() if M.travel == mine then M.travelSignStep() end end)
+    end)
     return
   end
   -- back inside: in the area the trip was for (any of its rooms - a gate not known yet)
@@ -19912,7 +19952,7 @@ function M.legacyCommand(args)
       M.cfg.map = false; M.saveSettings(); M.mapStop(); return say("map following and click-to-walk off")
     elseif b == "stop" then
       if M.running and M.running.target then M.running.target = nil; M.walk = nil; return say("walk cancelled (the run itself goes on until it stops)") end
-      if M.walk then M.walk = nil; return say("walk cancelled") end
+      if M.walk or M.dirWalk then M.walk, M.dirWalk = nil, nil; return say("walk cancelled") end
       return say("not walking")
     elseif b:match("^find%s") or b:match("^search%s") then
       return M.mapFind(b:gsub("^%a+%s+", ""))
@@ -20604,8 +20644,8 @@ end
 function M.stopAll()
   local what = {}
   if M.travel or M.trip then M.travel, M.trip = nil, nil; what[#what + 1] = "the trip" end
-  if M.walk or (M.running and M.running.target) then
-    M.walk = nil
+  if M.walk or M.dirWalk or (M.running and M.running.target) then
+    M.walk, M.dirWalk = nil, nil
     if M.running then M.running.target = nil end
     what[#what + 1] = "the walk"
   end
