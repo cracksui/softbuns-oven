@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.25"
+M.version = "1.99.26"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -219,6 +219,7 @@ local SCHEMA_ADD = {
   "ALTER TABLE deaths ADD COLUMN killer TEXT",    -- 0.24.0: what you were fighting
   "ALTER TABLE shop_items ADD COLUMN currency TEXT", -- 0.59.0: "gold", "rewardunits", …
   "ALTER TABLE room_xy ADD COLUMN zone TEXT",     -- 1.99.22: the place's name (GMCP's zone): the world map names it
+  "ALTER TABLE entrances ADD COLUMN out TEXT",    -- 1.99.26: a gate's step out (town side → the wilds)
 }
 
 function M.dbOpen()
@@ -17919,8 +17920,9 @@ function M.wayRoom()
   local id = type(info) == "table" and tonumber(info.num) or nil
   if not id or id <= 0 then return end
   local prev = M.wayPrev
-  M.wayPrev = { room = id, wild = tostring(info.wilds) == "true" or M.isWildRoom(id) }
+  M.wayPrev = { room = id, wild = tostring(info.wilds) == "true" or M.isWildRoom(id), info = info }
   if not prev or prev.room == id then return end
+  if prev.info then pcall(M.gateNote, prev.info, info) end
   local C = M.lastCmd
   if not C or now() - C.at > 4 or C.room ~= prev.room then return end
   local cmd = trim(C.cmd):lower()
@@ -18143,6 +18145,164 @@ function M.entranceLinks(from, target)
     end
   end
   return out
+end
+
+---------------------------------------------------------------------------
+-- Gates: where an area and the wilds meet. Every crossing is one (however you moved - typed, walked by Oven,
+-- followed): the area's room, the spot of the wilds, the step in and the step out, read from GMCP's exits (the
+-- wild room's exit to the area room, the area room's exit to the wild room). A command way in ('enter portal',
+-- learned from what you typed) is kept as it is.
+---------------------------------------------------------------------------
+M.DIR_OPP = { n = "s", s = "n", e = "w", w = "e", ne = "sw", sw = "ne", nw = "se", se = "nw", u = "d", d = "u" }
+-- the direction in an exits table that leads to room `to` (GMCP: { n = "123", n_realnum = …, door = {} })
+function M.exitTo(exits, to)
+  to = tostring(to)
+  for d, v in pairs(type(exits) == "table" and exits or {}) do
+    if M.DIR_OPP[d] and type(v) ~= "table" and tostring(v) == to then return d end
+  end
+end
+function M.entrancesOut()
+  if M.entrancesOutOk then return end
+  M.entrancesOutOk = true
+  local conn = M.dbOpen()
+  if conn then pcall(function() conn:execute("ALTER TABLE entrances ADD COLUMN out TEXT") end) end
+end
+-- a step between two rooms (GMCP room.info before and after): a gate, when one is of the wilds and the other isn't
+function M.gateNote(a, b)
+  if type(a) ~= "table" or type(b) ~= "table" then return end
+  local aw, bw = tostring(a.wilds) == "true", tostring(b.wilds) == "true"
+  if aw == bw then return end
+  local W, R = aw and a or b, aw and b or a
+  local wn, rn = tonumber(W.num), tonumber(R.num)
+  local c = type(W.coord) == "table" and W.coord or {}
+  local x, y, map = tonumber(c.x), tonumber(c.y), c.name
+  if not (wn and rn and rn > 0 and x and y and map) then return end
+  local din = M.exitTo(W.exits, rn)
+  local dout = M.exitTo(R.exits, wn)
+  din = din or (dout and M.DIR_OPP[dout])
+  dout = dout or (din and M.DIR_OPP[din])
+  if not din then return end
+  M.entrancesOut()
+  local old = M.dbRow("SELECT cmd, out FROM entrances WHERE wild = %s AND room = %s", wn, rn)
+  -- (a learned command way in stays: only an empty one, or a direction, is the step)
+  local cmd = (old and old.cmd and old.cmd ~= "" and not M.DIR_OPP[old.cmd]) and old.cmd or din
+  if old and old.cmd == cmd and old.out == dout then return end
+  M.dbx("INSERT OR REPLACE INTO entrances (wild, room, cmd, map, x, y, t, out) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+    wn, rn, cmd, map, x, y, os.time(), dout)
+  M.entranceRows, M.worldTownList = nil, nil
+  return true
+end
+-- the gates kept in the recordings (crossings before 1.99.26 were learned only from what you typed): once
+function M.gateImport()
+  if M.cfg.gates1 then return 0 end
+  local n, prev = 0, nil
+  local function parse(l)
+    local ex = l:match('%["exits"%]=(%b{})') or ""
+    local exits = {}
+    for d, v in ex:gmatch('%["(%a+)"%]="(%d+)"') do exits[d] = v end
+    local co = l:match('%["coord"%]=(%b{})') or ""
+    return { num = l:match('%["num"%]="(%-?%d+)"'), wilds = l:find('["wilds"]="true"', 1, true) and "true" or "false", exits = exits,
+      coord = { x = co:match('%["x"%]=(%d+)'), y = co:match('%["y"%]=(%d+)'), name = co:match('%["name"%]="([^"]*)"') } }
+  end
+  for _, f in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
+    local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
+    if fh then
+      prev = nil
+      for l in fh:lines() do
+        if l:sub(1, 15) == "@gmcp room.info" then
+          local cur = parse(l)
+          if prev and prev.num ~= cur.num then
+            local ok, got = pcall(M.gateNote, prev, cur)
+            if ok and got then n = n + 1 end
+          end
+          prev = cur
+        end
+      end
+      fh:close()
+    end
+  end
+  M.cfg.gates1 = true
+  M.saveSettings()
+  return n
+end
+-- an area's gates: { wild, room, x, y, map, cmd (in), out } with the area room on the map
+function M.gatesOf(area)
+  if not M.entranceRows then
+    M.entrancesOut()
+    M.entranceRows = M.dbRows("SELECT wild, room, cmd, map, x, y, out FROM entrances WHERE cmd != ''")
+  end
+  local out = {}
+  for _, e in ipairs(M.entranceRows) do
+    local room = tonumber(e.room)
+    if room and roomExists(room) and getRoomArea(room) == area then
+      out[#out + 1] = { wild = tonumber(e.wild), room = room, x = tonumber(e.x), y = tonumber(e.y), map = e.map, cmd = e.cmd,
+        out = (e.out and e.out ~= "") and e.out or (M.DIR_OPP[e.cmd] or nil) }
+    end
+  end
+  return out
+end
+
+-- The trip on foot - there always is one: out of where you are (a gate of this area, or the game leading you
+-- out: where is exit track), through the wilds to the target area's nearest gate and in, then on inside. With no
+-- gate of the target area known yet, to its spot on the map (where its rooms are) - Oven stops there for you to
+-- step in (that crossing is learned). nil only when Oven can't place here or there on the world map.
+M.GATE_OUT_GUESS = 15   -- the walk out of an area with no gate known (the game leads), counted as this many steps
+function M.mapSteps(a, b)
+  if a == b then return 0 end
+  if getPath(a, b) then return #speedWalkDir end
+end
+function M.footPlan(here, target)
+  if not (here and target and roomExists(target)) then return nil end
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  local hereWild = M.isWildRoom(here) or (type(info) == "table" and tonumber(info.num) == here and tostring(info.wilds) == "true")
+  local hp = M.worldPos and M.worldPos(here)
+  -- out
+  local outs = {}
+  if hereWild then
+    if hp then outs[1] = { x = hp.x, y = hp.y, map = hp.map, cost = 0 } end
+  else
+    local ha = roomExists(here) and getRoomArea(here)
+    for _, g in ipairs(ha and M.gatesOf(ha) or {}) do
+      local k = g.out and M.mapSteps(here, g.room)
+      if k then outs[#outs + 1] = { x = g.x, y = g.y, map = g.map, cost = k + 1, room = g.room, dir = g.out } end
+    end
+    if #outs == 0 and hp then outs[1] = { x = hp.x, y = hp.y, map = hp.map, cost = M.GATE_OUT_GUESS, track = true } end
+  end
+  -- in
+  local ins = {}
+  if M.isWildRoom(target) then
+    local tp = M.worldPos(target)
+    if tp then ins[1] = { x = tp.x, y = tp.y, map = tp.map, cost = 0, wild = target } end
+  else
+    for _, g in ipairs(M.gatesOf(getRoomArea(target))) do
+      local k = M.mapSteps(g.room, target)
+      if k then ins[#ins + 1] = { x = g.x, y = g.y, map = g.map, cost = k + 1, wild = g.wild, room = g.room, cmd = g.cmd, inside = k } end
+    end
+    if #ins == 0 then
+      local tp = M.worldPos(target)
+      if tp then ins[1] = { x = tp.x, y = tp.y, map = tp.map, cost = 0, unknown = true } end
+    end
+  end
+  local best, bo, bi, bw
+  for _, o in ipairs(outs) do
+    for _, i in ipairs(ins) do
+      if o.map == i.map then
+        local w = math.max(math.abs(o.x - i.x), math.abs(o.y - i.y))
+        local c = o.cost + i.cost + 2 * w
+        if not best or c < best then best, bo, bi, bw = c, o, i, w end
+      end
+    end
+  end
+  if not best then return nil end
+  local ta = getRoomArea(target)
+  local dest = (M.isWildRoom(target) and ("#" .. target)) or (ta and getRoomAreaName(ta)) or getRoomName(target) or ("#" .. target)
+  local L = { kind = "wildwalk", foot = true, key = "foot", board = {}, cost = 0, noBuy = true, shopName = "",
+    sign = { room = bi.wild, x = bi.x, y = bi.y, map = bi.map }, walkOut = bw, dir = M.compassTo(bo.x, bo.y, bi.x, bi.y),
+    enter = bi.cmd, land = bi.room or bi.wild, areaId = ta, dest = dest, unknownIn = bi.unknown,
+    outRoom = bo.room, outDir = bo.dir, track = bo.track }
+  local segs = { { kind = "ride", link = L, from = here, to = bi.room or target } }
+  if bi.inside and bi.inside > 0 then segs[2] = { kind = "walk", n = bi.inside, to = target } end
+  return { segs = segs, gold = 0, rides = 1, runs = 0, walked = (bo.cost or 0) + (bi.inside or 0), wild = bw, foot = true, cost = best }
 end
 
 -- One search for the whole trip: for a moment, every ride (Ganuk's tokens, balloons, passage), every signpost
@@ -18368,6 +18528,17 @@ end
 
 -- the best trip from here to target: { segs = { walk | run | ride … }, gold, rides, walked } or nil
 function M.tripPlan(here, target, used)
+  local plan = M.tripPlanRides(here, target, used)
+  local foot = not (used or {}).foot and M.footPlan(here, target)
+  if foot and (not plan or foot.cost < M.tripCost(plan)) then return foot end
+  return plan
+end
+-- what a plan costs, in steps (the trips counted as M.TRAVEL_COST each; the wilds twice: they're slower going)
+function M.tripCost(plan)
+  if plan.foot then return plan.cost end
+  return (plan.walked or 0) + ((plan.rides or 0) + (plan.runs or 0)) * M.TRAVEL_COST + (plan.wild or 0)
+end
+function M.tripPlanRides(here, target, used)
   -- in the clan hall, which isn't on the map: out and recall, then the best trip on from the signpost
   -- anywhere else off the map that Oven can place (a room of the wilds it hasn't mapped): walk toward a signpost
   -- and recall there, or clan gohall and the hall's way out - never "no route"
@@ -18530,7 +18701,25 @@ function M.tripPlanLines(plan, target)
       lines[#lines + 1] = "run " .. sg.name .. " to the " .. ((M.signLabel and M.signLabel(sg.to)) or ("#" .. sg.to))
     else
       local L = sg.link
-      if L.kind == "wildwalk" then
+      if L.kind == "wildwalk" and L.foot then
+        -- the trip on foot: out, the wilds, in
+        if L.outRoom then
+          local k = M.mapSteps(sg.from, L.outRoom) or 0
+          lines[#lines + 1] = (k > 0 and string.format("%d step%s to %s, then ", k, pl(k), getRoomName(L.outRoom) or ("#" .. L.outRoom)) or "")
+            .. L.outDir .. " out into the wilds"
+        elseif L.track then
+          lines[#lines + 1] = "out into the wilds - the game leads (where is exit track)"
+        end
+        local w = string.format("about %d room%s %s through the wilds", L.walkOut, pl(L.walkOut), COMPASS_WORD[L.dir] or "on")
+        if L.unknownIn then
+          lines[#lines + 1] = string.format("%s to %s's spot (%d,%d) - its way in isn't known yet: Oven stops there, step in and it's learned",
+            w, L.dest, L.sign.x, L.sign.y)
+        elseif L.enter then
+          lines[#lines + 1] = string.format("%s to %s, in at %s (%s)", w, L.dest, getRoomName(L.land) or ("#" .. L.land), L.enter)
+        else
+          lines[#lines + 1] = w .. " to " .. L.dest
+        end
+      elseif L.kind == "wildwalk" then
         lines[#lines + 1] = string.format("about %d room%s %s to the %s", L.walkOut, pl(L.walkOut), COMPASS_WORD[L.dir] or "on", L.dest)
       elseif L.kind == "recall" or L["then"] then
         local R = L["then"] or L
@@ -18877,6 +19066,56 @@ function M.travelSignStep()
   local function stop(why) M.travel = nil; M.trip = nil; say("travel: " .. why .. " - stopped") end
   local info = M.gmcpGet and M.gmcpGet("room.info")
   local x, y = type(info) == "table" and tonumber(info.coord and info.coord.x), type(info) == "table" and tonumber(info.coord and info.coord.y)
+  local L = T.link
+  local inWilds = type(info) == "table" and tostring(info.wilds) == "true"
+  if inWilds then T.wasOut = true end
+  -- the trip on foot, inside where it starts: out first - through the gate, or the game leads (where is exit track)
+  if L.foot and not inWilds and not T.wasOut then
+    if M.walk then return end
+    -- a room with an exit straight into the wilds (the exit the game led you to, or the gate): out that way
+    local wildDir
+    for d, v in pairs(type(info) == "table" and type(info.exits) == "table" and info.exits or {}) do
+      if M.DIR_OPP[d] and type(v) ~= "table" and M.isWildRoom(tonumber(v)) and (not wildDir or d == L.outDir) then wildDir = d end
+    end
+    if wildDir and (not L.outRoom or M.mapRoom == L.outRoom or T.tracking) then
+      if T.outSent == M.mapRoom then return stop("the way out (" .. wildDir .. ") didn't take you into the wilds") end
+      T.outSent = M.mapRoom
+      local mine, from = T, M.mapRoom
+      M.sendOwn(wildDir, false)
+      tempTimer(6, function() if M.travel == mine and not mine.wasOut and M.mapRoom == from then stop("the way out (" .. wildDir .. ") didn't take you into the wilds") end end)
+      return
+    end
+    if L.outRoom then
+      if M.mapRoom == L.outRoom then
+        if T.outSent then return stop("the way out (" .. L.outDir .. ") didn't take you into the wilds") end
+        T.outSent = true
+        local mine = T
+        M.sendOwn(L.outDir, false)
+        tempTimer(6, function() if M.travel == mine and not mine.wasOut then stop("the way out (" .. L.outDir .. ") didn't take you into the wilds") end end)
+        return
+      end
+      if T.outWalked then return stop("couldn't get to " .. (getRoomName(L.outRoom) or ("#" .. L.outRoom))) end
+      T.outWalked = true
+      if not (M.mapRoom and getPath(M.mapRoom, L.outRoom)) then return stop("no way on the map to " .. (getRoomName(L.outRoom) or ("#" .. L.outRoom))) end
+      local d, p = {}, {}
+      for i, s2 in ipairs(speedWalkDir) do d[i] = s2; p[i] = tonumber(speedWalkPath[i]) end
+      M.walk = { dirs = d, path = p, step = 1, thenDo = function() if M.travel == T then M.travelSignStep() end end }
+      return M.walkStep()
+    end
+    if not T.tracking then
+      T.tracking = true
+      local mine = T
+      M.sendOwn("where is exit track", false)
+      tempTimer(90, function() if M.travel == mine and not mine.wasOut then stop("the game didn't lead you out (where is exit track)") end end)
+    end
+    return
+  end
+  -- back inside: in the area the trip was for (any of its rooms - a gate not known yet)
+  if L.foot and not inWilds and T.wasOut and L.areaId and M.mapRoom and roomExists(M.mapRoom) and getRoomArea(M.mapRoom) == L.areaId then
+    M.travel = nil
+    say("travel: in " .. L.dest .. " - on from here")
+    return tempTimer(0.5, function() if M.trip then M.tripContinue() else M.goTo(T.target) end end)
+  end
   -- a way into an area (learned): in once you're inside
   local entrance = T.link.enter ~= nil
   if entrance and M.mapRoom == T.link.land then
@@ -18885,6 +19124,10 @@ function M.travelSignStep()
     return tempTimer(0.5, function() if M.trip then M.tripContinue() else M.goTo(T.target) end end)
   end
   if M.mapRoom == S.room or (x == S.x and y == S.y) then
+    if L.unknownIn then
+      M.travel, M.trip = nil, nil
+      return say(string.format("travel: at %s's spot (%d,%d) - its way in isn't known yet: step in (Oven learns it), then sbo go again", L.dest, S.x, S.y))
+    end
     if entrance then
       if T.entered then return stop("the way in (" .. T.link.enter .. ") didn't take you in") end
       T.entered = true
@@ -21384,5 +21627,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport); pcall(M.gateImport) end)
 pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end

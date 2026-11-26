@@ -909,6 +909,71 @@ def go_from_the_wilds_on_the_map():
 
 
 @test
+def go_always_has_a_plan_on_foot():
+    o = Oven()
+    o.lua("""roomExists = function() return true end
+      AREA = { [10490] = 'Rune', [10463] = 'Rune', [10500] = 'Rune', [61834] = 'Rigel', [61910] = 'Rigel', [61900] = 'Rigel' }
+      getRoomArea = function(id) id = tonumber(id) if sbo.isWildRoom(id) then return 'W' end return AREA[id] or 'X' end
+      getRoomAreaName = function(a) return a end; getRoomName = function(id) return 'room ' .. id end
+      getPath = function(a, b) if getRoomArea(a) == getRoomArea(b) then speedWalkDir = { 'n', 'n' }; speedWalkPath = { 1, 2 }; return true end return false end
+      sbo.worldPos = function(id) id = tonumber(id)
+        if id >= 1000000 then local v = id - 1060834 return { map = 'Alyria', x = v % 2300, y = math.floor(v / 2300) } end
+        if AREA[id] == 'Rune' then return { map = 'Alyria', x = 705, y = 763 } end
+        if AREA[id] == 'Rigel' then return { map = 'Alyria', x = 801, y = 545 } end end
+      function WILD(x, y) return tostring(1060834 + y * 2300 + x) end""")
+    # a gate learned from GMCP's exits, however you moved (nothing typed): going out of Rune, and into Rigel
+    o.lua("""sbo.gateNote({ num = '10490', wilds = 'false', exits = { n = WILD(684, 760) }, coord = { name = 'Alyria', x = 705, y = 763 } },
+                   { num = WILD(684, 760), wilds = 'true', exits = { s = '10490' }, coord = { name = 'Alyria', x = 684, y = 760 } })
+      sbo.gateNote({ num = WILD(798, 564), wilds = 'true', exits = { n = '61910' }, coord = { name = 'Alyria', x = 798, y = 564 } },
+                   { num = '61910', wilds = 'false', exits = { s = WILD(798, 564) }, coord = { name = 'Alyria', x = 801, y = 545 } })""")
+    g = o.ev("sbo.gatesOf('Rune')[1]")
+    eq((g.room, g.x, g.y, g.cmd, g.out), (10490, 684, 760, "s", "n"), "Rune's gate: in s, out n")
+    g = o.ev("sbo.gatesOf('Rigel')[1]")
+    eq((g.room, g.cmd, g.out), (61910, "n", "s"), "Rigel's gate")
+    # a recall or ride into the wilds isn't a gate (no exit joins the two rooms)
+    eq(o.ev("""sbo.gateNote({ num = '10500', wilds = 'false', exits = { e = '10501' }, coord = { name = 'Alyria', x = 705, y = 763 } },
+                   { num = WILD(900, 900), wilds = 'true', exits = { n = WILD(900, 899) }, coord = { name = 'Alyria', x = 900, y = 900 } })"""), None, "not a gate")
+    # from the wilds: walk to the gate, in, on inside
+    o.lua("gmcp.room = { info = { num = WILD(1814, 255), wilds = 'true' } }; P = sbo.footPlan(tonumber(WILD(1814, 255)), 61834)")
+    eq((o.ev("P.segs[1].link.land"), o.ev("P.segs[1].link.enter"), o.ev("P.segs[1].link.sign.x"), o.ev("P.segs[2].n")), (61910, "n", 798, 2), "in at the South Gate")
+    # from in a town: out its gate first
+    o.lua("gmcp.room = { info = { num = '10500', wilds = 'false' } }; P = sbo.footPlan(10500, 61834)")
+    eq((o.ev("P.segs[1].link.outRoom"), o.ev("P.segs[1].link.outDir")), (10490, "n"), "out through Rune's gate")
+    lines = list(o.ev("(sbo.tripPlanLines(P, 61834))").values())
+    assert lines[0].startswith("2 steps to room 10490, then n out"), lines
+    # a town with no gate known: the game leads out; a target town with none: to its spot, Oven stops there
+    o.lua("sbo.dbx('DELETE FROM entrances'); sbo.entranceRows = nil; P = sbo.footPlan(10500, 61834)")
+    eq((o.ev("P.segs[1].link.track"), o.ev("P.segs[1].link.unknownIn"), o.ev("P.segs[1].link.sign.x")), (True, True, 801), "always a plan")
+    # the trip planner takes it when it's cheaper than any ride (here: there's none)
+    o.lua("sbo.tripPlanRides = function() return nil end")
+    eq(o.ev("sbo.tripPlan(10500, 61834, {}).foot"), True, "the plan on foot")
+    # going: inside, a room with an exit into the wilds: out that way; then in the wilds, toward the spot
+    o.lua("""SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end; sbo.mapRoom = 10500; sbo.walk = nil
+      gmcp.room = { info = { num = '10500', wilds = 'false', exits = { w = '10501', e = WILD(700, 763) }, coord = { name = 'Alyria', x = 705, y = 763 } } }
+      sbo.travelStart({ legs = { { link = P.segs[1].link, walk = 0 } } }, 61834, 1)""")
+    eq(o.ev("SENT[1]"), "e", "straight out into the wilds")
+    o.lua("""sbo.mapRoom = tonumber(WILD(800, 547)); gmcp.room = { info = { num = WILD(800, 547), wilds = 'true', coord = { name = 'Alyria', x = 800, y = 547 } } }
+      sbo.travelSignStep()""")
+    assert o.ev("SENT[2]") in ("ne", "n", "e"), o.ev("SENT[2]")
+    # stepped into the town on the way (a gate not known): the trip goes on from there
+    o.lua("""CONT = nil; sbo.trip = { target = 61834 }; sbo.tripContinue = function() CONT = true end
+      sbo.mapRoom = 61900; gmcp.room = { info = { num = '61900', wilds = 'false', coord = { name = 'Alyria', x = 801, y = 545 } } }
+      sbo.travelSignStep(); runTimers()""")
+    eq((o.ev("sbo.travel"), o.ev("CONT")), (None, True), "in the town: on from here")
+    # the gates in the recordings: learned once
+    home = o.L.globals().OVEN_TEST_HOME
+    open(home + "/oven_record.txt", "w").write(
+        '@gmcp room.info = {["num"]="61834",["zone"]="Rigel",["exits"]={["n"]="%s",["door"]={}},["coord"]={["x"]=801,["name"]="Alyria",["y"]=545},["wilds"]="false"}\n'
+        '@gmcp room.info = {["num"]="%s",["zone"]="Alyria",["exits"]={["s"]="61834"},["coord"]={["x"]=801,["name"]="Alyria",["y"]=544},["wilds"]="true"}\n'
+        % (o.ev("WILD(801, 544)"), o.ev("WILD(801, 544)")))
+    o.lua("sbo.cfg.gates1 = nil")
+    eq(o.ev("sbo.gateImport()"), 1, "one gate from the recording")
+    g = o.ev("sbo.gatesOf('Rigel')[1]")
+    eq((g.room, g.y, g.cmd, g.out), (61834, 544, "s", "n"), "the North Gate")
+    eq(o.ev("sbo.gateImport()"), 0, "once")
+
+
+@test
 def quest_steps_are_links():
     o = Oven()
     o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
