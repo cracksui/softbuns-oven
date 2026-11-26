@@ -2796,9 +2796,12 @@ def signpost_runs():
     eq(o.ev("HERE"), 250, "sbo run rune: to the signpost, then the run")
     eq(list(o.ev("SENT").values())[0], "w", "back to the signpost first")
     # the game refuses: walks instead
+    # the game refuses: planned again from there - shown and asked (it may be a long walk now), the run left out
     o.lua('SIGNS[120] = nil; AT(2); SENT = {}; sbo.mapWalkTo(255); sbo.goAnswer("y"); PUMP()')
-    eq(o.ev("HERE"), 255, "fell back to walking")
-    assert any("another way from here" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    assert any("planning again from here" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    eq(o.ev("sbo.goAsk ~= nil"), True, "asked first")
+    o.lua('sbo.goAnswer("y"); PUMP()')
+    eq(o.ev("HERE"), 255, "then walked")
     o.lua('sbo.command("signposts")')
 
 

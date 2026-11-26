@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.37"
+M.version = "1.99.38"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16993,10 +16993,13 @@ function M.runFailed(why)
   if R.timer then pcall(killTimer, R.timer) end
   if R.quiet then pcall(killTimer, R.quiet) end
   if R.trip and M.trip == R.trip then
+    -- (planned again from here - shown and asked first: without the run, the way on may be a long walk)
     local T = M.trip
-    T.used["run:" .. R.name .. ":" .. tostring(M.mapRoom)] = true
-    M.notifyWalk("run " .. R.name .. ": " .. why .. " - another way from here")
-    return tempTimer(0.5, function() if M.trip == T then M.tripContinue() end end)
+    M.trip = nil
+    M.runRefused = M.runRefused or {}
+    M.runRefused[R.name .. ":" .. tostring(M.mapRoom)] = os.time()
+    M.notifyWalk("run " .. R.name .. ": " .. why .. " - planning again from here")
+    return tempTimer(0.5, function() M.goTo(T.targets) end)
   end
   if R.target then
     M.notifyWalk("run " .. R.name .. ": " .. why .. " - walking instead")
@@ -17584,6 +17587,7 @@ function M.mapRunNow(arg, planned)
   M.goTo(ids)
 end
 M.GO_CANDIDATES = 8
+M.GO_ASK_STEPS = 30   -- a walk from the wilds longer than this is shown and asked first
 
 -- sbo go's walk: inside your area it's walked (no signpost run); a route out of town is asked about first
 -- ("y" goes, "n" stays - answered to Oven, not the game). Already in the wilds: no question.
@@ -17640,11 +17644,11 @@ function M.goToNow(targets)
   local target = plan.legs[#plan.legs].to
   if roomExists(target) then pcall(M.mapShow, target) end
   local leg1 = plan.legs[1]
-  -- (one walk on the map that stays in the place you're in - or you're out in the wilds already: no question)
+  -- (one walk on the map that stays in the place you're in - or a short one, out in the wilds already: no question)
   local stays = false
   if #plan.legs == 1 and leg1.kind == "walk" then
     local info = M.gmcpGet and M.gmcpGet("room.info")
-    stays = (type(info) == "table" and tostring(info.wilds) == "true") or M.isWildRoom(here)
+    stays = ((type(info) == "table" and tostring(info.wilds) == "true") or M.isWildRoom(here)) and leg1.n <= M.GO_ASK_STEPS
     if not stays and getPath(here, target) then
       local hk = M.placeKey(here)
       stays = hk ~= nil
@@ -18329,6 +18333,7 @@ M.GRID_BLOCK = 8             -- the coarse search: blocks of 8×8 cells
 M.GRID_LEG_MAX = 250         -- a walk through the wilds goes this many cells, then the trip is planned again
 M.PLAN_OUT_GUESS = 15        -- the way out of a place the map doesn't have (where is exit): about this many steps
 M.PLAN_RUN_EXTRA = 2         -- a run's start and stop, in steps
+M.RUN_REFUSED_FOR = 600
 M.PLAN_RUN_GUESS = 5         -- and a run whose end is worked out, not yet run: this many more (it may stop a little off)
 
 -- what terrain costs to walk, learned: { mount = { [terrain] = { avg, n } }, foot = … } (runs: "@run", a room)
@@ -19023,7 +19028,11 @@ function M.planTripOnce(here, targets, used)
   -- only when nothing else gets there: used.recallHere, the second search below)
   local okE, edges = pcall(M.tripEdges, here, targets[1], used)
   for _, e in ipairs(okE and edges or {}) do
-    if e.run and not used["run:" .. e.from .. ":" .. e.run] and not used["run:" .. e.run .. ":" .. e.from] then
+    -- (a run the game wouldn't start from there a moment ago: left out for M.RUN_REFUSED_FOR seconds)
+    local refused = e.run and (M.runRefused or {})[e.run .. ":" .. tostring(e.from)]
+    if refused and os.time() - refused > M.RUN_REFUSED_FOR then refused = nil end
+    if refused then
+    elseif e.run and not used["run:" .. e.from .. ":" .. e.run] and not used["run:" .. e.run .. ":" .. e.from] then
       local rooms = M.stRunRooms(e.from, e.to) or 0
       edge(e.from, e.to, rooms * runSt + (M.PLAN_RUN_EXTRA + (e.guess and M.PLAN_RUN_GUESS or 0)) * typical,
         { kind = "run", name = e.run, rooms = rooms, guess = e.guess })
