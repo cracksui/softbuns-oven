@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.49"
+M.version = "1.99.50"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -18056,7 +18056,7 @@ function M.wayLearn(prev, here, id, cmd)
         M.dbx("INSERT OR REPLACE INTO entrances (wild, room, cmd, map, x, y, t) VALUES (%s, %s, %s, %s, %s, %s, %s)",
           wild, room, way or (old and old.cmd) or "", p.map, p.x, p.y, os.time())
         M.worldTownList = nil
-        M.entranceRows, M.mapGatesCache = nil, nil
+        M.entranceRows, M.mapGatesCache, M.gridBlockedCache = nil, nil, nil
         if not old then M.say(string.format("learned a way into %s: from the wilds at %d,%d%s - sbo go uses it",
           (M.areaNameOf(getRoomArea(room)) or getRoomName(room) or ("#" .. room)), p.x, p.y, way and way ~= "" and ("  (" .. way .. ")") or "")) end
       end
@@ -18172,7 +18172,7 @@ function M.gateNote(a, b)
   if old and old.cmd == cmd and old.out == dout then return end
   M.dbx("INSERT OR REPLACE INTO entrances (wild, room, cmd, map, x, y, t, out) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
     wn, rn, cmd, map, x, y, os.time(), dout)
-  M.entranceRows, M.worldTownList = nil, nil
+  M.entranceRows, M.worldTownList, M.gridBlockedCache = nil, nil, nil
   return true
 end
 -- gates learned before 1.99.33 with a command for their step in where an exit joins the rooms (something typed
@@ -18682,6 +18682,13 @@ function M.gridBlocked(mapName, img)
   for _, r in ipairs(M.dbRows("SELECT room, dir FROM wild_blocked")) do
     local p = M.worldPos(tonumber(r.room))
     local k = M.GRID_DIR[r.dir]
+    if p and k and p.map == mapName then B[(p.y * img.w + p.x) * 8 + k - 1] = true end
+  end
+  -- and the steps from the wilds into a place (w into the village): a walk through the wilds never takes one -
+  -- it'd go into the place, not on to the next cell (and planned again from there, out, and in again)
+  for _, g in ipairs(M.allGates()) do
+    local p = M.worldPos(g.wild)
+    local k = M.GRID_DIR[g.cmd]
     if p and k and p.map == mapName then B[(p.y * img.w + p.x) * 8 + k - 1] = true end
   end
   M.gridBlockedCache[mapName] = B

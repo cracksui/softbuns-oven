@@ -136,6 +136,8 @@ def sweep(o, pairs=300, seed=1):
                 fa, fb = o.ev("sbo.worldPos(%d)" % l["from"]), o.ev("sbo.worldPos(%d)" % l["to"])
                 if fa and fb and not o.ev("sbo.gridLegDirs(%r, %d, %d, %d, %d, 50)" % (fa.map, fa.x, fa.y, fb.x, fb.y)):
                     bad.append(("a walk through the wilds with no way cell by cell", an, bn))
+                elif fa and fb and o.ev("INTOPLACE(%r, %d, %d, %d, %d)" % (fa.map, fa.x, fa.y, fb.x, fb.y)):
+                    bad.append(("a walk through the wilds that steps into a place", an, bn))
     return n, none, bad
 
 
@@ -145,6 +147,22 @@ def main():
         print("skipped: not in %s: %s" % (PROFILE, ", ".join(missing))); return 0
     o = load()
     bad = 0
+    # a walk through the wilds that takes a gate's step (w from the road by Muldar Lohk Mulvar is into the village):
+    # it goes into the place, Oven plans again from there - out, and in again (recorded 2026-11-26)
+    o.lua("""INTOPLACE = function(map, x0, y0, x1, y1)
+        local gm = {}
+        for _, g in ipairs(sbo.allGates()) do local p = sbo.worldPos(g.wild); if p and p.map == map then gm[p.x .. ',' .. p.y .. g.cmd] = true end end
+        local x, y = x0, y0
+        for _, d in ipairs(sbo.gridLegDirs(map, x0, y0, x1, y1, 60) or {}) do
+          if gm[x .. ',' .. y .. d] then return true end
+          local v = sbo.WILD_STEP[d]; x, y = x + v[1], y + v[2]
+        end
+        return false
+      end""")
+    o.lua("gmcp.room = { info = { num = '1483385', wilds = 'true' } }; sbo.mapRoom = 1483385; P = sbo.withPathMemo(sbo.planTrip, 1483385, { 61834 }, { clan = true })")
+    good = o.ev("P and P.legs[1].kind == 'wild'") and not o.ev("(function() local a, b = sbo.worldPos(P.legs[1].from), sbo.worldPos(P.legs[1].to); return INTOPLACE(a.map, a.x, a.y, b.x, b.y) end)()")
+    print("%s  out of Muldar Lohk Mulvar: through the wilds, not back in through its gate" % ("ok  " if good else "FAIL"))
+    if not good: bad += 1
     for label, frm, to, ok in TRIPS:
         p, dt = plan(o, frm, to)
         good = p is not None and ok(p) and dt < 3
