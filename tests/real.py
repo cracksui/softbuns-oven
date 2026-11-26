@@ -172,14 +172,13 @@ def main():
           % ("ok  " if not sbad else "FAIL", n, none, len(sbad), time.time() - t))
     for x in sbad[:15]: print("        %s: %s -> %s" % x)
     if sbad: bad += 1
-    # the world maps: everything drawn on each - signposts (the map's own, and the ones above or below it),
-    # places - named when it's pointed at or clicked
+    # the world maps: everything drawn on each - its own signposts and places - named when it's pointed at or clicked
     unnamed, drawn = [], 0
     for mp in ("Alyria", "Alyrian Underworld", "Faerie Plane", "Verity Isle"):
         spots = []
         for sp in o.ev("sbo.signposts()").values():
             p = o.ev("sbo.worldPos(%d)" % sp.room)
-            if p and (p.map == mp or o.ev("sbo.worldStacked(%r, %r)" % (p.map, mp))): spots.append((p.x, p.y, "signpost %d" % sp.room))
+            if p and p.map == mp: spots.append((p.x, p.y, "signpost %d" % sp.room))
         o.lua("sbo.worldTownList = nil")
         for t in o.ev("sbo.worldTowns()").values():
             if t.map == mp and not t.entry: spots.append((t.x, t.y, t.name))
@@ -190,6 +189,22 @@ def main():
     good = not unnamed
     print("%s  every marker on the world maps named when pointed at: %d markers, %d unnamed" % ("ok  " if good else "FAIL", drawn, len(unnamed)))
     for u in unnamed[:10]: print("        %s %d,%d %s (zoom %s)" % u)
+    if not good: bad += 1
+    # each world map shows its own marks only: the underworld drawn whole has no sign of Alyria's signposts
+    import glob
+    home = o.L.globals().OVEN_TEST_HOME
+    o.lua("""sbo.worldLabel = { echo = function() end, setStyleSheet = function() end, show = function() end, hide = function() end,
+        get_width = function() return 1150 end, get_height = function() return 750 end }
+      sbo.mapMode = 'world'; sbo.worldHere = { map = 'Alyrian Underworld', x = 1150, y = 750, wild = true }
+      sbo.worldV = { zoomI = 2, follow = false, map = 'Alyrian Underworld', cx = 1150, cy = 750 }; sbo.worldDrawNow()""")
+    f = sorted(glob.glob(home + "/oven_maps/oven_world_*.bmp"))[-1]
+    raw = open(f, "rb").read()
+    own = sum(1 for sp in o.ev("sbo.signposts()").values()
+              if (lambda p: p and p.map == "Alyrian Underworld")(o.ev("sbo.worldPos(%d)" % sp.room)))
+    sign = bytes([255, 90, 170])   # (the signpost colour, as a bitmap's blue-green-red)
+    n = raw.count(sign)
+    good = own > 0 or n == 0
+    print("%s  the underworld shows no signposts of Alyria's (its own: %d; signpost pixels drawn: %d)" % ("ok  " if good else "FAIL", own, n))
     if not good: bad += 1
     # each wild room you've stood in: no step planned from it that its exits don't have
     rows = o.rows("SELECT room, dir FROM wild_blocked")

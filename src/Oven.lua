@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.45"
+M.version = "1.99.46"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -15772,10 +15772,10 @@ function M.worldDrawNow()
       end
     end
   end
-  -- signposts you've read
+  -- signposts you've read - this map's own (the map above or below has its own: Alyria's aren't the underworld's)
   for _, sp in ipairs(M.signposts()) do
     local p = at(sp.room)
-    if p then
+    if p and not p.other then
       local sz = math.max(zoom, 2)
       M.worldPaint(rows, outW, p.x, p.y, sz + 2, RGB.black)
       M.worldPaint(rows, outW, p.x, p.y, sz, RGB.sign)
@@ -16013,8 +16013,7 @@ function M.worldTowns()
   return list
 end
 -- whatever the world map shows at (or within a few screen pixels of) a spot, by name: the places (towns, the
--- markers of places Oven's been into) and the signposts - of this map, and of the one above or below it, drawn on
--- it too ("(on Alyria)") - nearest first; nil when there's nothing there
+-- markers of places Oven's been into) and the signposts of this map - nearest first; nil when there's nothing there
 function M.worldThingAt(map, x, y, zoom)
   local reach = math.max(2, math.ceil(10 / math.max(tonumber(zoom) or 1, 0.01)))
   local found = {}
@@ -16025,9 +16024,9 @@ function M.worldThingAt(map, x, y, zoom)
   if town then add(0, town) end
   for _, sp in ipairs(M.signposts()) do
     local p = M.worldPos(sp.room)
-    if p and (p.map == map or M.worldStacked(p.map, map)) then
+    if p and p.map == map then
       local label = (M.signLabel and M.signLabel(sp.room)) or ("signpost #" .. sp.room)
-      add(math.max(math.abs(p.x - x), math.abs(p.y - y)), label .. (p.map ~= map and (" (on " .. p.map .. ")") or ""))
+      add(math.max(math.abs(p.x - x), math.abs(p.y - y)), label)
     end
   end
   if #found == 0 then return nil end
