@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.33"
+M.version = "1.99.34"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14664,6 +14664,10 @@ function M.worldNote(info)
   local w = W()
   local wild = tostring(info.wilds) == "true"
   M.worldHere = { map = name, x = x, y = y, room = num, wild = wild }
+  if wild and info.zone and info.zone ~= "" then
+    w.zoneMaps = w.zoneMaps or {}
+    if w.zoneMaps[info.zone] ~= name then w.zoneMaps[info.zone] = name; M.saveSettings() end
+  end
   if wild then
     local img = M.worldImages[(M.worldFileFor(name) or {}).file or ""]
     local width = img and img.w or 2300
@@ -17580,6 +17584,14 @@ function M.goToNow(targets)
     M.notifyWalk(string.format("%d step%s…", leg1.n, leg1.n == 1 and "" or "s"))
     return M.tripStart({ target })
   end
+  for _, leg in ipairs(plan.legs) do
+    if leg.kind == "gate" and (leg.age or 0) > M.WORLDGATE_FRESH and not M.goGateChecked then
+      M.goGateChecked = true
+      say("the plan goes through a worldgate - checking where they are now (time)")
+      return M.worldgateRefresh(function() M.goToNow(targets); M.goGateChecked = nil end)
+    end
+  end
+  M.goGateChecked = nil
   local lines, tail = M.planLines(plan)
   M.goAsk = { id = { target }, at = os.time(), trip = true, route = M.planRoute(plan) }
   if M.worldDraw then pcall(M.worldDraw) end
@@ -18833,6 +18845,86 @@ function M.mapGates()
   return out
 end
 
+-- Worldgates: two circles of stones joined for a while ("enter gate"), as the game's time command says -
+-- "Worldgates in Alyria [1279, 1053], and Great Alyrian Underground [834, 499]." They change every so often: a
+-- reading's kept, and the trip planner looks again (time) before a plan that uses one when it's older than
+-- M.WORLDGATE_FRESH seconds; one older than M.WORLDGATE_KEEP isn't used at all
+M.WORLDGATE_FRESH = 600
+M.WORLDGATE_KEEP = 3 * 3600
+function M.worldgateLines(lines)
+  for _, l in ipairs(lines or {}) do
+    local t = trim(l)
+    local a, x1, y1, b, x2, y2 = t:match("^Worldgates in (.-) %[(%d+), (%d+)%], and (.-) %[(%d+), (%d+)%]%.?$")
+    if a then
+      M.cfg.worldgates = { a = { zone = a, x = tonumber(x1), y = tonumber(y1) }, b = { zone = b, x = tonumber(x2), y = tonumber(y2) },
+        at = os.time(), link = M.cfg.worldgates and M.cfg.worldgates.link }
+      M.saveSettings()
+    end
+    local la, lb = t:match("^Worldgates link (.-) and (.-)%.?$")
+    if la and M.cfg.worldgates then M.cfg.worldgates.link = la .. " and " .. lb end
+  end
+  local W = M.wgWait
+  if W and M.cfg.worldgates and M.cfg.worldgates.at >= W.at then M.wgWait = nil; pcall(W.fn) end
+end
+M.addBlockReader("worldgates", "*", function(b) M.worldgateLines(b.lines) end)
+-- the world map a zone of the wilds is on ("Great Alyrian Underground" is GMCP's "Alyrian Underworld"): learned as
+-- you go (worldNote), else the zone's own name when there's a world map by it
+function M.zoneMap(zone)
+  local Z = (M.cfg.world or {}).zoneMaps or {}
+  if Z[zone] then return Z[zone] end
+  if M.worldFileFor(zone) then return zone end
+end
+-- the worldgates now: the two cells (rooms of the wilds) and how old the reading is, or nil
+function M.worldgateCells()
+  local G = M.cfg.worldgates
+  if not G or os.time() - (G.at or 0) > M.WORLDGATE_KEEP then return nil end
+  local ma, mb = M.zoneMap(G.a.zone), M.zoneMap(G.b.zone)
+  local ca, cb = ma and M.cellRoom(ma, G.a.x, G.a.y), mb and M.cellRoom(mb, G.b.x, G.b.y)
+  if not (ca and cb) then return nil end
+  return ca, cb, os.time() - G.at
+end
+-- the zone (the game's name) of a worldgate's cell
+function M.worldgateZone(cell)
+  local G = M.cfg.worldgates
+  if not G then return nil end
+  for _, side in ipairs({ G.a, G.b }) do
+    local m = M.zoneMap(side.zone)
+    if m and M.cellRoom(m, side.x, side.y) == cell then return side.zone end
+  end
+end
+-- which world map each zone of the wilds is on, from the recordings (GMCP's zone and coord name): once
+function M.zoneMapImport()
+  if M.cfg.zoneMaps1 then return 0 end
+  M.cfg.world = M.cfg.world or {}
+  local Z = M.cfg.world.zoneMaps or {}
+  M.cfg.world.zoneMaps = Z
+  local n = 0
+  for _, f in ipairs({ "oven_record.old.txt", "oven_record.txt" }) do
+    local fh = io.open(getMudletHomeDir() .. "/" .. f, "r")
+    if fh then
+      for l in fh:lines() do
+        if l:sub(1, 15) == "@gmcp room.info" and l:find('["wilds"]="true"', 1, true) then
+          local zone = l:match('%["zone"%]="([^"]+)"')
+          local co = l:match('%["coord"%]=(%b{})')
+          local name = co and co:match('%["name"%]="([^"]+)"')
+          if zone and name and Z[zone] ~= name then Z[zone] = name; n = n + 1 end
+        end
+      end
+      fh:close()
+    end
+  end
+  M.cfg.zoneMaps1 = true
+  M.saveSettings()
+  return n
+end
+-- time, then fn (when its worldgate lines have been read, or after a few seconds)
+function M.worldgateRefresh(fn)
+  local W = { fn = fn, at = os.time() }
+  M.wgWait = W
+  M.sendOwn("time", false)
+  tempTimer(5, function() if M.wgWait == W then M.wgWait = nil; pcall(fn) end end)
+end
+
 -- which place a room is in, as a key: its area on the map, else its zone (GMCP's, kept in room_xy) - for rooms
 -- the map doesn't have too
 function M.placeKey(room)
@@ -18917,6 +19009,12 @@ function M.planTripOnce(here, targets, used)
     elseif not e.run then
       edge(e.from, e.to, (e.weight or M.TRAVEL_COST) * typical, { kind = "ride", link = e.link })
     end
+  end
+  -- the worldgates, both ways
+  local ga, gb, gAge = M.worldgateCells()
+  if ga then
+    edge(ga, gb, 2 * typical, { kind = "gate", age = gAge })
+    edge(gb, ga, 2 * typical, { kind = "gate", age = gAge })
   end
   -- a run named for a target's town whose end isn't learned yet (a signpost lists "rune"): it goes there - run, and
   -- the trip's planned again wherever it stops (its end is learned then)
@@ -19072,6 +19170,9 @@ function M.planLines(plan, targets)
         or (" to the " .. ((M.signLabel and M.signLabel(leg.to)) or ("#" .. leg.to))))
     elseif k == "whereout" then
       lines[#lines + 1] = "out the way the game gives (where is exit)"
+    elseif k == "gate" then
+      local q = M.worldPos(leg.to)
+      lines[#lines + 1] = string.format("enter gate - the worldgate to %s%s", M.worldgateZone(leg.to) or "?", q and string.format(" [%d, %d]", q.x, q.y) or "")
     elseif k == "unknownin" then
       local q = M.worldPos(leg.from)
       lines[#lines + 1] = string.format("%s's way in isn't known yet: Oven stops at its spot%s - step in and it's learned",
@@ -19147,6 +19248,14 @@ function M.legStart(leg, T)
     local q = M.worldPos(M.mapRoom)
     return M.notifyWalk(string.format("at %s's spot%s - its way in isn't known yet: step in (Oven learns it), then sbo go again",
       M.placeLabel(leg.to) or ("#" .. leg.to), q and string.format(" (%d,%d)", q.x, q.y) or ""))
+  elseif k == "gate" then
+    local _, _, age = M.worldgateCells()
+    if not age or (age > M.WORLDGATE_FRESH and not T.gateChecked) then
+      T.gateChecked = true
+      return M.worldgateRefresh(function() if M.trip == T then T.legs = T.legs - 1; M.tripContinue() end end)
+    end
+    T.gateChecked = nil
+    return M.walkDirs({ "enter gate" }, cont)
   elseif k == "whereout" then
     return M.quietly("where is exit", "where", function(lines)
       if M.trip ~= T then return end
@@ -21918,5 +22027,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport); pcall(M.gateImport); pcall(M.gateCmdFix); pcall(M.terrainImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport); pcall(M.gateImport); pcall(M.gateCmdFix); pcall(M.terrainImport); pcall(M.zoneMapImport) end)
 pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end

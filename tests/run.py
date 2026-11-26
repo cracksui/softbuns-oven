@@ -977,6 +977,28 @@ def go_plans_the_world():
       P = sbo.planTrip(CELL(0, 0), { CELL(38, 22) }, {})""")
     eq([l.kind for l in o.ev("P.legs").values()], ["wild", "run", "wild"], "a room to the signpost, the run, two rooms on")
     eq(o.ev("P.legs[2].name"), "east", "the run")
+    # a worldgate (the game's time command): its two circles joined - the plan goes through it
+    o.lua("""sbo.signposts = function() return {} end; sbo.cfg.runs = { names = {}, ends = {}, endsFixed = 1 }
+      sbo.cfg.world.zoneMaps = { ['Great Alyrian Underground'] = 'Alyrian Underworld' }
+      sbo.worldgateLines({ "Worldgates in Alyria [2, 21], and Alyria [37, 2].", "Worldgates link Rune and the Garbool stronghold." })""")
+    eq((o.ev("sbo.cfg.worldgates.a.x"), o.ev("sbo.cfg.worldgates.b.y"), o.ev("sbo.cfg.worldgates.link")), (2, 2, "Rune and the Garbool stronghold"), "read")
+    eq(o.ev("sbo.zoneMap('Great Alyrian Underground')"), "Alyrian Underworld", "a zone's world map")
+    o.lua("P = sbo.planTrip(CELL(1, 22), { CELL(38, 1) }, {})")
+    eq([l.kind for l in o.ev("P.legs").values()], ["wild", "gate", "wild"], "to the gate, through, on")
+    assert "enter gate - the worldgate to Alyria [37, 2]" in list(o.ev("(sbo.planLines(P))").values()), list(o.ev("(sbo.planLines(P))").values())
+    # going: a reading older than 10 minutes - time first, then planned again; fresh - enter gate
+    o.lua("""SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end
+      sbo.cfg.worldgates.at = os.time() - 700
+      sbo.trip = { targets = { CELL(38, 1) }, used = {}, legs = 0 }; sbo.legStart(P.legs[2], sbo.trip)""")
+    eq(o.ev("SENT[#SENT]"), "time", "looks again first")
+    o.lua("""CONT = 0; TC = sbo.tripContinue; sbo.tripContinue = function() CONT = CONT + 1 end
+      sbo.worldgateLines({ "Worldgates in Alyria [2, 21], and Alyria [37, 2]." })""")
+    eq(o.ev("CONT"), 1, "then planned again")
+    o.lua("sbo.tripContinue = TC; sbo.legStart(P.legs[2], sbo.trip)")
+    eq(o.ev("SENT[#SENT]"), "enter gate", "through it")
+    # one read hours ago: not used
+    o.lua("sbo.cfg.worldgates.at = os.time() - 4 * 3600; P = sbo.planTrip(CELL(1, 22), { CELL(38, 1) }, {})")
+    assert "gate" not in [l.kind for l in o.ev("P.legs").values()], "an old reading isn't trusted"
 
 
 @test
