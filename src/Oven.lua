@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.57"
+M.version = "1.99.58"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -22155,7 +22155,7 @@ M.LEG_GAME = { run = true, recall = true, clan = true, gate = true, whereout = t
 function M.tripSegs()
   local T = M.trip
   if not T or not T.cur then return nil end
-  local out = { { T.curGame and C.title or C.text, T.cur } }
+  local out = { { T.curGame and C.plus or C.text, T.cur } }   -- (green: the game's - as the quest panel's room the game names)
   -- (resting for the leg: it's waiting, not stopped - how far along)
   local R = M.stResting
   if R and R.need then
