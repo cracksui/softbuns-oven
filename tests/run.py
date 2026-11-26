@@ -883,6 +883,7 @@ def go_feature_off_the_map():
       sbo.cfg.map = true; roomExists = function(id) return false end; sbo.mapRoom = 917745
       sbo.areaNow = function() return 'The Iceberg' end
       sbo.dbx("INSERT OR REPLACE INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('The Iceberg', 'exit', 917755, 917700, 'n', 0)")
+      sbo.dbx("INSERT INTO where_features (area, feature) VALUES ('The Iceberg', 'exit')")
       sbo.mapRunNow('exit')""")
     eq(o.ev("SENT[1]"), "where is exit", "asks the game")
     o.lua("""sbo.dbx("INSERT OR REPLACE INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('The Iceberg', 'exit', NULL, 917745, 'e, sw, nw, d, e, s', 1)")
@@ -5409,13 +5410,28 @@ def go_asks_where_is_first():
       SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end; sbo.busyWhy = function() return nil end
       sbo.quietly = function(cmd, kind, fn) SENT[#SENT+1] = cmd; QFN = fn end
       GONE = nil; sbo.goTo = function(t) GONE = t end""")
+    # the town's list not known yet: where is (the list) first
     o.lua("sbo.command('go questmaster')")
-    eq(o.ev("SENT[1]"), "where is questmaster", "the game first")
+    eq(o.ev("SENT[1]"), "where is", "the town's list first")
+    # questmaster on the list: where is questmaster, its path walked
+    o.lua("""for _, f in ipairs({ 'bank', 'questmaster' }) do sbo.dbx("INSERT INTO where_features (area, feature) VALUES ('Towne of Decara', %s)", f) end
+      SENT = {}; QFN()""")
+    eq(o.ev("SENT[1]"), "where is questmaster", "the game's path to the one here")
     o.lua("QFN({ 'You sense that questmaster may be located w, d, s.' })")
     eq((o.ev("SENT[2]"), o.ev("GONE")), ("w", None), "its path walked - not a trip to Maldra Keep")
-    o.lua("sbo.dirWalk = nil; SENT = {}; sbo.command('go questmaster')")
-    o.lua("QFN({ \"That feature isn't recognized. Features that you might be interested include:\", '   bank' })")
-    eq(o.ev("GONE and GONE[1]"), 900, "none here: the one Oven knows of elsewhere")
+    # "quest" is on the list too (the start of the word)
+    o.lua("sbo.dirWalk = nil; SENT = {}; sbo.command('go quest')")
+    eq(o.ev("SENT[1]"), "where is questmaster", "the start of a feature's name")
+    # not on the town's list: not asked - the one Oven knows of elsewhere
+    o.lua("sbo.dbx(\"DELETE FROM where_features WHERE feature = 'questmaster'\"); SENT = {}; GONE = nil; sbo.command('go questmaster')")
+    eq((o.ev("#SENT"), o.ev("GONE and GONE[1]")), (0, 900), "not here: straight to the one elsewhere")
+    # a town with nothing to find ("None around here"): remembered, not asked
+    o.lua("""sbo.dbx("DELETE FROM where_features"); sbo.readWhere = sbo.readWhere
+      local _, f, _, none = sbo.readWhere({ 'Where is what? Features that Towne of Decara might contain that you may be interested in:', '   None around here.', 'When you do find' }, 'x')
+      sbo.cfg.whereNone = { ['Towne of Decara'] = none }
+      SENT = {}; GONE = nil; sbo.command('go questmaster')""")
+    eq((o.ev("#SENT"), o.ev("GONE and GONE[1]")), (0, 900), "a town with nothing: straight to the plan")
+    o.lua("sbo.cfg.whereNone = nil")
     # in the wilds: not asked (they have no features)
     o.lua("SENT = {}; GONE = nil; gmcp.room.info.wilds = 'true'; sbo.command('go questmaster')")
     eq((o.ev("#SENT"), o.ev("GONE and GONE[1]")), (0, 900), "the wilds: straight to the plan")

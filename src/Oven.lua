@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.44"
+M.version = "1.99.45"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11967,26 +11967,31 @@ end
 -- "Where is what? Features that Towne of Rune might contain …:" then the names in columns
 -- "You sense that food may be located s, s, w, w, w, w, w, w, w, w, w, s."
 function M.readWhere(lines, area)
-  local inList, listArea, features = false, nil, {}
+  local inList, listArea, features, none = false, nil, {}, false
   local answers = {}
   for _, l in ipairs(lines) do
     local t = trim(l)
     local a = t:match("^Where is what%? Features that (.-) might contain")
     if a then inList, listArea = true, a
     elseif t:match("^When you do find") then inList = false
-    elseif inList and t:match("^None around here") then inList = false   -- an area with no features
+    elseif inList and t:match("^None around here") then inList = false; none = true   -- an area with no features
     elseif inList and t ~= "" then
       for f in t:gmatch("%S+") do features[#features + 1] = f:lower() end
     end
     local what, dirs = t:match("^You sense that (.-) may be located (.-)%.?$")
     if what then answers[#answers + 1] = { feature = what:lower(), dirs = dirs } end
   end
-  return listArea or area, features, answers
+  return listArea or area, features, answers, none
 end
 
 M.addBlockReader("where_is", "*", function(b)
   local area = M.areaNow()
-  local listArea, features, answers = M.readWhere(b.lines, area)
+  local listArea, features, answers, none = M.readWhere(b.lines, area)
+  -- (a place with nothing to find: remembered, so it isn't asked again - and sbo go knows there's nothing here)
+  if none and listArea then
+    M.cfg.whereNone = M.cfg.whereNone or {}
+    if not M.cfg.whereNone[listArea] then M.cfg.whereNone[listArea] = true; M.saveSettings() end
+  end
   if #features > 0 and listArea then
     for _, f in ipairs(features) do
       M.dbx("INSERT OR IGNORE INTO where_features (area, feature) VALUES (%s, %s)", listArea, f)
@@ -12002,6 +12007,26 @@ M.addBlockReader("where_is", "*", function(b)
     M.noteAuto("where", room, a.feature .. (room and "" or " (directions go off the map)"))
   end
 end)
+
+-- what a place has to find (where is, with nothing after it): its features, false for a place with none, nil when
+-- it hasn't been asked
+function M.whereList(area)
+  if not area or area == "" then return nil end
+  local rows = M.dbRows("SELECT feature FROM where_features WHERE area = %s", area)
+  if #rows > 0 then
+    local out = {}
+    for _, r in ipairs(rows) do out[#out + 1] = r.feature end
+    return out
+  end
+  if (M.cfg.whereNone or {})[area] then return false end
+  return nil
+end
+-- the feature of a place's list that `q` names (the whole word, or the start of one: "quest" is questmaster)
+function M.whereListHas(list, q)
+  q = tostring(q or ""):lower()
+  for _, f in ipairs(list or {}) do if f == q then return f end end
+  for _, f in ipairs(list or {}) do if f:sub(1, #q) == q then return f end end
+end
 
 -- where a feature is, from what Oven has learned: rows of { area, feature, room }
 function M.whereRooms(q)
@@ -12085,6 +12110,7 @@ function M.whereLearnTick()
     M.saveSettings()
   end
   local list = M.dbRows("SELECT feature FROM where_features WHERE area = %s", area)
+  if #list == 0 and (M.cfg.whereNone or {})[area] then return end
   if #list == 0 then
     M.whereAsked = M.whereAsked or {}
     if M.whereAsked[area .. "|"] then return end
@@ -12105,7 +12131,7 @@ end
 
 function M.whereLearnStart()
   if M.whereTimer then killTimer(M.whereTimer) end
-  M.whereTimer = tempTimer(4, function() pcall(M.whereLearnTick) end, true)   -- repeating
+  M.whereTimer = tempTimer(2, function() pcall(M.whereLearnTick) end, true)   -- repeating
 end
 
 -- sbo shops [text]: the shops Oven knows, or where to buy something (cheapest first)
@@ -17564,30 +17590,43 @@ function M.mapRunNow(arg, planned)
   if not M.cfg.map then return say("map following is off - sbo config map on first") end
   local here = M.mapRoom or M.currentRoom()
   if not here then return say("Oven doesn't know where you are yet - move one room first") end
-  -- where is FIRST, in any place (not the wilds - they have no features): the game's own path to it here, walked;
-  -- only when the game doesn't know one here does Oven look further (what it knows of, everywhere)
+  -- where is FIRST, in any place (not the wilds - they have no features). The place's list (where is, asked once
+  -- when you come into it) says what it has: one on it - the game's own path to it, walked; not on it - one Oven
+  -- knows of elsewhere. A place whose list isn't known yet: asked now, then decided
   local info = M.gmcpGet and M.gmcpGet("room.info")
   local inWilds = (type(info) == "table" and tostring(info.wilds) == "true") or M.isWildRoom(here)
-  if not all and not M.goWhereDone and not inWilds and q:match("^[%w%-]+$") and not M.busyWhy(M.lastStatusPrompt) then
-    return M.quietly("where is " .. q, "where", function(lines)
-      local dirs = M.whereDirs(lines, q)
-      if dirs then
-        M.say("where is " .. q .. ": " .. dirs .. " - walking it")
-        return M.walkDirs(dirs, function() M.notifyWalk("arrived") end)
-      end
-      -- (not here: what Oven knows of elsewhere - where is isn't asked again for this)
-      M.goWhereDone = true
-      local ok, err = pcall(M.mapRunNow, arg, planned)
-      M.goWhereDone = nil
-      if not ok then say("couldn't plan: " .. tostring(err)) end
-    end)
+  local area = M.areaNow()
+  local function goOn()
+    M.goWhereDone = true
+    local ok, err = pcall(M.mapRunNow, arg, planned)
+    M.goWhereDone = nil
+    if not ok then say("couldn't plan: " .. tostring(err)) end
+  end
+  local listSaysNo = false
+  if not all and not M.goWhereDone and not inWilds and area and q:match("^[%w%-]+$") and not M.busyWhy(M.lastStatusPrompt) then
+    local list = M.whereList(area)
+    listSaysNo = list == false or (list and not M.whereListHas(list, q)) or false
+    if list == nil then
+      return M.quietly("where is", "where", function() M.mapRunNow(arg, planned) end)
+    end
+    local f = list and M.whereListHas(list, q)
+    if f then
+      return M.quietly("where is " .. f, "where", function(lines)
+        local dirs = M.whereDirs(lines, f)
+        if dirs then
+          M.say("where is " .. f .. ": " .. dirs .. " - walking it")
+          return M.walkDirs(dirs, function() M.notifyWalk("arrived") end)
+        end
+        goOn()
+      end)
+    end
   end
   local targets, fromNotes = M.runTargets(q)
   if #targets == 0 or (not fromNotes and #M.whereAreas(q) > 0) then
     -- a feature the game knows by name in the place you're in (where is food): its path, walked
-    if not all and (#M.whereAreas(q) > 0 or #targets == 0) and q:match("^[%w%-]+$") and M.whereGo(q) then return end
+    if not all and not listSaysNo and not M.goWhereDone and (#M.whereAreas(q) > 0 or #targets == 0) and q:match("^[%w%-]+$") and M.whereGo(q) then return end
   end
-  if #targets == 0 then return say("nothing called '" .. q .. "' that Oven has seen, and no room on the map by that name") end
+  if #targets == 0 then return say("nothing called '" .. q .. "' here (where is doesn't list it) that Oven has seen, and no room on the map by that name") end
   if all then
     -- sbo go all <name>: every match, by the map's walk to it
     local reach = {}
