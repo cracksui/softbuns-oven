@@ -889,6 +889,26 @@ def go_feature_off_the_map():
 
 
 @test
+def go_from_the_wilds_on_the_map():
+    o = Oven()
+    # a room of the wilds that's on the map, not joined to the town on it: a walk to a signpost near, then on from there
+    o.lua("""roomExists = function() return true end; getRoomArea = function(id) return tonumber(id) >= 1000000 and 1 or 2 end
+      getRoomName = function(id) return 'room ' .. id end; getRoomAreaName = function(a) return a == 2 and 'The Towne of New Rigel' or 'Alyria' end
+      sbo.recallCandidates = function() return {} end; sbo.entranceLinks = function() return {} end; sbo.recallReady = function() return false end
+      sbo.wildSignLinks = function() return { { kind = 'wildwalk', land = 500, walkOut = 12, key = 'wildwalk:500' } } end
+      ONCE = {}; sbo.tripPlanOnce = function(from, to, used) ONCE[#ONCE+1] = from
+        if from == 500 then return { segs = { { kind = 'run', name = 'new rigel', from = 500, to = 61834 } }, gold = 0, rides = 0, runs = 1, walked = 0, wild = 0 } end end
+      P = sbo.tripPlan(1649148, 61834, {})""")
+    eq((o.ev("P.rides"), o.ev("P.runs"), o.ev("P.segs[1].link.land")), (1, 1, 500), "walk to the signpost, then the run")
+    # sbo go <name>: a plan with no paid ride is still taken (it was dropped, and "no way there" said)
+    o.lua("""sbo.cfg.map = true; sbo.mapRoom = 1649148; getPath = function() return false end
+      sbo.runTargets = function() return { { id = 61834, rank = 1 } }, true end; sbo.whereAreas = function() return {} end
+      sbo.tripPlan = function() return { segs = {}, gold = 0, rides = 0, runs = 1, walked = 3, wild = 0 } end
+      WENT = nil; sbo.goTo = function(id) WENT = id end; sbo.mapRunNow('new rigel')""")
+    eq(o.ev("WENT"), 61834, "planned, not given up on")
+
+
+@test
 def quest_steps_are_links():
     o = Oven()
     o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end

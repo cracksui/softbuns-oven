@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.24"
+M.version = "1.99.25"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -17498,8 +17498,9 @@ function M.mapRunNow(arg, planned)
   if #reach == 0 then
     for i, t in ipairs(targets) do
       if i > 10 then break end
+      -- (any way the planner finds: a ride, recall, a signpost run, a walk through the wilds - sbo go asks first)
       local okT, plan = pcall(M.tripPlan, here, t.id, {})
-      if okT and plan and plan.rides > 0 then return M.goTo(t.id) end
+      if okT and plan then return M.goTo(t.id) end
     end
     -- say what was found, so it's clear whether it's the place you meant
     local names = {}
@@ -18370,7 +18371,24 @@ function M.tripPlan(here, target, used)
   -- in the clan hall, which isn't on the map: out and recall, then the best trip on from the signpost
   -- anywhere else off the map that Oven can place (a room of the wilds it hasn't mapped): walk toward a signpost
   -- and recall there, or clan gohall and the hall's way out - never "no route"
-  if here and not roomExists(here) and roomExists(target) then
+  if here and not roomExists(here) and roomExists(target) then return M.tripPlanFrom(here, target, used) end
+  local plan = M.tripPlanOnce(here, target, used)
+  if not plan and not ((used or {}).recall or (used or {}).recallHere) then
+    local u = {}
+    for k, v in pairs(used or {}) do u[k] = v end
+    u.recallHere = true
+    plan = M.tripPlanOnce(here, target, u)
+  end
+  -- a room of the wilds that's on the map but not joined to the target on it: what's tried off the map too (a
+  -- walk to a signpost near, a learned way in, recall)
+  if not plan and here and M.isWildRoom(here) and roomExists(target) and not (used or {}).wildwalk then
+    plan = M.tripPlanFrom(here, target, used)
+  end
+  return plan
+end
+-- a trip from a room the map can't walk from: out of the clan hall, or from a spot of the wilds
+function M.tripPlanFrom(here, target, used)
+  do
     local inHall = tonumber(M.cfg.clanHall) == here
     local starts = {}
     if inHall then
@@ -18415,12 +18433,6 @@ function M.tripPlan(here, target, used)
     end
     return best
   end
-  local plan = M.tripPlanOnce(here, target, used)
-  if plan or (used or {}).recall or (used or {}).recallHere then return plan end
-  local u = {}
-  for k, v in pairs(used or {}) do u[k] = v end
-  u.recallHere = true
-  return M.tripPlanOnce(here, target, u)
 end
 function M.tripPlanOnce(here, target, used)
   used = used or {}
