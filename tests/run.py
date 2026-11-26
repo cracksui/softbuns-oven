@@ -903,23 +903,80 @@ def go_feature_off_the_map():
 
 
 @test
-def go_from_the_wilds_on_the_map():
+def go_plans_the_world():
+    import struct
     o = Oven()
-    # a room of the wilds that's on the map, not joined to the town on it: a walk to a signpost near, then on from there
-    o.lua("""roomExists = function() return true end; getRoomArea = function(id) return tonumber(id) >= 1000000 and 1 or 2 end
-      getRoomName = function(id) return 'room ' .. id end; getRoomAreaName = function(a) return a == 2 and 'The Towne of New Rigel' or 'Alyria' end
-      sbo.recallCandidates = function() return {} end; sbo.entranceLinks = function() return {} end; sbo.recallReady = function() return false end
-      sbo.wildSignLinks = function() return { { kind = 'wildwalk', land = 500, walkOut = 12, key = 'wildwalk:500' } } end
-      ONCE = {}; sbo.tripPlanOnce = function(from, to, used) ONCE[#ONCE+1] = from
-        if from == 500 then return { segs = { { kind = 'run', name = 'new rigel', from = 500, to = 61834 } }, gold = 0, rides = 0, runs = 1, walked = 0, wild = 0 } end end
-      P = sbo.tripPlan(1649148, 61834, {})""")
-    eq((o.ev("P.rides"), o.ev("P.runs"), o.ev("P.segs[1].link.land")), (1, 1, 500), "walk to the signpost, then the run")
-    # sbo go <name>: a plan with no paid ride is still taken (it was dropped, and "no way there" said)
-    o.lua("""sbo.cfg.map = true; sbo.mapRoom = 1649148; getPath = function() return false end
-      sbo.runTargets = function() return { { id = 61834, rank = 1 } }, true end; sbo.whereAreas = function() return {} end
-      sbo.tripPlan = function() return { segs = {}, gold = 0, rides = 0, runs = 1, walked = 3, wild = 0 } end
-      WENT = nil; sbo.goTo = function(id) WENT = id end; sbo.mapRunNow('new rigel')""")
-    eq(o.ev("WENT"), 61834, "planned, not given up on")
+    home = o.L.globals().OVEN_TEST_HOME
+    os.makedirs(home + "/oven_maps", exist_ok=True)
+    # a 40 × 24 Alyria: plain, a lake across the middle (x 10-29, y 8-15) with a road round its south side
+    # (y 17), and a wall (x 34, y 0-19) the game refuses moves into
+    W_, H_ = 40, 24
+    PLAIN, LAKE, ROAD, WALL = bytes([0, 160, 0]), bytes([200, 0, 0]), bytes([90, 140, 170]), bytes([200, 0, 200])
+    def colour(x, y):
+        if x == 34 and y < 20: return WALL
+        if 10 <= x <= 29 and 8 <= y <= 15: return LAKE
+        if y == 17 and 5 <= x <= 33: return ROAD
+        return PLAIN
+    rowb = ((W_ * 3 + 3) // 4) * 4
+    body = b"".join(b"".join(colour(x, y) for x in range(W_)).ljust(rowb, b"\0") for y in range(H_ - 1, -1, -1))
+    head = b"BM" + struct.pack("<IHHI", 54 + len(body), 0, 0, 54) + struct.pack("<IiiHHIIiiII", 40, W_, H_, 1, 24, 0, len(body), 2835, 2835, 0, 0)
+    open(home + "/oven_maps/alyria.bmp", "wb").write(head + body)
+    o.lua("""sbo.WORLD_FILES[1].offset = 1000000; roomExists = function(id) return false end; getPath = function() return false end
+      sbo.cfg.world = { offsets = { Alyria = 1000000 }, terrain = { ['00a000'] = 'plain', ['0000c8'] = 'salt water', ['aa8c5a'] = 'paved road' } }
+      function CELL(x, y) return 1000000 + y * 40 + x end
+      sbo.mounted = function() return true end""")
+    # what terrain costs, learned from the mount's stamina on each step ("(Mount: N st)" before the prompt)
+    o.lua("""sbo.cfg.stTerrain = nil
+      local function step(x, y, terr, mst) sbo.mountPending = mst
+        sbo.stTerrainStep({ num = tostring(CELL(x, y)), wilds = 'true', terrain = terr, coord = { name = 'Alyria', x = x, y = y } }) end
+      step(0, 0, 'plain', 500); step(1, 0, 'plain', 498); step(2, 0, 'salt water', 496); step(3, 0, 'plain', 484); step(4, 0, 'paved road', 482)
+      step(5, 0, 'paved road', 481); step(6, 0, 'plain', 480); step(7, 0, 'salt water', 478); step(8, 0, 'plain', 466)""")
+    T = "sbo.cfg.stTerrain.mount"
+    eq((round(o.ev(T + "['plain'].avg")), round(o.ev(T + "['salt water'].avg")), round(o.ev(T + "['paved road'].avg"))), (2, 12, 1), "plain 2, water 12, road 1")
+    # and from the recordings, once: steps you typed
+    open(home + "/oven_record.txt", "w").write("""===== x | cmd=e | room=1
+@gmcp room.info = {["num"]="5",["terrain"]="desert",["wilds"]="true"}
+(Mount: 900st)
+<1hp 1sp 1st>
+===== x | cmd=e | room=5
+@gmcp room.info = {["num"]="6",["terrain"]="desert",["wilds"]="true"}
+(Mount: 896st)
+<1hp 1sp 1st>
+===== x | cmd=e | room=6
+@gmcp room.info = {["num"]="7",["terrain"]="desert",["wilds"]="true"}
+(Mount: 892st)
+<1hp 1sp 1st>
+""")
+    o.lua("sbo.cfg.stTerrain1 = nil")
+    eq(o.ev("sbo.terrainImport()"), 2, "two steps measured")
+    eq(round(o.ev(T + "['desert'].avg")), 4, "desert 4")
+    # across the lake: around it on the road (cheaper than 20 rooms of water at 12)
+    dirs = list(o.ev("sbo.gridLegDirs('Alyria', 5, 12, 33, 12)").values())
+    x, y, wet = 5, 12, 0
+    D = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0), "ne": (1, -1), "nw": (-1, -1), "se": (1, 1), "sw": (-1, 1)}
+    for d in dirs:
+        x, y = x + D[d][0], y + D[d][1]
+        if 10 <= x <= 29 and 8 <= y <= 15: wet += 1
+    eq((x, y), (33, 12), "it gets there")
+    assert wet < 3, (wet, dirs)
+    # a colour the game refused twice, never stood on: left out - the walk goes round the wall's south end
+    o.lua("""sbo.mapRoom = CELL(33, 5); sbo.wrongDir('e'); sbo.mapRoom = CELL(33, 6); sbo.wrongDir('east')""")
+    eq(o.ev("sbo.cfg.world.refused['c800c8']"), 2, "the wall's colour, refused twice")
+    dirs = list(o.ev("sbo.gridLegDirs('Alyria', 32, 2, 37, 2)").values())
+    x, y = 32, 2
+    for d in dirs:
+        x, y = x + D[d][0], y + D[d][1]
+        assert not (x == 34 and y < 20), ("through the wall", dirs)
+    eq((x, y), (37, 2), "round the wall")
+    # the plan: a run from a signpost near you to one near the target, the wilds walked only from there
+    o.lua("""sbo.signposts = function() return { { room = CELL(1, 1), dests = { east = 'east' } } } end
+      sbo.cfg.runs = { names = { east = {} }, ends = { east = CELL(36, 22) }, endsFixed = 1 }
+      sbo.signLabel = function(r) return 'signpost ' .. r end; sbo.signAt = function() return nil end
+      sbo.travelLinks = function() return {} end; sbo.recallReady = function() return false end
+      gmcp.room = { info = { num = tostring(CELL(0, 0)), wilds = 'true' } }
+      P = sbo.planTrip(CELL(0, 0), { CELL(38, 22) }, {})""")
+    eq([l.kind for l in o.ev("P.legs").values()], ["wild", "run", "wild"], "a room to the signpost, the run, two rooms on")
+    eq(o.ev("P.legs[2].name"), "east", "the run")
 
 
 @test
@@ -929,7 +986,7 @@ def go_always_has_a_plan_on_foot():
       AREA = { [10490] = 'Rune', [10463] = 'Rune', [10500] = 'Rune', [61834] = 'Rigel', [61910] = 'Rigel', [61900] = 'Rigel' }
       getRoomArea = function(id) id = tonumber(id) if sbo.isWildRoom(id) then return 'W' end return AREA[id] or 'X' end
       getRoomAreaName = function(a) return a end; getRoomName = function(id) return 'room ' .. id end
-      getPath = function(a, b) if getRoomArea(a) == getRoomArea(b) then speedWalkDir = { 'n', 'n' }; speedWalkPath = { 1, 2 }; return true end return false end
+      getPath = function(a, b) if getRoomArea(a) == getRoomArea(b) and getRoomArea(a) ~= 'W' then speedWalkDir = { 'n', 'n' }; speedWalkPath = { 1, 2 }; return true end return false end
       sbo.worldPos = function(id) id = tonumber(id)
         if id >= 1000000 then local v = id - 1060834 return { map = 'Alyria', x = v % 2300, y = math.floor(v / 2300) } end
         if AREA[id] == 'Rune' then return { map = 'Alyria', x = 705, y = 763 } end
@@ -947,45 +1004,40 @@ def go_always_has_a_plan_on_foot():
     # a recall or ride into the wilds isn't a gate (no exit joins the two rooms)
     eq(o.ev("""sbo.gateNote({ num = '10500', wilds = 'false', exits = { e = '10501' }, coord = { name = 'Alyria', x = 705, y = 763 } },
                    { num = WILD(900, 900), wilds = 'true', exits = { n = WILD(900, 899) }, coord = { name = 'Alyria', x = 900, y = 900 } })"""), None, "not a gate")
-    # from the wilds: walk to the gate, in, on inside
-    o.lua("gmcp.room = { info = { num = WILD(1814, 255), wilds = 'true' } }; P = sbo.footPlan(tonumber(WILD(1814, 255)), 61834)")
-    eq((o.ev("P.segs[1].link.land"), o.ev("P.segs[1].link.enter"), o.ev("P.segs[1].link.sign.x"), o.ev("P.segs[2].n")), (61910, "n", 798, 2), "in at the South Gate")
+    kinds = lambda: [l.kind for l in o.ev("P.legs").values()]
+    # from the wilds: through the wilds to the gate, in, on inside
+    o.lua("gmcp.room = { info = { num = WILD(1814, 255), wilds = 'true' } }; P = sbo.planTrip(tonumber(WILD(1814, 255)), { 61834 }, {})")
+    eq(kinds(), ["wild", "step", "walk"], "the wilds, the gate, inside")
+    eq((o.ev("P.legs[1].to"), o.ev("P.legs[2].cmd"), o.ev("P.legs[2].to")), (int(o.ev("WILD(798, 564)")), "n", 61910), "in at the South Gate")
     # from in a town: out its gate first
-    o.lua("gmcp.room = { info = { num = '10500', wilds = 'false' } }; P = sbo.footPlan(10500, 61834)")
-    eq((o.ev("P.segs[1].link.outRoom"), o.ev("P.segs[1].link.outDir")), (10490, "n"), "out through Rune's gate")
-    lines = list(o.ev("(sbo.tripPlanLines(P, 61834))").values())
-    assert lines[0].startswith("2 steps to room 10490, then n out"), lines
-    # a town with no gate known: the game leads out; a target town with none: to its spot, Oven stops there
-    o.lua("sbo.dbx('DELETE FROM entrances'); sbo.entranceRows = nil; P = sbo.footPlan(10500, 61834)")
-    eq((o.ev("P.segs[1].link.track"), o.ev("P.segs[1].link.unknownIn"), o.ev("P.segs[1].link.sign.x")), (True, True, 801), "always a plan")
-    # going out of a town with no gate known: where is exit, its path walked, then out the exit room's way to the wilds
+    o.lua("gmcp.room = { info = { num = '10500', wilds = 'false' } }; P = sbo.planTrip(10500, { 61834 }, {})")
+    eq(kinds()[:3], ["walk", "step", "wild"], "to Rune's gate, out, the wilds")
+    eq((o.ev("P.legs[1].to"), o.ev("P.legs[2].cmd")), (10490, "n"), "out through Rune's gate")
+    lines = list(o.ev("(sbo.planLines(P))").values())
+    eq(lines[:2], ["2 steps to room 10490", "n out into the wilds"], "said so")
+    # no gate known either end: out the way the game gives; to the town's spot, where Oven stops for you
+    o.lua("sbo.dbx('DELETE FROM entrances'); sbo.entranceRows = nil; P = sbo.planTrip(10500, { 61834 }, {})")
+    eq(kinds(), ["whereout", "wild", "unknownin"], "always a plan")
+    # going: where is exit, its path walked, then the exit room's way into the wilds (GMCP's exits)
     o.lua("""SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end; sbo.mapRoom = 10500; sbo.walk = nil; sbo.quietNext = nil
-      sbo.quietly = function(cmd, kind, fn) SENT[#SENT+1] = cmd; QFN = fn end
+      sbo.quietly = function(cmd, kind, fn) SENT[#SENT+1] = cmd; QFN = fn end; centerview = function() end
       gmcp.room = { info = { num = '10500', wilds = 'false', exits = { w = '10501' }, coord = { name = 'Alyria', x = 705, y = 763 } } }
-      sbo.travelStart({ legs = { { link = P.segs[1].link, walk = 0 } } }, 61834, 1)""")
+      sbo.tripStart({ 61834 })""")
     eq(o.ev("SENT[1]"), "where is exit", "asks the way")
     o.lua("QFN({ 'You sense that exit may be located w.' })")
     eq(o.ev("SENT[2]"), "w", "walks it")
     o.lua("""sbo.mapRoom = 10501; gmcp.room = { info = { num = '10501', wilds = 'false', exits = { s = WILD(704, 764) }, coord = { name = 'Alyria', x = 705, y = 763 } } }
-      centerview = function() end; sbo.mapRoomId = function() return 10501 end; sbo.onRoom()""")
+      sbo.mapRoomId = function() return 10501 end; sbo.onRoom()""")
     eq(o.ev("SENT[3]"), "s", "at the exit: out into the wilds")
-    o.lua("sbo.travel = nil; sbo.dirWalk = nil")
-    # the trip planner takes it when it's cheaper than any ride (here: there's none)
-    o.lua("sbo.tripPlanRides = function() return nil end")
-    eq(o.ev("sbo.tripPlan(10500, 61834, {}).foot"), True, "the plan on foot")
-    # going: inside, a room with an exit into the wilds: out that way; then in the wilds, toward the spot
-    o.lua("""SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end; sbo.mapRoom = 10500; sbo.walk = nil
-      gmcp.room = { info = { num = '10500', wilds = 'false', exits = { w = '10501', e = WILD(700, 763) }, coord = { name = 'Alyria', x = 705, y = 763 } } }
-      sbo.travelStart({ legs = { { link = P.segs[1].link, walk = 0 } } }, 61834, 1)""")
-    eq(o.ev("SENT[1]"), "e", "straight out into the wilds")
-    o.lua("""sbo.mapRoom = tonumber(WILD(800, 547)); gmcp.room = { info = { num = WILD(800, 547), wilds = 'true', coord = { name = 'Alyria', x = 800, y = 547 } } }
-      sbo.travelSignStep()""")
-    assert o.ev("SENT[2]") in ("ne", "n", "e"), o.ev("SENT[2]")
-    # stepped into the town on the way (a gate not known): the trip goes on from there
-    o.lua("""CONT = nil; sbo.trip = { target = 61834 }; sbo.tripContinue = function() CONT = true end
+    # in the wilds, toward the town's spot; stepping into the town on the way: planned on from there
+    o.lua("""sbo.mapRoom = tonumber(WILD(704, 764)); gmcp.room = { info = { num = WILD(704, 764), wilds = 'true', coord = { name = 'Alyria', x = 704, y = 764 } } }
+      sbo.mapRoomId = function() return tonumber(WILD(704, 764)) end; sbo.onRoom()""")
+    assert o.ev("SENT[4]") in ("ne", "n", "e"), o.ev("SENT[4]")
+    o.lua("""CONT = 0; TC = sbo.tripContinue; sbo.tripContinue = function() CONT = CONT + 1 end
       sbo.mapRoom = 61900; gmcp.room = { info = { num = '61900', wilds = 'false', coord = { name = 'Alyria', x = 801, y = 545 } } }
-      sbo.travelSignStep(); runTimers()""")
-    eq((o.ev("sbo.travel"), o.ev("CONT")), (None, True), "in the town: on from here")
+      sbo.mapRoomId = function() return 61900 end; sbo.onRoom()""")
+    eq((o.ev("sbo.dirWalk"), o.ev("CONT")), (None, 1), "in the town: the walk stops, the trip goes on from there")
+    o.lua("sbo.tripContinue = TC; sbo.trip = nil")
     # the gates in the recordings: learned once
     home = o.L.globals().OVEN_TEST_HOME
     open(home + "/oven_record.txt", "w").write(
@@ -1006,7 +1058,9 @@ def go_runs_to_the_signpost_nearest_first():
       AREA = { [61834] = 'Rigel', [917755] = -1, [917745] = -1, [12000] = -1 }
       getRoomArea = function(id) id = tonumber(id) if sbo.isWildRoom(id) then return 'W' end return AREA[id] or 'X' end
       getRoomAreaName = function(a) if a == -1 then return -1 end return a end; getRoomName = function(id) return 'room ' .. id end
-      getPath = function(a, b) if getRoomArea(a) == getRoomArea(b) and getRoomArea(a) ~= 'W' then speedWalkDir = { 'n' }; speedWalkPath = { 1 }; return true end return false end
+      -- (the map's real paths: the iceberg's rooms are joined, and so are Rigel's - not every room of the unnamed area)
+      local ZONE = { [917755] = 'ice', [917745] = 'ice', [61834] = 'rigel', [12000] = 'else' }
+      getPath = function(a, b) if ZONE[tonumber(a)] and ZONE[tonumber(a)] == ZONE[tonumber(b)] then speedWalkDir = { 'n' }; speedWalkPath = { 1 }; return true end return false end
       function WILD(x, y) return 1060834 + y * 2300 + x end
       sbo.worldPos = function(id) id = tonumber(id)
         if id >= 1000000 then local v = id - 1060834 return { map = 'Alyria', x = v % 2300, y = math.floor(v / 2300) } end
@@ -1023,16 +1077,17 @@ def go_runs_to_the_signpost_nearest_first():
       -- a signpost 414 rooms from it, reached by a run from where you are
       HUB = WILD(1630, 552)
       sbo.signpostPoints = function() return { { room = HUB, x = 1630, y = 552, map = 'Alyria' }, { room = WILD(100, 100), x = 100, y = 100, map = 'Alyria' } } end
-      sbo.tripPlanRides = function(from, to) if to == HUB then return { segs = { { kind = 'run', name = 'the north', from = from, to = HUB } }, gold = 0, rides = 0, runs = 1, walked = 0, wild = 0 } end end
+      sbo.tripEdges = function() return { { from = 61834, to = HUB, run = 'the north' } } end
+      sbo.signLabel = function(r) return 'signpost ' .. r end
       gmcp.room = { info = { num = '61834', wilds = 'false' } }""")
     eq((o.ev("select(2, sbo.placeOf(917745))"), o.ev("#sbo.gatesOf(sbo.placeOf(917745))")), ("The Iceberg", 1), "named and matched by zone, not the unnamed area")
     # Mudlet's -1 for the unnamed area is never taken for a name (it crashed the run lookup, and the trip planner with it)
     eq(o.ev("sbo.areaNameOf(-1)"), None, "no name")
     o.lua("sbo.runNames = function() return {} end; sbo.runData = function() return { ends = {} } end")
     o.ev("sbo.runForArea(917745)")
-    o.lua("P = sbo.tripPlan(61834, 917745, {})")
-    eq((o.ev("P.segs[1].kind"), o.ev("P.segs[2].link.sign.x"), o.ev("P.wild")), ("run", 2044, 414), "the run first, then 414 rooms, not 1243")
-    lines = list(o.ev("(sbo.tripPlanLines(P, 917745))").values())
+    o.lua("P = sbo.planTrip(61834, { 917745 }, {})")
+    eq([l.kind for l in o.ev("P.legs").values()][:3], ["run", "wild", "step"], "the run first, then the wilds from its end, in")
+    lines = list(o.ev("(sbo.planLines(P))").values())
     assert lines[0].startswith("run the north") and "The Iceberg" in lines[1], lines
     # found by name (sbo go iceberg), though the map's area has none: its way in
     o.lua("getAreaTable = function() return { Rigel = 7 } end")
@@ -1042,7 +1097,7 @@ def go_runs_to_the_signpost_nearest_first():
     o.lua("""roomExists = function(id) return not sbo.isWildRoom(tonumber(id)) end; sbo.cfg.map = true
       sbo.mapRoom = WILD(2000, 300); WENT = nil; sbo.goTo = function(id) WENT = id end
       ASKED = nil; WHEREGO = sbo.whereGo; sbo.whereGo = function(q) ASKED = q; return true end; sbo.mapRunNow('Iceberg')""")
-    eq((o.ev("WENT"), o.ev("ASKED")), (917755, None), "the plan, not where is iceberg")
+    eq((o.ev("type(WENT) == 'table' and WENT[1]"), o.ev("ASKED")), (917755, None), "the plan, not where is iceberg")
     # nothing by that name, in the wilds: where is isn't asked (the wilds have no features)
     o.lua("""sbo.whereGo = WHEREGO; SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end; sbo.quietly = function(c) SENT[#SENT+1] = c end
       gmcp.room = { info = { num = tostring(WILD(2000, 300)), wilds = 'true' } }; sbo.mapRunNow('zzz')""")
@@ -1059,7 +1114,7 @@ def quest_steps_are_links():
       sbo.questTarget = function(ph) return ROOMS[ph.n], 'abbot' end; sbo.questGuess = sbo.questTarget
       roomExists = function() return true end; getRoomName = function(id) return 'room ' .. id end
       getPath = function() return false end
-      WALKS = {}; sbo.mapWalkTo = function(id) WALKS[#WALKS+1] = id end""")
+      WALKS = {}; sbo.mapWalkTo = function(id) WALKS[#WALKS+1] = id end; sbo.goTo = sbo.mapWalkTo""")
     html_acts = o.ev("function() local h, w, a = sbo.questCardHtml('77', sbo.quests['77']) local out = {} for k, v in pairs(a) do out[#out+1] = k .. '=' .. (v.fold and 'fold' or v.n) end table.sort(out) return table.concat(out, ',') , #h end")
     acts, nlines = html_acts()
     # line 1 the title; 2 step 1 (done); 3 step 2; 4 its "→ room 200  go ▸"
@@ -1603,18 +1658,17 @@ def route_plan_text():
       sbo.signAt = function(r) if r == 10 then return { sign = "a weatherbeaten signpost outside Sigil's north gate" } end
         if r == 20 then return { sign = "a weatherbeaten signpost outside Vospire's east gate" } end end
       sbo.cfg.runs = { names = { vospire = {} }, ends = { vospire = 20 }, endsFixed = 1 }""")
-    lines, sum = o.ev("function() return sbo.routePlanLines(1, 30) end")()
+    lines = o.ev("(sbo.planLines(sbo.planTrip(1, { 30 }, {})))")
     eq(list(lines.values()), ["3 steps to the signpost outside Sigil's north gate", "run vospire to the signpost outside Vospire's east gate",
-        "1 step to Main Street"], "a run, with its signposts, a line each")
-    eq(sum, "about 29 steps instead of 60 on foot", "and what it saves")
+        "about 1 step on to Main Street"], "a run, with its signposts, a line each")
     # printed as numbered lines
-    o.lua("LOGS = {}; sbo.log = function(m) LOGS[#LOGS+1] = m end; sbo.sayPlan('walk:', ({ sbo.routePlanLines(1, 30) })[1], 'about 29')")
+    o.lua("LOGS = {}; sbo.log = function(m) LOGS[#LOGS+1] = m end; sbo.sayPlan('walk:', (sbo.planLines(sbo.planTrip(1, { 30 }, {}))), 'about 29')")
     logs = list(o.ev("LOGS").values())
     assert len(logs) == 5 and "1." in logs[1] and "3." in logs[3], logs
-    # no run worth it: on foot, the areas and the mirror
+    # no run: on foot, the places and the mirror on the way
     o.lua("sbo.cfg.runs.ends = {}; sbo.signposts = function() return {} end")
-    lines, sum = o.ev("function() return sbo.routePlanLines(1, 30) end")()
-    eq(list(lines.values()), ["60 steps on foot to Main Street", "through Sigil → Alyria → enter mirror → Vospire"], "on foot")
+    lines = o.ev("(sbo.planLines(sbo.planTrip(1, { 30 }, {})))")
+    eq(list(lines.values()), ["about 60 steps on to Main Street", "through Sigil → Alyria → enter mirror → Vospire"], "on foot")
 
 
 @test
@@ -1670,6 +1724,8 @@ def travel_by_ganuk():
       sbo.dbx("INSERT INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('Sigil', 'exit', 500, 0, '', 0)")
       sbo.mapRoom = 1""")
     eq((o.ev("#sbo.travelLinks()"), o.ev("sbo.travelLinks()[1].dest")), (2, "Sigil"), "read from the shop list")
+    o.lua("""function ARRIVE(r) sbo.mapRoom = r; gmcp.room = { info = { num = tostring(r), wilds = 'false' } }
+        local w = sbo.walk; sbo.walk = nil; if w and w.thenDo then w.thenDo() end; runTimers() end""")
     o.lua("sbo.goTo(600)")
     text = "\n".join(o.ev("LOGS").values())
     assert "5 steps to room 10636" in text and "Iron Worm to Sigil - 3,625 gold" in text and "about 3 steps on to room 600" in text, text
@@ -1679,16 +1735,18 @@ def travel_by_ganuk():
     eq(o.ev("#SENT"), 0, "n: nothing")
     # y: walk to Ganuk, buy, down, give, land, walk on
     o.lua("sbo.goTo(600); sbo.goAnswer('y'); runTimers()")
-    eq((o.ev("sbo.trip.waitAt"), o.ev("#WALK.dirs")), (10636, 5), "walking to Ganuk")
-    o.lua("sbo.walk = nil; sbo.mapRoom = 10636; sbo.tripOnRoom(10636); runTimers()")
+    eq((o.ev("WALK.path[#WALK.path]"), o.ev("#WALK.dirs")), (10636, 5), "walking to Ganuk")
+    o.lua("ARRIVE(10636)")
     eq(o.ev("SENT[#SENT]"), "shop buy 4", "the token")
     o.feed("Ganuk Jr. takes your payment and hands you a token for Sigil passage.")
     o.lua("runTimers()")
     eq(o.ev("SENT[#SENT]"), "down", "down to Ganuk")
     o.lua("sbo.mapRoom = 10637; sbo.travelOnRoom(10637); runTimers()")
     eq(o.ev("SENT[#SENT]"), "give token ganuk", "the token handed over")
-    o.lua("runTimers(); WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; CHAIN(2, { 499, 500 }, 'n'); sbo.mapRoom = 499; sbo.travelOnRoom(499); runTimers()")
-    eq((o.ev("WALKED"), o.ev("sbo.trip"), o.ev("sbo.travel")), (600, None, None), "landed: on to the room asked for")
+    o.lua("runTimers(); WALK = nil; CHAIN(2, { 499, 500 }, 'n'); sbo.mapRoom = 499; sbo.travelOnRoom(499); runTimers()")
+    eq((o.ev("WALK.path[#WALK.path]"), o.ev("sbo.travel")), (600, None), "landed: on to the room asked for")
+    o.lua("ARRIVE(600)")
+    eq(o.ev("sbo.trip"), None, "arrived")
     # two runs in a row (no ride): the trip runs both
     o.lua("""CHAIN(3, { 3000, 3001 }, 'e'); CHAIN(3, { 3100, 3101 }, 'e'); CHAIN(2, { 3200, 3201 }, 'e')
       for i = 1, 200 do EX[3001][#EX[3001] + 1] = nil end
@@ -1703,13 +1761,14 @@ def travel_by_ganuk():
     o.lua("sbo.goTo(3201)")
     text = "\n".join(o.ev("LOGS").values())
     assert "run mid" in text and "run far" in text and "y to go" in text, text
-    o.lua("sbo.goAnswer('y'); runTimers(); sbo.walk = nil; sbo.mapRoom = 3001; sbo.tripOnRoom(3001); runTimers()")
+    o.lua("sbo.goAnswer('y'); runTimers(); ARRIVE(3001)")
     eq(o.ev("SENT[#SENT]"), "run mid", "the first run")
-    o.lua("sbo.running.started = true; sbo.mapRoom = 3100; sbo.runStopped(true); runTimers(); sbo.walk = nil; sbo.mapRoom = 3101; sbo.tripOnRoom(3101); runTimers()")
+    o.lua("sbo.running.started = true; sbo.mapRoom = 3100; sbo.runStopped(true); runTimers(); ARRIVE(3101)")
     eq(o.ev("SENT[#SENT]"), "run far", "then the second")
-    o.lua("WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; sbo.running.started = true; sbo.mapRoom = 3200; sbo.runStopped(true); runTimers()")
-    eq((o.ev("WALKED"), o.ev("sbo.trip")), (3201, None), "and the last step")
-    o.lua("sbo.mapWalkTo = REALWALK")
+    o.lua("sbo.running.started = true; sbo.mapRoom = 3200; sbo.runStopped(true); runTimers()")
+    eq(o.ev("WALK.path[#WALK.path]"), 3201, "and the last step")
+    o.lua("ARRIVE(3201)")
+    eq(o.ev("sbo.trip"), None, "there")
     # a long walk through the wilds: the wild rooms made dearer and looked again - a run wins where there is one;
     # none: the plan says so (rooms 1,000,000 and up are the wilds)
     o.lua("""getRoomWeight = function(r) return RW and RW[r] or 1 end; setRoomWeight = function(r, w) RW = RW or {}; RW[r] = w end
@@ -1720,8 +1779,7 @@ def travel_by_ganuk():
       sbo.mapRoom = 7000; LOGS = {}; SENT = {}""")
     o.lua("sbo.goTo(7100)")
     text = "\n".join(o.ev("LOGS").values())
-    assert "⚠ 90 rooms of wilds on foot" in text and "y to go" in text, text
-    eq(o.ev("(function() local n, bad = 0, 0 for _, w in pairs(RW or {}) do n = n + 1; if w ~= 1 then bad = bad + 1 end end return n > 50 and bad == 0 end)()"), True, "the wild rooms made dearer for the search - and put back")
+    assert "91 steps" in text and "y to go" in text, text
     # with a signpost run beside that walk: the search takes the run
     o.lua("""CHAIN(3, { 7000, 7050 }, 'e'); CHAIN(3, { 7060, 7100 }, 'e'); AREA[7050], AREA[7060] = 3, 3
       EX[7000] = { { 'e', 7050 }, { 'n', 8100001 } }; AREA[7000], AREA[7100] = 7, 5
@@ -1743,7 +1801,6 @@ def travel_by_ganuk():
     text = "\n".join(o.ev("LOGS").values())
     assert "Iron Worm to Lowangen - 3,625 gold" in text and "4 steps to room 16091" in text and "balloon to New Rigel - 2,500 gold" in text, text
     assert "costs 6,125 gold in all" in text, text
-    eq(o.ev("CALLS"), 2, "one search for the trip (and one for the walk on foot)")
     # the clan hall, walk out until Mandrake Woods' signpost is the nearest, recall, run to Rune
     o.lua("""CHAIN(6, { 384334 }, 'x'); CHAIN(3, { 1900988 }, 'x'); CHAIN(3, { 1500000 }, 'x'); CHAIN(1, { 10490, 10491, 10495 }, 'e')
       sbo.cfg.clanHall = 384334
@@ -1782,7 +1839,9 @@ def travel_by_ganuk():
     o.lua("runTimers(); WALKED = nil; sbo.mapRoom = 1900988; sbo.travelOnRoom(1900988); runTimers()")
     eq(o.ev("SENT[#SENT]"), "run rune", "recalled at the signpost: the run")
     o.lua("sbo.running.started = true; sbo.mapRoom = 10490; sbo.runStopped(true); runTimers()")
-    eq((o.ev("WALKED"), o.ev("sbo.trip")), (10495, None), "the run's over: the last steps on foot")
+    eq(o.ev("WALK.path[#WALK.path]"), 10495, "the run's over: the last steps on foot")
+    o.lua("ARRIVE(10495)")
+    eq(o.ev("sbo.trip"), None, "there")
     # a room of the wilds that isn't on the map (just outside the hall): planned from where it is - never "no route"
     o.lua("""sbo.travel = nil; sbo.trip = nil; POS[1595001] = { map = 'Alyria', x = 567, y = 232 }
       gmcp.room = { info = { num = '1595001', wilds = 'true', coord = { name = 'Alyria', x = 567, y = 232 } } }
@@ -1824,11 +1883,11 @@ def travel_by_ganuk():
       sbo.mapRoom = 1250000; LOGS = {}; SENT = {}""")
     o.lua("sbo.goTo(10495)")
     text = "\n".join(o.ev("LOGS").values())
-    assert "about 5 rooms southeast to the signpost on the Shadow Road" in text and "run rune" in text and "y to go" in text, text
+    assert "about 5 rooms southeast through the wilds to the signpost on the Shadow Road" in text and "run rune" in text and "y to go" in text, text
     o.lua("sbo.goAnswer('y'); runTimers()")
-    eq(o.ev("SENT[#SENT]"), "se", "a room toward the signpost")
+    assert o.ev("SENT[#SENT]") in ("se", "s"), o.ev("SENT[#SENT]")   # (5 rooms either way)
     o.lua("""gmcp.room = { info = { num = '1900988', wilds = 'true', coord = { name = 'Alyria', x = 654, y = 365 } } }
-      sbo.mapRoom = 1900988; sbo.travelOnRoom(1900988); runTimers(); runTimers()""")
+      local w = sbo.dirWalk; sbo.dirWalk = nil; sbo.mapRoom = 1900988; if w and w.done then w.done() end; runTimers(); runTimers()""")
     eq(o.ev("SENT[#SENT]"), "run rune", "there: the run")
     o.lua("sbo.running = nil; sbo.trip = nil; sbo.travel = nil")
     # wilds to wilds (one area, the size of the world): no way on foot between the two shores - the Worm
@@ -2008,18 +2067,18 @@ def go_stays_in_town():
         speedWalkPath = {}; speedWalkDir = {}
         for i, r in ipairs(p) do speedWalkPath[i] = tostring(r); speedWalkDir[i] = "n" end
         return true end
-      WALKS = {}; sbo.mapWalkTo = function(id, onFoot) WALKS[#WALKS+1] = { id, onFoot or false } end
+      WALKS = {}; sbo.tripStart = function(t) WALKS[#WALKS+1] = { t[1], sbo.goAsk == nil } end
       gmcp.room = { info = { wilds = "false" } }""")
     walks = lambda: [tuple(w.values()) for w in o.ev("WALKS").values()]
-    # a weaker match in town beats a better one outside it
+    # a weaker match in town beats a better one outside it: walked at once
     o.lua("""sbo.runTargets = function() return { { id = 9, why = "[Trainer] outside", rank = 1 }, { id = 3, why = "a trainer in town", rank = 2 } }, true end
       sbo.mapRun('trainer')""")
-    eq(walks(), [(3, True)], "the one in town, walked (no signpost run)")
+    eq(walks(), [(3, True)], "the one in town, walked (no question)")
     # only outside: asked first
     o.lua("WALKS = {}; sbo.goTo(9)")
     assert walks() == [] and "y to go, n to stay" in o.ev("SAYS[#SAYS]"), o.ev("SAYS[#SAYS]")
     o.lua("sbo.onSend(nil, 'y'); runTimers()")
-    eq((walks(), o.ev("DENIED")), ([(9, False)], 1), "y: goes, and isn't sent to the game")
+    eq((walks(), o.ev("DENIED")), ([(9, True)], 1), "y: goes, and isn't sent to the game")
     # n: stays
     o.lua("WALKS = {}; sbo.goTo(5); sbo.onSend(nil, 'n'); runTimers()")
     eq((walks(), o.ev("DENIED")), ([], 2), "n: stays (5 is in town, but the way there leaves it)")
@@ -2028,7 +2087,7 @@ def go_stays_in_town():
     eq((walks(), o.ev("DENIED")), ([], 2), "another command: no walk, nothing held back")
     # already in the wilds: no question
     o.lua("gmcp.room.info.wilds = 'true'; sbo.goTo(9)")
-    eq(walks(), [(9, False)], "in the wilds: just goes")
+    eq(walks(), [(9, True)], "in the wilds: just goes")
 
 
 @test
@@ -2768,21 +2827,21 @@ def signpost_runs():
     eq(o.ev("sbo.runData().ends.rune"), 250, "the run's end is learned")
     assert not o.ev("sbo.runData().ends.towerofart"), "not one that wasn't run"
     # a long walk now uses it: to the signpost, run, the last few steps
-    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(255); PUMP()')
+    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(255); sbo.goAnswer("y"); PUMP()')
     eq(list(o.ev("SENT").values()), ["e"] * 23 + ["run rune"] + ["e"] * 5, "walk to the signpost, run, walk")
     eq(o.ev("HERE"), 255, "arrived")
     assert any("walk arrived" in m for m in o.ev("SAYS").values())
     # a short one doesn't
-    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(110); PUMP()')
+    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(110); sbo.goAnswer("y"); PUMP()')
     assert "run rune" not in list(o.ev("SENT").values()), "short walks stay on foot"
     # sbo run <name>: goes to where that run ends
-    o.lua('AT(140); SENT = {}; sbo.command("run rune"); PUMP()')
+    o.lua('AT(140); SENT = {}; sbo.command("run rune"); sbo.goAnswer("y"); PUMP()')
     eq(o.ev("HERE"), 250, "sbo run rune: to the signpost, then the run")
     eq(list(o.ev("SENT").values())[0], "w", "back to the signpost first")
     # the game refuses: walks instead
-    o.lua('SIGNS[120] = nil; AT(2); SENT = {}; sbo.mapWalkTo(255); PUMP()')
+    o.lua('SIGNS[120] = nil; AT(2); SENT = {}; sbo.mapWalkTo(255); sbo.goAnswer("y"); PUMP()')
     eq(o.ev("HERE"), 255, "fell back to walking")
-    assert any("walking instead" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
+    assert any("another way from here" in m for m in o.ev("SAYS").values()), list(o.ev("SAYS").values())
     o.lua('sbo.command("signposts")')
 
 
@@ -2811,7 +2870,7 @@ def mounted_run():
       end
       sbo.dbx("INSERT OR REPLACE INTO signposts (room, sign, dests, exact, last) VALUES (120, 'a post', 'rune=east', 1, 1)")
     """)
-    o.lua("AT(120); SENT = {}; sbo.mapWalkTo(255); PUMP1()")
+    o.lua("AT(120); SENT = {}; sbo.mapWalkTo(255); local A = sbo.goAsk; sbo.goAsk = nil; sbo.tripStart(A.id); PUMP1()")
     eq(list(o.ev("SENT").values()), ["run rune"], "runs from the signpost")
     # the run's 6-second check fires while the gryphon is still going
     o.lua("for id, t in pairs(timers) do if t[1] == 6 then timers[id] = nil; t[2]() end end")
@@ -2841,7 +2900,7 @@ def run_stops_at_a_signpost_on_the_way():
       end
       sbo.dbx("INSERT OR REPLACE INTO signposts (room, sign, dests, exact, last) VALUES (120, 'a post', 'rune=east', 1, 1)")
     """)
-    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(255); PUMP()')
+    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(255); sbo.goAnswer("y"); PUMP()')
     sent = list(o.ev("SENT").values())
     eq(sent.count("run rune"), 2, f"ran on from the signpost on the way: {sent}")
     eq(o.ev("HERE"), 255, "arrived")
@@ -2878,7 +2937,7 @@ def signpost_learning():
     eq(len(o.ev("SENT")), 0, "read once")
     # a run whose end isn't known: to the town the target is in, then walk on - and its end is learned
     assert not o.ev("sbo.runData().ends.rune")
-    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(255); PUMP()')
+    o.lua('AT(1); SENT = {}; sbo.mapWalkTo(255); sbo.goAnswer("y"); PUMP()')
     eq(list(o.ev("SENT").values()), ["e"] * 53 + ["run rune"] + ["e"] * 5, "walk to the signpost, run to the town's name, walk")
     eq(o.ev("HERE"), 255, "arrived")
     eq(o.ev("sbo.runData().ends.rune"), 250, "and learned where it ends")
@@ -3256,12 +3315,12 @@ def ways_learned():
     row = o.rows("SELECT wild, room, cmd, x, y FROM entrances WHERE room = 200")[0]
     eq((row["wild"], row["room"], row["cmd"], row["x"], row["y"]), (wild, 200, "n", 1328, 686), "the way in")
     near = 1060834 + 690 * 2300 + 1330
-    o.lua(f"LINKS = sbo.entranceLinks({near}, 200)")
-    eq(o.ev("LINKS[1] and LINKS[1].land"), 200, "offered to the planner")
-    eq(o.ev("LINKS[1].enter"), "n", "with the step in")
-    # refused in the wilds: remembered, and the next step goes around it
+    o.lua("sbo.entranceRows = nil; G = nil; for _, g in ipairs(sbo.allGates()) do if g.room == 200 then G = g end end")
+    eq((o.ev("G.wild"), o.ev("G.cmd")), (wild, "n"), "a gate for the planner, with the step in")
+    # refused in the wilds (GMCP room.wrongdir): remembered, and the next step goes around it
     o.lua(f"AT({near}, true); sbo.onSend(nil, 'n')")
-    o.feed("You cannot move in that direction.")
+    o.set_gmcp("room.wrongdir", '{ wrongdir = "n" }')
+    o.lua("handlers['gmcp.room.wrongdir']('gmcp.room.wrongdir')")
     eq(o.ev(f"sbo.wildBlocked({near}, 'n')"), True, "remembered")
     o.lua("T = {}")
     d = o.ev(f"sbo.wildStep({near}, 1330, 690, 1330, 600, T)")
@@ -3272,18 +3331,17 @@ def ways_learned():
     eq(o.ev("LOCKED['100n']"), True, "locked on the map")
     o.lua("AT(100); sbo.onSend(nil, 'n'); AT(101)")
     eq(o.ev("LOCKED['100n']"), None, "been through it: open again")
-    # a trip through a learned way in: to the spot, then the step in, then on
-    o.lua(f"""SENT = {{}}; send = function(c) SENT[#SENT+1] = c end
-      sbo.trip = {{ target = 200, used = {{}}, legs = 1 }}; CONT = 0; sbo.tripContinue = function() CONT = CONT + 1 end
+    # a trip through a learned way in: to the gate's cell of the wilds, the step in, there
+    o.lua(f"""SENT = {{}}; send = function(c) SENT[#SENT+1] = c end; getPath = getPath or function() return false end
       gmcp.room = {{ info = {{ num = "{wild + 1}", wilds = "true", coord = {{ x = 1329, y = 686, name = "Alyria" }} }} }}; sbo.mapRoom = {wild + 1}
-      sbo.travelStart({{ legs = {{ {{ link = LINKS[1] }} }} }}, 200, 1)""")
-    eq(o.ev("SENT[#SENT]"), "w", "toward the spot")
+      sbo.tripStart({{ 200 }})""")
+    eq(o.ev("SENT[#SENT]"), "w", "toward the gate")
     o.lua(f"""gmcp.room = {{ info = {{ num = "{wild}", wilds = "true", coord = {{ x = 1328, y = 686, name = "Alyria" }} }} }}; sbo.mapRoom = {wild}
-      sbo.travelSignStep()""")
-    eq(o.ev("SENT[#SENT]"), "n", "at the spot: the step in")
-    o.lua("gmcp.room = { info = { num = '200', wilds = 'false' } }; sbo.mapRoom = 200; sbo.travelOnRoom(200)")
-    o.L.execute("runTimers()")
-    eq(o.ev("CONT"), 1, "inside: the trip goes on")
+      local w = sbo.dirWalk; sbo.dirWalk = nil; w.done()""")
+    eq(o.ev("SENT[#SENT]"), "n", "at the gate: the step in")
+    o.lua("""gmcp.room = { info = { num = '200', wilds = 'false' } }; sbo.mapRoom = 200
+      local w = sbo.dirWalk; sbo.dirWalk = nil; w.done()""")
+    eq(o.ev("sbo.trip"), None, "inside: there")
     # a step that goes nowhere (Kalied's riddle), then a command that takes you where it leads: the direction
     # is locked on the map, so routes use the command
     o.lua("""EXITS = { [100] = { east = 101 } }; getRoomExits = function(r) return EXITS[r] or {} end
@@ -3369,9 +3427,9 @@ def trip_stamina():
     # a run of ~200 rooms needs ~480; with 100: rest first
     o.lua("""sbo.stRunRooms = function() return 200 end
       RAN = nil; sbo.runStart = function(n, t) RAN = n end
-      sbo.trip = { target = 5, used = {}, legs = 1, ride = { kind = 'run', name = 'sigil', from = 1, to = 2 } }""")
+      sbo.trip = { target = 5, used = {}, legs = 1 }""")
     o.set_gmcp("char.vitals", "{ st = 100 }")
-    o.lua("SENT = {}; sbo.tripRide()")
+    o.lua("SENT = {}; RUNLEG = { kind = 'run', name = 'sigil', from = 1, to = 2, rooms = sbo.stRunRooms() }; sbo.legStart(RUNLEG, sbo.trip)")
     eq(list(o.ev("SENT").values()), ["rest"], "short: rest")
     eq(o.ev("RAN"), None, "not run yet")
     o.set_gmcp("char.vitals", "{ st = 600 }")
@@ -3379,18 +3437,18 @@ def trip_stamina():
     eq(list(o.ev("SENT").values()), ["rest", "stand"], "enough: stand")
     eq(o.ev("RAN"), "sigil", "and run")
     # enough already: straight on
-    o.lua("RAN = nil; SENT = {}; sbo.trip = { target = 5, used = {}, legs = 1, ride = { kind = 'run', name = 'sigil', from = 1, to = 2 } }; sbo.tripRide()")
+    o.lua("RAN = nil; SENT = {}; sbo.trip = { target = 5, used = {}, legs = 1 }; sbo.legStart({ kind = 'run', name = 'sigil', from = 1, to = 2, rooms = sbo.stRunRooms() }, sbo.trip)")
     eq((o.ev("RAN"), len(o.ev("SENT") or {})), ("sigil", 0), "no rest needed")
     # more than the run needs than you have, but over half your stamina: go (a run that runs out stops, and rests there)
-    o.lua("sbo.stRunRooms = function() return 650 end; RAN = nil; SENT = {}; sbo.trip = { target = 5, used = {}, legs = 1, ride = { kind = 'run', name = 'sigil', from = 1, to = 2 } }")
+    o.lua("sbo.stRunRooms = function() return 650 end; RAN = nil; SENT = {}; sbo.trip = { target = 5, used = {}, legs = 1 }")
     o.set_gmcp("char.vitals", "{ st = 700 }")
-    o.lua("sbo.tripRide()")
+    o.lua("sbo.legStart({ kind = 'run', name = 'sigil', from = 1, to = 2, rooms = sbo.stRunRooms() }, sbo.trip)")
     eq((o.ev("RAN"), len(o.ev("SENT") or {})), ("sigil", 0), "700 of 1000: no rest first")
     o.lua("sbo.stRunRooms = function() return 200 end")
     # not learned yet: no check
     o.lua("sbo.cfg.stCost = nil; RAN = nil; SENT = {}")
     o.set_gmcp("char.vitals", "{ st = 10 }")
-    o.lua("sbo.trip = { target = 5, used = {}, legs = 1, ride = { kind = 'run', name = 'sigil', from = 1, to = 2 } }; sbo.tripRide()")
+    o.lua("sbo.trip = { target = 5, used = {}, legs = 1 }; sbo.legStart({ kind = 'run', name = 'sigil', from = 1, to = 2, rooms = sbo.stRunRooms() }, sbo.trip)")
     eq(o.ev("RAN"), "sigil", "costs unknown: goes")
     # cut short by exhaustion mid-run: rest, then plan on
     o.lua("""CONT = 0; sbo.tripContinue = function() CONT = CONT + 1 end; SENT = {}
@@ -3531,8 +3589,9 @@ def map_town_by_name():
     eq(o.ev("SHOWN"), 701, "sbo map vir shows the town")
     o.lua('SAYS = {}; sbo.command("map on")')
     assert any("following you" in x for x in o.ev("SAYS").values()), "sbo map on still works"
-    o.lua('sbo.mapRoom = 150; sbo.goTo = function(id) GONE = id end; sbo.command("go vir")')
-    eq(o.ev("GONE"), 702, "sbo go vir: the nearest way in")
+    o.lua('sbo.mapRoom = 150; GOTO = sbo.goTo; sbo.goTo = function(id) GONE = id end; sbo.command("go vir")')
+    eq(sorted(o.ev("GONE").values()), [701, 702], "sbo go vir: Vir's ways in (not the shop)")
+    eq(o.ev("sbo.planTrip(150, GONE, {}).legs[1].to"), 702, "the nearest of them")
 
 
 @test
@@ -3671,9 +3730,10 @@ def where_is():
     o.lua('send("where is bank")')
     eq([r.get("room") for r in o.rows("SELECT room, dirs FROM where_rooms WHERE feature = 'bank'")], [None], "off the map: no room, directions kept")
     # sbo go food: from anywhere, the room it learned
-    o.lua("WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; AT(3); SENT = {}")
+    o.lua("WALKED = nil; TS = sbo.tripStart; sbo.tripStart = function(t) WALKED = t[1] end; AT(3); SENT = {}")
     o.lua('sbo.command("go food")')
     eq(o.ev("WALKED"), 5, "sbo go food")
+    o.lua("sbo.tripStart = TS")
     # something Oven hasn't found yet but the area has: it asks the game
     o.lua('SENT = {}; sbo.command("go questmaster")')
     assert "where is questmaster" in list(o.ev("SENT").values()), list(o.ev("SENT").values())
@@ -3895,9 +3955,9 @@ def item_search():
     eq(o.ev("sbo.cmdPick(sbo.CMDS, 'i').name"), "inspector", "i stays inspector")
     eq(o.ev("sbo.cmdPick(sbo.CMDS, 'it').name"), "item", "it is item")
     # sbo go cheese: the nearest shop that sells it
-    o.lua("WALKED = nil; sbo.mapWalkTo = function(id) WALKED = id end; sbo.cfg.map = true; sbo.log = function() end")
+    o.lua("WALKED = nil; sbo.goTo = function(id) WALKED = id end; sbo.cfg.map = true; sbo.log = function() end")
     o.lua('sbo.command("go cheese")')
-    eq(o.ev("WALKED"), 10468, "sbo go cheese")
+    eq(o.ev("sbo.planTrip(10500, WALKED, {}).legs[1].to"), 10468, "sbo go cheese: the nearest shop")
 
 
 @test

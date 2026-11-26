@@ -133,6 +133,24 @@ hasn't found yet, it asks the game (walking to the right area first, if another 
 you're idle it also learns each area's features by itself, one question at a time
 (`sbo config map.wherelearn off` to stop).
 
+## Getting around (`sbo go`)
+
+One planner works out every trip (`sbo go`, the go ▸ links, `sbo quest go`, a double-click on the map): the
+way that costs the least stamina - your mount's while you ride. It joins up everything Oven knows:
+
+- **places** (towns, buildings): their rooms and exits on the map, special exits too (`enter portal`,
+  `sayto kalied e`), and the game's `where is` for a feature in the place you're in (its path, walked);
+- **the wilds**: every room of the world map, walked by its terrain - what each terrain costs is learned from
+  your stamina as you go (a road a fraction of salt water), and a move the game refuses is walked around after;
+- **gates**: where a place and the wilds meet, learned every time you cross (however you moved);
+- **signpost runs** (the cheapest way across the wilds), **rides** (Ganuk, balloons, passages), **recall**
+  and **clan gohall**.
+
+A walk inside the place you're in just goes; anything more is shown first, a step a line, with the stamina
+it costs (and the gold, and whether you carry enough) - `y` goes, `n` stays. A place whose way in Oven
+hasn't learned yet: it takes you to its spot on the world map and stops there for you to step in (that's
+learned, and next time it goes on in). Long walks rest first when your stamina is short.
+
 ## Comparing gear
 
 Every item you look at is remembered (it survives logging out). Items, loot, kills, deaths and what's
@@ -196,9 +214,9 @@ well as `sbo`.
 
 ```
 sbo                          the menu
-sbo go {what}                walk/run to a trainer, shop, quest, NPC, room #,
-                             bookmark, or a "where is" feature (food, bank…);
-                             signpost runs when quicker
+sbo go {what}                to a trainer, shop, quest, NPC, place, room #,
+                             bookmark, or a "where is" feature (food, bank…):
+                             the way that costs the least stamina (below)
 sbo stop                     stop a walk, or anything Oven is doing for you
 sbo item {text}              find an item: what you have (and in which bag), what you've
                              looked at, shops that sell it (nearest first, [go]),
