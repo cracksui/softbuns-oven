@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.48"
+M.version = "1.99.49"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -21916,34 +21916,23 @@ function M.helpProgressMark()
   local f = math.min(1, (HF.done or 0) / HF.total)
   return FILL[math.max(1, math.ceil(f * #FILL))]
 end
--- a leg in a few words, for the bar: "run newrigel", "walk → Bank", "recall → Sigil"
+-- the leg you're on, for the bar: where it starts -> where it ends ("Rune → New Rigel")
 function M.legShort(leg)
-  local k = leg.kind
-  local function name(id)
-    local n = M.placeLabel(id) or select(2, M.placeOf(id)) or (roomExists(id) and getRoomName(id)) or ""
+  local function name(id, room)
+    local n = (not room and (M.placeLabel(id) or select(2, M.placeOf(id)))) or (roomExists(id) and getRoomName(id)) or ""
     if n == "" then local q = M.worldPos(id); n = q and string.format("%d,%d", q.x, q.y) or ("#" .. id) end
+    if ulen(n) > 20 then n = M.usub(n, 1, 19) .. "…" end
     return n
   end
-  if k == "run" then return "run " .. leg.name
-  elseif k == "walk" then return "walk → " .. name(leg.to)
-  elseif k == "wild" then return "wilds → " .. name(leg.to)
-  elseif k == "step" then return leg.cmd
-  elseif k == "recall" then return "recall → " .. tostring(leg.name)
-  elseif k == "clan" then return "clan gohall"
-  elseif k == "gate" then return "gate → " .. (M.worldgateZone(leg.to) or "?")
-  elseif k == "whereout" then return "where is exit"
-  elseif k == "ride" then local L = leg.link or {}; return tostring(L.kind or "ride"):lower() .. " → " .. tostring(L.dest) end
-  return k
+  local a, b = name(leg.from), name(leg.to)
+  if a == b then a, b = name(leg.from, true), name(leg.to, true) end   -- (within a place: its rooms)
+  return a .. " → " .. b
 end
 
--- on sbo go: the leg you're on, at the right of the prompt bar ("go 2/5 · run newrigel")
 function M.tripSegs()
   local T = M.trip
   if not T or not T.cur then return nil end
-  local txt = T.cur
-  if ulen(txt) > 28 then txt = M.usub(txt, 1, 27) .. "…" end
-  return { { C.key, "go " }, { C.num, string.format("%d/%d", (T.done or 0) + 1, math.max(T.total or 1, (T.done or 0) + 1)) },
-    { C.dim, " · " }, { C.text, txt }, { C.dim, "   " } }
+  return { { C.text, T.cur }, { C.dim, "   " } }
 end
 
 function M.versionTag()
