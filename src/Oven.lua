@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.51"
+M.version = "1.99.52"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -15708,6 +15708,7 @@ end
 function M.worldDrawNow()
   local lab = M.worldLabel
   if not lab or M.mapMode ~= "world" then return end
+  pcall(M.drawMapHeader)   -- (the map on show, or a find on it)
   local v = V()
   local here = M.worldHere
   -- following you: the map you're on (through a portal to the Faerie Plane, that one); else the one you chose (⇅)
@@ -16260,12 +16261,38 @@ function M.mapZoom(factor)
 end
 
 -- room name · area · #number in the header
+-- the room the map is showing, when it isn't the one you're in (a search's find, a room shown): its id and the
+-- map it's on (the world map's view: that map's name), else nil
+function M.mapShownOther()
+  if M.mapMode == "world" then
+    local v = M.worldV or {}
+    local here = M.worldHere
+    if v.follow ~= false or not v.map then return nil end
+    -- (the find on the map on show; else just that map)
+    for _, id in ipairs(M.worldFound or {}) do
+      local p = M.worldPos(id)
+      if p and p.map == v.map then return id, v.map end
+    end
+    if here and here.map == v.map then return nil end
+    return false, v.map
+  end
+  local id = M.mapCenter
+  if id and id ~= M.mapRoom and roomExists(id) then return id end
+end
 function M.drawMapHeader()
   if not M.mapRoomLabel then return end
   local info = type(gmcp) == "table" and gmcp.room and gmcp.room.info or {}
   local id = tonumber(info.num) or M.mapRoom
   local name = info.name or (id and roomExists(id) and getRoomName(id)) or "?"
   local area = info.zone or ""
+  local okO, other, mapName = pcall(M.mapShownOther)
+  if okO and other ~= nil then
+    -- (somewhere else on show: that room, its area - and on the world map, the map)
+    id = other or nil
+    name = (other and roomExists(other) and getRoomName(other)) or (other and ("#" .. other)) or mapName
+    area = (other and roomExists(other) and M.areaNameOf(getRoomArea(other))) or ""
+    if mapName and other then area = (area ~= "" and area ~= mapName) and (area .. "  ·  " .. mapName) or mapName end
+  end
   local font = (pcall(getFont) and getFont()) or "monospace"
   local esc = function(x) return (tostring(x):gsub("&", "&amp;"):gsub("<", "&lt;")) end
   M.mapRoomLabel:echo(string.format(
@@ -16284,6 +16311,7 @@ function M.centerOn(id)
   M.mapCenter = id
   centerview(id)
   if M.mapSearchFollow then M.mapSearchFollow() end
+  pcall(M.drawMapHeader)
 end
 
 -- the room you're in, for the kill / loot / death records

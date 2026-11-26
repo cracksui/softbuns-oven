@@ -5411,6 +5411,29 @@ def trips_dont_loop():
 
 
 @test
+def map_header_shows_the_find():
+    # a search shows a room elsewhere: the map's header names that room and its area (the world map: the map it's on),
+    # not the room you're in; back on you, yours again
+    o = Oven()
+    o.lua("""MAPSTUB({ [1] = {}, [2] = {} }); getRoomArea = function(id) return id end
+      getRoomAreaName = function(a) return a == 1 and 'Rune' or 'New Rigel' end; getRoomName = function(id) return id == 1 and 'Square' or 'Slake Pen' end
+      centerview = function() end; sbo.mapRoom = 1; gmcp.room = { info = { num = '1', name = 'Square', zone = 'Rune' } }
+      HEAD = ''; sbo.mapRoomLabel = { echo = function(_, t) HEAD = t:gsub('<[^>]*>', '') end }""")
+    o.lua("sbo.mapMode = 'local'; sbo.centerOn(2)")
+    eq(o.ev("HEAD"), "Slake Pen  ·  New Rigel  ·  #2", "the find, in its area")
+    o.lua("sbo.centerOn(1)")
+    eq(o.ev("HEAD"), "Square  ·  Rune  ·  #1", "back on you")
+    o.lua("""sbo.mapMode = 'world'; sbo.worldHere = { map = 'Alyria', x = 1, y = 1 }
+      sbo.worldPos = function(id) return id == 2 and { map = 'Alyrian Underworld', x = 5, y = 5 } or { map = 'Alyria', x = 1, y = 1 } end
+      sbo.worldV = { follow = false, map = 'Alyrian Underworld' }; sbo.worldFound = { 2 }; sbo.drawMapHeader()""")
+    eq(o.ev("HEAD"), "Slake Pen  ·  New Rigel  ·  Alyrian Underworld  ·  #2", "on the world map: the map it's on")
+    o.lua("sbo.worldFound = nil; sbo.drawMapHeader()")
+    eq(o.ev("HEAD"), "Alyrian Underworld", "another map on show: its name")
+    o.lua("sbo.worldV = { follow = true, map = 'Alyria' }; sbo.drawMapHeader()")
+    eq(o.ev("HEAD"), "Square  ·  Rune  ·  #1", "following you: yours")
+
+
+@test
 def trip_leg_on_the_bar():
     # sbo go: the leg you're on shows at the right of the prompt bar, numbered, and goes when the trip's over
     o = Oven()
