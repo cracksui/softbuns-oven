@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.30"
+M.version = "1.99.31"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4188,7 +4188,7 @@ function M.questGuess(ph, qid)
   local function inArea(id)
     if not area then return true end
     local a = getRoomArea(id)
-    local an = a and getRoomAreaName(a)
+    local an = a and M.areaNameOf(a)
     return an and an:lower():find(area, 1, true) ~= nil
   end
   for _, name in ipairs(M.questStepNames(ph.text)) do
@@ -12016,6 +12016,9 @@ end
 -- area), then walk there; in another area that has it, walk to that area first and ask on arrival
 function M.whereGo(q)
   q = trim(q or ""):lower()
+  -- the wilds have no features (where is there: "Features that Alyria might contain" and none) - never asked there
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  if (type(info) == "table" and tostring(info.wilds) == "true") or M.isWildRoom(M.mapRoom) then return false end
   local area = M.areaNow()
   local areas = M.whereAreas(q)
   local hereHas = false
@@ -12106,7 +12109,7 @@ function M.shopLines(width, q)
   local function where(room)
     local nm = (room and roomExists(room) and getRoomName(room)) or "?"
     local area = room and roomExists(room) and getRoomArea(room)
-    area = area and getRoomAreaName(area) or ""
+    area = area and M.areaNameOf(area) or ""
     return nm .. (area ~= "" and (" · " .. area) or "") .. "  #" .. tostring(room)
   end
   local function walkLink(room, label)
@@ -13493,7 +13496,7 @@ function M.friendWhere(n, walk)
     if not roomExists(room) then return M.say(who .. " is in room #" .. room .. ", which isn't on your map") end
     local name = getRoomName(room) or ("#" .. room)
     local a = getRoomArea(room)
-    local where = name .. ((a and getRoomAreaName(a)) and (" (" .. getRoomAreaName(a) .. ")") or "")
+    local where = name .. ((a and M.areaNameOf(a)) and (" (" .. M.areaNameOf(a) .. ")") or "")
     if M.mapRoom == room then return M.say(who .. " is right here") end
     if walk then
       M.say(who .. " is at " .. where .. " - on the way")
@@ -16230,7 +16233,7 @@ function M.roomCardLines(id)
   local function row(...) out[#out + 1] = { ... } end
   local name = getRoomName(id) or "?"
   local area = getRoomArea(id)
-  local areaName = area and getRoomAreaName(area) or ""
+  local areaName = area and M.areaNameOf(area) or ""
   local title = { { C.item, name }, { C.dim, "  #" .. id } }
   local fl = M.roomFlagsOf(id)
   if fl and fl.tags and #fl.tags > 0 then
@@ -16683,7 +16686,7 @@ function M.targetsShow(arg)
     id = tonumber(id)
     if not id or id == 0 or not roomExists(id) then return "room not on the map" end
     local a = getRoomArea(id)
-    return (getRoomName(id) or ("#" .. id)) .. " · " .. (a and getRoomAreaName(a) or "?")
+    return (getRoomName(id) or ("#" .. id)) .. " · " .. (a and M.areaNameOf(a) or "?")
   end
   local KIND = { mob = "mob", worn = "worn", shop = "shop" }
   for _, r in ipairs(rows) do
@@ -16723,7 +16726,7 @@ function M.mobsShow(q)
     list = kept
   end
   local width = M.cfg.window and M.viewCols() or 80
-  local areaName = hereArea and getRoomAreaName(hereArea) or "?"
+  local areaName = hereArea and M.areaNameOf(hereArea) or "?"
   local title = q == "" and ("Mobs seen in " .. areaName) or ("Mobs: " .. q)
   local out = { header("map", "", width, string.format("%s  (%d)", title, #list)) }
   local links = {}
@@ -16754,7 +16757,7 @@ function M.mobsShow(q)
     if bestN then info[#info + 1] = { C.dim, string.format("  ·  nearest %d step%s", bestN, bestN == 1 and "" or "s") }
     elseif best and roomExists(best) then
       local a = getRoomArea(best)
-      if a ~= hereArea then info[#info + 1] = { C.dim, "  ·  " .. (getRoomAreaName(a) or "") } end
+      if a ~= hereArea then info[#info + 1] = { C.dim, "  ·  " .. (M.areaNameOf(a) or "") } end
     end
     out[#out + 1] = info
     if best then
@@ -16778,7 +16781,7 @@ function M.mapFind(q)
     local id = tonumber(key)
     if id then
       local area = getRoomArea(id)
-      rows[#rows + 1] = { id = id, name = name, area = area, areaName = area and getRoomAreaName(area) or "" }
+      rows[#rows + 1] = { id = id, name = name, area = area, areaName = area and M.areaNameOf(area) or "" }
     end
   end
   table.sort(rows, function(a, b)
@@ -17085,9 +17088,8 @@ end)
 
 -- the run named after the area a room is in: "Towne of Rune" -> rune, "Tower of Art" -> towerofart
 function M.runForArea(id)
-  local a = id and roomExists(id) and getRoomArea(id)
-  local an = a and getRoomAreaName(a)
-  if not an or an == "" then return nil end
+  local _, an = M.placeOf(id)   -- (the map's name for its area, else GMCP's: never the unnamed area's -1)
+  if type(an) ~= "string" or an == "" then return nil end
   local words = {}
   for w in an:lower():gmatch("%a+") do words[#words + 1] = w end
   local full = table.concat(words)
@@ -17166,7 +17168,7 @@ local function footSummary(dirs, path)
     local d = dirs[i]
     if d and not STD_DIRS[d] then parts[#parts + 1] = d end
     local a = getRoomArea(tonumber(r))
-    local an = a and getRoomAreaName(a)
+    local an = a and M.areaNameOf(a)
     if an and an ~= "" and an ~= lastArea then parts[#parts + 1] = an; lastArea = an end
   end
   return table.concat(parts, " → ")
@@ -17527,12 +17529,25 @@ function M.mapRunNow(arg, planned)
   end
   if not M.cfg.map then return say("map following is off - sbo config map on first") end
   local here = M.mapRoom or M.currentRoom()
+  local targets, fromNotes = M.runTargets(q)
   if not here or not roomExists(here) then
-    -- off the map (a room the map doesn't have): the game can still lead you to a feature it knows (where is exit)
+    -- a room the map doesn't have (the wilds off it: its number is its spot on the world map): what Oven knows by
+    -- that name is planned from where you are in the world - the best match, the nearest of those
+    local hp = here and M.worldPos and M.worldPos(here)
+    if hp and #targets > 0 then
+      local best, bd
+      for _, t in ipairs(targets) do
+        local tp = M.worldPos(t.id)
+        local d = tp and tp.map == hp.map and math.max(math.abs(tp.x - hp.x), math.abs(tp.y - hp.y)) or math.huge
+        if not best or t.rank < best.rank or (t.rank == best.rank and d < bd) then best, bd = t, d end
+      end
+      return M.goTo(best.id)
+    end
+    -- nothing by that name: a feature the game knows here (where is exit - not in the wilds: they have none)
     if not all and q:match("^[%w%-]+$") and M.whereGo(q) then return end
+    if hp then return say("nothing called '" .. q .. "' that Oven has seen (the wilds have no where is features)") end
     return say("Oven doesn't know where you are on the map yet - move one room first")
   end
-  local targets, fromNotes = M.runTargets(q)
   if #targets == 0 or (not fromNotes and #M.whereAreas(q) > 0) then
     -- a feature the game knows by name (where is food): ask it
     if not all and (#M.whereAreas(q) > 0 or #targets == 0) and q:match("^[%w%-]+$") and M.whereGo(q) then return end
@@ -17557,7 +17572,7 @@ function M.mapRunNow(arg, planned)
     for i, t in ipairs(targets) do
       if i > 3 then names[#names + 1] = "…"; break end
       local area = getRoomArea(t.id)
-      area = area and getRoomAreaName(area) or ""
+      area = area and M.areaNameOf(area) or ""
       names[#names + 1] = (getRoomName(t.id) or "?") .. " #" .. t.id .. (area ~= "" and (" (" .. area .. ")") or "")
     end
     return say(string.format("no way there on the map from here (#%d) to %s - nothing on foot, by a ride, recall or a run "
@@ -17677,7 +17692,7 @@ function M.goToNow(id)
   local info = M.gmcpGet and M.gmcpGet("room.info")
   local inWilds = type(info) == "table" and tostring(info.wilds) == "true"
   if inWilds then return M.mapWalkTo(id) end
-  local function areaName(a) return a and getRoomAreaName(a) or "?" end
+  local function areaName(a) return a and M.areaNameOf(a) or "?" end
   M.goAsk = { id = id, at = os.time() }
   local okRt, route = pcall(M.worldPlanRoute, here, id)
   M.goAsk.route = okRt and route or {}
@@ -17780,8 +17795,8 @@ function M.clanHallLink()
   if not r then return nil end
   -- (the hall needn't be on the map: a trip goes on from it by recall, worked out from where it is)
   local a = roomExists(r) and getRoomArea(r) or nil
-  return { kind = "clan hall", anywhere = true, land = r, areaId = a, area = a and getRoomAreaName(a) or nil,
-    dest = (a and getRoomAreaName(a)) or "your clan hall", cost = 0, board = { "clan gohall" }, shopName = "your clan hall" }
+  return { kind = "clan hall", anywhere = true, land = r, areaId = a, area = a and M.areaNameOf(a) or nil,
+    dest = (a and M.areaNameOf(a)) or "your clan hall", cost = 0, board = { "clan gohall" }, shopName = "your clan hall" }
 end
 
 -- from the clan hall, the way you go out to recall: out of the hall, 5 rooms east, then north or south
@@ -18005,7 +18020,7 @@ function M.wayLearn(prev, here, id, cmd)
         M.worldTownList = nil
         M.entranceRows = nil
         if not old then M.say(string.format("learned a way into %s: from the wilds at %d,%d%s - sbo go uses it",
-          (getRoomAreaName(getRoomArea(room)) or getRoomName(room) or ("#" .. room)), p.x, p.y, way and way ~= "" and ("  (" .. way .. ")") or "")) end
+          (M.areaNameOf(getRoomArea(room)) or getRoomName(room) or ("#" .. room)), p.x, p.y, way and way ~= "" and ("  (" .. way .. ")") or "")) end
       end
     end
   end
@@ -18188,7 +18203,7 @@ function M.entranceLinks(from, target)
       if d <= M.WILD_SIGN_MAX then
         out[#out + 1] = { kind = "wildwalk", sign = { room = tonumber(e.wild), x = ex, y = ey, map = e.map }, board = {}, cost = 0,
           noBuy = true, walkOut = d, land = room, areaId = ta, enter = e.cmd,
-          dest = getRoomAreaName(ta) or getRoomName(room) or ("#" .. room), dir = M.compassTo(p.x, p.y, ex, ey), shopName = "",
+          dest = M.areaNameOf(ta) or getRoomName(room) or ("#" .. room), dir = M.compassTo(p.x, p.y, ex, ey), shopName = "",
           key = "entrance:" .. e.wild .. ">" .. room .. "@" .. tostring(from) }
       end
     end
@@ -18274,6 +18289,15 @@ function M.gateImport()
   M.saveSettings()
   return n
 end
+-- an area's name, or nil: never the -1 Mudlet gives for the map's unnamed area (rooms of many places share it),
+-- nor anything that isn't text
+function M.areaNameOf(a)
+  if a == nil then return nil end
+  local ok, n = pcall(getRoomAreaName, a)
+  if not ok or type(n) ~= "string" or n == "" or n == "-1" then return nil end
+  return n
+end
+
 -- which place a room is in: its area on the map, or (a room in the map's unnamed area, -1 - rooms of many places
 -- share it) the zone GMCP gave it - a key, and a name to show
 function M.placeOf(room)
@@ -19301,7 +19325,7 @@ function M.travelList()
   for _, L in ipairs(links) do
     if L.shop ~= lastShop then
       lastShop = L.shop
-      local an = getRoomArea(L.shop); an = an and getRoomAreaName(an) or ""
+      local an = getRoomArea(L.shop); an = an and M.areaNameOf(an) or ""
       out[#out + 1] = { { C.slot, L.kind .. "  " }, { C.item, L.shopName }, { C.dim, (an ~= "" and ("  " .. an) or "") .. "  #" .. L.shop
         .. (L.board and "" or "  (boarding not known yet - not used by sbo go)") } }
     end
@@ -20607,7 +20631,7 @@ function M.itemFind(q)
   local function where(room)
     local nm = (room and roomExists(room) and getRoomName(room)) or nil
     local area = room and roomExists(room) and getRoomArea(room)
-    area = area and getRoomAreaName(area) or ""
+    area = area and M.areaNameOf(area) or ""
     return (nm or "?") .. (area ~= "" and (" · " .. area) or "") .. "  #" .. tostring(room)
   end
   local any = false
@@ -20752,7 +20776,7 @@ function M.mapHighlightAll(q, quiet)
     local kept = {}
     for _, t in ipairs(targets) do
       local a = getRoomArea(t.id)
-      local an = a and getRoomAreaName(a) or ""
+      local an = a and M.areaNameOf(a) or ""
       if an:lower():find(area:lower(), 1, true) then kept[#kept + 1] = t end
     end
     targets = kept

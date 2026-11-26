@@ -1026,6 +1026,10 @@ def go_runs_to_the_signpost_nearest_first():
       sbo.tripPlanRides = function(from, to) if to == HUB then return { segs = { { kind = 'run', name = 'the north', from = from, to = HUB } }, gold = 0, rides = 0, runs = 1, walked = 0, wild = 0 } end end
       gmcp.room = { info = { num = '61834', wilds = 'false' } }""")
     eq((o.ev("select(2, sbo.placeOf(917745))"), o.ev("#sbo.gatesOf(sbo.placeOf(917745))")), ("The Iceberg", 1), "named and matched by zone, not the unnamed area")
+    # Mudlet's -1 for the unnamed area is never taken for a name (it crashed the run lookup, and the trip planner with it)
+    eq(o.ev("sbo.areaNameOf(-1)"), None, "no name")
+    o.lua("sbo.runNames = function() return {} end; sbo.runData = function() return { ends = {} } end")
+    o.ev("sbo.runForArea(917745)")
     o.lua("P = sbo.tripPlan(61834, 917745, {})")
     eq((o.ev("P.segs[1].kind"), o.ev("P.segs[2].link.sign.x"), o.ev("P.wild")), ("run", 2044, 414), "the run first, then 414 rooms, not 1243")
     lines = list(o.ev("(sbo.tripPlanLines(P, 917745))").values())
@@ -1034,6 +1038,15 @@ def go_runs_to_the_signpost_nearest_first():
     o.lua("getAreaTable = function() return { Rigel = 7 } end")
     eq([t.id for t in o.ev("(sbo.runTargets('iceberg'))").values()], [917755], "the iceberg's gate")
     eq([t.id for t in o.ev("(sbo.runTargets('the iceberg'))").values()], [917755], "with 'the'")
+    # from a room of the wilds the map doesn't have: planned from its spot, not handed to where is
+    o.lua("""roomExists = function(id) return not sbo.isWildRoom(tonumber(id)) end; sbo.cfg.map = true
+      sbo.mapRoom = WILD(2000, 300); WENT = nil; sbo.goTo = function(id) WENT = id end
+      ASKED = nil; WHEREGO = sbo.whereGo; sbo.whereGo = function(q) ASKED = q; return true end; sbo.mapRunNow('Iceberg')""")
+    eq((o.ev("WENT"), o.ev("ASKED")), (917755, None), "the plan, not where is iceberg")
+    # nothing by that name, in the wilds: where is isn't asked (the wilds have no features)
+    o.lua("""sbo.whereGo = WHEREGO; SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end; sbo.quietly = function(c) SENT[#SENT+1] = c end
+      gmcp.room = { info = { num = tostring(WILD(2000, 300)), wilds = 'true' } }; sbo.mapRunNow('zzz')""")
+    eq(o.ev("#SENT"), 0, "nothing sent")
 
 
 @test
