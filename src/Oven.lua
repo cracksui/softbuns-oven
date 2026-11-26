@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.55"
+M.version = "1.99.56"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14728,7 +14728,7 @@ function M.worldNote(info)
       w.offsets[name] = off
       -- (the same map under the name worked out from Mudlet's map: GMCP's name for it from now on)
       for other, o in pairs(w.offsets) do if other ~= name and o == off then w.offsets[other] = nil end end
-      M.worldRoomXY = nil
+      M.worldRoomXY, M.worldAreaXY, M.worldXYByArea = nil, nil, nil
       M.saveSettings()
     end
     -- a waterway runs under the land and sea the map shows: not that pixel's terrain - its path is kept instead
@@ -14751,7 +14751,7 @@ function M.worldNote(info)
       M.worldRoomXY[num] = { map = name, x = x, y = y, zone = zone }
       M.roomXYZone()
       M.dbx("INSERT OR REPLACE INTO room_xy (room, map, x, y, zone) VALUES (%s, %s, %s, %s, %s)", num, name, x, y, zone)
-      M.worldTownList = nil
+      M.worldTownList, M.worldAreaXY, M.worldXYByArea = nil, nil, nil
     end
   end
 end
@@ -15534,10 +15534,30 @@ function M.worldPos(room)
     M.worldAreaXY = M.worldAreaXY or {}
     if M.worldAreaXY[a] == nil then
       M.worldAreaXY[a] = false
-      for _, r in ipairs(M.dbRows("SELECT room, map, x, y FROM room_xy LIMIT 5000")) do
-        if roomExists(tonumber(r.room)) and getRoomArea(tonumber(r.room)) == a then
-          M.worldAreaXY[a] = { map = r.map, x = tonumber(r.x), y = tonumber(r.y), area = true }
-          break
+      -- (every room placed so far, by area - read once)
+      if not M.worldXYByArea then
+        M.worldXYByArea = {}
+        for _, r in ipairs(M.dbRows("SELECT room, map, x, y FROM room_xy")) do
+          local id = tonumber(r.room)
+          local ra = id and roomExists(id) and getRoomArea(id)
+          if ra and not M.worldXYByArea[ra] then M.worldXYByArea[ra] = { map = r.map, x = tonumber(r.x), y = tonumber(r.y), area = true } end
+        end
+      end
+      M.worldAreaXY[a] = M.worldXYByArea[a] or false
+      -- none of its rooms placed (never been in): where its way out into the wilds leads - Grigmorth's Crossing,
+      -- in Sigil's underground
+      if not M.worldAreaXY[a] and getAreaRooms then
+        local okR, rooms = pcall(getAreaRooms, a)
+        for _, r in pairs(okR and type(rooms) == "table" and rooms or {}) do
+          local okE, ex = pcall(getRoomExits, r)
+          for _, to in pairs(okE and type(ex) == "table" and ex or {}) do
+            to = tonumber(to)
+            if to and roomExists(to) and getRoomArea(to) ~= a and M.isWildRoom(to) then
+              local p = M.worldPos(to)
+              if p and not p.area then M.worldAreaXY[a] = { map = p.map, x = p.x, y = p.y, area = true }; break end
+            end
+          end
+          if M.worldAreaXY[a] then break end
         end
       end
     end
@@ -15882,8 +15902,11 @@ function M.worldOffsetsFromMap()
         local ok, x, y = pcall(getRoomCoordinates, id)
         if ok and x and y then
           total = total + 1
-          local off = id - ((-y) * 2300 + x)
-          count[off] = (count[off] or 0) + 1
+          -- (Mudlet's y may run either way - north up or down: whichever fits)
+          for _, sy in ipairs({ -1, 1 }) do
+            local off = id - ((sy * y) * 2300 + x)
+            count[off] = (count[off] or 0) + 1
+          end
         end
       end
       local best, bn = nil, 0
@@ -15895,7 +15918,7 @@ function M.worldOffsetsFromMap()
       end
     end
   end
-  if n > 0 then M.worldRoomXY = nil; M.saveSettings() end
+  if n > 0 then M.worldRoomXY, M.worldAreaXY, M.worldXYByArea = nil, nil, nil; M.saveSettings() end
   return n
 end
 function M.worldLayer()
@@ -16136,10 +16159,14 @@ function M.mapSetMode(mode, auto)
   if mode == "world" and not auto and M.mapMode ~= "world" then
     local okO, other = pcall(M.mapShownOther)
     local p = okO and other and M.worldPos(other)
+    if okO and other and not p and (pcall(M.worldOffsetsFromMap)) then p = M.worldPos(other) end
     if p then
       local v = V()
       v.map, v.follow, v.cx, v.cy = p.map, false, p.x, p.y
       M.worldFound = { other }
+    elseif okO and other then
+      say(string.format("world map: Oven doesn't know where %s (#%d, %s) is on the world maps yet", getRoomName(other) or "that room",
+        other, M.areaNameOf(getRoomArea(other)) or "?"))
     end
   end
   M.mapMode = mode

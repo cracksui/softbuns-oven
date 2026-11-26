@@ -158,6 +158,16 @@ def main():
     good = o.ev("SP ~= nil and SP.map:lower():find('sigil') ~= nil")
     print("%s  the Sigil Underground placed on its own map: %s" % ("ok  " if good else "FAIL", o.ev("SP and (SP.map .. ' ' .. SP.x .. ',' .. SP.y)")))
     if not good: bad += 1
+    # a place in it never visited (Grigmorth's Crossing - a quest's): where its way out leads; the room map on it, the
+    # world button opens the world map there (recorded 2026-11-26: it stayed on Alyria)
+    o.lua("""GC = nil; for _, id in ipairs({ 33934, 33948 }) do if roomExists(id) then GC = id end end
+      if GC then sbo.mapRoom = 10490; sbo.mapMode = 'local'; sbo.mapCenter = GC; sbo.worldDraw = function() end; sbo.worldV = { map = 'Alyria', follow = true }
+        sbo.mapSetMode('world'); sbo.mapSetMode('local') end""")
+    if o.ev("GC"):
+        good = o.ev("sbo.worldV.map:lower():find('sigil') ~= nil and sbo.worldFound[1] == GC")
+        print("%s  Grigmorth's Crossing (never been in): the world button opens on it: %s %s,%s" % ("ok  " if good else "FAIL",
+            o.ev("sbo.worldV.map"), o.ev("sbo.worldV.cx"), o.ev("sbo.worldV.cy")))
+        if not good: bad += 1
     # a walk through the wilds that takes a gate's step (w from the road by Muldar Lohk Mulvar is into the village):
     # it goes into the place, Oven plans again from there - out, and in again (recorded 2026-11-26)
     o.lua("""INTOPLACE = function(map, x0, y0, x1, y1)
