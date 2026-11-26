@@ -184,3 +184,29 @@ Geyser.MiniConsole = { new = function(self, o, parent)
   WIDGETS = WIDGETS or {}; WIDGETS[o.name] = t
   return t
 end }
+
+-- a room map for a test, like Mudlet's: EXITS[room] = { [direction or command] = room } (directions short: n, e…).
+-- getRooms, getRoomExits (long names, as Mudlet gives them), getSpecialExitsSwap and getPath (fewest steps) over it
+function MAPSTUB(exits)
+  local LONG = { n = "north", s = "south", e = "east", w = "west", ne = "northeast", nw = "northwest", se = "southeast",
+    sw = "southwest", u = "up", d = "down", ["in"] = "in", out = "out" }
+  MAP_EXITS = exits
+  getRooms = function() local t = {} for id in pairs(MAP_EXITS) do t[id] = "room " .. id end return t end
+  getRoomExits = function(id) local t = {} for d, to in pairs(MAP_EXITS[tonumber(id)] or {}) do if LONG[d] then t[LONG[d]] = to end end return t end
+  getSpecialExitsSwap = function(id) local t = {} for d, to in pairs(MAP_EXITS[tonumber(id)] or {}) do if not LONG[d] then t[d] = to end end return t end
+  getPath = function(a, b)
+    a, b = tonumber(a), tonumber(b)
+    local prev, q, head = { [a] = false }, { a }, 1
+    while head <= #q do
+      local x = q[head]; head = head + 1
+      if x == b then break end
+      for d, y in pairs(MAP_EXITS[x] or {}) do if prev[y] == nil then prev[y] = { x, d }; q[#q + 1] = y end end
+    end
+    if prev[b] == nil then return false end
+    speedWalkDir, speedWalkPath = {}, {}
+    local x = b
+    while x ~= a do table.insert(speedWalkDir, 1, prev[x][2]); table.insert(speedWalkPath, 1, tostring(x)); x = prev[x][1] end
+    return true
+  end
+  if sbo then sbo.roomGraphCache = nil end
+end

@@ -986,7 +986,13 @@ def go_always_has_a_plan_on_foot():
       AREA = { [10490] = 'Rune', [10463] = 'Rune', [10500] = 'Rune', [61834] = 'Rigel', [61910] = 'Rigel', [61900] = 'Rigel' }
       getRoomArea = function(id) id = tonumber(id) if sbo.isWildRoom(id) then return 'W' end return AREA[id] or 'X' end
       getRoomAreaName = function(a) return a end; getRoomName = function(id) return 'room ' .. id end
-      getPath = function(a, b) if getRoomArea(a) == getRoomArea(b) and getRoomArea(a) ~= 'W' then speedWalkDir = { 'n', 'n' }; speedWalkPath = { 1, 2 }; return true end return false end
+      -- each town's rooms two steps from each other (through a room between, its own for each pair)
+      local X = {}
+      local function join(rooms) for _, a in ipairs(rooms) do for _, b in ipairs(rooms) do if a ~= b then
+        local m = -(a * 100000 + b); AREA[m] = AREA[a]; X[a] = X[a] or {}; X[a]['to' .. b] = m; X[m] = { n = b } end end end end
+      join({ 10490, 10463, 10500 }); join({ 61834, 61910, 61900 })
+      for _, r in ipairs({ 10490, 10463, 10500, 61834, 61910, 61900 }) do X[r] = X[r] or {} end
+      MAPSTUB(X)
       sbo.worldPos = function(id) id = tonumber(id)
         if id >= 1000000 then local v = id - 1060834 return { map = 'Alyria', x = v % 2300, y = math.floor(v / 2300) } end
         if AREA[id] == 'Rune' then return { map = 'Alyria', x = 705, y = 763 } end
@@ -1058,9 +1064,8 @@ def go_runs_to_the_signpost_nearest_first():
       AREA = { [61834] = 'Rigel', [917755] = -1, [917745] = -1, [12000] = -1 }
       getRoomArea = function(id) id = tonumber(id) if sbo.isWildRoom(id) then return 'W' end return AREA[id] or 'X' end
       getRoomAreaName = function(a) if a == -1 then return -1 end return a end; getRoomName = function(id) return 'room ' .. id end
-      -- (the map's real paths: the iceberg's rooms are joined, and so are Rigel's - not every room of the unnamed area)
-      local ZONE = { [917755] = 'ice', [917745] = 'ice', [61834] = 'rigel', [12000] = 'else' }
-      getPath = function(a, b) if ZONE[tonumber(a)] and ZONE[tonumber(a)] == ZONE[tonumber(b)] then speedWalkDir = { 'n' }; speedWalkPath = { 1 }; return true end return false end
+      -- (the map's real paths: the iceberg's two rooms are joined - not every room of the unnamed area)
+      MAPSTUB({ [917755] = { n = 917745 }, [917745] = { s = 917755 }, [61834] = {}, [12000] = {} })
       function WILD(x, y) return 1060834 + y * 2300 + x end
       sbo.worldPos = function(id) id = tonumber(id)
         if id >= 1000000 then local v = id - 1060834 return { map = 'Alyria', x = v % 2300, y = math.floor(v / 2300) } end
@@ -1648,12 +1653,11 @@ def route_plan_text():
       getRoomArea = function(id) return AREA[tonumber(id)] end
       getRoomAreaName = function(a) return ({ 'Sigil', 'Alyria', 'Vospire' })[a] end
       getRoomName = function(id) return NAMES[tonumber(id)] or ('room ' .. id) end
-      ROUTES = { ['1>10'] = { {'n',2}, {'n',3}, {'n',10} }, ['20>30'] = { {'w',30} },
-        ['1>30'] = {}, ['10>30'] = {} }
-      for i = 1, 60 do table.insert(ROUTES['1>30'], { i == 30 and 'enter mirror' or 'w', i < 20 and 2 or (i < 59 and 10 or 30) }) end
-      getPath = function(a, b) local r = ROUTES[tonumber(a) .. '>' .. tonumber(b)]; if not r then return false end
-        speedWalkDir, speedWalkPath = {}, {}
-        for i, x in ipairs(r) do speedWalkDir[i] = x[1]; speedWalkPath[i] = tostring(x[2]) end return true end
+      local X = { [1] = { n = 2 }, [2] = { n = 3 }, [3] = { n = 10 }, [10] = {}, [20] = { w = 30 }, [30] = {} }
+      local prev = 1
+      for i = 1, 59 do local r = 2000 + i; AREA[r] = i < 20 and 1 or 2; X[prev] = X[prev] or {}; X[prev][i == 30 and 'enter mirror' or 'w'] = r; X[r] = {}; prev = r end
+      X[prev].w = 30
+      MAPSTUB(X)
       sbo.signposts = function() return { { room = 10, dests = { vospire = 'north' } } } end
       sbo.signAt = function(r) if r == 10 then return { sign = "a weatherbeaten signpost outside Sigil's north gate" } end
         if r == 20 then return { sign = "a weatherbeaten signpost outside Vospire's east gate" } end end
@@ -1709,6 +1713,10 @@ def travel_by_ganuk():
         speedWalkDir, speedWalkPath = dirs, path
         return true
       end
+      getRooms = function() local t = {} for id in pairs(AREA) do t[id] = 'room ' .. id end return t end
+      getRoomExits = function(id) local t = {} for _, e in ipairs(EX[tonumber(id)] or {}) do t[e[1]] = e[2] end return t end
+      getSpecialExitsSwap = function(id) return SPECIAL[tonumber(id)] or {} end
+      local RG = sbo.roomGraph; sbo.roomGraph = function() sbo.roomGraphCache = nil; return RG() end
       sbo.signposts = function() return {} end
       sbo.cfg.runs = { names = {}, ends = {}, endsFixed = 1 }
       gmcp.char = gmcp.char or {}; gmcp.char.worth = { gold = 2000, bank = 579098 }
@@ -2058,15 +2066,11 @@ def go_stays_in_town():
       sbo.cfg.map = true; sbo.mapRoom = 1
       -- rooms 1-3 are in town (area 1), 9 is outside (area 2); 5 is in town but only reached through 9
       AREA = { [1] = 1, [2] = 1, [3] = 1, [5] = 1, [9] = 2 }
-      PATHS = { [2] = { 1, 2 }, [3] = { 2, 3 }, [9] = { 2, 9 }, [5] = { 2, 9, 5 } }
+      MAPSTUB({ [1] = { n = 2 }, [2] = { n = 3, e = 9 }, [3] = {}, [9] = { n = 5 }, [5] = {} })
       roomExists = function(id) return AREA[tonumber(id)] ~= nil end
       getRoomArea = function(id) return AREA[tonumber(id)] end
       getRoomAreaName = function(a) return a == 1 and "Towne of Rune" or "the wilds" end
       getRoomName = function(id) return "room " .. id end
-      getPath = function(a, b) local p = PATHS[tonumber(b)]; if not p then return false end
-        speedWalkPath = {}; speedWalkDir = {}
-        for i, r in ipairs(p) do speedWalkPath[i] = tostring(r); speedWalkDir[i] = "n" end
-        return true end
       WALKS = {}; sbo.tripStart = function(t) WALKS[#WALKS+1] = { t[1], sbo.goAsk == nil } end
       gmcp.room = { info = { wilds = "false" } }""")
     walks = lambda: [tuple(w.values()) for w in o.ev("WALKS").values()]
@@ -2744,20 +2748,7 @@ MAP_GAME = r"""
   getRoomName = function(id) return id == 250 and "Runic Highway" or ("Room " .. tostring(id)) end
   getRoomAreaName = function(a) return a == 3 and "Towne of Rune" or ("Area " .. tostring(a)) end
   centerview = function() end; highlightRoom = function() end; unHighlightRoom = function() end
-  getPath = function(a, b)
-    a, b = tonumber(a), tonumber(b)
-    local prev, q, seen = {}, { a }, { [a] = true }
-    while #q > 0 do
-      local x = table.remove(q, 1)
-      if x == b then break end
-      for d, y in pairs(EXITS[x] or {}) do if not seen[y] then seen[y] = true; prev[y] = { x, d }; q[#q + 1] = y end end
-    end
-    if not seen[b] then return false end
-    speedWalkDir, speedWalkPath = {}, {}
-    local x = b
-    while x ~= a do table.insert(speedWalkDir, 1, prev[x][2]); table.insert(speedWalkPath, 1, tostring(x)); x = prev[x][1] end
-    return true
-  end
+  MAPSTUB(EXITS)
   HERE = 1
   local function at(id)
     HERE = id
@@ -3576,7 +3567,9 @@ def map_town_by_name():
       getRoomName = function(id) return "room " .. id end
       searchRoom = function() return {} end
       SHOWN = nil; sbo.mapShow = function(id) SHOWN = id end
-      getPath = function(a, b) speedWalkDir = {} for i = 1, (b == 702 and 3 or 9) do speedWalkDir[i] = "e" end return true end
+      local X = { [150] = { e = 151, w = 149, s = 160 }, [151] = { e = 152 }, [152] = { e = 702 }, [702] = {}, [160] = {} }
+      for r = 149, 142, -1 do X[r] = { w = r - 1 } end; X[141] = { w = 701 }; X[701] = {}
+      MAPSTUB(X)
       sbo.viewOut = function() end
       SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
       sbo.cfg.map = true; sbo.mapRoom = 150""")
@@ -3701,11 +3694,10 @@ def where_is():
       -- a street: 1 -s-> 2 -s-> 3 -w-> 4 -w-> 5 (the food)
       EX = { [1] = { south = 2 }, [2] = { north = 1, south = 3 }, [3] = { north = 2, west = 4 }, [4] = { east = 3, west = 5 }, [5] = { east = 4 } }
       roomExists = function(id) return EX[tonumber(id)] ~= nil end
-      getRoomExits = function(id) return EX[tonumber(id)] end
+      MAPSTUB({ [1] = { s = 2 }, [2] = { n = 1, s = 3 }, [3] = { n = 2, w = 4 }, [4] = { e = 3, w = 5 }, [5] = { e = 4 } })
       getRoomName = function(id) return "Room " .. id end
       getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end
       centerview = function() end; highlightRoom = function() end; unHighlightRoom = function() end
-      getPath = function(a, b) speedWalkDir, speedWalkPath = { "s" }, { tostring(b) } return true end
       sbo.cfg.map = true
       function AT(id) gmcp.room = { info = { num = tostring(id), zone = "Towne of Rune" } }; sbo.onRoom() end
       SENT = {}
@@ -3933,7 +3925,9 @@ def item_search():
       sbo.viewOut = function(lines, links) local t = {} for _, r in ipairs(lines) do for _, g in ipairs(r) do t[#t+1] = tostring(g[2] or "") end t[#t+1] = "\\n" end OUT = { table.concat(t), links } end
       roomExists = function() return true end; getRoomName = function(id) return "Room " .. id end
       getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne of Rune" end
-      getPath = function(a, b) speedWalkDir = {} for i = 1, (b == 10468 and 4 or 40) do speedWalkDir[i] = "e" end return true end
+      local X = { [10500] = { e = 10501, w = 11000 }, [10501] = { e = 10502 }, [10502] = { e = 10503 }, [10503] = { e = 10468 }, [10468] = {} }
+      for i = 0, 38 do X[11000 + i] = { w = 11001 + i } end; X[11039] = { w = 900 }; X[900] = {}
+      MAPSTUB(X)
       sbo.mapRoom = 10500
       sbo.cfg.carried = { inv = { "a cute little pixie bag" }, bags = { ["a cute little pixie bag"] = { "a hunk of cheese" } }, at = 1 }
       sbo.remember({ name = "a hunk of cheese", type = "food", level = 1, affects = {}, raw = {} })
