@@ -3397,16 +3397,27 @@ def trip_stamina():
         o.set_gmcp("char.vitals", "{ st = %d }" % st)
         o.set_gmcp("room.info", '{ num = "%d", wilds = "true", terrain = "paved road", coord = { x = %d, y = 540 } }' % (2000 + i, 1193 + 12 * i))
         o.lua("handlers['gmcp.room.info']('gmcp.room.info')")
-    o.lua("sbo.running = nil")
     eq(round(o.ev("sbo.cfg.stCost.run.avg")), 1, "running in the wilds: 1 a room")
-    eq(round(o.ev("sbo.cfg.stTerrain.foot['@run'].avg")), 1, "and for the planner")
-    o.lua("sbo.cfg.stCost.run = { avg = 2, n = 9 }")
-    # a run of ~200 rooms needs ~480; with 100: rest first
-    o.lua("""sbo.stRunRooms = function() return 200 end
-      RAN = nil; sbo.runStart = function(n, t) RAN = n end
+    eq(round(o.ev("sbo.cfg.stTerrain.foot['@run:paved road'].avg")), 1, "a road room on a run: 1")
+    # a bridge costs more (recorded 2026-11-26: ~43 a jump of 12 over the sailable bridge)
+    for i in range(8, 11):
+        st -= 42
+        o.set_gmcp("char.vitals", "{ st = %d }" % st)
+        o.set_gmcp("room.info", '{ num = "%d", wilds = "true", terrain = "sailable-bridge", coord = { x = %d, y = 540 } }' % (2000 + i, 1193 + 12 * i))
+        o.lua("handlers['gmcp.room.info']('gmcp.room.info')")
+    eq(round(o.ev("sbo.cfg.stTerrain.foot['sailable-bridge'] == nil and sbo.cfg.stTerrain.foot['@run:sailable-bridge'].avg")), 4, "a bridge room: ~3.5")
+    eq(dict(o.ev("sbo.running.route").items()), {"paved road": 84, "sailable-bridge": 36}, "the run's road rooms, by terrain")
+    # the run's end: what it went over is kept, from the signpost it started at
+    o.lua("roomExists = roomExists or function() return false end; sbo.running.from = 1; sbo.running.name = 'sigil'; sbo.mapRoom = 7; sbo.runStopped(true)")
+    eq(dict(o.ev("sbo.runData().routes.sigil['1']").items()), {"paved road": 84, "sailable-bridge": 36}, "kept")
+    need = o.ev("sbo.runNeed('sigil', 1)")
+    assert 200 < need < 260, need   # (84 × 1 + 36 × 3.5) × 1.1 + 20
+    eq(o.ev("sbo.runNeed('sigil', 9)"), None, "not run from there: not known")
+    # short of what it needs: rest first
+    o.lua("""RAN = nil; sbo.runStart = function(n, t) RAN = n end
       sbo.trip = { target = 5, used = {}, legs = 1 }""")
     o.set_gmcp("char.vitals", "{ st = 100 }")
-    o.lua("SENT = {}; RUNLEG = { kind = 'run', name = 'sigil', from = 1, to = 2, rooms = sbo.stRunRooms() }; sbo.legStart(RUNLEG, sbo.trip)")
+    o.lua("SENT = {}; RUNLEG = { kind = 'run', name = 'sigil', from = 1, to = 2, rooms = 200 }; sbo.legStart(RUNLEG, sbo.trip)")
     eq(list(o.ev("SENT").values()), ["rest"], "short: rest")
     eq(o.ev("RAN"), None, "not run yet")
     o.set_gmcp("char.vitals", "{ st = 600 }")
@@ -3414,19 +3425,18 @@ def trip_stamina():
     eq(list(o.ev("SENT").values()), ["rest", "stand"], "enough: stand")
     eq(o.ev("RAN"), "sigil", "and run")
     # enough already: straight on
-    o.lua("RAN = nil; SENT = {}; sbo.trip = { target = 5, used = {}, legs = 1 }; sbo.legStart({ kind = 'run', name = 'sigil', from = 1, to = 2, rooms = sbo.stRunRooms() }, sbo.trip)")
+    o.lua("RAN = nil; SENT = {}; sbo.trip = { target = 5, used = {}, legs = 1 }; sbo.legStart(RUNLEG, sbo.trip)")
     eq((o.ev("RAN"), len(o.ev("SENT") or {})), ("sigil", 0), "no rest needed")
-    # more than the run needs than you have, but over half your stamina: go (a run that runs out stops, and rests there)
-    o.lua("sbo.stRunRooms = function() return 650 end; RAN = nil; SENT = {}; sbo.trip = { target = 5, used = {}, legs = 1 }")
+    # more than you have, but over half your stamina: go (a run that runs out stops, and rests there)
+    o.lua("sbo.runData().routes.sigil['1'] = { ['paved road'] = 900 }; RAN = nil; SENT = {}; sbo.trip = { target = 5, used = {}, legs = 1 }")
     o.set_gmcp("char.vitals", "{ st = 700 }")
-    o.lua("sbo.legStart({ kind = 'run', name = 'sigil', from = 1, to = 2, rooms = sbo.stRunRooms() }, sbo.trip)")
+    o.lua("sbo.legStart(RUNLEG, sbo.trip)")
     eq((o.ev("RAN"), len(o.ev("SENT") or {})), ("sigil", 0), "700 of 1000: no rest first")
-    o.lua("sbo.stRunRooms = function() return 200 end")
-    # not learned yet: no check
-    o.lua("sbo.cfg.stCost = nil; RAN = nil; SENT = {}")
+    # not run from here before: no rest first, however little you have
+    o.lua("RAN = nil; SENT = {}")
     o.set_gmcp("char.vitals", "{ st = 10 }")
-    o.lua("sbo.trip = { target = 5, used = {}, legs = 1 }; sbo.legStart({ kind = 'run', name = 'sigil', from = 1, to = 2, rooms = sbo.stRunRooms() }, sbo.trip)")
-    eq(o.ev("RAN"), "sigil", "costs unknown: goes")
+    o.lua("sbo.trip = { target = 5, used = {}, legs = 1 }; sbo.legStart({ kind = 'run', name = 'sigil', from = 9, to = 2, rooms = 200 }, sbo.trip)")
+    eq(o.ev("RAN"), "sigil", "not known: goes")
     # cut short by exhaustion mid-run: rest, then plan on
     o.lua("""CONT = 0; sbo.tripContinue = function() CONT = CONT + 1 end; SENT = {}
       sbo.trip = { target = 5, used = {}, legs = 1 }; sbo.mapRoom = 3

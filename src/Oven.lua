@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.52"
+M.version = "1.99.53"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -17125,6 +17125,13 @@ function M.runStopped(atSign)
       r.endsFrom = r.endsFrom or {}
       r.endsFrom[R.name] = r.endsFrom[R.name] or {}
       if r.endsFrom[R.name][tostring(R.from)] ~= here then r.endsFrom[R.name][tostring(R.from)] = here; M.saveSettings() end
+      -- (and what it went over, on foot from start to end: road rooms by terrain - what it costs next time)
+      if R.route and next(R.route) and not R.exhausted and (R.restarts or 0) == 0 then
+        r.routes = r.routes or {}
+        r.routes[R.name] = r.routes[R.name] or {}
+        r.routes[R.name][tostring(R.from)] = R.route
+        M.saveSettings()
+      end
     end
     if old ~= here then
       r.ends[R.name] = here
@@ -18506,8 +18513,9 @@ function M.terrainCost(name, a, b, typical)
   if e and (e.n or 0) >= 2 then return math.max(0.2, e.avg) end
   return typical or M.terrainTypical(a, b)
 end
-function M.terrainNote(mode, name, drop)
-  if not name or name == "" or not drop or drop < 0 or drop > 60 then return end
+-- (net: a run's jump can gain - stamina comes back faster than the road takes it)
+function M.terrainNote(mode, name, drop, net)
+  if not name or name == "" or not drop or drop < (net and -20 or 0) or drop > 60 then return end
   M.cfg.stTerrain = M.cfg.stTerrain or {}
   local T = M.cfg.stTerrain[mode] or {}
   M.cfg.stTerrain[mode] = T
@@ -18529,14 +18537,74 @@ function M.stTerrainStep(info)
   local mounted = M.mounted()
   local st, mst = M.stNow(), M.mountPending
   local dist = P and P.x and x and math.max(math.abs(P.x - x), math.abs(P.y - y))
-  -- (a run is reported every dozen rooms or so: what it took, a room)
+  -- (a run is reported a jump at a time - up to a dozen road rooms: what it took, a road room, by the terrain it
+  -- came to: a bridge costs more than a road; the road rooms counted along the road on the map)
   if P and P.num ~= num and P.wild and wild and dist and dist >= 1 and (dist <= 1 or (running and dist <= 40))
       and P.running == running and P.mounted == mounted then
-    local name = running and "@run" or P.terrain
-    if mounted and P.mst and mst then M.terrainNote("mount", name, (P.mst - mst) / dist) end
-    if not mounted and P.st and st then M.terrainNote("foot", name, (P.st - st) / dist) end
+    local rooms = dist
+    if running then
+      local okR, r = pcall(M.roadRooms, P.map, P.x, P.y, x, y)
+      rooms = (okR and r) or dist
+      local R = M.running
+      if R and not mounted then
+        R.route = R.route or {}
+        local t = info.terrain or "?"
+        R.route[t] = (R.route[t] or 0) + rooms
+      end
+    end
+    local name = running and ("@run:" .. tostring(info.terrain or "?")) or P.terrain
+    if mounted and P.mst and mst then M.terrainNote("mount", name, (P.mst - mst) / rooms, running) end
+    if not mounted and P.st and st then M.terrainNote("foot", name, (P.st - st) / rooms, running) end
   end
-  M.stTerrPrev = { num = num, wild = wild, x = x, y = y, terrain = info.terrain, running = running, mounted = mounted, st = st, mst = mst }
+  M.stTerrPrev = { num = num, wild = wild, x = x, y = y, map = type(info.coord) == "table" and info.coord.name or nil,
+    terrain = info.terrain, running = running, mounted = mounted, st = st, mst = mst }
+end
+-- road rooms from one point of the wilds to another, along the road on the map (a run goes by road only): nil when
+-- the map can't say (no picture, no road between - a bridge's colour may not be known as road)
+function M.isRoadTerrain(t) return t ~= nil and (t:find("road", 1, true) or t:find("bridge", 1, true) or t:find("trail", 1, true)) ~= nil end
+function M.roadRooms(mapName, x0, y0, x1, y1, margin)
+  if not (mapName and x0 and y0 and x1 and y1) then return nil end
+  if x0 == x1 and y0 == y1 then return 0 end
+  local img = M.worldImage(mapName, true)
+  if not img then return nil end
+  local terr = (M.cfg.world or {}).terrain or {}
+  local data, w, h, row, off = img.data, img.w, img.h, img.row, img.off
+  local isRoad = {}
+  local function road(x, y)
+    if x < 0 or y < 0 or x >= w or y >= h then return false end
+    local o = off + (h - 1 - y) * row + x * 3 + 1
+    local b, g, r = data:byte(o, o + 2)
+    local k = r * 65536 + g * 256 + b
+    local v = isRoad[k]
+    if v == nil then
+      local t = terr[string.format("%02x%02x%02x", r, g, b)]
+      v = t == nil or M.isRoadTerrain(t)   -- (a colour not known yet: maybe road)
+      isRoad[k] = v
+    end
+    return v
+  end
+  local m = margin or 6
+  local xa, xb = math.min(x0, x1) - m, math.max(x0, x1) + m
+  local ya, yb = math.min(y0, y1) - m, math.max(y0, y1) + m
+  local goal = y1 * w + x1
+  local dist = { [y0 * w + x0] = 0 }
+  local q, qi = { y0 * w + x0 }, 1
+  while q[qi] do
+    local c = q[qi]; qi = qi + 1
+    if c == goal then return dist[c] end
+    local x = c % w
+    local y = (c - x) / w
+    for dy = -1, 1 do
+      for dx = -1, 1 do
+        local nx, ny = x + dx, y + dy
+        if (dx ~= 0 or dy ~= 0) and nx >= xa and nx <= xb and ny >= ya and ny <= yb then
+          local k = ny * w + nx
+          if not dist[k] and road(nx, ny) then dist[k] = dist[c] + 1; q[#q + 1] = k end
+        end
+      end
+    end
+  end
+  return nil
 end
 -- what the terrain cost in the recordings (oven_record.txt and the one before): steps you typed, once
 function M.terrainImport()
@@ -19209,7 +19277,7 @@ function M.planTripOnce(here, targets, used)
   if not here then return nil end
   local a, b = M.terrainCosts()
   local typical = M.terrainTypical(a, b)
-  local runEntry = a["@run"] or b["@run"]
+  local runEntry = a["@run:paved road"] or b["@run:paved road"] or a["@run"] or b["@run"]
   local runSt = (runEntry and (runEntry.n or 0) >= 2) and runEntry.avg or typical * 0.15
   local nodes, adj = {}, {}
   local function node(id)
@@ -19608,7 +19676,7 @@ function M.legStart(leg, T)
     end)
   elseif k == "run" then
     if not T.stOk then
-      local need = M.stNeed("run", leg.rooms)
+      local need = M.runNeed(leg.name, leg.from)
       if M.stShort(need) then
         return M.stRest(need, function() if M.trip == T then T.stOk = true; M.legStart(leg, T) end end, "before the run to " .. leg.name)
       end
@@ -19740,6 +19808,24 @@ function M.stCostSet(k, v)
   M.say(k .. ": " .. M.stCostText(k))
 end
 
+-- a road room's cost on a run, by terrain (learned from the jumps; a terrain not learned: a road's)
+function M.runRoomCost(t)
+  local foot = (M.cfg.stTerrain or {}).foot or {}
+  local function got(n) local e = foot[n]; return e and (e.n or 0) >= 2 and e.avg or nil end
+  return got("@run:" .. tostring(t)) or got("@run:paved road") or M.stPerRoom("run") or 1
+end
+-- stamina a run needs, from the road rooms it went over the last time it was run from there (by terrain); nil: not
+-- run from there yet (gone without resting first - one that runs out stops, and Oven rests there), riding, or
+-- sbo config go.rest off
+function M.runNeed(name, from)
+  if M.cfg.tripRest == false or M.mounted() then return nil end
+  local routes = (M.runData().routes or {})[name]
+  local route = routes and routes[tostring(from)]
+  if not route then return nil end
+  local sum = 0
+  for t, rooms in pairs(route) do sum = sum + rooms * M.runRoomCost(t) end
+  return math.max(0, math.ceil(sum * 1.1)) + 20
+end
 function M.stRunRooms(from, to)
   local a, b = M.worldPos and M.worldPos(from), M.worldPos and M.worldPos(to)
   if not (a and b and a.map == b.map) then return nil end
