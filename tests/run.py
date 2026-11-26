@@ -1007,6 +1007,15 @@ def go_always_has_a_plan_on_foot():
     eq((g.room, g.x, g.y, g.cmd, g.out), (10490, 684, 760, "s", "n"), "Rune's gate: in s, out n")
     g = o.ev("sbo.gatesOf('Rigel')[1]")
     eq((g.room, g.cmd, g.out), (61910, "n", "s"), "Rigel's gate")
+    # a command typed just before the move (it was learned as the way in before): the exit's direction wins
+    o.lua("""sbo.dbx("INSERT OR REPLACE INTO entrances (wild, room, cmd, map, x, y, t, out) VALUES (%s, 10463, 'socker survery rune', 'Alyria', 706, 763, 0, 'e')", WILD(706, 763))
+      sbo.cfg.gates2 = nil""")
+    eq(o.ev("sbo.gateCmdFix()"), 1, "one fixed")
+    eq(o.rows("SELECT cmd FROM entrances WHERE room = 10463")[0]["cmd"], "w", "the step in: w")
+    o.lua("""sbo.gateNote({ num = '10463', wilds = 'false', exits = { e = WILD(706, 763) }, coord = { name = 'Alyria', x = 705, y = 763 } },
+                   { num = WILD(706, 763), wilds = 'true', exits = { w = '10463' }, coord = { name = 'Alyria', x = 706, y = 763 } })""")
+    eq(o.rows("SELECT cmd FROM entrances WHERE room = 10463")[0]["cmd"], "w", "and stays w")
+    o.lua("sbo.dbx('DELETE FROM entrances WHERE room = 10463'); sbo.entranceRows = nil")
     # a recall or ride into the wilds isn't a gate (no exit joins the two rooms)
     eq(o.ev("""sbo.gateNote({ num = '10500', wilds = 'false', exits = { e = '10501' }, coord = { name = 'Alyria', x = 705, y = 763 } },
                    { num = WILD(900, 900), wilds = 'true', exits = { n = WILD(900, 899) }, coord = { name = 'Alyria', x = 900, y = 900 } })"""), None, "not a gate")

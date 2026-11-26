@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.32"
+M.version = "1.99.33"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -18077,14 +18077,34 @@ function M.gateNote(a, b)
   if not din then return end
   M.entrancesOut()
   local old = M.dbRow("SELECT cmd, out FROM entrances WHERE wild = %s AND room = %s", wn, rn)
-  -- (a learned command way in stays: only an empty one, or a direction, is the step)
-  local cmd = (old and old.cmd and old.cmd ~= "" and not M.DIR_OPP[old.cmd]) and old.cmd or din
+  -- (an exit joins the two rooms: that's the step in - a command learned for it before was something typed just
+  -- before the move, not the way)
+  local cmd = din
   if old and old.cmd == cmd and old.out == dout then return end
   M.dbx("INSERT OR REPLACE INTO entrances (wild, room, cmd, map, x, y, t, out) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
     wn, rn, cmd, map, x, y, os.time(), dout)
   M.entranceRows, M.worldTownList = nil, nil
   return true
 end
+-- gates learned before 1.99.33 with a command for their step in where an exit joins the rooms (something typed
+-- just before the move: "socker survery rune"): the step is the way back from the step out - once
+function M.gateCmdFix()
+  if M.cfg.gates2 then return 0 end
+  M.entrancesOut()
+  local n = 0
+  for _, r in ipairs(M.dbRows("SELECT wild, room, cmd, out FROM entrances")) do
+    local back = r.out and M.DIR_OPP[r.out]
+    if back and r.cmd ~= back and not M.DIR_OPP[r.cmd or ""] then
+      M.dbx("UPDATE entrances SET cmd = %s WHERE wild = %s AND room = %s", back, r.wild, r.room)
+      n = n + 1
+    end
+  end
+  M.entranceRows = nil
+  M.cfg.gates2 = true
+  M.saveSettings()
+  return n
+end
+
 -- the gates kept in the recordings (crossings before 1.99.26 were learned only from what you typed): once
 function M.gateImport()
   if M.cfg.gates1 then return 0 end
@@ -21898,5 +21918,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport); pcall(M.gateImport); pcall(M.terrainImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport); pcall(M.gateImport); pcall(M.gateCmdFix); pcall(M.terrainImport) end)
 pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end
