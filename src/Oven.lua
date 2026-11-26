@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.38"
+M.version = "1.99.39"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -17682,9 +17682,11 @@ end
 function M.planRoute(plan)
   local segs = {}
   for _, leg in ipairs(plan.legs) do
-    if leg.kind == "walk" and getPath(leg.from, leg.to) then
+    local pd, pp
+    if leg.kind == "walk" then pd, pp = M.legPath(leg) end
+    if leg.kind == "walk" and (pd or getPath(leg.from, leg.to)) then
       local rooms = {}
-      for i, r in ipairs(speedWalkPath) do rooms[i] = tonumber(r) end
+      for i, r in ipairs(pp or speedWalkPath) do rooms[i] = tonumber(r) end
       segs[#segs + 1] = { walk = rooms }
     elseif leg.kind == "run" or leg.kind == "wild" then
       segs[#segs + 1] = { run = { leg.from, leg.to } }
@@ -18731,46 +18733,82 @@ function M.allGates()
   return out
 end
 -- the room map as a graph: every room's exits and special exits (enter mirror, sayto kalied e), forwards and
--- backwards - read when a trip is planned, kept until Oven changes the map (a way or a lock learned, a temporary
--- map) or M.ROOM_GRAPH_AGE seconds have gone by (the map edited by hand). (Locked exits aren't looked for: the
--- walk itself goes by Mudlet's own path, which keeps to them.)
+-- backwards, each with the command that takes it - leaving out what Mudlet's own paths leave out: locked rooms
+-- (The Wandering Sidhe, which wanders) and locked exits. Read when a trip is planned, kept until Oven changes the
+-- map (a way or a lock learned, a temporary map) or M.ROOM_GRAPH_AGE seconds have gone by (the map edited by hand)
 M.ROOM_GRAPH_AGE = 600
 function M.roomGraph()
   local C = M.roomGraphCache
   if C and os.time() - C.at < M.ROOM_GRAPH_AGE then return C end
-  local fwd, rev = {}, {}
+  local fwd, rev, locked = {}, {}, {}
   local okR, rooms = pcall(getRooms)
   for id in pairs(okR and type(rooms) == "table" and rooms or {}) do
     id = tonumber(id)
     if id then
+      local okL, l = pcall(roomLocked, id)
+      if okL and l then locked[id] = true end
       local out = {}
       local okE, ex = pcall(getRoomExits, id)
-      for _, to in pairs(okE and type(ex) == "table" and ex or {}) do if tonumber(to) then out[#out + 1] = tonumber(to) end end
+      for dir, to in pairs(okE and type(ex) == "table" and ex or {}) do
+        local okX, xl = pcall(hasExitLock, id, dir)
+        if tonumber(to) and not (okX and xl) then out[#out + 1] = { tonumber(to), M.DIR_SHORT[dir] or dir } end
+      end
       local okS, sp = pcall(getSpecialExitsSwap, id)
-      for _, to in pairs(okS and type(sp) == "table" and sp or {}) do if tonumber(to) then out[#out + 1] = tonumber(to) end end
+      for cmd, to in pairs(okS and type(sp) == "table" and sp or {}) do
+        local okX, xl = pcall(hasSpecialExitLock, id, tonumber(to), cmd)
+        if tonumber(to) and not (okX and xl) then out[#out + 1] = { tonumber(to), cmd } end
+      end
       fwd[id] = out
-      for _, to in ipairs(out) do rev[to] = rev[to] or {}; table.insert(rev[to], id) end
+      for _, e in ipairs(out) do rev[e[1]] = rev[e[1]] or {}; table.insert(rev[e[1]], { id, e[2] }) end
     end
   end
-  M.roomGraphCache = { fwd = fwd, rev = rev, at = os.time() }
+  M.roomGraphCache = { fwd = fwd, rev = rev, locked = locked, at = os.time() }
   return M.roomGraphCache
 end
 -- steps on the map from `from` to every room (back: to `from` from every room) - not through the wilds (they're
--- the wilds' own legs; their rooms are reached, not gone on from - unless the world map can't place them);
--- `area`: only within that area
+-- the wilds' own legs; their rooms are reached, not gone on from - unless the world map can't place them), nor
+-- through a locked room; `area`: only within that area. Returns the steps, and the way: tree[room] = { room
+-- before it (back: after it), the command between }
 function M.mapSteps(from, back, area)
   local Gr = M.roomGraph()
   local adj = back and Gr.rev or Gr.fwd
-  local dist, q, head = { [from] = 0 }, { from }, 1
+  local locked = Gr.locked or {}
+  local dist, tree, q, head = { [from] = 0 }, {}, { from }, 1
   while head <= #q do
     local x = q[head]; head = head + 1
     if x == from or not M.isWildRoom(x) or not M.worldPos(x) then
-      for _, y in ipairs(adj[x] or {}) do
-        if not dist[y] and (not area or getRoomArea(y) == area or M.isWildRoom(y)) then dist[y] = dist[x] + 1; q[#q + 1] = y end
+      for _, e in ipairs(adj[x] or {}) do
+        local y = e[1]
+        if not dist[y] and not locked[y] and (not area or getRoomArea(y) == area or M.isWildRoom(y)) then
+          dist[y] = dist[x] + 1; tree[y] = { x, e[2] }; q[#q + 1] = y
+        end
       end
     end
   end
-  return dist
+  return dist, tree
+end
+-- the way a walk leg was planned: its commands and rooms, from the tree of the search it came from
+function M.legPath(leg)
+  local T = leg.tree
+  if not T then return nil end
+  local dirs, path = {}, {}
+  if leg.back then
+    -- (a search back from leg.to: from leg.from, each room's next one toward it)
+    local x = leg.from
+    while x ~= leg.to do
+      local t = T[x]
+      if not t then return nil end
+      dirs[#dirs + 1] = t[2]; path[#path + 1] = t[1]; x = t[1]
+    end
+  else
+    local x = leg.to
+    while x ~= leg.from do
+      local t = T[x]
+      if not t then return nil end
+      table.insert(dirs, 1, t[2]); table.insert(path, 1, x); x = t[1]
+    end
+  end
+  return dirs, path
 end
 
 -- the gates on the map: read from every room's exits once a session (and again after the map's learned something)
@@ -19095,16 +19133,17 @@ function M.planTripOnce(here, targets, used)
   -- search of the map from here, and one back from each target)
   local rooms = {}
   for id, n in pairs(nodes) do if n.onMap and (not n.wild or id == here or isTarget[id]) then rooms[#rooms + 1] = id end end
-  local function walks(from, dist, back)
+  local function walks(from, dist, back, tree)
     for _, r in ipairs(rooms) do
       local k = dist[r]
       if r ~= from and k and k > 0 then
-        if back then edge(r, from, k * typical, { kind = "walk", n = k }) else edge(from, r, k * typical, { kind = "walk", n = k }) end
+        if back then edge(r, from, k * typical, { kind = "walk", n = k, tree = tree, back = true })
+        else edge(from, r, k * typical, { kind = "walk", n = k, tree = tree }) end
       end
     end
   end
-  if nodes[here].onMap then walks(here, M.mapSteps(here)) end
-  for t in pairs(isTarget) do if nodes[t].onMap then walks(t, M.mapSteps(t, true), true) end end
+  if nodes[here].onMap then local d, t = M.mapSteps(here); walks(here, d, false, t) end
+  for t in pairs(isTarget) do if nodes[t].onMap then local d, tr = M.mapSteps(t, true); walks(t, d, true, tr) end end
   -- inside a place, between a ride's shop or landing (or a run's ends, when they're rooms of a place) and the
   -- place's other key rooms, both ways (from a gate in to the shop, from where a ride lands out to a gate). (Gate to gate of one place isn't searched: crossing a
   -- town to leave it again is never the way. Rooms of the wilds that are on the map too: walked to and from
@@ -19117,8 +19156,8 @@ function M.planTripOnce(here, targets, used)
   for r1 in pairs(hub) do
     if place[r1] ~= nil and nodes[r1].onMap then
       local a1 = getRoomArea(r1)
-      if r1 ~= here then walks(r1, M.mapSteps(r1, false, a1)) end
-      if not isTarget[r1] then walks(r1, M.mapSteps(r1, true, a1), true) end
+      if r1 ~= here then local d, t = M.mapSteps(r1, false, a1); walks(r1, d, false, t) end
+      if not isTarget[r1] then local d, t = M.mapSteps(r1, true, a1); walks(r1, d, true, t) end
     end
   end
   -- the wilds: every two of its key cells on the same map, guessed by their distance until costed
@@ -19196,8 +19235,9 @@ function M.planLines(plan, targets)
       if i == #plan.legs then lines[#lines + 1] = string.format("about %d step%s on to %s", leg.n, pl(leg.n), name(leg.to))
       else lines[#lines + 1] = string.format("%d step%s to %s", leg.n, pl(leg.n), name(leg.to)) end
       -- a walk through other places (or a command on the way: enter mirror): which
-      if getPath(leg.from, leg.to) then
-        local okF, f = pcall(M.routeFoot, speedWalkDir, speedWalkPath)
+      local pd, pp = M.legPath(leg)
+      if pd or getPath(leg.from, leg.to) then
+        local okF, f = pcall(M.routeFoot, pd or speedWalkDir, pp or speedWalkPath)
         local _, arrows = (okF and f or ""):gsub(" → ", "")
         if arrows >= 2 then lines[#lines + 1] = "through " .. f end
       end
@@ -19283,7 +19323,9 @@ function M.legStart(leg, T)
   local function cont() if M.trip == T then M.tripContinue() end end
   local k = leg.kind
   if k == "walk" then
-    if not getPath(M.mapRoom, leg.to) then M.trip = nil; return M.notifyWalk("stopped: no way on the map to " .. (getRoomName(leg.to) or ("#" .. leg.to))) end
+    local pd, pp = M.legPath(leg)
+    if pd and leg.from == M.mapRoom then speedWalkDir, speedWalkPath = pd, pp
+    elseif not getPath(M.mapRoom, leg.to) then M.trip = nil; return M.notifyWalk("stopped: no way on the map to " .. (getRoomName(leg.to) or ("#" .. leg.to))) end
     local need = M.stNeed("walk", #speedWalkDir)
     if M.stShort(need) and not T.stOk then
       return M.stRest(need, function() if M.trip == T then T.stOk = true; M.legStart(leg, T) end end,

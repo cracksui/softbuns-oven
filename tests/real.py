@@ -34,13 +34,14 @@ def load():
       sbo.cfg.recallReadyAt = os.time() + 10^9
     """)
     d = json.load(open(os.path.join(PROFILE, "oven_map.json")))
-    AREA, ANAME, NAME, EX = {}, {}, {}, {}
+    AREA, ANAME, NAME, EX, LOCKED = {}, {}, {}, {}, set()
     SHORT = {"north": "n", "south": "s", "east": "e", "west": "w", "northeast": "ne", "northwest": "nw",
              "southeast": "se", "southwest": "sw", "up": "u", "down": "d", "in": "in", "out": "out"}
     for a in d["areas"]:
         ANAME[a["id"]] = a["name"]
         for r in a["rooms"]:
             AREA[r["id"]] = a["id"]; NAME[r["id"]] = r.get("name", "")
+            if r.get("locked"): LOCKED.add(r["id"])
             EX[r["id"]] = [(e["name"], e["exitId"]) for e in r.get("exits", []) if not e.get("locked")]
     def getPath(a, b):
         a, b = int(a), int(b)
@@ -49,7 +50,8 @@ def load():
         while q and b not in prev:
             x = q.popleft()
             for c, y in EX.get(x, []):
-                if y not in prev: prev[y] = (x, c); q.append(y)
+                # (like Mudlet's: never through a locked room)
+                if y not in prev and y not in LOCKED: prev[y] = (x, c); q.append(y)
         if b not in prev: return False
         dirs, path, x = [], [], b
         while prev[x]: px, c = prev[x]; dirs.insert(0, SHORT.get(c, c)); path.insert(0, str(x)); x = px
@@ -57,6 +59,7 @@ def load():
         return True
     G = L.globals()
     G.getPath = getPath
+    G.roomLocked = lambda i: int(i) in LOCKED
     G.roomExists = lambda i: (i is not None) and int(i) in AREA
     G.getRoomArea = lambda i: AREA.get(int(i))
     G.getRoomAreaName = lambda a: ANAME.get(int(a)) or -1
@@ -85,12 +88,16 @@ def plan(o, frm, to):
 # trips, and what they must (or mustn't) do - from what went wrong before
 TRIPS = [
     ("Rune -> Sigil", 10490, 27964, lambda p: True),
-    ("Sigil -> Rune: on the map, through The Wandering Sidhe", 27964, 10490, lambda p: [l["kind"] for l in p["legs"]] == ["walk"]),
+    ("Sigil -> Rune: not through The Wandering Sidhe (locked: it wanders)", 27964, 10490, lambda p: not any("Wandering Sidhe" in l for l in p["lines"])),
     ("New Rigel -> the iceberg: runs, not 1243 rooms on foot", 61834, 917745, lambda p: any(l["kind"] in ("run", "ride") for l in p["legs"])),
     ("the wilds -> the iceberg", 1649148, 917755, lambda p: True),
     ("the worldgate circle -> the Palace of Diocletian's signpost", 3481713, 4189387, lambda p: True),
     ("Rune, in town", 10490, 10500, lambda p: [l["kind"] for l in p["legs"]] == ["walk"]),
     ("Teolaven's inn -> Rune: out, and a run (not walked all the way)", 328864, 10490, lambda p: any(l["kind"] == "run" for l in p["legs"])),
+    # The Wandering Sidhe is a locked room (it wanders): never planned through - Mudlet's own path won't go there
+    ("Sigil's questmaster -> Lowangen: not through the locked Sidhe", 28450, 16014,
+        lambda p: not any("Wandering Sidhe" in l for l in p["lines"])),
+    ("Lowangen -> Rune: out and run rune (not walked)", 16004, 10490, lambda p: any(l["kind"] == "run" for l in p["legs"])),
 ]
 
 
