@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.47"
+M.version = "1.99.48"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -19507,8 +19507,8 @@ function M.tripContinue()
   end
   T.done = (T.done or 0) + (T.cur and 1 or 0)
   T.total = T.done + 1 + left
-  local okL, ls = pcall(M.planLines, { legs = { leg }, cost = 0, gold = 0 }, T.targets)
-  T.cur = okL and ls and ls[1] or leg.kind
+  local okL, ls = pcall(M.legShort, leg)
+  T.cur = okL and ls or leg.kind
   pcall(M.drawBar)
   M.legStart(leg, T)
 end
@@ -21916,12 +21916,32 @@ function M.helpProgressMark()
   local f = math.min(1, (HF.done or 0) / HF.total)
   return FILL[math.max(1, math.ceil(f * #FILL))]
 end
--- on sbo go: the leg you're on, at the right of the prompt bar ("go 2/5 · run north to the signpost outside Rune")
+-- a leg in a few words, for the bar: "run newrigel", "walk → Bank", "recall → Sigil"
+function M.legShort(leg)
+  local k = leg.kind
+  local function name(id)
+    local n = M.placeLabel(id) or select(2, M.placeOf(id)) or (roomExists(id) and getRoomName(id)) or ""
+    if n == "" then local q = M.worldPos(id); n = q and string.format("%d,%d", q.x, q.y) or ("#" .. id) end
+    return n
+  end
+  if k == "run" then return "run " .. leg.name
+  elseif k == "walk" then return "walk → " .. name(leg.to)
+  elseif k == "wild" then return "wilds → " .. name(leg.to)
+  elseif k == "step" then return leg.cmd
+  elseif k == "recall" then return "recall → " .. tostring(leg.name)
+  elseif k == "clan" then return "clan gohall"
+  elseif k == "gate" then return "gate → " .. (M.worldgateZone(leg.to) or "?")
+  elseif k == "whereout" then return "where is exit"
+  elseif k == "ride" then local L = leg.link or {}; return tostring(L.kind or "ride"):lower() .. " → " .. tostring(L.dest) end
+  return k
+end
+
+-- on sbo go: the leg you're on, at the right of the prompt bar ("go 2/5 · run newrigel")
 function M.tripSegs()
   local T = M.trip
   if not T or not T.cur then return nil end
-  local txt = T.cur:gsub("%s*%(.-%)", "")
-  if ulen(txt) > 48 then txt = M.usub(txt, 1, 47) .. "…" end
+  local txt = T.cur
+  if ulen(txt) > 28 then txt = M.usub(txt, 1, 27) .. "…" end
   return { { C.key, "go " }, { C.num, string.format("%d/%d", (T.done or 0) + 1, math.max(T.total or 1, (T.done or 0) + 1)) },
     { C.dim, " · " }, { C.text, txt }, { C.dim, "   " } }
 end

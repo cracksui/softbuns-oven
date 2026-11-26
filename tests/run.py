@@ -5424,9 +5424,9 @@ def trip_leg_on_the_bar():
       sbo.recallToAsk = function() return false end
       SEG = function() local t = {}; for _, s in ipairs(sbo.tripSegs() or {}) do t[#t+1] = s[2] end; return table.concat(t) end
       sbo.trip = { targets = { 3 }, used = {}, legs = 0 }; sbo.tripContinue()""")
-    eq(o.ev("SEG()"), "go 1/2 · e into Towne   ", "the first leg of two")
+    eq(o.ev("SEG()"), "go 1/2 · e   ", "the first leg of two")
     o.lua("sbo.mapRoom = 2; sbo.tripContinue()")
-    eq(o.ev("SEG()"), "go 2/2 · about 1 step on to room 3   ", "the second")
+    eq(o.ev("SEG()"), "go 2/2 · walk → Towne   ", "the second")
     o.lua("sbo.mapRoom = 3; sbo.tripContinue()")
     eq(o.ev("sbo.tripSegs()"), None, "gone on arrival")
 
