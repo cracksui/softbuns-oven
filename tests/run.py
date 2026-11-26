@@ -893,6 +893,13 @@ def go_feature_off_the_map():
     eq(o.ev("SENT[4]"), "nw", "and the next")
     o.lua("sbo.stopAll()")
     eq(o.ev("sbo.dirWalk"), None, "sbo stop stops it")
+    # on the map too: the game's path, walked as given (not a map walk to the room it was worked out to be)
+    o.lua("""SENT = {}; roomExists = function() return true end; sbo.mapRoom = 10490; sbo.areaNow = function() return 'Towne of Rune' end
+      sbo.dbx("INSERT OR REPLACE INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('Towne of Rune', 'bank', 10500, 10490, 'n, e', 1)")
+      MAPWALK = nil; sbo.mapWalkTo = function(id) MAPWALK = id end
+      sbo.whereGo('bank'); local q = sbo.quietNext; sbo.quietNext = nil; q.fn({ "You sense that bank may be located n, e." })""")
+    eq((o.ev("SENT[1]"), o.ev("SENT[2]"), o.ev("MAPWALK")), ("where is bank", "n", None), "walks n, e")
+    o.lua("sbo.dirWalk = nil")
 
 
 @test

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.27"
+M.version = "1.99.28"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -12023,14 +12023,9 @@ function M.whereGo(q)
   if hereHas or #areas == 0 or not (M.mapRoom and roomExists(M.mapRoom)) then   -- (off the map: ask here)
     if M.busyWhy(M.lastStatusPrompt) then return false end
     M.quietly("where is " .. q, "where", function(lines)
-      local r = M.dbRow("SELECT room, dirs FROM where_rooms WHERE area = %s AND feature = %s", area or "", q)
-      local onMap = M.mapRoom and roomExists(M.mapRoom)
+      -- the game's own directions, walked as given (the map isn't needed, and may not have every room or exit)
       local dirs = M.whereDirs(lines, q)
-      if r and tonumber(r.room) and onMap then
-        M.say("where is " .. q .. ": " .. ((roomExists(tonumber(r.room)) and getRoomName(tonumber(r.room))) or "") .. " #" .. r.room)
-        M.mapWalkTo(tonumber(r.room))
-      elseif dirs then
-        -- off the map: the game's own directions, walked
+      if dirs then
         M.say("where is " .. q .. ": " .. dirs .. " - walking it")
         M.walkDirs(dirs, function() M.notifyWalk("arrived") end)
       else
