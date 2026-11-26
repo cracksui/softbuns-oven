@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.42"
+M.version = "1.99.43"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -17564,6 +17564,14 @@ function M.mapRunNow(arg, planned)
   if not M.cfg.map then return say("map following is off - sbo config map on first") end
   local here = M.mapRoom or M.currentRoom()
   if not here then return say("Oven doesn't know where you are yet - move one room first") end
+  -- a feature the place you're in has (where is lists it here: questmaster, bank): the game's own path to it -
+  -- the one here, not one Oven knows of somewhere else
+  local area = M.areaNow()
+  if not all and area and q:match("^[%w%-]+$")
+      and M.dbRow("SELECT feature FROM where_features WHERE area = %s AND (feature = %s OR instr(feature, %s) = 1)", area, q:lower(), q:lower())
+      and M.whereGo(q) then
+    return
+  end
   local targets, fromNotes = M.runTargets(q)
   if #targets == 0 or (not fromNotes and #M.whereAreas(q) > 0) then
     -- a feature the game knows by name in the place you're in (where is food): its path, walked
@@ -17622,7 +17630,8 @@ function M.mapRunNow(arg, planned)
   table.sort(cands, function(a, b) return a.d < b.d end)
   local ids = {}
   for i = 1, math.min(#cands, M.GO_CANDIDATES) do ids[i] = cands[i].id end
-  say(string.format("going to %s%s", cands[1].why, #cands > 1 and string.format("  (%d matches - the cheapest way to one of the nearest; sbo map find %s lists them)", #cands, q) or ""))
+  if #cands > 1 then say(string.format("%d places for '%s' - planning the cheapest way to one of them (sbo map find %s lists them)", #cands, q, q))
+  else say("going to " .. cands[1].why) end
   M.goTo(ids)
 end
 M.GO_CANDIDATES = 8

@@ -3695,10 +3695,12 @@ def where_is():
     o.lua('send("where is bank")')
     eq([r.get("room") for r in o.rows("SELECT room, dirs FROM where_rooms WHERE feature = 'bank'")], [None], "off the map: no room, directions kept")
     # sbo go food: from anywhere, the room it learned
-    o.lua("WALKED = nil; TS = sbo.tripStart; sbo.tripStart = function(t) WALKED = t[1] end; AT(3); SENT = {}")
-    o.lua('sbo.command("go food")')
-    eq(o.ev("WALKED"), 5, "sbo go food")
-    o.lua("sbo.tripStart = TS")
+    # sbo go food, in a place that has food: the game's own path, walked (not a room Oven knows of elsewhere)
+    o.lua("AT(1); SENT = {}; sbo.busyWhy = function() return nil end")
+    o.lua('sbo.command("go food"); runTimers()')
+    sent = list(o.ev("SENT").values())
+    assert sent[:2] == ["where is food", "s"], sent
+    o.lua("sbo.dirWalk = nil")
     # something Oven hasn't found yet but the area has: it asks the game
     o.lua('SENT = {}; sbo.command("go questmaster")')
     assert "where is questmaster" in list(o.ev("SENT").values()), list(o.ev("SENT").values())
