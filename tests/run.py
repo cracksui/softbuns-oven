@@ -1000,6 +1000,39 @@ def go_always_has_a_plan_on_foot():
 
 
 @test
+def go_runs_to_the_signpost_nearest_first():
+    o = Oven()
+    o.lua("""roomExists = function() return true end
+      AREA = { [61834] = 'Rigel', [917755] = -1, [917745] = -1, [12000] = -1 }
+      getRoomArea = function(id) id = tonumber(id) if sbo.isWildRoom(id) then return 'W' end return AREA[id] or 'X' end
+      getRoomAreaName = function(a) if a == -1 then return -1 end return a end; getRoomName = function(id) return 'room ' .. id end
+      getPath = function(a, b) if getRoomArea(a) == getRoomArea(b) and getRoomArea(a) ~= 'W' then speedWalkDir = { 'n' }; speedWalkPath = { 1 }; return true end return false end
+      function WILD(x, y) return 1060834 + y * 2300 + x end
+      sbo.worldPos = function(id) id = tonumber(id)
+        if id >= 1000000 then local v = id - 1060834 return { map = 'Alyria', x = v % 2300, y = math.floor(v / 2300) } end
+        if AREA[id] == 'Rigel' then return { map = 'Alyria', x = 801, y = 545 } end
+        if id == 12000 then return { map = 'Alyria', x = 300, y = 300 } end
+        return { map = 'Alyria', x = 2044, y = 150 } end
+      -- the iceberg is in the map's unnamed area (-1), like another place far off: named and matched by GMCP's zone
+      sbo.dbx("INSERT OR REPLACE INTO room_xy (room, map, x, y, zone) VALUES (917755, 'Alyria', 2044, 150, 'The Iceberg')")
+      sbo.dbx("INSERT OR REPLACE INTO room_xy (room, map, x, y, zone) VALUES (917745, 'Alyria', 2044, 150, 'The Iceberg')")
+      sbo.dbx("INSERT OR REPLACE INTO room_xy (room, map, x, y, zone) VALUES (12000, 'Alyria', 300, 300, 'Elsewhere')")
+      sbo.dbx("INSERT OR REPLACE INTO entrances (wild, room, cmd, map, x, y, t) VALUES (%s, 917755, 'n', 'Alyria', 2044, 151, 0)", WILD(2044, 151))
+      sbo.dbx("INSERT OR REPLACE INTO entrances (wild, room, cmd, map, x, y, t) VALUES (%s, 12000, 'n', 'Alyria', 300, 301, 0)", WILD(300, 301))
+      sbo.entranceRows = nil
+      -- a signpost 414 rooms from it, reached by a run from where you are
+      HUB = WILD(1630, 552)
+      sbo.signpostPoints = function() return { { room = HUB, x = 1630, y = 552, map = 'Alyria' }, { room = WILD(100, 100), x = 100, y = 100, map = 'Alyria' } } end
+      sbo.tripPlanRides = function(from, to) if to == HUB then return { segs = { { kind = 'run', name = 'the north', from = from, to = HUB } }, gold = 0, rides = 0, runs = 1, walked = 0, wild = 0 } end end
+      gmcp.room = { info = { num = '61834', wilds = 'false' } }""")
+    eq((o.ev("select(2, sbo.placeOf(917745))"), o.ev("#sbo.gatesOf(sbo.placeOf(917745))")), ("The Iceberg", 1), "named and matched by zone, not the unnamed area")
+    o.lua("P = sbo.tripPlan(61834, 917745, {})")
+    eq((o.ev("P.segs[1].kind"), o.ev("P.segs[2].link.sign.x"), o.ev("P.wild")), ("run", 2044, 414), "the run first, then 414 rooms, not 1243")
+    lines = list(o.ev("(sbo.tripPlanLines(P, 917745))").values())
+    assert lines[0].startswith("run the north") and "The Iceberg" in lines[1], lines
+
+
+@test
 def quest_steps_are_links():
     o = Oven()
     o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end

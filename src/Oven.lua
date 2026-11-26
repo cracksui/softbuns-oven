@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.28"
+M.version = "1.99.29"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -17640,7 +17640,7 @@ function M.goToNow(id)
     if okT and plan and (plan.rides > 0 or plan.runs > 0 or (plan.wild or 0) > M.TRIP_WILD_WARN) then
       local lines, tail = M.tripPlanLines(plan, id)
       M.goAsk = { id = id, at = os.time(), trip = true }
-      M.sayPlan(string.format("%s is in %s - the fastest way:", getRoomName(id) or ("#" .. id), getRoomAreaName(getRoomArea(id)) or "?"),
+      M.sayPlan(string.format("%s is in %s - the fastest way:", getRoomName(id) or ("#" .. id), select(2, M.placeOf(id)) or "?"),
         lines, onFoot and string.format("%d steps on foot instead of %d", plan.walked, onFoot) or "no way there on foot", tail .. " · y to go, n to stay")
       return
     end
@@ -18255,7 +18255,19 @@ function M.gateImport()
   M.saveSettings()
   return n
 end
--- an area's gates: { wild, room, x, y, map, cmd (in), out } with the area room on the map
+-- which place a room is in: its area on the map, or (a room in the map's unnamed area, -1 - rooms of many places
+-- share it) the zone GMCP gave it - a key, and a name to show
+function M.placeOf(room)
+  room = tonumber(room)
+  if not room or not roomExists(room) then return nil end
+  local a = getRoomArea(room)
+  local ok, n = pcall(getRoomAreaName, a)
+  if a and tonumber(a) and tonumber(a) > 0 and ok and type(n) == "string" and n ~= "" then return a, (n:gsub("^Oven: ", "")) end
+  local r = M.dbRow("SELECT zone FROM room_xy WHERE room = %s", room)
+  if r and r.zone and r.zone ~= "" then return "zone:" .. r.zone, r.zone end
+  return a, nil
+end
+-- an area's gates: { wild, room, x, y, map, cmd (in), out } with the area room on the map (area: a placeOf key)
 function M.gatesOf(area)
   if not M.entranceRows then
     M.entrancesOut()
@@ -18264,7 +18276,7 @@ function M.gatesOf(area)
   local out = {}
   for _, e in ipairs(M.entranceRows) do
     local room = tonumber(e.room)
-    if room and roomExists(room) and getRoomArea(room) == area then
+    if room and roomExists(room) and M.placeOf(room) == area then
       out[#out + 1] = { wild = tonumber(e.wild), room = room, x = tonumber(e.x), y = tonumber(e.y), map = e.map, cmd = e.cmd,
         out = (e.out and e.out ~= "") and e.out or (M.DIR_OPP[e.cmd] or nil) }
     end
@@ -18291,7 +18303,7 @@ function M.footPlan(here, target)
   if hereWild then
     if hp then outs[1] = { x = hp.x, y = hp.y, map = hp.map, cost = 0 } end
   else
-    local ha = roomExists(here) and getRoomArea(here)
+    local ha = M.placeOf(here)
     for _, g in ipairs(ha and M.gatesOf(ha) or {}) do
       local k = g.out and M.mapSteps(here, g.room)
       if k then outs[#outs + 1] = { x = g.x, y = g.y, map = g.map, cost = k + 1, room = g.room, dir = g.out } end
@@ -18304,7 +18316,7 @@ function M.footPlan(here, target)
     local tp = M.worldPos(target)
     if tp then ins[1] = { x = tp.x, y = tp.y, map = tp.map, cost = 0, wild = target } end
   else
-    for _, g in ipairs(M.gatesOf(getRoomArea(target))) do
+    for _, g in ipairs(M.gatesOf(M.placeOf(target))) do
       local k = M.mapSteps(g.room, target)
       if k then ins[#ins + 1] = { x = g.x, y = g.y, map = g.map, cost = k + 1, wild = g.wild, room = g.room, cmd = g.cmd, inside = k } end
     end
@@ -18324,8 +18336,8 @@ function M.footPlan(here, target)
     end
   end
   if not best then return nil end
-  local ta = getRoomArea(target)
-  local dest = (M.isWildRoom(target) and ("#" .. target)) or (ta and getRoomAreaName(ta)) or getRoomName(target) or ("#" .. target)
+  local ta, tname = M.placeOf(target)
+  local dest = (M.isWildRoom(target) and ("#" .. target)) or tname or getRoomName(target) or ("#" .. target)
   local L = { kind = "wildwalk", foot = true, key = "foot", board = {}, cost = 0, noBuy = true, shopName = "",
     sign = { room = bi.wild, x = bi.x, y = bi.y, map = bi.map }, walkOut = bw, dir = M.compassTo(bo.x, bo.y, bi.x, bi.y),
     enter = bi.cmd, land = bi.room or bi.wild, areaId = ta, dest = dest, unknownIn = bi.unknown,
@@ -18558,14 +18570,54 @@ end
 
 -- the best trip from here to target: { segs = { walk | run | ride … }, gold, rides, walked } or nil
 function M.tripPlan(here, target, used)
-  local plan = M.tripPlanRides(here, target, used)
-  local foot = not (used or {}).foot and M.footPlan(here, target)
-  if foot and (not plan or foot.cost < M.tripCost(plan)) then return foot end
-  return plan
+  -- the plan that walks the fewest rooms of the wilds (the roads - runs - and rides save the stamina and the
+  -- time), then the cheapest: runs and rides to the signpost nearest the target, the walk only from there
+  local best
+  local function consider(p)
+    if not p then return end
+    p.cost = p.cost or M.tripCost(p)
+    if not best or (p.wild or 0) < (best.wild or 0) or ((p.wild or 0) == (best.wild or 0) and p.cost < best.cost) then best = p end
+  end
+  consider(M.tripPlanRides(here, target, used))
+  if (used or {}).foot then return best end
+  local foot = M.footPlan(here, target)
+  consider(foot)
+  for _, H in ipairs(M.tripHubs(here, target, foot and foot.wild)) do
+    local f = M.footPlan(H.room, target)
+    if f and (not best or (f.wild or 0) < (best.wild or 0)) then
+      local p1 = M.tripPlanRides(here, H.room, used)
+      if p1 then
+        local segs = {}
+        for _, sg in ipairs(p1.segs) do segs[#segs + 1] = sg end
+        for _, sg in ipairs(f.segs) do segs[#segs + 1] = sg end
+        consider({ segs = segs, gold = (p1.gold or 0), rides = p1.rides + f.rides, runs = p1.runs, walked = (p1.walked or 0) + (f.walked or 0),
+          wild = (p1.wild or 0) + (f.wild or 0), cost = M.tripCost(p1) + f.cost })
+      end
+    end
+  end
+  return best
+end
+-- signposts on the target's map nearer to it than where the walk would start (`wild`: that walk's length), nearest
+-- first - the few worth planning a way to
+M.TRIP_HUBS = 8
+function M.tripHubs(here, target, wild)
+  local tp = M.worldPos and M.worldPos(target)
+  if not tp then return {} end
+  local c = {}
+  for _, S in ipairs(M.signpostPoints()) do
+    if S.map == tp.map and S.room ~= here and roomExists(S.room) then
+      local d = math.max(math.abs(S.x - tp.x), math.abs(S.y - tp.y))
+      if not wild or d < wild then c[#c + 1] = { room = S.room, d = d } end
+    end
+  end
+  table.sort(c, function(a, b) return a.d < b.d end)
+  local out = {}
+  for i = 1, math.min(#c, M.TRIP_HUBS) do out[i] = c[i] end
+  return out
 end
 -- what a plan costs, in steps (the trips counted as M.TRAVEL_COST each; the wilds twice: they're slower going)
 function M.tripCost(plan)
-  if plan.foot then return plan.cost end
+  if plan.cost then return plan.cost end
   return (plan.walked or 0) + ((plan.rides or 0) + (plan.runs or 0)) * M.TRAVEL_COST + (plan.wild or 0)
 end
 function M.tripPlanRides(here, target, used)
@@ -19146,7 +19198,7 @@ function M.travelSignStep()
     return
   end
   -- back inside: in the area the trip was for (any of its rooms - a gate not known yet)
-  if L.foot and not inWilds and T.wasOut and L.areaId and M.mapRoom and roomExists(M.mapRoom) and getRoomArea(M.mapRoom) == L.areaId then
+  if L.foot and not inWilds and T.wasOut and L.areaId and M.mapRoom and roomExists(M.mapRoom) and M.placeOf(M.mapRoom) == L.areaId then
     M.travel = nil
     say("travel: in " .. L.dest .. " - on from here")
     return tempTimer(0.5, function() if M.trip then M.tripContinue() else M.goTo(T.target) end end)
