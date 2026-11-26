@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.46"
+M.version = "1.99.47"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10521,7 +10521,8 @@ function M.drawBar()
   if M.cfg.barSession and not top then
     local sess = M.sessionSegs()
     local sep = { C.dim, "   │ " }
-    local tagW = ulen(" [v" .. M.version .. " ✓]  ") + (M.helpFetch and 2 or 0)
+    local okT, ts = pcall(M.tripSegs)
+    local tagW = ulen(" [v" .. M.version .. " ✓]  ") + (M.helpFetch and 2 or 0) + ((okT and ts) and segLen(ts) or 0)
     local need = segLen(main) + ulen(sep[2]) + segLen(sess) + tagW - cols
     if need > 0 and #p.vals > 0 then
       local smaller = gw - math.ceil(need / #p.vals)
@@ -10538,6 +10539,8 @@ function M.drawBar()
   end
 
   local tag = M.versionTag()
+  local okT, ts = pcall(M.tripSegs)
+  if okT and ts then addAll(ts, tag); tag = ts end
   if collapsed ~= (M.barCollapsed or false) then
     M.barCollapsed = collapsed
     M.layoutBar()
@@ -18497,11 +18500,13 @@ function M.stTerrainStep(info)
   local running = (M.running and M.running.started) and true or false
   local mounted = M.mounted()
   local st, mst = M.stNow(), M.mountPending
-  if P and P.num ~= num and P.wild and wild and P.x and x and math.max(math.abs(P.x - x), math.abs(P.y - y)) <= 1
+  local dist = P and P.x and x and math.max(math.abs(P.x - x), math.abs(P.y - y))
+  -- (a run is reported every dozen rooms or so: what it took, a room)
+  if P and P.num ~= num and P.wild and wild and dist and dist >= 1 and (dist <= 1 or (running and dist <= 40))
       and P.running == running and P.mounted == mounted then
     local name = running and "@run" or P.terrain
-    if mounted and P.mst and mst then M.terrainNote("mount", name, P.mst - mst) end
-    if not mounted and P.st and st then M.terrainNote("foot", name, P.st - st) end
+    if mounted and P.mst and mst then M.terrainNote("mount", name, (P.mst - mst) / dist) end
+    if not mounted and P.st and st then M.terrainNote("foot", name, (P.st - st) / dist) end
   end
   M.stTerrPrev = { num = num, wild = wild, x = x, y = y, terrain = info.terrain, running = running, mounted = mounted, st = st, mst = mst }
 end
@@ -19494,6 +19499,17 @@ function M.tripContinue()
   local leg = plan.legs[1]
   local j = 2
   while leg.kind == "wild" and plan.legs[j] and plan.legs[j].kind == "wild" do leg.to = plan.legs[j].to; j = j + 1 end
+  -- (for the prompt bar: legs taken so far, and the plan's legs left - walks or wilds one after another count once)
+  local left = 0
+  for i = j, #plan.legs do
+    local a, b = plan.legs[i - 1], plan.legs[i]
+    if not (i > j and (b.kind == "walk" or b.kind == "wild") and a.kind == b.kind) then left = left + 1 end
+  end
+  T.done = (T.done or 0) + (T.cur and 1 or 0)
+  T.total = T.done + 1 + left
+  local okL, ls = pcall(M.planLines, { legs = { leg }, cost = 0, gold = 0 }, T.targets)
+  T.cur = okL and ls and ls[1] or leg.kind
+  pcall(M.drawBar)
   M.legStart(leg, T)
 end
 function M.legStart(leg, T)
@@ -19613,9 +19629,14 @@ function M.stLearnRoom()
   local id = type(info) == "table" and tonumber(info.num) or nil
   local st = M.stNow()
   local prev = M.stPrev
-  M.stPrev = { room = id, st = st, run = M.running and M.running.started or false }
+  local c = type(info) == "table" and type(info.coord) == "table" and info.coord or {}
+  local x, y = tonumber(c.x), tonumber(c.y)
+  M.stPrev = { room = id, st = st, run = M.running and M.running.started or false, x = x, y = y }
   if not (prev and id and st and prev.st) or prev.room == id or M.mounted() or M.stResting then return end
-  local drop = prev.st - st
+  -- (a run is reported every dozen rooms or so: what it took, a room - not a dozen rooms' worth as one)
+  if (x ~= nil) ~= (prev.x ~= nil) then return end   -- (into or out of the wilds: how far isn't known)
+  local rooms = (x and y and prev.x and prev.y) and math.max(1, math.abs(x - prev.x), math.abs(y - prev.y)) or 1
+  local drop = (prev.st - st) / rooms
   if drop <= 0 or drop > 200 then return end   -- regained, or something else took it
   local kind = ((prev.run and M.running and M.running.started) and "run" or "walk") .. (M.stLevitating() and "+lev" or "")
   M.cfg.stCost = M.cfg.stCost or {}
@@ -19634,6 +19655,13 @@ function M.stLevitating()
 end
 -- stamina a leg needs (nil: not learned yet, or riding - the mount's own, or sbo config go.rest off). The
 -- learned cost is what a room took net of what you regained on the way, as you are now (floating or not)
+-- (before 1.99.47 a run's report - a dozen rooms - was learned as one room: 14 stamina a room, not ~1; learned again)
+function M.stRunFix()
+  if M.cfg.stRunFix1 then return end
+  M.cfg.stRunFix1 = true
+  if M.cfg.stCost then M.cfg.stCost.run, M.cfg.stCost["run+lev"] = nil, nil end
+  for _, T in pairs(M.cfg.stTerrain or {}) do if type(T) == "table" then T["@run"] = nil end end
+end
 function M.stNeed(kind, rooms)
   if M.cfg.tripRest == false or M.mounted() or not rooms or rooms <= 0 then return nil end
   local k = M.stLevitating() and (kind .. "+lev") or kind
@@ -19650,6 +19678,14 @@ function M.stPerRoom(k)
   if fixed then return fixed end
   local c = (M.cfg.stCost or {})[k]
   if c and c.n >= 5 then return c.avg end
+  -- (a run not learned yet: what its rooms took in the wilds, else a road room - runs go by road)
+  if k == "run" then
+    local foot = (M.cfg.stTerrain or {}).foot or {}
+    for _, t in ipairs({ "@run", "paved road", "gravel road" }) do
+      local e = foot[t]
+      if e and (e.n or 0) >= 2 then return e.avg end
+    end
+  end
 end
 M.ST_KINDS = { { "walk", "walk" }, { "run", "run" }, { "walklev", "walk+lev" }, { "runlev", "run+lev" } }
 -- short, for sbo config: "3.8" learned, "2 set" yours, "-" not learned yet
@@ -21880,6 +21916,16 @@ function M.helpProgressMark()
   local f = math.min(1, (HF.done or 0) / HF.total)
   return FILL[math.max(1, math.ceil(f * #FILL))]
 end
+-- on sbo go: the leg you're on, at the right of the prompt bar ("go 2/5 · run north to the signpost outside Rune")
+function M.tripSegs()
+  local T = M.trip
+  if not T or not T.cur then return nil end
+  local txt = T.cur:gsub("%s*%(.-%)", "")
+  if ulen(txt) > 48 then txt = M.usub(txt, 1, 47) .. "…" end
+  return { { C.key, "go " }, { C.num, string.format("%d/%d", (T.done or 0) + 1, math.max(T.total or 1, (T.done or 0) + 1)) },
+    { C.dim, " · " }, { C.text, txt }, { C.dim, "   " } }
+end
+
 function M.versionTag()
   local st = M.updState or {}
   local segs = { { C.dim, "[v" .. M.version } }
@@ -22256,5 +22302,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport); pcall(M.gateImport); pcall(M.gateCmdFix); pcall(M.terrainImport); pcall(M.zoneMapImport); pcall(M.wildExitsImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport); pcall(M.gateImport); pcall(M.gateCmdFix); pcall(M.stRunFix); pcall(M.terrainImport); pcall(M.zoneMapImport); pcall(M.wildExitsImport) end)
 pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end

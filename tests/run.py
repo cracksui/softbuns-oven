@@ -3389,6 +3389,18 @@ def trip_stamina():
         st -= 2; at(r, st)
     o.lua("sbo.running = nil")
     eq(round(o.ev("sbo.cfg.stCost.run.avg")), 2, "running: 2 a room")
+    # a run in the wilds is reported every dozen rooms (recorded 2026-11-25: 12 stamina each, x 1193 -> 1205 -> ...):
+    # a room, not twelve
+    o.lua("sbo.cfg.stCost.run = nil; sbo.running = { started = true, name = 'x' }")
+    for i in range(8):
+        st -= 12
+        o.set_gmcp("char.vitals", "{ st = %d }" % st)
+        o.set_gmcp("room.info", '{ num = "%d", wilds = "true", terrain = "paved road", coord = { x = %d, y = 540 } }' % (2000 + i, 1193 + 12 * i))
+        o.lua("handlers['gmcp.room.info']('gmcp.room.info')")
+    o.lua("sbo.running = nil")
+    eq(round(o.ev("sbo.cfg.stCost.run.avg")), 1, "running in the wilds: 1 a room")
+    eq(round(o.ev("sbo.cfg.stTerrain.foot['@run'].avg")), 1, "and for the planner")
+    o.lua("sbo.cfg.stCost.run = { avg = 2, n = 9 }")
     # a run of ~200 rooms needs ~480; with 100: rest first
     o.lua("""sbo.stRunRooms = function() return 200 end
       RAN = nil; sbo.runStart = function(n, t) RAN = n end
@@ -5396,6 +5408,27 @@ def trips_dont_loop():
       for i = 1, 4 do if sbo.trip then sbo.tripContinue() end end""")
     eq(o.ev("sbo.trip"), None, "stopped")
     assert any("keeps coming back" in l for l in o.ev("LOGS").values()), list(o.ev("LOGS").values())
+
+
+@test
+def trip_leg_on_the_bar():
+    # sbo go: the leg you're on shows at the right of the prompt bar, numbered, and goes when the trip's over
+    o = Oven()
+    o.lua("""MAPSTUB({ [1] = { e = 2 }, [2] = { e = 3 }, [3] = {} })
+      getRoomArea = function() return 1 end; getRoomAreaName = function() return 'Towne' end; getRoomName = function(id) return 'room ' .. id end
+      sbo.mapRoom = 1; gmcp.room = { info = { num = '1', wilds = 'false', zone = 'Towne' } }
+      sbo.planTrip = function(here) if here == 1 then return { cost = 2, gold = 0, legs = {
+          { kind = 'step', cmd = 'e', from = 1, to = 2 }, { kind = 'walk', from = 2, to = 3, n = 1 } } }
+        else return { cost = 1, gold = 0, legs = { { kind = 'walk', from = 2, to = 3, n = 1 } } } end end
+      STARTED = {}; sbo.legStart = function(leg) STARTED[#STARTED+1] = leg.kind end
+      sbo.recallToAsk = function() return false end
+      SEG = function() local t = {}; for _, s in ipairs(sbo.tripSegs() or {}) do t[#t+1] = s[2] end; return table.concat(t) end
+      sbo.trip = { targets = { 3 }, used = {}, legs = 0 }; sbo.tripContinue()""")
+    eq(o.ev("SEG()"), "go 1/2 · e into Towne   ", "the first leg of two")
+    o.lua("sbo.mapRoom = 2; sbo.tripContinue()")
+    eq(o.ev("SEG()"), "go 2/2 · about 1 step on to room 3   ", "the second")
+    o.lua("sbo.mapRoom = 3; sbo.tripContinue()")
+    eq(o.ev("sbo.tripSegs()"), None, "gone on arrival")
 
 
 @test
