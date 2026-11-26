@@ -172,6 +172,25 @@ def main():
           % ("ok  " if not sbad else "FAIL", n, none, len(sbad), time.time() - t))
     for x in sbad[:15]: print("        %s: %s -> %s" % x)
     if sbad: bad += 1
+    # the world maps: everything drawn on each - signposts (the map's own, and the ones above or below it),
+    # places - named when it's pointed at or clicked
+    unnamed, drawn = [], 0
+    for mp in ("Alyria", "Alyrian Underworld", "Faerie Plane", "Verity Isle"):
+        spots = []
+        for sp in o.ev("sbo.signposts()").values():
+            p = o.ev("sbo.worldPos(%d)" % sp.room)
+            if p and (p.map == mp or o.ev("sbo.worldStacked(%r, %r)" % (p.map, mp))): spots.append((p.x, p.y, "signpost %d" % sp.room))
+        o.lua("sbo.worldTownList = nil")
+        for t in o.ev("sbo.worldTowns()").values():
+            if t.map == mp and not t.entry: spots.append((t.x, t.y, t.name))
+        for x, y, what in spots:
+            drawn += 1
+            for z in (0.5, 4):
+                if not o.ev("sbo.worldThingAt(%r, %d, %d, %s)" % (mp, x, y, z)): unnamed.append((mp, x, y, what, z))
+    good = not unnamed
+    print("%s  every marker on the world maps named when pointed at: %d markers, %d unnamed" % ("ok  " if good else "FAIL", drawn, len(unnamed)))
+    for u in unnamed[:10]: print("        %s %d,%d %s (zoom %s)" % u)
+    if not good: bad += 1
     # each wild room you've stood in: no step planned from it that its exits don't have
     rows = o.rows("SELECT room, dir FROM wild_blocked")
     print("moves known not to be there: %d" % len(rows))
