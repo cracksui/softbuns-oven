@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.50"
+M.version = "1.99.51"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -19738,9 +19738,11 @@ function M.stRest(need, fn, what)
   local function tick()
     if M.stResting ~= R then return end
     local st = M.stNow() or 0
+    pcall(M.drawBar)   -- (the bar's "resting 615/1083 st")
     if st > R.best then R.best, R.bestAt = st, now() end
     if st >= R.need then
       M.stResting = nil
+      pcall(M.drawBar)
       M.sendOwn("stand", false)
       return tempTimer(1, function() R.fn() end)
     end
@@ -21939,7 +21941,15 @@ end
 function M.tripSegs()
   local T = M.trip
   if not T or not T.cur then return nil end
-  return { { C.text, T.cur }, { C.dim, "   " } }
+  local out = { { C.text, T.cur } }
+  -- (resting for the leg: it's waiting, not stopped - how far along)
+  local R = M.stResting
+  if R and R.need then
+    out[#out + 1] = { C.dim, " · resting " }
+    out[#out + 1] = { C.num, string.format("%d/%d st", M.stNow() or 0, R.need) }
+  end
+  out[#out + 1] = { C.dim, "   " }
+  return out
 end
 
 function M.versionTag()

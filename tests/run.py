@@ -5427,6 +5427,9 @@ def trip_leg_on_the_bar():
     eq(o.ev("SEG()"), "room 1 → room 2   ", "the first leg of two")
     o.lua("sbo.mapRoom = 2; sbo.tripContinue()")
     eq(o.ev("SEG()"), "room 2 → room 3   ", "the second")
+    o.lua("sbo.stResting = { need = 900 }; sbo.stNow = function() return 615 end")
+    eq(o.ev("SEG()"), "room 2 → room 3 · resting 615/900 st   ", "resting for it: waiting, not stopped")
+    o.lua("sbo.stResting = nil")
     o.lua("sbo.mapRoom = 3; sbo.tripContinue()")
     eq(o.ev("sbo.tripSegs()"), None, "gone on arrival")
 
