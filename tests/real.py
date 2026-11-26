@@ -103,6 +103,8 @@ TRIPS = [
     ("Sigil's questmaster -> Lowangen: not through the locked Sidhe", 28450, 16014,
         lambda p: not any("Wandering Sidhe" in l for l in p["lines"])),
     ("Lowangen -> Rune: out and run rune (not walked)", 16004, 10490, lambda p: any(l["kind"] == "run" for l in p["legs"])),
+    # (recorded 2026-11-26: a run room learned at -0.49 - regen beat the road - and the plan ran 15 runs "for the gain")
+    ("the clan hall -> Rune: a few runs, not a tour", 384334, 10490, lambda p: sum(l["kind"] == "run" for l in p["legs"]) <= 3),
 ]
 
 
@@ -129,6 +131,7 @@ def sweep(o, pairs=300, seed=1):
             if pa and pb and pa.map == pb.map: bad.append(("no plan, both on %s" % pa.map, an, bn))
             continue
         if dt > 2: slow += 1; bad.append(("slow %.1fs" % dt, an, bn))
+        if not all((l.get("cost") or 0) > 0 for l in p["legs"]): bad.append(("a leg that costs nothing or less", an, bn))
         for i, l in enumerate(p["legs"]):
             if l["kind"] == "walk":
                 o.lua("LG = PL.legs[%d]" % (i + 1))

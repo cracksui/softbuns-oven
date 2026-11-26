@@ -5471,6 +5471,9 @@ def trip_leg_on_the_bar():
     o.lua("sbo.stResting = { need = 900 }; sbo.stNow = function() return 615 end")
     eq(o.ev("SEG()"), "room 2 → room 3 · resting 615/900 st   ", "resting for it: waiting, not stopped")
     o.lua("sbo.stResting = nil")
+    # the game's way (a run) in another colour from Oven's own (a walk)
+    o.lua("OWN = sbo.tripSegs()[1][1]; sbo.trip.curGame = true; GAME = sbo.tripSegs()[1][1]")
+    eq(o.ev("OWN ~= GAME and GAME ~= nil"), True, "a run (the game's way) in another colour from a walk (Oven's)")
     o.lua("sbo.mapRoom = 3; sbo.tripContinue()")
     eq(o.ev("sbo.tripSegs()"), None, "gone on arrival")
 

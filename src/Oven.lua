@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.56"
+M.version = "1.99.57"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -18593,7 +18593,7 @@ function M.terrainTypical(a, b)
   if not a then a, b = M.terrainCosts() end
   for _, t in ipairs({ a, b }) do
     local v = {}
-    for name, e in pairs(t) do if name ~= "@run" and (e.n or 0) >= 2 then v[#v + 1] = e.avg end end
+    for name, e in pairs(t) do if name:sub(1, 1) ~= "@" and (e.n or 0) >= 2 then v[#v + 1] = e.avg end end   -- (not runs: "@run…")
     if #v > 0 then table.sort(v); return v[math.ceil(#v / 2)] end
   end
   return M.ST_CELL_DEFAULT
@@ -18840,7 +18840,7 @@ function M.gridCosts(mapName)
   local moves = M.gridBlocked(mapName, img)
   local data, w, h, row, off = img.data, img.w, img.h, img.row, img.off
   local minCost = typical
-  for name, e in pairs(a) do if name ~= "@run" and (e.n or 0) >= 2 and e.avg < minCost then minCost = math.max(0.2, e.avg) end end
+  for name, e in pairs(a) do if name:sub(1, 1) ~= "@" and (e.n or 0) >= 2 and e.avg < minCost then minCost = math.max(0.2, e.avg) end end
   local function cost(i)
     local x = i % w
     local y = (i - x) / w
@@ -19369,8 +19369,10 @@ function M.planTripOnce(here, targets, used)
   if not here then return nil end
   local a, b = M.terrainCosts()
   local typical = M.terrainTypical(a, b)
+  -- (a run's road room, net of what comes back on the way - never below M.RUN_ST_FLOOR: where regen outpaces the road
+  -- a run room nets a gain, and a plan that counted that would run on and on for it)
   local runEntry = a["@run:paved road"] or b["@run:paved road"] or a["@run"] or b["@run"]
-  local runSt = (runEntry and (runEntry.n or 0) >= 2) and runEntry.avg or typical * 0.15
+  local runSt = math.max(M.RUN_ST_FLOOR, (runEntry and (runEntry.n or 0) >= 2) and runEntry.avg or typical * 0.15)
   local nodes, adj = {}, {}
   local function node(id)
     id = tonumber(id)
@@ -19384,6 +19386,7 @@ function M.planTripOnce(here, targets, used)
   end
   local function edge(from, to, cost, leg)
     if not (node(from) and node(to)) or from == to or not cost then return end
+    cost = math.max(cost, 0.01)   -- (nothing is free, let alone a gain: the search needs every way to cost something)
     adj[from] = adj[from] or {}
     leg.from, leg.to, leg.cost = from, to, cost
     table.insert(adj[from], leg)
@@ -19704,6 +19707,7 @@ function M.tripContinue()
   T.total = T.done + 1 + left
   local okL, ls = pcall(M.legShort, leg)
   T.cur = okL and ls or leg.kind
+  T.curGame = M.LEG_GAME[leg.kind] or false
   pcall(M.drawBar)
   M.legStart(leg, T)
 end
@@ -19901,6 +19905,7 @@ function M.stCostSet(k, v)
 end
 
 -- a road room's cost on a run, by terrain (learned from the jumps; a terrain not learned: a road's)
+M.RUN_ST_FLOOR = 0.2
 function M.runRoomCost(t)
   local foot = (M.cfg.stTerrain or {}).foot or {}
   local function got(n) local e = foot[n]; return e and (e.n or 0) >= 2 and e.avg or nil end
@@ -22144,10 +22149,13 @@ function M.legShort(leg)
   return a .. " → " .. b
 end
 
+-- legs whose way the game picks (a run follows its roads, recall and gohall and rides land where they land, where
+-- is gives its path) - the bar shows them in another colour from Oven's own (walks, the wilds, a step)
+M.LEG_GAME = { run = true, recall = true, clan = true, gate = true, whereout = true, ride = true }
 function M.tripSegs()
   local T = M.trip
   if not T or not T.cur then return nil end
-  local out = { { C.text, T.cur } }
+  local out = { { T.curGame and C.title or C.text, T.cur } }
   -- (resting for the leg: it's waiting, not stopped - how far along)
   local R = M.stResting
   if R and R.need then
