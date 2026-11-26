@@ -34,13 +34,14 @@ def load():
       sbo.cfg.recallReadyAt = os.time() + 10^9
     """)
     d = json.load(open(os.path.join(PROFILE, "oven_map.json")))
-    AREA, ANAME, NAME, EX, LOCKED = {}, {}, {}, {}, set()
+    AREA, ANAME, NAME, EX, LOCKED, XY = {}, {}, {}, {}, set(), {}
     SHORT = {"north": "n", "south": "s", "east": "e", "west": "w", "northeast": "ne", "northwest": "nw",
              "southeast": "se", "southwest": "sw", "up": "u", "down": "d", "in": "in", "out": "out"}
     for a in d["areas"]:
         ANAME[a["id"]] = a["name"]
         for r in a["rooms"]:
             AREA[r["id"]] = a["id"]; NAME[r["id"]] = r.get("name", "")
+            if r.get("coordinates"): XY[r["id"]] = r["coordinates"]
             if r.get("locked"): LOCKED.add(r["id"])
             EX[r["id"]] = [(e["name"], e["exitId"]) for e in r.get("exits", []) if not e.get("locked")]
     def getPath(a, b):
@@ -67,6 +68,10 @@ def load():
     G.getRoomExits = lambda i: L.table_from({c: b for c, b in EX.get(int(i), []) if c in SHORT})
     G.getSpecialExitsSwap = lambda i: L.table_from({c: b for c, b in EX.get(int(i), []) if c not in SHORT})
     G.getRooms = lambda: L.table_from({k: NAME[k] for k in AREA})
+    BYAREA = collections.defaultdict(list)
+    for k, a in AREA.items(): BYAREA[a].append(k)
+    G.getAreaRooms = lambda a: L.table_from({i: k for i, k in enumerate(BYAREA.get(int(a), []))})
+    G.getRoomCoordinates = lambda i: tuple(XY.get(int(i), (None, None, None)))
     G.getAreaTable = lambda: L.table_from({n: i for i, n in ANAME.items() if n})
     G.searchRoom = lambda q: L.table_from({k: v for k, v in NAME.items() if v.lower() == str(q).lower()})
     o.lua("centerview = function() end; sbo.mounted = function() return true end")
@@ -147,6 +152,12 @@ def main():
         print("skipped: not in %s: %s" % (PROFILE, ", ".join(missing))); return 0
     o = load()
     bad = 0
+    # Sigil's underground, never visited with Oven: placed from Mudlet's map (its rooms' positions fit their numbers)
+    o.ev("sbo.worldOffsetsFromMap()")
+    o.lua("SU = nil; for id = 15572481, 15572490 do if roomExists(id) then SU = id; break end end; SP = SU and sbo.worldPos(SU)")
+    good = o.ev("SP ~= nil and SP.map:lower():find('sigil') ~= nil")
+    print("%s  the Sigil Underground placed on its own map: %s" % ("ok  " if good else "FAIL", o.ev("SP and (SP.map .. ' ' .. SP.x .. ',' .. SP.y)")))
+    if not good: bad += 1
     # a walk through the wilds that takes a gate's step (w from the road by Muldar Lohk Mulvar is into the village):
     # it goes into the place, Oven plans again from there - out, and in again (recorded 2026-11-26)
     o.lua("""INTOPLACE = function(map, x0, y0, x1, y1)

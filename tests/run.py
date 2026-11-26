@@ -5441,6 +5441,11 @@ def map_header_shows_the_find():
     eq(o.ev("HEAD"), "Alyrian Underworld", "another map on show: its name")
     o.lua("sbo.worldV = { follow = true, map = 'Alyria' }; sbo.drawMapHeader()")
     eq(o.ev("HEAD"), "Square  ·  Rune  ·  #1", "following you: yours")
+    # ⇅: Alyria, the underworld, Sigil's underground - each in turn
+    o.lua("""sbo.cfg.world = sbo.cfg.world or {}; sbo.cfg.world.offsets = { Alyria = 1060834, ['Alyrian Underworld'] = 10005834, ['Sigil Underground'] = 15005834 }
+      sbo.worldOffsetsFromMap = function() return 0 end; sbo.worldDraw = function() end; sbo.worldV = { map = 'Alyria' }
+      LAY = {}; for i = 1, 3 do sbo.worldLayer(); LAY[i] = sbo.worldV.map end""")
+    eq(list(o.ev("LAY").values()), ["Alyrian Underworld", "Sigil Underground", "Alyria"], "each layer in turn")
     # the room map on the find, switched to the world map: it opens there, marked
     o.lua("sbo.mapMode = 'local'; sbo.centerOn(2); sbo.worldDraw = function() end; sbo.mapSetMode('world')")
     eq((o.ev("sbo.worldV.map"), o.ev("sbo.worldV.cx"), o.ev("sbo.worldV.follow"), o.ev("sbo.worldFound[1]")), ("Alyrian Underworld", 5, False, 2), "the world map, on the find")

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.54"
+M.version = "1.99.55"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14526,7 +14526,7 @@ function M.createMapPanel()
   button("ovenMapZoomOut", "−", "zoom out", function() if M.mapMode == "world" then M.worldZoom(-1) else M.mapZoom(1.25) end end)
   button("ovenMapZoomIn", "+", "zoom in", function() if M.mapMode == "world" then M.worldZoom(1) else M.mapZoom(0.8) end end)
   button("ovenMapCentre", "◎", "centre on you", function() if M.mapMode == "world" then M.worldFollow() else M.centerOn(M.mapRoom) end end)
-  button("ovenMapLayer", "⇅", "world map: the layer below / above (Alyria ⇄ the underworld), same place", function()
+  button("ovenMapLayer", "⇅", "world map: the next layer, same place (Alyria → the underworld → Sigil's underground)", function()
     if M.mapMode ~= "world" then M.mapSetMode("world") end
     M.worldLayer()
   end)
@@ -14724,7 +14724,13 @@ function M.worldNote(info)
     local img = M.worldImages[(M.worldFileFor(name) or {}).file or ""]
     local width = img and img.w or 2300
     local off = num - (y * width + x)
-    if w.offsets[name] ~= off then w.offsets[name] = off; M.saveSettings() end
+    if w.offsets[name] ~= off then
+      w.offsets[name] = off
+      -- (the same map under the name worked out from Mudlet's map: GMCP's name for it from now on)
+      for other, o in pairs(w.offsets) do if other ~= name and o == off then w.offsets[other] = nil end end
+      M.worldRoomXY = nil
+      M.saveSettings()
+    end
     -- a waterway runs under the land and sea the map shows: not that pixel's terrain - its path is kept instead
     if M.worldWaterNote(name, x, y, info.terrain) then return end
     -- the colour of this terrain
@@ -15856,13 +15862,61 @@ function M.worldFollow()
   M.worldDraw()
 end
 -- the map above / below this one, at the same place (Alyria ⇄ the underworld)
+-- a map of the wilds you haven't been on with Oven (Sigil's underground): where its rooms are, from Mudlet's map - an
+-- area named for it whose rooms' map positions fit their numbers (room = offset + y × width + x, as the game's
+-- are). Kept under that area's name until GMCP gives the map's own
+function M.worldOffsetsFromMap()
+  local w = W()
+  if not (getAreaTable and getAreaRooms and getRoomCoordinates) then return 0 end
+  local known = {}
+  for _, off in pairs(w.offsets) do known[off] = true end
+  local n = 0
+  for areaName, areaId in pairs(getAreaTable() or {}) do
+    local e = M.worldFileFor(areaName)
+    local have = false
+    for name in pairs(w.offsets) do if M.worldFileFor(name) == e then have = true end end
+    if e and not e.offset and not have then
+      local rooms = getAreaRooms(areaId) or {}
+      local count, total = {}, 0
+      for _, id in pairs(rooms) do
+        local ok, x, y = pcall(getRoomCoordinates, id)
+        if ok and x and y then
+          total = total + 1
+          local off = id - ((-y) * 2300 + x)
+          count[off] = (count[off] or 0) + 1
+        end
+      end
+      local best, bn = nil, 0
+      for off, c in pairs(count) do if c > bn then best, bn = off, c end end
+      if best and total >= 100 and bn >= total * 0.5 and not known[best] then
+        w.offsets[areaName] = best
+        known[best] = true
+        n = n + 1
+      end
+    end
+  end
+  if n > 0 then M.worldRoomXY = nil; M.saveSettings() end
+  return n
+end
 function M.worldLayer()
   local v = V()
   local cur = (v.map or (M.worldHere and M.worldHere.map) or "Alyria"):lower()
+  -- Alyria, the underworld beneath it, Sigil's underground (when Oven knows where its rooms are): each in turn
+  pcall(M.worldOffsetsFromMap)
   local names = { alyria = "Alyria", underworld = "Underworld" }
-  -- a learned name for the underworld (GMCP's) when there is one
-  for name in pairs(W().offsets) do if name:lower():find("underworld", 1, true) then names.underworld = name end end
-  local nextName = cur:find("underworld", 1, true) and names.alyria or names.underworld
+  for name in pairs(W().offsets) do
+    local l = name:lower()
+    if l:find("underworld", 1, true) then names.underworld = name
+    elseif l:find("sigil", 1, true) then names.sigil = name end
+  end
+  local order = { "alyria", "underworld", "sigil" }
+  local at = 1
+  for i, k in ipairs(order) do if cur:find(k, 1, true) then at = i end end
+  local nextName
+  for j = 1, #order do
+    local k = order[(at - 1 + j) % #order + 1]
+    if names[k] then nextName = names[k]; break end
+  end
   v.map, v.follow = nextName, false
   M.say("world map: " .. nextName .. " (◎ to follow you again)")
   M.worldDraw()
@@ -22453,5 +22507,5 @@ if M.notesConsole and M.notesLayout ~= 3 and M.tabPages and M.tabPages.notes the
 end
 if M.notesConsole then pcall(M.notesRender, M.notesFilter) end
 -- the world map's waterways: the wrong terrain colours learned from them gone, the ones in your recordings read once
-tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport); pcall(M.gateImport); pcall(M.gateCmdFix); pcall(M.stRunFix); pcall(M.terrainImport); pcall(M.zoneMapImport); pcall(M.wildExitsImport) end)
+tempTimer(4, function() pcall(M.worldWaterUnlearn); pcall(M.worldWaterImport); pcall(M.clanHallImport); pcall(M.tripCleanup); pcall(M.worldPaletteImport); pcall(M.worldLookImport); pcall(M.targetLight); pcall(M.questNextTick); pcall(M.rideLandImport); pcall(M.wearMarginImport); pcall(M.mountLight); pcall(M.wayCleanup); pcall(M.worldZoneImport); pcall(M.gateImport); pcall(M.gateCmdFix); pcall(M.stRunFix); pcall(M.worldOffsetsFromMap); pcall(M.terrainImport); pcall(M.zoneMapImport); pcall(M.wildExitsImport) end)
 pcall(M.chatLoad); if M.chatConsole then pcall(M.chatRender); pcall(M.chatChips) end
