@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.23"
+M.version = "1.99.24"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -12019,11 +12019,12 @@ function M.whereGo(q)
   local areas = M.whereAreas(q)
   local hereHas = false
   for _, a in ipairs(areas) do if area and a:lower() == area:lower() then hereHas = true end end
-  if hereHas or #areas == 0 then
+  if hereHas or #areas == 0 or not (M.mapRoom and roomExists(M.mapRoom)) then   -- (off the map: ask here)
     if M.busyWhy(M.lastStatusPrompt) then return false end
     M.quietly("where is " .. q, "where", function()
       local r = M.dbRow("SELECT room, dirs FROM where_rooms WHERE area = %s AND feature = %s", area or "", q)
-      if r and tonumber(r.room) then
+      local onMap = M.mapRoom and roomExists(M.mapRoom)
+      if r and tonumber(r.room) and onMap then
         M.say("where is " .. q .. ": " .. ((roomExists(tonumber(r.room)) and getRoomName(tonumber(r.room))) or "") .. " #" .. r.room)
         M.mapWalkTo(tonumber(r.room))
       elseif r and r.dirs then
@@ -17476,7 +17477,11 @@ function M.mapRunNow(arg, planned)
   end
   if not M.cfg.map then return say("map following is off - sbo config map on first") end
   local here = M.mapRoom or M.currentRoom()
-  if not here or not roomExists(here) then return say("Oven doesn't know where you are on the map yet - move one room first") end
+  if not here or not roomExists(here) then
+    -- off the map (a room the map doesn't have): the game can still lead you to a feature it knows (where is exit)
+    if not all and q:match("^[%w%-]+$") and M.whereGo(q) then return end
+    return say("Oven doesn't know where you are on the map yet - move one room first")
+  end
   local targets, fromNotes = M.runTargets(q)
   if #targets == 0 or (not fromNotes and #M.whereAreas(q) > 0) then
     -- a feature the game knows by name (where is food): ask it

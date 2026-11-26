@@ -874,6 +874,21 @@ def where_none_around_here():
 
 
 @test
+def go_feature_off_the_map():
+    # in a room the map doesn't have: sbo go exit asks the game, and lets it lead (where is exit track)
+    o = Oven()
+    o.lua("""SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end; sbo.busyWhy = function() return nil end
+      sbo.cfg.map = true; roomExists = function(id) return false end; sbo.mapRoom = 917745
+      sbo.areaNow = function() return 'The Iceberg' end
+      sbo.dbx("INSERT OR REPLACE INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('The Iceberg', 'exit', 917755, 917700, 'n', 0)")
+      sbo.mapRunNow('exit')""")
+    eq(o.ev("SENT[1]"), "where is exit", "asks the game")
+    o.lua("""sbo.dbx("INSERT OR REPLACE INTO where_rooms (area, feature, room, start, dirs, t) VALUES ('The Iceberg', 'exit', NULL, 917745, 'e, sw, nw, d, e, s', 1)")
+      local q = sbo.quietNext; sbo.quietNext = nil; q.fn({})""")
+    eq(o.ev("SENT[2]"), "where is exit track", "the game leads")
+
+
+@test
 def quest_steps_are_links():
     o = Oven()
     o.lua("""SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
