@@ -5398,6 +5398,30 @@ def trips_dont_loop():
 
 
 @test
+def go_asks_where_is_first():
+    # sbo go questmaster in Decara, with questmasters Oven knows of in other towns (recorded 2026-11-26: it planned a
+    # trip to Maldra Keep): where is FIRST, its path walked; elsewhere only when the game knows none here
+    o = Oven()
+    o.lua("""MAPSTUB({ [1] = { w = 2 }, [2] = {}, [900] = {} }); getRoomArea = function(id) return id == 900 and 2 or 1 end
+      getRoomAreaName = function(a) return a == 1 and 'Towne of Decara' or 'Maldra Keep' end; getRoomName = function(id) return 'room ' .. id end
+      sbo.cfg.map = true; sbo.mapRoom = 1; gmcp.room = { info = { num = '1', wilds = 'false', zone = 'Towne of Decara' } }
+      sbo.runTargets = function() return { { id = 900, why = '[Questmaster] Lord Maldra', rank = 1 } }, true end
+      SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end; sbo.busyWhy = function() return nil end
+      sbo.quietly = function(cmd, kind, fn) SENT[#SENT+1] = cmd; QFN = fn end
+      GONE = nil; sbo.goTo = function(t) GONE = t end""")
+    o.lua("sbo.command('go questmaster')")
+    eq(o.ev("SENT[1]"), "where is questmaster", "the game first")
+    o.lua("QFN({ 'You sense that questmaster may be located w, d, s.' })")
+    eq((o.ev("SENT[2]"), o.ev("GONE")), ("w", None), "its path walked - not a trip to Maldra Keep")
+    o.lua("sbo.dirWalk = nil; SENT = {}; sbo.command('go questmaster')")
+    o.lua("QFN({ \"That feature isn't recognized. Features that you might be interested include:\", '   bank' })")
+    eq(o.ev("GONE and GONE[1]"), 900, "none here: the one Oven knows of elsewhere")
+    # in the wilds: not asked (they have no features)
+    o.lua("SENT = {}; GONE = nil; gmcp.room.info.wilds = 'true'; sbo.command('go questmaster')")
+    eq((o.ev("#SENT"), o.ev("GONE and GONE[1]")), (0, 900), "the wilds: straight to the plan")
+
+
+@test
 def recall_from_recall_list():
     # where recall goes is what recall list says where you stand: planned only from there
     o = Oven()

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.43"
+M.version = "1.99.44"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -17564,13 +17564,23 @@ function M.mapRunNow(arg, planned)
   if not M.cfg.map then return say("map following is off - sbo config map on first") end
   local here = M.mapRoom or M.currentRoom()
   if not here then return say("Oven doesn't know where you are yet - move one room first") end
-  -- a feature the place you're in has (where is lists it here: questmaster, bank): the game's own path to it -
-  -- the one here, not one Oven knows of somewhere else
-  local area = M.areaNow()
-  if not all and area and q:match("^[%w%-]+$")
-      and M.dbRow("SELECT feature FROM where_features WHERE area = %s AND (feature = %s OR instr(feature, %s) = 1)", area, q:lower(), q:lower())
-      and M.whereGo(q) then
-    return
+  -- where is FIRST, in any place (not the wilds - they have no features): the game's own path to it here, walked;
+  -- only when the game doesn't know one here does Oven look further (what it knows of, everywhere)
+  local info = M.gmcpGet and M.gmcpGet("room.info")
+  local inWilds = (type(info) == "table" and tostring(info.wilds) == "true") or M.isWildRoom(here)
+  if not all and not M.goWhereDone and not inWilds and q:match("^[%w%-]+$") and not M.busyWhy(M.lastStatusPrompt) then
+    return M.quietly("where is " .. q, "where", function(lines)
+      local dirs = M.whereDirs(lines, q)
+      if dirs then
+        M.say("where is " .. q .. ": " .. dirs .. " - walking it")
+        return M.walkDirs(dirs, function() M.notifyWalk("arrived") end)
+      end
+      -- (not here: what Oven knows of elsewhere - where is isn't asked again for this)
+      M.goWhereDone = true
+      local ok, err = pcall(M.mapRunNow, arg, planned)
+      M.goWhereDone = nil
+      if not ok then say("couldn't plan: " .. tostring(err)) end
+    end)
   end
   local targets, fromNotes = M.runTargets(q)
   if #targets == 0 or (not fromNotes and #M.whereAreas(q) > 0) then
