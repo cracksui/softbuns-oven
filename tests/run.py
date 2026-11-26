@@ -3265,9 +3265,14 @@ def ways_learned():
     o.lua("""SPECIAL[100]['check eqlookup e599'] = 101; SPECIAL[100]['backstab commoner'] = 101
       getRooms = function() return { [100] = 'Room 100', [101] = 'Room 101' } end
       removeSpecialExit = function(id, c) SPECIAL[id][c] = nil end
-      sbo.cfg.wayCleanup1 = nil; sbo.cfg.wayCleanup2 = nil; sbo.wayCleanup()""")
+      SPECIAL[100]['y'] = 101; SPECIAL[100]['giv tok gan'] = 101; SPECIAL[100]['sh bu 12'] = 101; SPECIAL[100]['drink ice'] = 101
+      SPECIAL[100]['sayto kalied e'] = 101; SPECIAL[100]['kk'] = 101; sbo.cfg.gameAliases = { kk = 'kick' }
+      sbo.cfg.wayCleanup1 = nil; sbo.cfg.wayCleanup2 = nil; sbo.cfg.wayCleanup3 = nil; sbo.wayCleanup()""")
     eq(o.ev("SPECIAL[100]['check eqlookup e599']"), None, "cleaned up")
     eq(o.ev("SPECIAL[100]['backstab commoner']"), None, "a backstab learned before: cleaned up")
+    for c in ("y", "giv tok gan", "sh bu 12", "drink ice", "kk"):
+        eq(o.ev("SPECIAL[100][%r]" % c), None, "not a way: " + c)
+    eq(o.ev("SPECIAL[100]['sayto kalied e']"), 101, "a real one kept")
     eq(o.ev("SPECIAL[100]['enter mirror']"), 101, "real ways kept")
     # from the wilds into an area: its way in
     wild = 1060834 + 686 * 2300 + 1328

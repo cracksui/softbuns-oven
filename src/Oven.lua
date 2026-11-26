@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.39"
+M.version = "1.99.40"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -17031,6 +17031,13 @@ function M.runStopped(atSign)
     local r = M.runData()
     local old = r.ends[R.name]
     r.names[R.name] = r.names[R.name] or {}
+    -- (and from the signpost it started at: a run to Rune from the north stops at its east gate, from the south
+    -- at its west gate)
+    if R.from then
+      r.endsFrom = r.endsFrom or {}
+      r.endsFrom[R.name] = r.endsFrom[R.name] or {}
+      if r.endsFrom[R.name][tostring(R.from)] ~= here then r.endsFrom[R.name][tostring(R.from)] = here; M.saveSettings() end
+    end
     if old ~= here then
       r.ends[R.name] = here
       M.saveSettings()
@@ -17639,7 +17646,13 @@ function M.goToNow(targets)
     return M.recallRefresh(function() M.goToNow(targets); M.goRecallAsked = nil end)
   end
   M.goRecallAsked = nil
-  if not plan then return say("no way found to " .. nm(targets[1]) .. " - Oven can't place it on the map or the world map") end
+  if not plan then
+    local hp, tp = M.worldPos(here), M.worldPos(targets[1])
+    if hp and tp and hp.map ~= tp.map then
+      return say(string.format("no way known from %s to %s yet - take a portal or gate between them once and Oven learns it", hp.map, tp.map))
+    end
+    return say("no way found to " .. nm(targets[1]) .. " - Oven can't place it on the map or the world map")
+  end
   if #plan.legs == 0 then return say("you're already there") end
   local target = plan.legs[#plan.legs].to
   if roomExists(target) then pcall(M.mapShow, target) end
@@ -17852,12 +17865,23 @@ M.WAY_NOT = { "give", "buy", "shop", "track", "mount", "dismount", "hitch", "rec
   "kill", "k", "kick", "get", "drop", "put", "wear", "remove", "eq", "i", "inventory", "score", "aff", "prac",
   "train", "c", "gohall", "portal", "transfer", "summon", "goto", "travel", "check", "eqdb", "help", "tell",
   "who", "where", "time", "save", "quit", "open", "close", "unlock", "lock",
-  "backstab", "bs", "murder", "hit", "bash", "steal", "kill" }
+  "backstab", "bs", "murder", "hit", "bash", "steal", "kill", "set", "wimpy", "vendor", "config", "alias",
+  "prompt", "toggle", "hold", "wield", "sacrifice", "junk", "emote", "glow" }
+-- commands that use something up (a vial, a scroll, a token): never a way - you may not have another
+M.WAY_ITEM = { "drink", "quaff", "eat", "recite", "use", "zap", "brandish", "sip", "taste", "read", "pour", "fill" }
+-- a command typed just before a move, as a way to learn - or nil when it isn't one: a word above, or the start of
+-- one (the game takes "giv tok gan" for give token ganuk, "sh bu 12" for shop buy 12), an answer ("y"), a single
+-- letter, one of your game aliases (kk, bb: they stand for other commands)
 function M.wayCommand(cmd)
   cmd = trim(tostring(cmd or "")):lower()
   if cmd == "" or cmd:find(";", 1, true) or M.WAY_DIRS[cmd] then return nil end
   local verb = cmd:match("^(%S+)")
-  for _, v in ipairs(M.WAY_NOT) do if verb == v then return nil end end
+  if #verb == 1 or verb == "yes" or verb == "no" or (M.cfg.gameAliases or {})[verb] then return nil end
+  for _, list in ipairs({ M.WAY_NOT, M.WAY_ITEM }) do
+    for _, v in ipairs(list) do
+      if verb == v or (#verb >= 2 and #verb < #v and v:sub(1, #verb) == verb) then return nil end
+    end
+  end
   if cmd:match("^cast%s") or cmd:match("^'") then return nil end
   return cmd
 end
@@ -17910,7 +17934,8 @@ function M.wayRoom()
   local C = M.lastCmd
   if not C or now() - C.at > 4 or C.room ~= prev.room then return end
   local cmd = trim(C.cmd):lower()
-  if M.travel or (M.running and M.running.started) then return end   -- (a ride, a run: not a way from here)
+  -- (a ride, a run, a trip of Oven's - its steps move you, not what you typed: not a way from here)
+  if M.travel or (M.running and M.running.started) or M.trip or M.dirWalk then return end
   -- a locked exit you've just gone through: open again
   local dirShort = ({ north = "n", south = "s", east = "e", west = "w", northeast = "ne", northwest = "nw",
     southeast = "se", southwest = "sw", up = "u", down = "d" })[cmd] or cmd
@@ -17968,8 +17993,8 @@ end
 -- fighting commands: never a way (a backstab sent as a walk moved you, before 1.99.19)
 M.WAY_FIGHT = { backstab = true, bs = true, murder = true, hit = true, bash = true, steal = true, kill = true }
 function M.wayCleanup()
-  if M.cfg.wayCleanup2 then return end
-  M.cfg.wayCleanup1, M.cfg.wayCleanup2 = true, true
+  if M.cfg.wayCleanup3 then return end
+  M.cfg.wayCleanup1, M.cfg.wayCleanup2, M.cfg.wayCleanup3 = true, true, true
   M.saveSettings()
   local okR, rooms = pcall(getRooms)
   if not okR or type(rooms) ~= "table" then return end
@@ -17980,14 +18005,13 @@ function M.wayCleanup()
       for c in pairs(ex) do
         local cmd = tostring(c)
         local verb = cmd:lower():match("^(%S+)")
-        if not cmd:find("^oven%-trip:") and not M.wayCommand(cmd) and not M.WAY_DIRS[cmd:lower()]
-           and (verb == "check" or M.WAY_FIGHT[verb]) then
+        if not cmd:find("^oven%-trip:") and not M.wayCommand(cmd) and not M.WAY_DIRS[cmd:lower()] then
           if pcall(removeSpecialExit, id, cmd) then n = n + 1 end
         end
       end
     end
   end
-  if n > 0 then M.say(string.format("took %d wrongly learned way%s off the map (eqdb lookups, backstabs)", n, n == 1 and "" or "s")); pcall(M.mapLearned) end
+  if n > 0 then M.say(string.format("took %d wrongly learned way%s off the map (answers, aliases, shop and item commands typed before a move)", n, n == 1 and "" or "s")); pcall(M.mapLearned) end
 end
 
 function M.wildBlocked(room, dir)
@@ -18300,7 +18324,7 @@ function M.tripEdges(here, target, used)
   for _, sp in ipairs(M.signposts()) do
     if roomExists(sp.room) or M.isWildRoom(sp.room) then
       for name in pairs(sp.dests) do
-        local e, guess = r.ends[name], false
+        local e, guess = ((r.endsFrom or {})[name] or {})[tostring(sp.room)] or r.ends[name], false
         if not e then e, guess = M.runEndGuess(name), true end
         if e and e ~= sp.room and (roomExists(e) or M.isWildRoom(e)) then
           add({ from = sp.room, to = e, cmd = TRIP .. "run:" .. name, run = name, guess = guess or nil,
@@ -18722,6 +18746,8 @@ function M.allGates()
   local out, seen = {}, {}
   for _, e in ipairs(M.entranceRows) do
     local w, r = tonumber(e.wild), tonumber(e.room)
+    -- (a command way in that isn't a way - drink vial uses the vial up - left out)
+    if w and r and not (M.DIR_OPP[e.cmd] or M.wayCommand(e.cmd)) then w = nil end
     if w and r then
       seen[w .. ">" .. r] = true
       out[#out + 1] = { wild = w, room = r, cmd = e.cmd, out = (e.out and e.out ~= "") and e.out or M.DIR_OPP[e.cmd] }
@@ -18756,7 +18782,8 @@ function M.roomGraph()
       local okS, sp = pcall(getSpecialExitsSwap, id)
       for cmd, to in pairs(okS and type(sp) == "table" and sp or {}) do
         local okX, xl = pcall(hasSpecialExitLock, id, tonumber(to), cmd)
-        if tonumber(to) and not (okX and xl) then out[#out + 1] = { tonumber(to), cmd } end
+        -- (one learned from something typed that isn't a way - giv tok gan, y - left out)
+        if tonumber(to) and not (okX and xl) and (M.wayCommand(cmd) or M.WAY_DIRS[tostring(cmd):lower()]) then out[#out + 1] = { tonumber(to), cmd } end
       end
       fwd[id] = out
       for _, e in ipairs(out) do rev[e[1]] = rev[e[1]] or {}; table.insert(rev[e[1]], { id, e[2] }) end
@@ -19089,6 +19116,15 @@ function M.planTripOnce(here, targets, used)
   end
   local hall = tonumber(M.cfg.clanHall)
   if hall and not used.clan and hall ~= here then edge(here, hall, M.TRIP_W_CLAN * typical, { kind = "clan" }) end
+  -- the commands that have taken you from one room to another (enter portal, enter mirror - a portal to the
+  -- Faerie Plane among them): not the worldgates (they move: time says where they are now)
+  for _, r in ipairs(M.dbRows("SELECT room, cmd, dest FROM room_enters")) do
+    local c = tostring(r.cmd or ""):lower()
+    local what = c:match("^enter%s+(%S+)")
+    if M.wayCommand(c) and not (what and (what == "gate" or what:find("^worldg"))) then
+      edge(tonumber(r.room), tonumber(r.dest), typical, { kind = "step", cmd = r.cmd })
+    end
+  end
   -- the worldgates, both ways
   local ga, gb, gAge = M.worldgateCells()
   if ga then
@@ -19228,12 +19264,17 @@ function M.planLines(plan, targets)
     return lbl or name(id)
   end
   local function pl(k) return k == 1 and "" or "s" end
-  local via   -- (walks through the wilds one after another: one line)
+  local via, walked   -- (walks through the wilds, or on the map, one after another: one line)
   for i, leg in ipairs(plan.legs) do
     local k = leg.kind
-    if k == "walk" then
-      if i == #plan.legs then lines[#lines + 1] = string.format("about %d step%s on to %s", leg.n, pl(leg.n), name(leg.to))
-      else lines[#lines + 1] = string.format("%d step%s to %s", leg.n, pl(leg.n), name(leg.to)) end
+    if k == "walk" and plan.legs[i + 1] and plan.legs[i + 1].kind == "walk" then
+      -- (walks one after another: one line)
+      walked = (walked or 0) + leg.n
+    elseif k == "walk" then
+      local n = leg.n + (walked or 0)
+      walked = nil
+      if i == #plan.legs then lines[#lines + 1] = string.format("about %d step%s on to %s", n, pl(n), name(leg.to))
+      else lines[#lines + 1] = string.format("%d step%s to %s", n, pl(n), name(leg.to)) end
       -- a walk through other places (or a command on the way: enter mirror): which
       local pd, pp = M.legPath(leg)
       if pd or getPath(leg.from, leg.to) then
@@ -19248,11 +19289,19 @@ function M.planLines(plan, targets)
       local p, q = M.worldPos(via and via.from or leg.from), M.worldPos(leg.to)
       local d = p and q and math.max(math.abs(p.x - q.x), math.abs(p.y - q.y)) or 0
       local nxt = plan.legs[i + 1]
+      local lbl = M.signLabel and M.signLabel(leg.to)
       local where = (nxt and (nxt.kind == "step" or nxt.kind == "unknownin") and M.placeLabel(nxt.to))
-        or (M.signLabel and M.signLabel(leg.to) and ("the " .. M.signLabel(leg.to))) or ("#" .. leg.to)
+        or (lbl and lbl:match("^signpost") and ("the " .. lbl))
+        or (roomExists(leg.to) and getRoomName(leg.to) ~= "" and getRoomName(leg.to))
+        or (q and string.format("[%d, %d]", q.x, q.y)) or ("#" .. leg.to)
       lines[#lines + 1] = string.format("about %d room%s %s through the wilds to %s (~%d stamina)", d, pl(d),
         (p and q and M.COMPASS_WORD[M.compassTo(p.x, p.y, q.x, q.y)]) or "on", where, math.floor(leg.cost + (via and via.cost or 0) + 0.5))
       via = nil
+    elseif k == "step" and not M.DIR_OPP[leg.cmd] then
+      -- a command that takes you somewhere (enter portal): to that place, or that map
+      local q = M.worldPos(leg.to)
+      local where = M.placeLabel(leg.to) or (q and string.format("%s [%d, %d]", q.map, q.x, q.y)) or name(leg.to)
+      lines[#lines + 1] = string.format("%s to %s", leg.cmd, where)
     elseif k == "step" then
       if M.isWildRoom(leg.to) then lines[#lines + 1] = leg.cmd .. " out into the wilds"
       else lines[#lines + 1] = string.format("%s into %s", leg.cmd, select(2, M.placeOf(leg.to)) or name(leg.to)) end

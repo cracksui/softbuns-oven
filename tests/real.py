@@ -101,6 +101,44 @@ TRIPS = [
 ]
 
 
+def sweep(o, pairs=300, seed=1):
+    """trips between many places (every place with a gate, and some signposts): what each plan must be"""
+    import random
+    gates = o.ev("sbo.allGates()")
+    by = {}
+    for g in gates.values():
+        k = o.ev("sbo.placeLabel(%d)" % g.room)
+        if k and k not in by and o.ev("roomExists(%d)" % g.room): by[k] = g.room
+    random.seed(seed)
+    signs = [sp.room for sp in o.ev("sbo.signposts()").values()]
+    pts = list(by.items()) + [("signpost %d" % r, r) for r in random.sample(signs, min(12, len(signs)))]
+    all_pairs = [(a, b) for a in pts for b in pts if a != b]
+    random.shuffle(all_pairs)
+    bad, n, none, slow = [], 0, 0, 0
+    for k, ((an, a), (bn, b)) in enumerate(all_pairs[:pairs]):
+        p, dt = plan(o, a, b)
+        n += 1
+        pa, pb = o.ev("sbo.worldPos(%d)" % a), o.ev("sbo.worldPos(%d)" % b)
+        if not p:
+            none += 1
+            if pa and pb and pa.map == pb.map: bad.append(("no plan, both on %s" % pa.map, an, bn))
+            continue
+        if dt > 2: slow += 1; bad.append(("slow %.1fs" % dt, an, bn))
+        for i, l in enumerate(p["legs"]):
+            if l["kind"] == "walk":
+                o.lua("LG = PL.legs[%d]" % (i + 1))
+                if not o.ev("(sbo.legPath(LG))"): bad.append(("a walk with no planned path", an, bn))
+            if l["kind"] == "step":
+                c = str(l.get("cmd"))
+                if not (o.ev("sbo.DIR_OPP[%r] ~= nil" % c) or o.ev("sbo.wayCommand(%r) ~= nil" % c)):
+                    bad.append(("a step that isn't a way: %r" % c, an, bn))
+            if l["kind"] == "wild" and k % 10 == 0:
+                fa, fb = o.ev("sbo.worldPos(%d)" % l["from"]), o.ev("sbo.worldPos(%d)" % l["to"])
+                if fa and fb and not o.ev("sbo.gridLegDirs(%r, %d, %d, %d, %d, 50)" % (fa.map, fa.x, fa.y, fb.x, fb.y)):
+                    bad.append(("a walk through the wilds with no way cell by cell", an, bn))
+    return n, none, bad
+
+
 def main():
     missing = [f for f in NEED if not os.path.exists(os.path.join(PROFILE, f))]
     if missing:
@@ -127,6 +165,13 @@ def main():
     good = not ends or agree >= 0.7 * len(ends)
     print("%s  a run's end worked out = where it really ends: %d of %d" % ("ok  " if good else "FAIL", agree, len(ends)))
     if not good: bad += 1
+    # many trips: what every plan must be
+    t = time.time()
+    n, none, sbad = sweep(o)
+    print("%s  %d trips between places and signposts: %d without a plan (other maps, no known way), %d problems  (%.0f s)"
+          % ("ok  " if not sbad else "FAIL", n, none, len(sbad), time.time() - t))
+    for x in sbad[:15]: print("        %s: %s -> %s" % x)
+    if sbad: bad += 1
     # each wild room you've stood in: no step planned from it that its exits don't have
     rows = o.rows("SELECT room, dir FROM wild_blocked")
     print("moves known not to be there: %d" % len(rows))
