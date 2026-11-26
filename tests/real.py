@@ -90,6 +90,7 @@ TRIPS = [
     ("the wilds -> the iceberg", 1649148, 917755, lambda p: True),
     ("the worldgate circle -> the Palace of Diocletian's signpost", 3481713, 4189387, lambda p: True),
     ("Rune, in town", 10490, 10500, lambda p: [l["kind"] for l in p["legs"]] == ["walk"]),
+    ("Teolaven's inn -> Rune: out, and a run (not walked all the way)", 328864, 10490, lambda p: any(l["kind"] == "run" for l in p["legs"])),
 ]
 
 
@@ -109,6 +110,16 @@ def main():
         print("%s  %s  (%.2f s)" % ("ok  " if good else "FAIL", label, dt))
         for line in (p or {}).get("lines", []): print("        " + line)
         if not good: bad += 1
+    # where a run ends, worked out from the signposts and the towns: right for most of the ones learned by running them
+    ends = dict(o.ev("sbo.runData().ends").items())
+    agree = 0
+    for n, e in ends.items():
+        o.lua("sbo.runGuessCache = nil; SAVED = sbo.runData().ends['%s']; sbo.runData().ends['%s'] = nil" % (n, n))
+        agree += o.ev("sbo.runEndGuess('%s')" % n) == e
+        o.lua("sbo.runData().ends['%s'] = SAVED; sbo.runGuessCache = nil" % n)
+    good = not ends or agree >= 0.7 * len(ends)
+    print("%s  a run's end worked out = where it really ends: %d of %d" % ("ok  " if good else "FAIL", agree, len(ends)))
+    if not good: bad += 1
     # each wild room you've stood in: no step planned from it that its exits don't have
     rows = o.rows("SELECT room, dir FROM wild_blocked")
     print("moves known not to be there: %d" % len(rows))

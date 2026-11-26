@@ -5332,6 +5332,27 @@ def run_cost_by_length():
 
 
 @test
+def run_ends_worked_out():
+    # a run not made yet: where it ends worked out from what the signposts say they stand by
+    o = Oven()
+    o.lua("""getAreaTable = function() return {} end; roomExists = function() return true end
+      for room, sign in pairs({ [1001] = 'a weatherbeaten signpost outside the Tower of Art', [1002] = 'a weatherbeaten signpost near the Tower of Art',
+          [1003] = 'a weatherbeaten signpost outside the Inn of the Twin Moons', [1004] = "a weatherbeaten signpost outside Sigil's north gate",
+          [1005] = "a weatherbeaten signpost outside Sigil's south gate" }) do
+        sbo.dbx("INSERT INTO signposts (room, sign, dests, exact, last) VALUES (%s, %s, '', 1, 0)", room, sign)
+      end""")
+    eq(o.ev("sbo.runEndGuess('towerofart')"), 1001, "the one outside it, not the one near it")
+    eq(o.ev("sbo.runEndGuess('twinmoons')"), 1003, "the name later in what it says")
+    eq(o.ev("sbo.runEndGuess('sigil')"), None, "two gates, no town to go by: not guessed")
+    eq(o.ev("sbo.runEndGuess('gilvery')"), None, "no signpost says it")
+    # a trip: through the wilds, a signpost passed on the way, on through the wilds - walked straight through
+    o.lua("""LEG = nil; sbo.legStart = function(leg) LEG = leg end; sbo.recallToAsk = function() return false end
+      sbo.planTrip = function() return { legs = { { kind = 'wild', from = 1, to = 2, cost = 1 }, { kind = 'wild', from = 2, to = 3, cost = 1 }, { kind = 'run', from = 3, to = 4 } }, cost = 3 } end
+      sbo.mapRoom = 1; sbo.trip = { targets = { 9 }, used = {}, legs = 0 }; sbo.tripContinue()""")
+    eq((o.ev("LEG.kind"), o.ev("LEG.to")), ("wild", 3), "to the signpost the run starts at, not the one passed")
+
+
+@test
 def recall_from_recall_list():
     # where recall goes is what recall list says where you stand: planned only from there
     o = Oven()

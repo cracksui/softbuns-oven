@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.35"
+M.version = "1.99.36"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -16910,6 +16910,7 @@ end
 -- one you've looked at (or seen standing here): exact, with its destinations
 function M.signSave(room, sign, dests)
   if not room then return end
+  M.runGuessCache = nil
   local old = M.signAt(room)
   M.dbx("INSERT OR REPLACE INTO signposts (room, sign, dests, exact, last) VALUES (%s, %s, %s, 1, %s)",
     room, sign or (old and old.sign), dests and destsStr(dests) or (old and destsStr(old.dests)) or "", os.time())
@@ -17134,6 +17135,53 @@ local function signLabel(room)
   return room and roomExists(room) and getRoomName(room) or ("#" .. tostring(room))
 end
 M.signLabel = signLabel
+
+-- where a run ends, when it's not been run yet: worked out from what the signposts say they stand by and where the
+-- towns are. A run's name is its place's name run together ("towerofart": the Tower of Art; "newrigel": New Rigel):
+--  1. a signpost you've read that stands outside that place ("signpost outside the Tower of Art" - one that's only
+--     "near" it, if none is outside it; the name first in what it says before the name later in it); one only
+--  2. else the place itself - an area or zone of that name: a gate of it out in the wilds (or its spot)
+-- nil when the name matches no place, or more than one. The real end's learned the first time the run's made
+function M.squashName(t) return (tostring(t or ""):lower():gsub("[^%a]", "")) end
+function M.runEndGuess(name)
+  local squash = M.squashName
+  M.runGuessCache = M.runGuessCache or {}
+  local c = M.runGuessCache[name]
+  if c ~= nil then return c or nil end
+  local n = squash(name)
+  local function place(label)
+    local p = squash(label:gsub("^signpost%s+", ""):gsub("^outside%s+of%s+", ""):gsub("^outside%s+", ""):gsub("^near%s+", "")
+      :gsub("^at%s+", ""):gsub("^on%s+", ""):gsub("^the%s+", ""))
+    return p
+  end
+  local best, tier, many = nil, nil, false
+  for _, r in ipairs(M.dbRows("SELECT room, sign FROM signposts WHERE exact = 1")) do
+    local label = r.sign and r.sign:gsub("^an? weatherbeaten signpost%s*", "") or ""
+    local outside = label:match("^outside") ~= nil
+    local p = place("signpost " .. label)
+    -- (the place's name first in what the signpost says: "outside the Tower of Art", "outside Xaventry's north gate";
+    -- else anywhere in it: "outside the Inn of the Twin Moons", "outside Dungeon Wroth")
+    local at = p:find(n, 1, true)
+    if at then
+      local t = (at == 1 and 0 or 2) + (outside and 1 or 2)
+      if not tier or t < tier then best, tier, many = tonumber(r.room), t, false
+      elseif t == tier and tonumber(r.room) ~= best then many = true end
+    end
+  end
+  if best and not many then M.runGuessCache[name] = best; return best end
+  -- the place itself: an area of the map, or a zone GMCP named, run together like the run's name
+  local rooms = {}
+  local okA, areas = pcall(getAreaTable)
+  for aname, id in pairs(okA and type(areas) == "table" and areas or {}) do
+    local a = squash(tostring(aname):gsub("^The Towne of ", ""):gsub("^Towne of ", ""):gsub("^The City of ", ""):gsub("^The ", ""))
+    if a == n then
+      for _, g in ipairs(M.allGates()) do if getRoomArea(g.room) == tonumber(id) then rooms[#rooms + 1] = g.wild end end
+    end
+  end
+  local land = #rooms > 0 and rooms[1] or nil
+  M.runGuessCache[name] = land or false
+  return land
+end
 
 local STD_DIRS = { n=1,s=1,e=1,w=1,u=1,d=1,ne=1,nw=1,se=1,sw=1,up=1,down=1,north=1,south=1,east=1,west=1,
   northeast=1,northwest=1,southeast=1,southwest=1,["in"]=1,out=1 }
@@ -18246,9 +18294,10 @@ function M.tripEdges(here, target, used)
   for _, sp in ipairs(M.signposts()) do
     if roomExists(sp.room) or M.isWildRoom(sp.room) then
       for name in pairs(sp.dests) do
-        local e = r.ends[name]
+        local e, guess = r.ends[name], false
+        if not e then e, guess = M.runEndGuess(name), true end
         if e and e ~= sp.room and (roomExists(e) or M.isWildRoom(e)) then
-          add({ from = sp.room, to = e, cmd = TRIP .. "run:" .. name, run = name,
+          add({ from = sp.room, to = e, cmd = TRIP .. "run:" .. name, run = name, guess = guess or nil,
             weight = math.max(M.TRIP_W_RUN_MIN, M.runCost(sp.room, e) + M.TRIP_RUN_EXTRA) })
         end
       end
@@ -18280,6 +18329,7 @@ M.GRID_BLOCK = 8             -- the coarse search: blocks of 8×8 cells
 M.GRID_LEG_MAX = 250         -- a walk through the wilds goes this many cells, then the trip is planned again
 M.PLAN_OUT_GUESS = 15        -- the way out of a place the map doesn't have (where is exit): about this many steps
 M.PLAN_RUN_EXTRA = 2         -- a run's start and stop, in steps
+M.PLAN_RUN_GUESS = 5         -- and a run whose end is worked out, not yet run: this many more (it may stop a little off)
 
 -- what terrain costs to walk, learned: { mount = { [terrain] = { avg, n } }, foot = … } (runs: "@run", a room)
 function M.terrainCosts()
@@ -18975,7 +19025,8 @@ function M.planTripOnce(here, targets, used)
   for _, e in ipairs(okE and edges or {}) do
     if e.run and not used["run:" .. e.from .. ":" .. e.run] and not used["run:" .. e.run .. ":" .. e.from] then
       local rooms = M.stRunRooms(e.from, e.to) or 0
-      edge(e.from, e.to, rooms * runSt + M.PLAN_RUN_EXTRA * typical, { kind = "run", name = e.run, rooms = rooms })
+      edge(e.from, e.to, rooms * runSt + (M.PLAN_RUN_EXTRA + (e.guess and M.PLAN_RUN_GUESS or 0)) * typical,
+        { kind = "run", name = e.run, rooms = rooms, guess = e.guess })
     elseif not e.run then
       edge(e.from, e.to, (e.weight or M.TRAVEL_COST) * typical, { kind = "ride", link = e.link })
     end
@@ -19120,6 +19171,12 @@ function M.planLines(plan, targets)
     if M.signAt and M.signAt(id) and M.signLabel then return "the " .. M.signLabel(id) end
     return (roomExists(id) and getRoomName(id)) or ("#" .. id)
   end
+  -- (where a run ends: a signpost, named by what it says - or, worked out and not yet run, a room by a town)
+  local function runEnd(id)
+    local lbl = M.signLabel and M.signLabel(id)
+    if lbl and lbl:match("^signpost") then return "the " .. lbl end
+    return lbl or name(id)
+  end
   local function pl(k) return k == 1 and "" or "s" end
   local via   -- (walks through the wilds one after another: one line)
   for i, leg in ipairs(plan.legs) do
@@ -19151,7 +19208,7 @@ function M.planLines(plan, targets)
     elseif k == "run" then
       -- (a run ends at a signpost: named by it)
       lines[#lines + 1] = "run " .. leg.name .. (leg.unknownEnd and " (where it ends isn't known yet: planned on from there)"
-        or (" to the " .. ((M.signLabel and M.signLabel(leg.to)) or ("#" .. leg.to))))
+        or (" to " .. runEnd(leg.to) .. (leg.guess and " (its first time: where it ends is learned)" or "")))
     elseif k == "whereout" then
       lines[#lines + 1] = "out the way the game gives (where is exit)"
     elseif k == "recall" then
@@ -19204,7 +19261,12 @@ function M.tripContinue()
     return M.recallRefresh(function() if M.trip == T then M.tripContinue() end end)
   end
   if not plan or not plan.legs[1] then M.trip = nil; return M.notifyWalk("stopped: no way on from here") end
-  M.legStart(plan.legs[1], T)
+  -- (through the wilds and on through the wilds - a signpost passed on the way: walked straight through, not
+  -- stopped at)
+  local leg = plan.legs[1]
+  local j = 2
+  while leg.kind == "wild" and plan.legs[j] and plan.legs[j].kind == "wild" do leg.to = plan.legs[j].to; j = j + 1 end
+  M.legStart(leg, T)
 end
 function M.legStart(leg, T)
   local function cont() if M.trip == T then M.tripContinue() end end
