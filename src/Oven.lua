@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.80"
+M.version = "1.99.81"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11526,7 +11526,7 @@ function M.gmcpHandlersList()
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onFightStatus) end),
     registerAnonymousEventHandler("gmcp.room.info", function() pcall(M.onFightRoom) end),
     -- a new connection: read your aliases again at its first prompt
-    registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil; M.stopLimbo() end),
+    registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil; M.stopLimbo(); M.limboMap = nil end),
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onGmcpStatus) end),
     -- HP / SP / ST as they change (mid-fight too): redraw the bar
     registerAnonymousEventHandler("gmcp.char.vitals", function() if M.cfg.bar then pcall(M.drawBar) end end),
@@ -14162,7 +14162,7 @@ function M.scanMarksShow()
 end
 
 function M.onLineWork()
-  if M.limbo then M.limboLine(line) end
+  if M.limbo or M.limboMap then M.limboLine(line) end
   local cap = M.cap
   pcall(M.dummyNoteLine, line)
   -- the game's sounds (MSP lines): played, and off the screen
@@ -14887,6 +14887,23 @@ function M.onRoom()
 end
 
 -- Limbo hides public room numbers. Use the real destination IDs exposed on its GMCP exits.
+do
+local dirs = { "n", "e", "s", "w", "ne", "se", "sw", "nw", "u", "d" }
+local function exitKey(info)
+  local exits = type(info.exits) == "table" and info.exits or {}
+  local ids = { tostring(info.name or ""), tostring(info.num or "") }
+  for _, d in ipairs(dirs) do ids[#ids + 1] = tostring(exits[d .. "_realnum"] or exits[d] or "") end
+  return table.concat(ids, ":")
+end
+
+local function blockMove(L)
+  L.map.blocked[L.key][L.direction] = true
+  local links = L.map.rooms[L.room] or {}
+  for i, edge in ipairs(links) do
+    if edge.dir == L.direction then table.remove(links, i); break end
+  end
+end
+
 function M.stopLimbo(msg)
   local L = M.limbo
   if not L then return end
@@ -14903,44 +14920,55 @@ function M.startLimbo()
   if M.trip or M.goAsk or M.walk or M.dirWalk or M.travel or M.running or M.cap or M.quietNext then
     return say("finish or stop the current action before sbo limbo")
   end
-  M.limbo = { rooms = {}, room = M.tempRealnum(info) or 0, steps = 0 }
+  M.limboMap = M.limboMap or { rooms = {}, byExits = {}, blocked = {}, unknown = 0 }
+  M.limbo = { map = M.limboMap, steps = 0 }
   M.limboRoom()
 end
 
 function M.limboRoom()
   local L = M.limbo
-  if not L then return end
   local info = M.gmcpGet("room.info")
+  local inside = type(info) == "table" and info.zone == "Limbo Maze"
+  if not inside then M.limboMap = nil end
+  if not L then return end
   if L.hermit then
-    if type(info) == "table" and info.exits ~= L.lastExits then L.arrived = true end
+    if not inside or exitKey(info) ~= L.key then L.arrived = true end
     return
   end
-  if type(info) ~= "table" or info.zone ~= "Limbo Maze" then return M.stopLimbo("left Limbo Maze") end
+  if not inside then return M.stopLimbo("left Limbo Maze") end
   local exits = info.exits
   if type(exits) ~= "table" then return M.stopLimbo("Limbo Maze: no exit data from the game") end
+  local key = exitKey(info)
   if not L.next and L.timer then return end
-  if L.next and L.lastExits == exits then return end
-  if L.timer then killTimer(L.timer) end
-  L.room, L.next = L.next or L.room, nil
+  if L.next and L.key == key then return end
+  if L.timer then killTimer(L.timer); L.timer = nil end
+  local map = L.map
+  local real = tonumber(info.num)
+  local room = (real and real > 0 and real) or L.next or map.byExits[key] or M.tempRealnum(info)
+  if not room then map.unknown = map.unknown - 1; room = map.unknown end
+  L.room, L.next, L.key = room, nil, key
+  map.byExits[key] = room
+  local blocked = map.blocked[key] or {}
+  map.blocked[key] = blocked
   local dir, dest
-  if exits.d ~= nil or exits.d_realnum ~= nil then
+  if (exits.d ~= nil or exits.d_realnum ~= nil) and not blocked.down then
     dir = "down"
   else
     local links = {}
-    for _, d in ipairs({ "n", "e", "s", "w", "ne", "se", "sw", "nw", "u" }) do
+    for _, d in ipairs(dirs) do
       local to = tonumber(exits[d .. "_realnum"]) or tonumber(exits[d])
-      if to and to > 0 then links[#links + 1] = { dir = d, to = to } end
+      if d ~= "d" and to and to > 0 and not blocked[d] then links[#links + 1] = { dir = d, to = to } end
     end
-    L.rooms[L.room] = links
+    map.rooms[L.room] = links
     local queue, seen = { { room = L.room } }, { [L.room] = true }
     local head = 1
     while head <= #queue and not dir do
       local node = queue[head]
       head = head + 1
-      for _, edge in ipairs(L.rooms[node.room]) do
+      for _, edge in ipairs(map.rooms[node.room]) do
         if not seen[edge.to] then
           local first = node.first or edge
-          if not L.rooms[edge.to] then dir, dest = first.dir, first.to; break end
+          if not map.rooms[edge.to] then dir, dest = first.dir, first.to; break end
           seen[edge.to] = true
           queue[#queue + 1] = { room = edge.to, first = first }
         end
@@ -14948,14 +14976,15 @@ function M.limboRoom()
     end
     if not dir then return M.stopLimbo("Limbo Maze: no unexplored exit leads on from here") end
   end
-  if L.steps >= 180 and dest then return M.stopLimbo("Limbo Maze: stopped after 180 moves; sbo limbo starts again") end
+  if L.steps >= 180 and dest then return M.stopLimbo("Limbo Maze: paused after 180 moves; sbo limbo resumes") end
   L.timer = tempTimer(0.2, function()
     if M.limbo ~= L then return end
-    L.steps, L.next, L.hermit, L.lastExits = L.steps + 1, dest, not dest, exits
+    L.steps, L.next, L.hermit, L.direction = L.steps + 1, dest, not dest, dir
     L.timer = tempTimer(L.hermit and 25 or 8, function()
       if M.limbo == L then
+        if not L.hermit then blockMove(L) end
         M.stopLimbo(L.hermit and "Limbo Maze: no question heard; answer the hermit yourself if asked"
-          or "Limbo Maze: no room update after " .. dir)
+          or "Limbo Maze: no room update after " .. dir .. "; sbo limbo resumes by another exit")
       end
     end)
     M.sendOwn(dir, false)
@@ -14964,8 +14993,17 @@ end
 
 function M.limboLine(text)
   local L = M.limbo
-  if text:find("^%s*The Powers take pity on you and restore your soul") then return M.stopLimbo() end
-  if text:find("^%s*You cannot move in that direction") then return M.stopLimbo("Limbo Maze: the game refused the move") end
+  if text:find("^%s*The Powers take pity on you and restore your soul") then
+    M.limboMap = nil
+    return M.stopLimbo()
+  end
+  if not L then return end
+  if (L.next or (L.hermit and not L.arrived)) and text:find("^%s*You cannot move in that direction") then
+    blockMove(L)
+    if L.timer then killTimer(L.timer) end
+    L.timer, L.next, L.hermit = nil, nil, nil
+    return M.limboRoom()
+  end
   if not L.hermit then return end
   local lower = text:lower()
   if (L.arrived or lower:find("hermit", 1, true)) and lower:find("?", 1, true)
@@ -14975,6 +15013,7 @@ function M.limboLine(text)
     M.stopLimbo()
     M.sendOwn("say yes", false)
   end
+end
 end
 
 -- a walk by directions the game gave (where is: "e, sw, nw, d, e, s") - no map needed: the next is sent as soon

@@ -6528,6 +6528,58 @@ def limbo_finds_down_and_answers_the_hermit():
 
 
 @test
+def limbo_resumes_after_a_stall_without_repeating_the_route():
+    o = Oven()
+    o.lua("""
+      sent = {}
+      sbo.sendOwn = function(cmd) sent[#sent + 1] = cmd end
+      function ROOM(exits, zone)
+        gmcp.room = {info={num=-99, name="A Maze of Twisty Passages", zone=zone or "Limbo Maze", exits=exits}}
+        sbo.limboRoom()
+      end
+      function TICK()
+        local id = sbo.limbo.timer
+        local callback = timers[id][2]
+        timers[id] = nil
+        callback()
+      end
+      ROOM({n_realnum=21, e_realnum=23, w_realnum=30})
+      sbo.command("limbo")
+      TICK()
+      local pending = sbo.limbo.timer
+      ROOM({n_realnum=21, e_realnum=23, w_realnum=30})
+      assert(sbo.limbo.timer == pending)
+      ROOM({s_realnum=22})
+      TICK()
+      ROOM({n_realnum=21, e_realnum=23, w_realnum=30})
+      TICK()
+      assert(table.concat(sent, ",") == "n,s,e")
+      TICK()
+      assert(not sbo.limbo)
+      sbo.command("limbo")
+      TICK()
+      assert(table.concat(sent, ",") == "n,s,e,w")
+      ROOM({}, "Ethereal Void")
+      assert(not sbo.limbo and not sbo.limboMap)
+    """)
+
+
+@test
+def limbo_tries_another_exit_after_a_refusal():
+    o = Oven()
+    o.lua("""
+      gmcp.room = {info={num=-99, zone="Limbo Maze", exits={n_realnum=21, e_realnum=23}}}
+      sent = {}
+      sbo.sendOwn = function(cmd) sent[#sent + 1] = cmd end
+      sbo.command("limbo")
+      timers[sbo.limbo.timer][2]()
+      sbo.limboLine("You cannot move in that direction.")
+      timers[sbo.limbo.timer][2]()
+      assert(table.concat(sent, ",") == "n,e")
+    """)
+
+
+@test
 def limbo_stop_cancels_a_scheduled_move():
     o = Oven()
     o.lua("""
