@@ -5866,13 +5866,14 @@ def trip_leg_on_the_bar():
 
 
 @test
-def trip_panel_highlights_the_active_leg():
+def route_tab_highlights_the_active_leg():
     o = Oven()
     o.lua(r"""
       MAPSTUB({[1] = {e = 2}, [2] = {}, [3] = {}, [4] = {}})
       getRoomArea = function() return 1 end
       getRoomAreaName = function() return "Towne" end
       getRoomName = function(id) return "room " .. id end
+      sbo.cfg.tabs = true
       sbo.mapRoom = 1
       sbo.recallToAsk = function() return false end
       sbo.planTrip = function(from)
@@ -5884,23 +5885,30 @@ def trip_panel_highlights_the_active_leg():
       sbo.legStart = function() end
       sbo.pageShow = function(pg, lines) if pg == sbo.tripPg then panelText = table.concat(lines, "\n") end end
       sbo.goToNow(4)
-      assert(sbo.goAsk and not sbo.tripPanel)
+      assert(sbo.goAsk and not sbo.tripPg)
       assert(sbo.goAnswer("y"))
       local last = 0
       for id in pairs(timers) do last = math.max(id, last) end
       timers[last][2]()
-      assert(sbo.tripPanel.shown)
+      assert(sbo.tabOn == "route" and sbo.tripPg.container == sbo.tabPages.route and not sbo.tripPanel)
       assert(panelText:find("▶ e into ", 1, true) and panelText:find("run original", 1, true))
+      sbo.tabShow("view", true)
       sbo.mapRoom = 2
       sbo.tripContinue()
       assert(panelText:find("▶ run replanned", 1, true) and panelText:find("✓ e into ", 1, true))
-      assert(not panelText:find("original", 1, true))
+      assert(not panelText:find("original", 1, true) and sbo.tabOn == "view")
       sbo.mapRoom = 4
       sbo.tripContinue()
-      assert(not sbo.tripPanel.shown)
+      assert(panelText:find("No active route", 1, true))
+      sbo.cfg.tabAuto = false
       sbo.mapRoom = 1
       sbo.tripStart(4)
-      assert(sbo.tripPanel.shown)
+      assert(sbo.tabOn == "view" and sbo.tabNew.route)
+      sbo.stopAll()
+      assert(panelText:find("No active route", 1, true) and not sbo.tabNew.route)
+      sbo.cfg.tabs = false
+      sbo.tripStart(4)
+      assert(sbo.tripPanel.shown and sbo.tripPg.container == sbo.tripPanel)
       sbo.stopAll()
       assert(not sbo.tripPanel.shown)
     """)
@@ -6572,8 +6580,15 @@ def upgrade_in_session():
     prev = previous_release()
     if not prev:
         return "skipped (no previous release in git)"
-    o = Oven(prev=prev.replace("@@REPO@@", "x/y"), src="CREATED = {}\n" + SRC)
+    o = Oven(prev=prev.replace("@@REPO@@", "x/y"), src="""
+      sbo.cfg.tabs = true
+      sbo.createWindow()
+      OLD_CHAT = sbo.tabPages.chat
+      OLD_NOTES = sbo.tabPages.notes
+      CREATED = {}
+    """ + SRC)
     o.lua('sbo.showHelp("item", {" [1087] general"}) sbo.viewAdd({lines={{{"white","eq"}}}, links={}}) sbo.command("") sbo.command("")')
+    assert o.ev("sbo.tabPages.route and sbo.tabPages.chat == OLD_CHAT and sbo.tabPages.notes == OLD_NOTES")
     made = list(o.ev("CREATED").values())
     bad = [m for m in made if "MAIN SCREEN" in m]
     assert not bad, f"panels on the main screen after upgrading: {bad}"

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.78"
+M.version = "1.99.79"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4812,15 +4812,17 @@ end
 -- Tabs along the top of the Inspector window. Each tab is its own page; whatever arrives for a
 -- tab (an item, a help page, the session) brings it to the front.
 M.TABS = { { key = "view", title = "Inspector" }, { key = "char", title = "Character" }, { key = "help", title = "Help" },
-           { key = "log", title = "Log" }, { key = "chat", title = "Chat" }, { key = "notes", title = "Notes" } }
-local TABS_ID = "ovenTabs4"   -- new widget names whenever the set of tabs changes (an update mid-session)
+           { key = "log", title = "Log" }, { key = "chat", title = "Chat" }, { key = "notes", title = "Notes" },
+           { key = "route", title = "Route" } }
+local TABS_ID = "ovenTabs4"
+M.TAB_WIDTH = "14%"
 local tabStyle = [[
   QLabel { background-color: rgba(24,24,32,255); color: ]] .. M.hex("dim") .. [[; border: 1px solid #333; border-bottom: none;
-           border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 10px; margin-right: 2px; }
+           border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 4px; margin-right: 2px; }
   QLabel::hover { color: ]] .. M.hex("text") .. [[; }]]
 local tabOnStyle = [[
   QLabel { background-color: black; color: ]] .. M.hex("title") .. [[; border: 1px solid #555; border-bottom: none;
-           border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 10px; margin-right: 2px; }]]
+           border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 4px; margin-right: 2px; }]]
 
 -- what a tab does when clicked, dragged and let go (wired again after an update, which keeps the labels)
 function M.tabWire(key, lab)
@@ -4829,8 +4831,26 @@ function M.tabWire(key, lab)
   pcall(function() lab:setReleaseCallback(function() M.tabRelease(key) end) end)
   pcall(function() lab:setMoveCallback(function() M.tabDragMove(key) end) end)
 end
+do
+local function buildTab(key, title)
+  local lab = Geyser.Label:new({ name = TABS_ID .. "_" .. key, width = M.TAB_WIDTH, h_policy = Geyser.Fixed }, M.tabBar)
+  lab:echo("<center>" .. title .. "</center>")
+  M.tabWire(key, lab)
+  M.tabLabels[key] = lab
+  M.tabPages[key] = Geyser.Container:new({ name = TABS_ID .. "Page_" .. key, x = 0, y = 0, width = "100%", height = "100%" }, M.tabBody)
+end
+
 function M.buildTabs()
   if M.tabBox and M.tabsId == TABS_ID then
+    if not M.tabPages.route then
+      -- Add the tab in place so an update can keep Chat, Notes and undocked pages.
+      if M.tabFill then M.tabFill:resize(0, nil); M.tabFill:hide() end
+      for key, lab in pairs(M.tabLabels) do
+        if not M.tabIsOut(key) then lab:resize(M.TAB_WIDTH, nil) end
+      end
+      buildTab("route", "Route")
+      M.tabBar:organize()
+    end
     for key, lab in pairs(M.tabLabels or {}) do M.tabWire(key, lab) end
     return
   end
@@ -4840,19 +4860,14 @@ function M.buildTabs()
   M.tabBar = Geyser.HBox:new({ name = TABS_ID .. "Bar", height = 24, v_policy = Geyser.Fixed }, M.tabBox)
   M.tabBody = Geyser.Container:new({ name = TABS_ID .. "Body" }, M.tabBox)
   M.tabLabels, M.tabPages = {}, {}
-  for _, t in ipairs(M.TABS) do
-    local key = t.key
-    local lab = Geyser.Label:new({ name = TABS_ID .. "_" .. key, width = 96, h_policy = Geyser.Fixed }, M.tabBar)
-    lab:echo("<center>" .. t.title .. "</center>")
-    M.tabWire(key, lab)
-    M.tabLabels[key] = lab
-    M.tabPages[key] = Geyser.Container:new({ name = TABS_ID .. "Page_" .. key, x = 0, y = 0, width = "100%", height = "100%" }, M.tabBody)
-  end
+  for _, t in ipairs(M.TABS) do buildTab(t.key, t.title) end
   pcall(M.buildChat, M.tabPages.chat)
   pcall(M.buildNotes, M.tabPages.notes)
   -- the rest of the bar stays empty
   M.tabFill = Geyser.Label:new({ name = TABS_ID .. "Fill" }, M.tabBar)
   M.tabFill:setStyleSheet("background-color: rgba(20,20,28,0); border-bottom: 1px solid #555;")
+end
+
 end
 
 -- point each page at its tab (tabs on) or at its own window (tabs off)
@@ -4886,7 +4901,7 @@ function M.applyTabs()
       local pg = M.tabPages and M.tabPages[key]
       if pg and pg.container == winInside(win) then
         pcall(function() pg:changeContainer(M.tabBody); pg:move(0, 0); pg:resize("100%", "100%") end)
-        pcall(function() M.tabLabels[key]:resize(96, nil); M.tabLabels[key]:show(); M.tabBar:organize() end)
+        pcall(function() M.tabLabels[key]:resize(M.TAB_WIDTH, nil); M.tabLabels[key]:show(); M.tabBar:organize() end)
         win:hide()
       end
     end
@@ -4923,6 +4938,7 @@ function M.tabShow(key, quiet)
     elseif key == "char" then M.charShow()
     elseif key == "log" and not M.logShown then M.logAdd(M.sessionLines(M.pageCols(M.logPg)), M.logLinks())
     elseif key == "chat" then M.chatSeen()
+    elseif key == "route" then M.drawTripPanel(M.trip)
     elseif key == "help" and not M.helpShown then
       M.helpPage("Help", { M.drgb("dim") .. "Game help pages open here - try help classes, or sbo for Oven's commands." }, "decho")
     end
@@ -5114,7 +5130,7 @@ function M.tabDock(key)
   M.tabPages[key]:changeContainer(M.tabBody)
   pcall(function() M.tabPages[key]:move(0, 0); M.tabPages[key]:resize("100%", "100%") end)
   pcall(function() M.container:raiseAll() end)
-  pcall(function() M.tabLabels[key]:resize(96, nil); M.tabBar:organize() end)
+  pcall(function() M.tabLabels[key]:resize(M.TAB_WIDTH, nil); M.tabBar:organize() end)
   M.tabLabels[key]:show()
   win:hide()
   M.container:show()
@@ -5129,6 +5145,7 @@ function M.redrawPage(key)
     pcall(function()
       if key == "view" and M.viewShown then M.viewShow()
       elseif key == "char" and M.charPg then M.charShow()
+      elseif key == "route" then M.drawTripPanel(M.trip)
       elseif key == "log" and M.logPg and M.logShown then M.logAdd(M.sessionLines(M.pageCols(M.logPg)), M.logLinks())
       end
     end)
@@ -20331,10 +20348,22 @@ end
 
 function M.hideTripPanel()
   if M.tripPanel then M.tripPanel:hide() end
+  if M.tabNew then M.tabNew.route = nil end
+  if M.cfg.tabs and M.tripPg then pcall(M.drawTripPanel) end
 end
 
-function M.drawTripPanel(T, route)
-  if not M.tripPanel then
+function M.drawTripPanel(T, open)
+  local route = T and T.route
+  local parent
+  if M.cfg.tabs then
+    if not M.tabPages or not M.tabPages.route then M.createWindow() end
+    parent = M.tabPages.route
+    if M.tripPanel then M.tripPanel:hide() end
+  elseif not route then
+    if M.tripPanel then M.tripPanel:hide() end
+    return
+  end
+  if not parent and not M.tripPanel then
     local d = M.PANEL_DEFAULTS.ovenTripPanel
     M.tripPanel = Adjustable.Container:new({
       name = "ovenTripPanel", titleText = M.panelTitle("Route"),
@@ -20343,7 +20372,14 @@ function M.drawTripPanel(T, route)
     })
     M.panelPlace("ovenTripPanel", M.tripPanel)
   end
-  if not M.tripPg then M.tripPg = M.newPage("ovenTrip", M.tripPanel) end
+  parent = parent or M.tripPanel
+  if not M.tripPg then M.tripPg = M.newPage("ovenTrip", parent) end
+  movePage(M.tripPg, parent)
+  if not route then
+    M.pageShow(M.tripPg, { M.drgb("dim") .. "No active route. Use sbo go to plan a trip." }, "decho")
+    if M.tabLabels.route then M.tabLabels.route:echo("<center>Route</center>") end
+    return
+  end
   local function safe(text) return text:gsub("<", "‹"):gsub(">", "›") end
   local name = roomExists(T.target) and getRoomName(T.target) or ("#" .. T.target)
   local lines = { M.drgb("title") .. safe(name), "" }
@@ -20356,7 +20392,17 @@ function M.drawTripPanel(T, route)
     for _, text in ipairs(T.routeDone) do lines[#lines + 1] = M.drgb("dim") .. "✓ " .. safe(text) end
   end
   M.pageShow(M.tripPg, lines, "decho")
-  M.tripPanel:show()
+  if not M.cfg.tabs then
+    M.tripPanel:show()
+  elseif open then
+    if M.cfg.tabAuto ~= false or M.tabOn == "route" or M.tabIsOut("route") then
+      M.tabWindowShow("route")
+      M.tabShow("route", true)
+    else
+      M.tabNew.route = true
+      M.tabShow(M.tabOn, true)
+    end
+  end
 end
 
 -- going: the first leg of the plan from where you are; when it's done, planned again from there
@@ -20471,8 +20517,9 @@ function M.tripContinue()
     local route = M.planLines({ legs = shown, cost = plan.cost, gold = plan.gold }, true)
     T.routeDone = T.routeDone or {}
     if T.routeTo == here and T.route then T.routeDone[#T.routeDone + 1] = T.route[1] end
+    local open = not T.route
     T.routeTo, T.route = leg.to, route
-    M.drawTripPanel(T, route)
+    M.drawTripPanel(T, open)
   end)
   M.legStart(leg, T)
 end
@@ -20553,7 +20600,7 @@ function M.legStart(leg, T)
             if not T.route then return end
             local lines = M.planLines({ legs = { leg.fallback }, cost = leg.fallback.cost or 0 }, true)
             T.routeTo, T.route[1] = leg.fallback.to, lines[1]
-            M.drawTripPanel(T, T.route)
+            M.drawTripPanel(T)
           end)
           return M.legStart(leg.fallback, T)
         end
@@ -21457,7 +21504,8 @@ function M.legacyCommand(args)
   elseif a == "tabs" and onoff ~= nil then
     M.cfg.tabs = onoff
     if M.container then M.applyTabs(); M.viewShow() end
-    say(onoff and "tabs on: Inspector | Help | Log in one window" or "tabs off: help pages get their own window again")
+    if M.trip and M.trip.route then M.drawTripPanel(M.trip, true) end
+    say(onoff and "tabs on: Oven pages share one window" or "tabs off: help pages get their own window again")
   elseif a == "layout" and (b == "save" or b == "reset" or b == "restore") then
     if b == "save" then M.panelsSave(true); return say("panel layout saved - it's also saved by itself a few seconds after you move a panel")
     elseif b == "restore" then M.panelsRestore(); return say("panels put back where you saved them")
@@ -21472,7 +21520,7 @@ function M.legacyCommand(args)
     say(string.format("combat mode mxp: target bar %s, round lines and summaries %s",
       M.cfg.combatBar and "on" or "off", M.cfg.combatLines and "on" or "off"))
   elseif a == "chat" then return M.chatCommand(b)
-  elseif a == "tab" and (b == "inspector" or b == "character" or b == "help" or b == "log" or b == "chat" or b == "notes") then
+  elseif a == "tab" and (b == "inspector" or b == "character" or b == "help" or b == "log" or b == "chat" or b == "notes" or b == "route") then
     local key = b == "inspector" and "view" or (b == "character" and "char" or b)
     M.tabWindowShow(key); M.tabShow(key)
     return
@@ -22160,7 +22208,7 @@ function M.tabMove(r, out)
   local tabs = { { name = "inspector", key = "view" } }
   for _, t in ipairs(M.TABS) do if t.key ~= "view" then tabs[#tabs + 1] = { name = t.key == "char" and "character" or t.key, key = t.key } end end
   local t = pick(tabs, r or "")
-  if not t then return say("sbo window " .. (out and "undock" or "dock") .. " inspector|character|help|log|chat|notes") end
+  if not t then return say("sbo window " .. (out and "undock" or "dock") .. " inspector|character|help|log|chat|notes|route") end
   if not M.cfg.tabs then return say("tabs are off (sbo config tabs on) - every page has its window already") end
   M.createWindow()
   if out then
@@ -22175,9 +22223,9 @@ function M.tabMove(r, out)
 end
 
 function M.windowTab(r)
-  local tabs = { { name = "inspector" }, { name = "character" }, { name = "help" }, { name = "log" }, { name = "chat" }, { name = "notes" } }
+  local tabs = { { name = "inspector" }, { name = "character" }, { name = "help" }, { name = "log" }, { name = "chat" }, { name = "notes" }, { name = "route" } }
   local t = pick(tabs, r)
-  if not t then return say("sbo window tab inspector|character|help|log|chat|notes") end
+  if not t then return say("sbo window tab inspector|character|help|log|chat|notes|route") end
   return legacy("tab " .. t.name)
 end
 
@@ -23448,6 +23496,7 @@ function M.init()
     -- an update in the middle of a session: rebuild the open window with (or without) its tabs
     pcall(M.viewShow)
   end
+  if (M.trip and M.trip.route) or (M.cfg.tabs and M.tabOn == "route") then pcall(M.drawTripPanel, M.trip) end
   if M.cfg.bar then M.showBar(true) end
   if M.cfg.map then M.mapStart() end
   if M.cfg.mapPanel then pcall(M.showMapPanel, true) end

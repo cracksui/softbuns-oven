@@ -149,8 +149,8 @@ way that costs the least stamina - your mount's while you ride. It joins up ever
 
 A walk inside the place you're in just goes; longer trips show the route, estimated stamina and fare.
 Oven prefers a route you can afford when it knows how much gold you're carrying. Type `y` to go or `n`
-to stay. The Route panel highlights the current leg, shows what comes next, and closes when the trip
-ends. If a replan raises the fare or adds a paid ride, recall or clan-hall hop, Oven shows the new
+to stay. Oven's **Route** tab highlights the current leg, shows what comes next, and clears when the
+trip ends. With tabs off, the route opens in its own panel. If a replan raises the fare or adds a paid ride, recall or clan-hall hop, Oven shows the new
 route and asks again. If the nearest matches for a name have no route you can take, Oven checks farther
 matches. A place whose way in Oven
 hasn't learned yet: it takes you to its spot on the world map and stops there for you to step in (that's
