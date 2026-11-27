@@ -5421,6 +5421,25 @@ def trips_dont_loop():
 
 
 @test
+def backstab_calculator():
+    # help 1345: ((weapon damage x 14) x (personality + backstab%)) / 100 + damage-backstab; +50% on a healthy target.
+    # The build page shows it, and what would raise it most, best first
+    o = Oven()
+    o.lua("""sbo.cfg.char = { class = 'rogue', combat = { damage = 158, accuracy = 73, dmgParts = { weapon = 123 } },
+        stats = { personality = { cur = 12, max = 14 } } }
+      sbo.cfg.skills = { backstab = { lrnd = 75 } }
+      sbo.wornTotals = function() return { ['damage-backstab'] = 6 }, false end""")
+    eq(round(o.ev("sbo.backstabDamage().hit")), 1930, "158 x 14 x (12 + 75) / 100 + 6")
+    eq(round(o.ev("sbo.backstabDamage().healthy")), 2896, "x 1.5 on a healthy target")
+    eq(o.ev("sbo.backstabLevers()[1].what"), "backstab 75% → 100%", "the most it'd gain: practice")
+    eq(round(o.ev("sbo.backstabLevers()[1].gain")), 553, "25% more backstab: 158 x 14 x 25 / 100")
+    assert o.ev("(function() for _, l in ipairs(sbo.backstabLevers()) do if l.what == 'personality back to 14' then return true end end end)()")
+    # not a backstabber: nothing
+    o.lua("sbo.cfg.skills = {}")
+    eq(o.ev("sbo.backstabDamage()"), None, "no backstab: no figure")
+
+
+@test
 def score_display():
     # the score: HP/SP/ST bars reach the attributes' right edge; an attribute over its maximum shows the part above in
     # green; the record as k/d, the bar's way: "k/d  4,441/68"

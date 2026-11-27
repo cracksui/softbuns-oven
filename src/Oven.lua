@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.61"
+M.version = "1.99.62"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -9196,6 +9196,48 @@ local NOT_CALCULATED = "dodging and parrying (agility, the defense skills), what
   .. "cheaper a spell gets per point of spell comprehension, how often weapon specials and procs fire, resistances "
   .. "(they depend on what you fight), granted skills, and spells whose help Oven hasn't read"
 
+-- backstab (help 1345): ((weapon damage × 14) × (personality + backstab%)) / 100 + damage-backstab, and a healthy
+-- opponent "unlabored by any infirmities" takes 50% more. Weapon damage: eq's (what the game says your weapon deals);
+-- personality: score's current; backstab%: practice's; damage-backstab: your gear's. nil when you don't know backstab
+function M.backstabDamage(over)
+  over = over or {}
+  local c = M.cfg.char or {}
+  local skill = over.skill or tonumber(((M.cfg.skills or {}).backstab or {}).lrnd)
+  if not skill or skill <= 0 then return nil end
+  local weapon = over.weapon or tonumber((c.combat or {}).damage)
+  local pers = over.personality or tonumber(((c.stats or {}).personality or {}).cur)
+  if not (weapon and pers) then return nil end
+  local okT, tot = pcall(M.wornTotals)
+  local gear = over.gear or (okT and type(tot) == "table" and tonumber(tot["damage-backstab"])) or 0
+  local hit = weapon * 14 * (pers + skill) / 100 + gear
+  return { hit = hit, healthy = hit * 1.5, weapon = weapon, personality = pers, skill = skill, gear = gear }
+end
+-- what would raise it most: each change, what it adds (and to a healthy target), best first
+function M.backstabLevers()
+  local b = M.backstabDamage()
+  if not b then return {} end
+  local c = M.cfg.char or {}
+  local out = {}
+  local function add(what, how, over)
+    local after = M.backstabDamage(over)
+    local gain = after and (after.hit - b.hit) or 0
+    if gain > 0.5 then out[#out + 1] = { what = what, how = how, gain = gain, healthy = gain * 1.5 } end
+  end
+  local pst = (c.stats or {}).personality or {}
+  if tonumber(pst.max) and tonumber(pst.cur) and pst.max > pst.cur then
+    add(string.format("personality back to %d", pst.max), string.format("it's %d of %d now", pst.cur, pst.max), { personality = pst.max })
+  end
+  add("+1 personality", "train it, or gear / spells with +personality", { personality = b.personality + 1 })
+  if b.skill < 100 then
+    local cost = math.ceil((100 - b.skill) * 2.3)   -- (help 1345: 2.3 practices a percent)
+    add(string.format("backstab %d%% → 100%%", b.skill), string.format("practice it: ~%d practices", cost), { skill = 100 })
+  end
+  add("+10 weapon damage", "a hook or dagger that hits harder (eq's damage)", { weapon = b.weapon + 10 })
+  add("+10 damage-backstab", "gear with damage-backstab", { gear = b.gear + 10 })
+  table.sort(out, function(x, y) return x.gain > y.gain end)
+  return out
+end
+
 function M.buildLines(width)
   local c = M.cfg.char or {}
   local cb = c.combat
@@ -9250,6 +9292,26 @@ function M.buildLines(width)
       row((k == cb.weapon and "now: " or "with ") .. k, string.format("%.1f", per),
         string.format("%s · %d dmg × %d%% × crit %d%%", w.type or "?", w.damage, math.min(98, w.accuracy), w.crit or 0),
         k == cb.weapon and C.plus or C.num)
+    end
+  end
+
+  -- backstab: the game's formula, your numbers, and what would raise it
+  local bs = M.backstabDamage()
+  if bs then
+    head("Backstab")
+    row("a healthy target", string.format("%.0f", bs.healthy), "full health, nothing wrong with it: +50%", C.plus)
+    row("any other target", string.format("%.0f", bs.hit),
+      string.format("%d dmg × 14 × (%d personality + %d%% backstab) / 100%s", bs.weapon, bs.personality, bs.skill,
+        bs.gear ~= 0 and string.format(" + %d gear", bs.gear) or ""))
+    local levers = M.backstabLevers()
+    if #levers > 0 then
+      out[#out + 1] = { { C.dim, "  what would raise it (on a healthy target · on any other):" } }
+      local lw = 0
+      for _, l in ipairs(levers) do lw = math.max(lw, ulen(l.what)) end
+      for _, l in ipairs(levers) do
+        out[#out + 1] = { { C.key, "    " .. pad(l.what, lw + 2) }, { C.plus, pad(string.format("+%.0f", l.healthy), 6) },
+          { C.dim, pad(string.format("+%.0f", l.gain), 6) .. l.how } }
+      end
     end
   end
 
