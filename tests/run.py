@@ -5342,11 +5342,11 @@ def score_tail_tidy():
     o.L.globals().SL = o.L.table_from(lines)
     out = o.lua("""local raw = {} for _, l in ipairs(SL) do raw[#raw+1] = l end local l = sbo.format('score', '', raw, 100)
       local s = {} for _, r in ipairs(l) do for _, g in ipairs(r) do s[#s+1] = tostring(g[2]) end s[#s+1] = "\\n" end return table.concat(s)""")
-    assert "Quests" in out and "#3390  Cooking Adventurers · step 10" in out and "#3519  step 1" in out, out
-    assert "The next phase" not in out, out
+    # (the quests aren't shown - the quest panel has them - nor the game's lines about them)
+    assert "Quests" not in out and "#3390" not in out and "The next phase" not in out, out
     assert "13 items · 11 st 50 pb" in out and "67,668 gp" in out, out
-    last = [l for l in out.split("\n") if l.strip()][-1]
-    assert last.startswith("107 hours played") and "quest" not in last and "CPK" not in last, last
+    # what's left, as its own section
+    assert "▸ Character" in out and "Played   107 hours" in out and "Born     9/17/1504" in out, out
 
 
 @test
@@ -5438,6 +5438,10 @@ def score_display():
         "* You have killed 4,441 and been killed by 68 creatures.",
         "* You have killed 0 and been killed by 0 players.",
         "* You have attained 71 marks and 0 relationships.",
+        "  Hours Played:      221        Age:            15 years (Born 9/17/1504) [Created: In Antiquity]",
+        "* You have 500 building points and 0 reward units.",
+        "* The next phase of quest #3390 is: Phase 10: Keep cooking for players.",
+        "* Review your equipment, affects, faction relationships, gold",
     ])
     o.lua("OUT = sbo.formatters.score(RAW, 100)")
     rows = ["".join(str(seg[2]) for seg in row.values()) for row in o.ev("OUT").values()]
@@ -5450,6 +5454,10 @@ def score_display():
     assert sanity.count("░") == 1, sanity   # (17/18: not drawn full)
     assert any(r.startswith("Creatures") and r.endswith("k/d  4,441/68") for r in rows), rows
     assert any(r.startswith("Relationships  0") for r in rows), rows
+    # no quests (the quest panel has them); the rest as its own section, the game's pointer to other commands left out
+    assert not any("Quests" in r or "#3390" in r for r in rows), rows
+    assert "▸ Character" in rows and any(r.startswith("Played           221 hours") for r in rows), rows
+    assert any("Building points  500" in r for r in rows) and not any("Review your" in r for r in rows), rows
 
 
 @test

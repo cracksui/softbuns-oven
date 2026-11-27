@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.60"
+M.version = "1.99.61"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2340,35 +2340,42 @@ function M.formatters.score(raw, width)
     end
   end
 
-  -- your quests' next steps: one each, its number and name, the step, what to do (wrapped under it)
-  if #sc.quests > 0 then
-    subhead(out, "Quests")
-    local idW = 0
-    for _, q in ipairs(sc.quests) do idW = math.max(idW, ulen(q.id) + 1) end
-    for _, q in ipairs(sc.quests) do
-      local Q = M.quests and M.quests[q.id]
-      local head = { { C.num, pad("#" .. q.id, idW) }, { C.dim, "  " } }
-      if Q and Q.name then head[#head + 1] = { C.item, Q.name }; head[#head + 1] = { C.dim, " · " } end
-      head[#head + 1] = { C.dim, "step " .. q.n }
-      out[#out + 1] = head
-      addAll(out, wrapWords(q.text, width, idW + 2, C.text, { { C.text, string.rep(" ", idW + 2) } }, idW + 2))
+  -- (your quests' next steps aren't shown: the quest panel has them)
+
+  -- about you: hours played, age, when born and created, gender, building points and reward units
+  local cells = {}
+  if I["Hours Played"] then cells[#cells + 1] = { "Played", { { C.num, I["Hours Played"] }, { C.dim, " hours" } } } end
+  if I["Age"] then
+    local years, born, created = I["Age"]:match("^(.-)%s*%(Born (.-)%)%s*%[Created:%s*(.-)%]")
+    if years then
+      cells[#cells + 1] = { "Age", { { C.num, years } } }
+      cells[#cells + 1] = { "Born", { { C.item, born } } }
+      cells[#cells + 1] = { "Created", { { C.item, created } } }
+    else
+      cells[#cells + 1] = { "Age", { { C.item, I["Age"] } } }
     end
   end
-
-  -- the rest, dimmed: one short line
-  local misc = {}
-  if I["Hours Played"] then misc[#misc + 1] = I["Hours Played"] .. " hours played" end
-  if I["Age"] then misc[#misc + 1] = "age " .. I["Age"]:gsub("%s*%[.-%]", "") end
-  if I["Gender"] then misc[#misc + 1] = I["Gender"] end
-  for k, v in pairs(I) do
-    local known = { ["Class Level"] = 1, ["Total Level"] = 1, Race = 1, Class = 1, Practices = 1, ["Quest Points"] = 1,
-                    Alignment = 1, Reputation = 1, ["Hours Played"] = 1, Age = 1, Gender = 1 }
-    if not known[k] then misc[#misc + 1] = k:lower() .. " " .. v end
+  if I["Gender"] then cells[#cells + 1] = { "Gender", { { C.item, I["Gender"] } } } end
+  local known = { ["Class Level"] = 1, ["Total Level"] = 1, Race = 1, Class = 1, Practices = 1, ["Quest Points"] = 1,
+                  Alignment = 1, Reputation = 1, ["Hours Played"] = 1, Age = 1, Gender = 1 }
+  local keys = {}
+  for k in pairs(I) do if not known[k] then keys[#keys + 1] = k end end
+  table.sort(keys)
+  for _, k in ipairs(keys) do cells[#cells + 1] = { k, { { C.item, I[k] } } } end
+  local rest = {}
+  for _, o in ipairs(sc.other) do
+    local bp, ru = o:match("^You have ([%d,]+) building points and ([%d,]+) reward units")
+    if bp then
+      cells[#cells + 1] = { "Building points", { { C.num, bp } } }
+      cells[#cells + 1] = { "Reward units", { { C.num, ru } } }
+    elseif not o:match("^Review your ") then   -- (the game's pointer to other commands: not about you)
+      rest[#rest + 1] = o
+    end
   end
-  for _, o in ipairs(sc.other) do misc[#misc + 1] = o end
-  if #misc > 0 then
+  if #cells > 0 then subhead(out, "Character"); grid(out, cells, width) end
+  if #rest > 0 then
     blank(out)
-    addAll(out, wrapWords(table.concat(misc, "  ·  "), width, 0, C.dim))
+    addAll(out, wrapWords(table.concat(rest, "  ·  "), width, 0, C.dim))
   end
   return out, sc.title
 end
