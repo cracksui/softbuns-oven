@@ -6487,6 +6487,64 @@ def go_asks_again_when_the_approved_route_changes():
 
 
 @test
+def reagent_refill_batches_live_shop_items_and_verifies_progress():
+    o = Oven()
+    o.lua("""
+      gmcp.room = {info={num="10554"}}
+      sent, messages = {}, {}
+      MLOG = sbo.log
+      sbo.log = function(msg) messages[#messages + 1] = msg end
+      send = function(cmd)
+        sent[#sent + 1] = cmd
+        sbo.onSend("sysDataSendRequest", cmd)
+      end
+      function REPLY()
+        sbo.finish("test")
+        local last
+        for id, timer in pairs(timers) do
+          if timer[1] == 0.3 and (not last or id > last) then last = id end
+        end
+        local callback = timers[last][2]
+        timers[last] = nil
+        callback()
+      end
+      sbo.command("reagent")
+    """)
+
+    def reply(command, *lines):
+        eq(o.ev("sent[#sent]"), command)
+        o.feed(*lines)
+        o.lua("REPLY()")
+
+    def supply(fire, air=50):
+        reply("score reagents", "Reagents", f"Fire: {fire}/28    Air: {air}/50", "Generators: 1/5")
+
+    supply(0)
+    reply("shop list", "Welcome to Grimaldi Magick!", "No.  Item Name   Level Amount Cost",
+          "  41) A pinch of sulfur    5   No limit   [    50 gold]",
+          "  29) A feather from a roc    5   No limit   [    50 gold]")
+    for fire in (7, 14, 21, 28):
+        reply("inventory", "You are carrying:", "A total of 61 items weighing 20 stones.",
+              "You may carry a maximum of 68 items weighing up to 40 stones.")
+        reply("shop buy 7 41", "You purchase seven pinches of sulfur.")
+        supply(fire)
+    assert not o.ev("sbo.reagentRun")
+    assert "reagents: full" in o.ev("messages[#messages]")
+    eq(sum(command == "shop buy 7 41" for command in o.ev("sent").values()), 4)
+
+    o.lua('sbo.command("reagent")')
+    supply(28, 49)
+    reply("shop list", "Welcome to Grimaldi Magick!", "No.  Item Name   Level Amount Cost",
+          "  18) A feather from a roc    5   No limit   [    50 gold]")
+    reply("inventory", "A total of 61 (68 max) items weighing 20 stones (40 stones max).")
+    reply("shop buy 1 18", "You don't have enough gold.")
+    supply(28, 49)
+    assert not o.ev("sbo.reagentRun")
+    assert "still short: air 1" in o.ev("messages[#messages]")
+    assert "don't have enough gold" in o.ev("messages[#messages]")
+
+
+@test
 def limbo_finds_down_and_answers_the_hermit():
     o = Oven()
     o.lua("""

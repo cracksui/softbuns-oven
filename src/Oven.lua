@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.82"
+M.version = "1.99.83"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -392,6 +392,7 @@ M.commands = {
     argsOk = function(r) local w = r:match("^(%S+)%s+%S") return w ~= nil and #w >= 2 and ("identify"):sub(1, #w) == w end },
   { word = "quest",     min = 3, kind = "item",
     argsOk = function(r) local w = r:match("^(%S+)%s+%S") return w ~= nil and #w >= 2 and ("identify"):sub(1, #w) == w end },
+  { word = "score",     min = 2, kind = "reagents", argsOk = function(r) return r == "reagents" end },
   { word = "score",     min = 2, kind = "score" },    -- "sc" is score in Materia Magica
   { word = "affects",   min = 2, kind = "affects" },
   { word = "help",      min = 3, kind = "help" },     -- shown as-is in the help window
@@ -418,6 +419,8 @@ M.commands = {
   -- "mark info <name>": read (sbo quest mark pins it); shown as the game sends it, with a link to pin it
   { word = "mark",      min = 4, kind = "markinfo",
     argsOk = function(r) local w = r:match("^(%S+)%s+%S") return w ~= nil and ("info"):sub(1, #w) == w end },
+  { word = "shop",      min = 2, kind = "reagentbuy",
+    argsOk = function(r) return M.reagentRun and r:match("^buy %d+ %d+$") ~= nil end },
   { word = "shop",      min = 2, kind = "shop",
     argsOk = function(r) return r ~= "" and (("list"):sub(1, #r) == r or ("inventory"):sub(1, #r) == r) end },
 }
@@ -11526,7 +11529,7 @@ function M.gmcpHandlersList()
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onFightStatus) end),
     registerAnonymousEventHandler("gmcp.room.info", function() pcall(M.onFightRoom) end),
     -- a new connection: read your aliases again at its first prompt
-    registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil; M.stopLimbo(); M.limboMap = nil end),
+    registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil; M.stopLimbo(); M.limboMap = nil; M.stopReagent() end),
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onGmcpStatus) end),
     -- HP / SP / ST as they change (mid-fight too): redraw the bar
     registerAnonymousEventHandler("gmcp.char.vitals", function() if M.cfg.bar then pcall(M.drawBar) end end),
@@ -11680,6 +11683,7 @@ function M.onSend(_, cmd)
       local okA, mine = pcall(M.goAnswer, cmd)
       if okA and mine then pcall(denyCurrentSend); return end
     end
+    if M.reagentRun then M.stopReagent("refill canceled (you typed)") end
     -- reading help pages in the background: you come first - it stops, and the page it was on
     -- isn't swallowing your command's output
     if M.classFetch then
@@ -12368,6 +12372,7 @@ end
 
 -- what's keeping Oven from doing something by itself right now (nil: nothing)
 function M.busyWhy(promptLine)
+  if M.reagentRun then return "refilling reagents" end
   if M.limbo then return "exploring Limbo Maze" end
   if M.walk then return "walking" end
   if M.running then return "running (" .. tostring(M.running.name) .. ")" end
@@ -15092,6 +15097,10 @@ end
 
 -- walk notes: a line in the game text (the prompt bar has no room to spare)
 function M.notifyWalk(msg)
+  if not M.trip and M.reagentRun and M.reagentRun.travel and msg ~= "arrived"
+      and (msg:match("^stopped") or msg:match("^at ") or msg:match("^run ")) then
+    M.stopReagent("refill canceled before reaching the shop")
+  end
   if not M.trip and M.lastRoute and not M.lastRoute.status then
     M.finishRoute(msg == "arrived" and "Arrived" or "Stopped")
   end
@@ -18548,11 +18557,14 @@ end
 
 -- sbo go, the go ▸ links, a double-click on the map: the plan to the cheapest of the targets (a room, or a list);
 -- a walk inside the place you're in just goes, anything more is shown and asked first ("y" goes, "n" stays)
-function M.goTo(id) return M.withPathMemo(M.goToNow, id) end
-function M.goToNow(targets)
+function M.goTo(id, arrived) return M.withPathMemo(M.goToNow, id, arrived) end
+function M.goToNow(targets, arrived)
   if type(targets) ~= "table" then targets = { targets } end
   local here = M.mapRoom or M.currentRoom()
-  if not here then return say("Oven doesn't know where you are yet - move one room first") end
+  if not here then
+    if arrived then arrived() end
+    return say("Oven doesn't know where you are yet - move one room first")
+  end
   if M.goAsk and M.goAsk.resume then M.finishRoute("Stopped") end
   M.goAsk = nil
   local plan, fallback
@@ -18561,7 +18573,10 @@ function M.goToNow(targets)
     local batch = {}
     for i = first, math.min(first + M.GO_CANDIDATES - 1, #targets) do batch[#batch + 1] = targets[i] end
     local ok, result = pcall(M.planTrip, here, batch, {})
-    if not ok then return say("couldn't plan the trip: " .. tostring(result)) end
+    if not ok then
+      if arrived then arrived() end
+      return say("couldn't plan the trip: " .. tostring(result))
+    end
     if result then
       if not gold or (result.gold or 0) <= gold then plan = result; break end
       fallback = fallback or result
@@ -18572,10 +18587,11 @@ function M.goToNow(targets)
   -- (no way, or more than a walk here - below: where recall goes from here, first)
   if not plan and M.recallToAsk({}) and not M.goRecallAsked then
     M.goRecallAsked = true
-    return M.recallRefresh(function() M.goToNow(targets); M.goRecallAsked = nil end)
+    return M.recallRefresh(function() M.goToNow(targets, arrived); M.goRecallAsked = nil end)
   end
   M.goRecallAsked = nil
   if not plan then
+    if arrived then arrived() end
     if #targets > 1 then return say("no known route to any of the " .. #targets .. " matches") end
     local hp, tp = M.worldPos(here), M.worldPos(targets[1])
     if hp and tp and hp.map ~= tp.map then
@@ -18583,7 +18599,10 @@ function M.goToNow(targets)
     end
     return say("no way found to " .. nm(targets[1]) .. " - Oven can't place it on the map or the world map")
   end
-  if #plan.legs == 0 then return say("you're already there") end
+  if #plan.legs == 0 then
+    if arrived then return arrived(here) end
+    return say("you're already there")
+  end
   local target = plan.legs[#plan.legs].to
   if roomExists(target) then pcall(M.mapShow, target) end
   local leg1 = plan.legs[1]
@@ -18600,29 +18619,29 @@ function M.goToNow(targets)
   end
   if stays then
     M.notifyWalk(string.format("%d step%s…", leg1.n, leg1.n == 1 and "" or "s"))
-    return M.tripStart({ target }, M.tripApproval(plan))
+    return M.tripStart({ target }, M.tripApproval(plan), nil, arrived)
   end
   -- more than a walk here: where recall goes from here, first (recall list), then planned again
   if M.recallToAsk({}) and not M.goRecallAsked then
     M.goRecallAsked = true
-    return M.recallRefresh(function() M.goToNow(targets); M.goRecallAsked = nil end)
+    return M.recallRefresh(function() M.goToNow(targets, arrived); M.goRecallAsked = nil end)
   end
   for _, leg in ipairs(plan.legs) do
     if leg.kind == "gate" and (leg.age or 0) > M.WORLDGATE_FRESH and not M.goGateChecked then
       M.goGateChecked = true
       say("the plan goes through a worldgate - checking where they are now (time)")
-      return M.worldgateRefresh(function() M.goToNow(targets); M.goGateChecked = nil end)
+      return M.worldgateRefresh(function() M.goToNow(targets, arrived); M.goGateChecked = nil end)
     end
   end
   M.goGateChecked = nil
   local place = M.placeLabel(target)
-  M.askTrip(plan, { target }, string.format("%s%s - the way:", nm(target), place and (" (" .. place .. ")") or ""))
+  M.askTrip(plan, { target }, string.format("%s%s - the way:", nm(target), place and (" (" .. place .. ")") or ""), nil, arrived)
 end
 
-function M.askTrip(plan, targets, title, resume)
+function M.askTrip(plan, targets, title, resume, arrived)
   local lines, tail = M.planLines(plan)
   M.goAsk = { id = targets, at = os.time(), trip = true, route = M.planRoute(plan),
-              approval = M.tripApproval(plan), resume = resume, lines = lines }
+              approval = M.tripApproval(plan), resume = resume, lines = lines, arrived = arrived or (resume and resume.arrived) }
   if M.worldDraw then pcall(M.worldDraw) end
   M.sayPlan(title, lines, tail, "y to go, n to stay")
 end
@@ -20497,9 +20516,9 @@ function M.drawTripPanel(T, open)
 end
 
 -- going: the first leg of the plan from where you are; when it's done, planned again from there
-function M.tripStart(targets, approval, preview)
+function M.tripStart(targets, approval, preview, arrived)
   if type(targets) ~= "table" then targets = { targets } end
-  M.trip = { targets = targets, target = targets[1], used = {}, legs = 0, approval = approval, route = preview, routeDone = {} }
+  M.trip = { targets = targets, target = targets[1], used = {}, legs = 0, approval = approval, route = preview, routeDone = {}, arrived = arrived }
   if preview then pcall(M.drawTripPanel, M.trip, true) end
   M.tripContinue()
 end
@@ -20508,7 +20527,12 @@ function M.tripContinue()
   if not T then return end
   local here = M.mapRoom
   for _, t in ipairs(T.targets) do
-    if tonumber(t) == here then M.trip = nil; return M.notifyWalk("arrived") end
+    if tonumber(t) == here then
+      M.trip = nil
+      M.notifyWalk("arrived")
+      if T.arrived then T.arrived(here) end
+      return
+    end
   end
   T.legs = T.legs + 1
   if T.legs > 80 then M.trip = nil; return M.notifyWalk("stopped: the trip isn't getting there - sbo go again") end
@@ -21067,6 +21091,7 @@ function M.goAnswer(cmd)
   if not A then return false end
   M.goAsk = nil
   if os.time() - A.at > 60 then
+    if A.arrived then A.arrived() end
     if A.resume then M.finishRoute("Stopped") end
     return false
   end
@@ -21080,11 +21105,12 @@ function M.goAnswer(cmd)
         A.resume.approval = A.approval
         M.trip = A.resume
         M.tripContinue()
-      elseif A.trip then M.tripStart(A.id, A.approval, A.lines)
+      elseif A.trip then M.tripStart(A.id, A.approval, A.lines, A.arrived)
       else M.mapWalkTo(A.id) end
     end)
     return true
   end
+  if A.arrived then A.arrived() end
   if A.resume then M.finishRoute("Stopped") end
   if c == "n" or c == "no" then tempTimer(0, function() say("staying put") end); return true end
   return false   -- anything else: the question's dropped, and the command goes as usual
@@ -21371,6 +21397,164 @@ function M.quietly(cmd, kind, fn)
   M.sendOwn(cmd, false)
   -- no reply of that kind? give up on it (mine is taken before sending: the reply can be picked up at once)
   tempTimer(6, function() if M.quietNext == mine then M.quietNext = nil; pcall(fn, nil) end end)
+end
+
+do
+-- Match the shop's item names so item numbers and stock can change between shops.
+local reagentTypes = {
+  ["a pinch of sulfur"] = "fire", ["a shimmering white fish scale"] = "water",
+  ["a feather from a roc"] = "air", ["a browning mandrake leaf"] = "earth",
+  ["a silver runestone"] = "gem", ["a sunstone"] = "ethereal",
+  ["a clear focusing crystal"] = "focus", ["a fragment of the astral plane"] = "astral",
+  ["a bandage"] = "bandages", ["a roll of bandages"] = "bandages",
+}
+local function counts(lines)
+  local result = {}
+  for _, line in ipairs(lines or {}) do
+    for name, have, cap in line:gmatch("(%a+):%s*([%d,]+)%s*/%s*([%d,]+)") do
+      name = name:lower()
+      if name ~= "generators" then
+        result[name] = { have = tonumber((have:gsub(",", ""))), cap = tonumber((cap:gsub(",", ""))) }
+      end
+    end
+  end
+  return next(result) and result
+end
+
+local function missing(result)
+  local left = {}
+  for name, v in pairs(result) do
+    if v.have < v.cap then left[#left + 1] = name end
+  end
+  table.sort(left)
+  return left
+end
+
+local function slots(lines)
+  local used, max
+  for _, line in ipairs(lines or {}) do
+    local t = trim(line)
+    local n, cap = t:match("^A total of (%d+) %((%d+) max%) items? weighing")
+    used = tonumber(n or t:match("^A total of (%d+) items? weighing")) or used
+    max = tonumber(cap or t:match("^You may carry a maximum of (%d+) items?")) or max
+  end
+  if used and max then return math.max(0, max - used) end
+end
+
+function M.stopReagent(msg)
+  local R = M.reagentRun
+  if not R then return end
+  M.reagentRun = nil
+  if not msg then return end
+  local left = {}
+  for _, name in ipairs(missing(R.counts or {})) do
+    local v = R.counts[name]
+    left[#left + 1] = name .. " " .. (v.cap - v.have)
+  end
+  say("reagents: " .. msg .. (#left > 0 and (" · still short: " .. table.concat(left, ", ")) or ""))
+end
+
+local function readReagent(R, cmd, kind, fn)
+  M.quietly(cmd, kind, function(lines)
+    if M.reagentRun ~= R then return end
+    fn(lines or {})
+  end)
+end
+
+local function refill(R)
+  if M.currentRoom() ~= R.room then return M.stopReagent("left the shop") end
+  local left = missing(R.counts)
+  if #left == 0 then return M.stopReagent("full") end
+  local key
+  for _, name in ipairs(left) do if R.stock[name] then key = name; break end end
+  if not key then return M.stopReagent("the shop doesn't stock the remaining reagents") end
+  readReagent(R, "inventory", "contents", function(lines)
+    if M.currentRoom() ~= R.room then return M.stopReagent("left the shop") end
+    local free = slots(lines)
+    if not free then return M.stopReagent("couldn't read free inventory slots") end
+    if free == 0 then return M.stopReagent("no free slots for a purchase") end
+    local before = R.counts[key]
+    local n = math.min(free, before.cap - before.have, 500)
+    readReagent(R, string.format("shop buy %d %d", n, R.stock[key]), "reagentbuy", function(reply)
+      readReagent(R, "score reagents", "reagents", function(after)
+        local updated = counts(after)
+        if not updated or not updated[key] then return M.stopReagent("couldn't verify the purchase") end
+        for name, v in pairs(updated) do R.counts[name] = v end
+        if updated[key].have <= before.have then
+          local reason = M.shopRefusal(trim(reply[1] or "")) or trim(reply[1] or "")
+          return M.stopReagent("purchase added no " .. key .. (reason ~= "" and (" · " .. reason:gsub("[<>]", "")) or ""))
+        end
+        refill(R)
+      end)
+    end)
+  end)
+end
+
+local function reagentShop(R, here, retry)
+  if not here then return M.stopReagent("refill canceled before reaching a shop") end
+  R.travel, R.room = nil, here
+  readReagent(R, "shop list", "shop", function(lines)
+    if M.currentRoom() ~= here then return M.stopReagent("left the shop") end
+    local shop = M.parseShop(lines)
+    R.stock = {}
+    for _, item in ipairs(shop and shop.items or {}) do
+      local key = reagentTypes[item.item:lower()]
+      if key and item.currency == "gold" then R.stock[key] = item.no end
+    end
+    local needs, have = {}, false
+    for _, key in ipairs(missing(R.counts)) do
+      needs[key] = true
+      if R.stock[key] then have = true end
+    end
+    if have or retry then return refill(R) end
+    local coverage, targets, best = {}, {}, 0
+    for _, row in ipairs(M.dbRows("SELECT room, item FROM shop_items WHERE currency = 'gold'")) do
+      local key = reagentTypes[row.item:lower()]
+      if row.room ~= here and needs[key] then
+        local found = coverage[row.room] or {}
+        coverage[row.room] = found
+        found[key] = true
+      end
+    end
+    for id, found in pairs(coverage) do
+      local n = 0
+      for _ in pairs(found) do n = n + 1 end
+      if n > best then best, targets = n, {} end
+      if n == best then targets[#targets + 1] = id end
+    end
+    if #targets == 0 then
+      local known
+      for _, key in pairs(reagentTypes) do if needs[key] then known = true; break end end
+      if not known or here == 10554 then return M.stopReagent("no known vendor stocks the missing reagents") end
+      targets[1] = 10554  -- Grimaldi Magick in Rune
+    end
+    table.sort(targets)
+    R.travel = true
+    say("reagents: planning a trip to a reagent shop")
+    M.goTo(targets, function(room)
+      if M.reagentRun == R then reagentShop(R, room, true) end
+    end)
+  end)
+end
+
+function M.startReagent()
+  if not M.mayAutoSend() then return end
+  if M.reagentRun then
+    if M.reagentRun.travel and not M.trip and not M.goAsk and not M.cap and not M.quietNext then M.stopReagent()
+    else return say("already refilling reagents") end
+  end
+  if M.trip or M.goAsk or M.walk or M.dirWalk or M.travel or M.running or M.limbo or M.cap or M.quietNext or M.fighting() then
+    return say("finish or stop the current action before sbo reagent")
+  end
+  local R = {}
+  M.reagentRun = R
+  readReagent(R, "score reagents", "reagents", function(lines)
+    R.counts = counts(lines)
+    if not R.counts then return M.stopReagent("couldn't read score reagents") end
+    if #missing(R.counts) == 0 then return M.stopReagent("already full") end
+    reagentShop(R, M.currentRoom())
+  end)
+end
 end
 
 -- the item names in an inventory or container list ("(  2) a lime green vial (new)" -> a lime green vial)
@@ -21895,6 +22079,7 @@ M.CMDS = {
       if who and (r:sub(1, 1) == "@" or M.isFriend(who)) then return M.friendWhere(who, true) end
       return M.mapRun(r, true)
     end },
+  { name = "reagent", desc = "refill reagents in batches that fit your inventory", run = function() return M.startReagent() end },
   { name = "limbo", desc = "find the down exit in Limbo Maze and accept the hermit's offer", run = function() return M.startLimbo() end },
   { name = "stop", desc = "stop a walk, or anything Oven is doing for you", run = function() return M.stopAll() end },
   { name = "travel", min = 3, desc = "the paid ways between towns Oven knows (Ganuk, balloons, passage) and their prices", run = function() return M.travelList() end },
@@ -22474,6 +22659,7 @@ end
 -- sbo stop: whatever Oven is doing for you
 function M.stopAll()
   local what = {}
+  if M.reagentRun then M.stopReagent(); what[#what + 1] = "refilling reagents" end
   if M.limbo then M.stopLimbo(); what[#what + 1] = "exploring Limbo Maze" end
   if M.goAsk then
     if M.goAsk.resume then M.finishRoute("Stopped") end
@@ -23506,6 +23692,7 @@ function M.questClock()
 end
 
 function M.teardown()
+  M.stopReagent()
   if M.tripPanel then M.tripPanel:hide() end
   M.stopLimbo()
   M.cancelCapture()
