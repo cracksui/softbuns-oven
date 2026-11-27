@@ -534,7 +534,7 @@ def quest_info_typed_updates_pins():
 def inspector_tabs():
     o = Oven()
     o.lua('''sbo.cfg.window = true
-      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log", "chat" }) do if WIDGETS["ovenTabs3Page_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end''')
+      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log", "chat" }) do if WIDGETS["ovenTabs4Page_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end''')
     o.lua('sbo.viewAdd({ lines = { { { "white", "an item" } } }, links = {} })')
     eq(o.ev("FRONT()"), "view", "an item: Inspector tab")
     o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES", "Character classes in Alyria are as follows:" })')
@@ -544,11 +544,11 @@ def inspector_tabs():
     o.lua('sbo.command("session")')
     eq(o.ev("FRONT()"), "log", "session: Log tab")
     o.lua('sbo.command("kills")'); eq(o.ev("FRONT()"), "log", "kills: Log tab")
-    o.lua('WIDGETS.ovenTabs3_view.click()'); eq(o.ev("FRONT()"), "view", "clicking a tab")
+    o.lua('WIDGETS.ovenTabs4_view.click()'); eq(o.ev("FRONT()"), "view", "clicking a tab")
     o.lua('sbo.command("tab help")'); eq(o.ev("FRONT()"), "help", "sbo tab help")
-    eq(o.ev("WIDGETS.ovenTabs3_help.css").count(o.ev("sbo.hex('title')")), 1, "the front tab is highlighted (the palette's title colour)")
+    eq(o.ev("WIDGETS.ovenTabs4_help.css").count(o.ev("sbo.hex('title')")), 1, "the front tab is highlighted (the palette's title colour)")
     o.lua('sbo.command("tabs off")')
-    eq(o.ev("WIDGETS.ovenTabs3Box.shown"), False, "tabs off hides the bar")
+    eq(o.ev("WIDGETS.ovenTabs4Box.shown"), False, "tabs off hides the bar")
     o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES" })')
     assert o.ev("sbo.helpContainer") is not None, "tabs off: help gets its own window again"
     bad = [m for m in o.ev("CREATED").values() if "MAIN SCREEN" in m]
@@ -567,10 +567,10 @@ def chat_tab():
     eq(list(o.ev("sbo.cfg.chatChannels").values()), ["AUCTION", "CLAN", "Tells", "YELL", "ANNOUNCEMENT", "HINT", "NOVICE"], "AUCTION from the start, then channels learned in order")
     eq(o.ev("sbo.cfg.chatGameChannels.SHOUT"), True, "the channel list is read")
     eq(o.ev("sbo.cfg.chatGameChannels.AUCTION"), False, "off channels too")
-    eq(o.ev("WIDGETS.ovenTabs3Page_view.shown"), True, "chat doesn't take the window's focus")
-    eq(o.ev("WIDGETS.ovenTabs3_chat.text"), "<center>Chat (8)</center>", "unread count on the tab")
+    eq(o.ev("WIDGETS.ovenTabs4Page_view.shown"), True, "chat doesn't take the window's focus")
+    eq(o.ev("WIDGETS.ovenTabs4_chat.text"), "<center>Chat (8)</center>", "unread count on the tab")
     o.lua('sbo.command("tab chat")')
-    eq(o.ev("WIDGETS.ovenTabs3_chat.text"), "<center>Chat</center>", "read once the tab is open")
+    eq(o.ev("WIDGETS.ovenTabs4_chat.text"), "<center>Chat</center>", "read once the tab is open")
     text = o.ev("WIDGETS.ovenChatConsole.text")
     assert "Bramble" in text and "Wren" in text, text
     o.lua('sbo.chatFilter("Tells")')
@@ -2132,7 +2132,7 @@ def eq_wielded_weapon_block():
 def eq_reads_eq_first():
     o = Oven()
     o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c; sbo.onSend(nil, c) end
-      VIEWS = 0; sbo.viewLive = function(make) VIEWS = VIEWS + 1; MAKE = make end
+      VIEWS = 0; sbo.charLive = function(kind, make) VIEWS = VIEWS + 1; MAKE = make end
       local q = sbo.quietly; sbo.quietly = function(c, k, fn) QFN = fn; return q(c, k, fn) end
       gmcp.char = { status = { state = "playing" } }; sbo.lastStatusPrompt = "<281hp 696sp 457st>" """)
     o.lua("sbo.command('eq')")
@@ -2314,7 +2314,8 @@ def training_advice():
     assert "max" in vit, "at max: nothing left to train"
     # the page follows the game: train knowledge, and the page on show is drawn again
     o.lua("sbo.cfg.window = true; sbo.command('eq')")
-    page = lambda: o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html")
+    # (the build page is your character's: in the Character tab)
+    page = lambda: o.ev("WIDGETS[sbo.charPg.prefix .. sbo.charPg.flip .. 'Label'].html")
     assert "12/21" in page(), page()
     TRAIN = ["You have 394 practice sessions.", "You may train the following vital statistics:",
              "Attribute Name        Current Stat   Practice Cost", "knowledge                 13/21           60",
@@ -2495,18 +2496,18 @@ def quest_time_up():
 def tabs_auto_off():
     o = Oven()
     o.lua('''sbo.cfg.window = true
-      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log", "chat" }) do if WIDGETS["ovenTabs3Page_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end
+      function FRONT() local f = {} for _, k in ipairs({ "view", "help", "log", "chat" }) do if WIDGETS["ovenTabs4Page_" .. k].shown then f[#f + 1] = k end end return table.concat(f, ",") end
       sbo.viewAdd({ lines = { { { "white", "an item" } } }, links = {} })
       sbo.command("tabs auto off")''')
     eq(o.ev("sbo.cfg.tabAuto"), False, "setting saved")
     o.lua('sbo.showHelp("classes", { "[1065 ] CLASSES", "Character classes" })')
     eq(o.ev("FRONT()"), "view", "a help page doesn't take the window")
-    eq(o.ev("WIDGETS.ovenTabs3_help.text"), "<center>Help •</center>", "the Help tab is marked")
+    eq(o.ev("WIDGETS.ovenTabs4_help.text"), "<center>Help •</center>", "the Help tab is marked")
     assert "(in window)" in o.ev("CREATED[#CREATED]"), "the page was still drawn in its tab"
     o.lua('sbo.command("tab help")')
-    eq((o.ev("FRONT()"), o.ev("WIDGETS.ovenTabs3_help.text")), ("help", "<center>Help</center>"), "looking clears the mark")
+    eq((o.ev("FRONT()"), o.ev("WIDGETS.ovenTabs4_help.text")), ("help", "<center>Help</center>"), "looking clears the mark")
     o.lua('sbo.viewAdd({ lines = { { { "white", "another" } } }, links = {} })')
-    eq((o.ev("FRONT()"), o.ev("WIDGETS.ovenTabs3_view.text")), ("help", "<center>Inspector •</center>"), "an item while reading help")
+    eq((o.ev("FRONT()"), o.ev("WIDGETS.ovenTabs4_view.text")), ("help", "<center>Inspector •</center>"), "an item while reading help")
     o.lua('sbo.command("kills")')
     eq(o.ev("FRONT()"), "log", "sbo kills, typed, still switches")
     o.lua('sbo.command("tabs auto on"); sbo.showHelp("x", { "[1 ] X" })')
@@ -2560,8 +2561,9 @@ def mirror_tabs():
         return "".join(o.ev("MAIN").values())
     assert "cap" in score(), "inspector on: layout on the main screen"
     o.lua('sbo.command("mirror inspector off")')
-    assert "cap" not in score(), "inspector off: only in the Inspector"
-    assert "cap" in o.ev("WIDGETS[sbo.viewPg.prefix .. sbo.viewPg.flip .. 'Label'].html"), "...which still has it"
+    assert "cap" not in score(), "inspector off: only in the window"
+    # (eq is your character's: its page is in the Character tab)
+    assert "cap" in o.ev("WIDGETS[sbo.charPg.prefix .. sbo.charPg.flip .. 'Label'].html"), "...which still has it"
     # chat
     o.lua('DELETED_LINES = 0; deleteLine = function() DELETED_LINES = DELETED_LINES + 1 end')
     o.feed("[CLAN] Moss: 'hi'")
@@ -3770,7 +3772,7 @@ def notes_tab():
     # notes kept before 1.49 (in the database): copied into the file the first time
     o.lua('''sbo.dbx("INSERT INTO notes (t, text, room, room_name, area) VALUES (%s, %s, %s, %s, %s)", os.time(), "an old note", 28840, "Palace Kitchen and Bakery", "Palace of Diocletian")''')
     o.lua('sbo.command("notes")')
-    eq(o.ev("WIDGETS['ovenTabs3Page_notes'].shown"), True, "sbo notes: the Notes tab")
+    eq(o.ev("WIDGETS['ovenTabs4Page_notes'].shown"), True, "sbo notes: the Notes tab")
     f = o.home + "/oven_notes.md"
     text = open(f).read()
     assert "an old note" in text and "Palace Kitchen and Bakery · Palace of Diocletian #28840" in text, text
@@ -3830,51 +3832,51 @@ def tab_dragged_out():
     o.lua('sbo.command("log")')
     eq(o.ev("WIDGETS['ovenViewer'].titleText"), "⠿⠿ Oven", "the window isn't called Inspector too (the grip like the quest panel's)")
     # a click is just a click
-    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_log"].click(); MOUSE = {955, 52}; sbo.tabRelease("log")')
+    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs4_log"].click(); MOUSE = {955, 52}; sbo.tabRelease("log")')
     eq(o.ev("sbo.tabIsOut('log')"), False, "clicked, not dragged")
     # dragged and let go inside the window: still a tab
-    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_log"].click(); MOUSE = {1100, 200}; sbo.tabRelease("log")')
+    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs4_log"].click(); MOUSE = {1100, 200}; sbo.tabRelease("log")')
     eq(o.ev("sbo.tabIsOut('log')"), False, "dropped inside the window")
     # dragged out
-    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_log"].click(); MOUSE = {300, 300}; sbo.tabRelease("log")')
+    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs4_log"].click(); MOUSE = {300, 300}; sbo.tabRelease("log")')
     eq(o.ev("sbo.tabIsOut('log')"), True, "dropped outside: its own window")
     eq(o.ev("WIDGETS['ovenTab_log'].titleText"), "⠿⠿ Log", "titled by its tab")
     eq(o.ev("WIDGETS['ovenTab_log'].x0"), 260, "where it was dropped")
-    eq(o.ev("WIDGETS['ovenTabs3_log'].shown"), False, "its tab leaves the bar")
+    eq(o.ev("WIDGETS['ovenTabs4_log'].shown"), False, "its tab leaves the bar")
     eq(o.ev("sbo.tabOn"), "view", "the Oven window shows another tab")
     eq(o.ev("sbo.cfg.tabsOut.log"), True, "remembered")
     # the window follows the mouse while the tab is dragged; Mudlet may not say when it's let go
     o.lua('WIDGETS["ovenTab_log"].items["dock into the Oven window"]()')
-    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_log"].click(); MOUSE = {960, 60}; sbo.tabDragMove("log")')
+    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs4_log"].click(); MOUSE = {960, 60}; sbo.tabDragMove("log")')
     eq(o.ev("sbo.tabIsOut('log')"), False, "a small move: still a tab")
     o.lua('MOUSE = {700, 100}; sbo.tabDragMove("log")')
     eq(o.ev("sbo.tabIsOut('log')"), True, "past the window's edge: torn off")
-    eq(o.ev("WIDGETS['ovenTabs3_log'].shown"), True, "its tab stays while still held")
+    eq(o.ev("WIDGETS['ovenTabs4_log'].shown"), True, "its tab stays while still held")
     o.lua('MOUSE = {400, 500}; sbo.tabDragMove("log")')
     eq(o.ev("WIDGETS['ovenTab_log'].x0"), 360, "follows the mouse")
     o.lua('runTimers()')
-    eq(o.ev("WIDGETS['ovenTabs3_log'].shown"), False, "stopped moving: its tab leaves the bar")
+    eq(o.ev("WIDGETS['ovenTabs4_log'].shown"), False, "stopped moving: its tab leaves the bar")
     eq(o.ev("sbo.tabDrag"), None, "drag over")
     # its window dragged back onto the tabs: a tab again (the tab bar sits at the top of the window)
-    o.lua('WIDGETS["ovenTabs3Bar"].get_x = function() return 900 end; WIDGETS["ovenTabs3Bar"].get_y = function() return 60 end')
-    o.lua('WIDGETS["ovenTabs3Bar"].get_width = function() return 500 end; WIDGETS["ovenTabs3Bar"].get_height = function() return 24 end')
+    o.lua('WIDGETS["ovenTabs4Bar"].get_x = function() return 900 end; WIDGETS["ovenTabs4Bar"].get_y = function() return 60 end')
+    o.lua('WIDGETS["ovenTabs4Bar"].get_width = function() return 500 end; WIDGETS["ovenTabs4Bar"].get_height = function() return 24 end')
     o.lua('MOUSE = {600, 400}; handlers["AdjustableContainerRepositionFinish"]("AdjustableContainerRepositionFinish", "ovenTab_log", 500, 400)')
     eq(o.ev("sbo.tabIsOut('log')"), True, "let go elsewhere: stays a window")
     o.lua('MOUSE = {1000, 70}; handlers["AdjustableContainerRepositionFinish"]("AdjustableContainerRepositionFinish", "ovenTab_log", 520, 400)')
     eq(o.ev("sbo.tabIsOut('log')"), True, "resized, not moved: stays a window")
     o.lua('MOUSE = {1000, 70}; handlers["AdjustableContainerRepositionFinish"]("AdjustableContainerRepositionFinish", "ovenTab_log", 520, 400)')
     eq(o.ev("sbo.tabIsOut('log')"), False, "dropped on the tabs: a tab again")
-    eq(o.ev("WIDGETS['ovenTabs3_log'].shown"), True, "its tab is back")
+    eq(o.ev("WIDGETS['ovenTabs4_log'].shown"), True, "its tab is back")
     o.lua('sbo.tabUndock("log", 300, 300); sbo.tabDragEnd("log")')
     # new content for it shows its window, and leaves the Oven window's tab alone
     o.lua('WIDGETS["ovenTab_log"]:hide(); sbo.command("log session")')
     eq(o.ev("WIDGETS['ovenTab_log'].shown"), True, "its window comes back for new content")
     eq(o.ev("sbo.tabOn"), "view", "...not the Oven window's tab")
-    eq(o.ev("WIDGETS['ovenTabs3Page_view'].shown"), True, "the Inspector still in front")
+    eq(o.ev("WIDGETS['ovenTabs4Page_view'].shown"), True, "the Inspector still in front")
     # docked back from its right-click menu
     o.lua('WIDGETS["ovenTab_log"].items["dock into the Oven window"]()')
     eq(o.ev("sbo.tabIsOut('log')"), False, "back in the Oven window")
-    eq(o.ev("WIDGETS['ovenTabs3_log'].shown"), True, "its tab is back")
+    eq(o.ev("WIDGETS['ovenTabs4_log'].shown"), True, "its tab is back")
     eq(o.ev("WIDGETS['ovenTab_log'].shown"), False, "its window gone")
     eq(o.ev("sbo.cfg.tabsOut.log"), None, "forgotten")
     # and by command
@@ -3883,8 +3885,8 @@ def tab_dragged_out():
     o.lua('sbo.command("window dock notes")')
     eq(o.ev("sbo.tabIsOut('notes')"), False, "sbo window dock notes")
     # an update mid-session keeps the tab labels: they're wired to the new code again
-    o.lua('WIDGETS["ovenTabs3_help"].click = function() end; sbo.createWindow()')
-    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs3_help"].click(); MOUSE = {300, 300}; sbo.tabRelease("help")')
+    o.lua('WIDGETS["ovenTabs4_help"].click = function() end; sbo.createWindow()')
+    o.lua('MOUSE = {950, 50}; WIDGETS["ovenTabs4_help"].click(); MOUSE = {300, 300}; sbo.tabRelease("help")')
     eq(o.ev("sbo.tabIsOut('help')"), True, "old labels drag too")
     o.lua('sbo.runTimers = nil'); o.lua('runTimers()')
 
@@ -5437,6 +5439,34 @@ def backstab_calculator():
     # not a backstabber: nothing
     o.lua("sbo.cfg.skills = {}")
     eq(o.ev("sbo.backstabDamage()"), None, "no backstab: no figure")
+
+
+@test
+def character_tab():
+    # score, eq, the build page...: the Character tab, each kept at its latest (not one at a time, as the Inspector's
+    # are) - the links along the top pick which; looks and items stay in the Inspector. Tabs off: all in the Inspector
+    o = Oven()
+    o.lua('sbo.cfg.window = true; sbo.cfg.promptPattern = "<%d+hp"; decho = function() end; cecho = function() end; echo = function() end')
+    def capture(cmd, lines):
+        o.L.globals().CAPLINES = o.L.table_from(lines)
+        o.lua('sbo.onSend(nil, "%s"); sbo.cap.plain = CAPLINES; sbo.cap.decho = CAPLINES; sbo.finish("prompt"); runTimers()' % cmd)
+    page = lambda: o.ev("WIDGETS[sbo.charPg.prefix .. sbo.charPg.flip .. 'Label'].html")
+    hist = lambda: len(o.ev("sbo.viewHist") or {})
+    before = hist()
+    capture("score", ["Player Information for: Tester", "  Class Level:        50        Total Level:    170",
+                      "  Hit Points:       1249/1287   Practices:      79"])
+    capture("eq", ["You are using:", "<worn on head>       a cap (new)", "<worn on neck>       nothing"])
+    eq(hist(), before, "not in the Inspector")
+    eq((o.ev("sbo.charEntries.score ~= nil"), o.ev("sbo.charEntries.eq ~= nil"), o.ev("sbo.charOn")), (True, True, "eq"), "both kept, eq on show")
+    assert "cap" in page(), page()
+    o.lua("sbo.charOn = 'score'; sbo.charShow()")
+    assert "1249/1287" in page() and "cap" not in page(), "the score's page, picked"
+    eq(o.ev("sbo.tabOn"), "char", "the Character tab in front")
+    # tabs off: the Inspector, as before
+    o.lua("sbo.cfg.tabs = false")
+    capture("score", ["Player Information for: Tester", "  Class Level:        51        Total Level:    171",
+                      "  Hit Points:       1250/1287   Practices:      79"])
+    eq(hist(), before + 1, "tabs off: in the Inspector")
 
 
 @test

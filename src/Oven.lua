@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.62"
+M.version = "1.99.63"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4809,9 +4809,9 @@ end
 
 -- Tabs along the top of the Inspector window. Each tab is its own page; whatever arrives for a
 -- tab (an item, a help page, the session) brings it to the front.
-M.TABS = { { key = "view", title = "Inspector" }, { key = "help", title = "Help" }, { key = "log", title = "Log" },
-           { key = "chat", title = "Chat" }, { key = "notes", title = "Notes" } }
-local TABS_ID = "ovenTabs3"   -- new widget names whenever the set of tabs changes (an update mid-session)
+M.TABS = { { key = "view", title = "Inspector" }, { key = "char", title = "Character" }, { key = "help", title = "Help" },
+           { key = "log", title = "Log" }, { key = "chat", title = "Chat" }, { key = "notes", title = "Notes" } }
+local TABS_ID = "ovenTabs4"   -- new widget names whenever the set of tabs changes (an update mid-session)
 local tabStyle = [[
   QLabel { background-color: rgba(24,24,32,255); color: ]] .. M.hex("dim") .. [[; border: 1px solid #333; border-bottom: none;
            border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 0 10px; margin-right: 2px; }
@@ -4869,6 +4869,8 @@ function M.applyTabs()
     if M.helpContainer then M.helpContainer:hide() end
     if not M.logPg then M.logPg = M.newPage("ovenLog", M.tabPages.log) end
     movePage(M.logPg, M.tabPages.log)
+    if not M.charPg then M.charPg = M.newPage("ovenChar", M.tabPages.char) end
+    movePage(M.charPg, M.tabPages.char)
     -- tabs that were dragged out before
     for _, t in ipairs(M.TABS) do if (M.cfg.tabsOut or {})[t.key] then pcall(M.tabUndock, t.key) end end
     if not M.tabOn or M.tabIsOut(M.tabOn) then
@@ -4916,6 +4918,7 @@ function M.tabShow(key, quiet)
   -- a tab nothing has been shown in yet
   if not quiet then
     if key == "view" and (not M.viewShown or M.viewStale) then M.viewShow()
+    elseif key == "char" then M.charShow()
     elseif key == "log" and not M.logShown then M.logAdd(M.sessionLines(M.pageCols(M.logPg)), M.logLinks())
     elseif key == "chat" then M.chatSeen()
     elseif key == "help" and not M.helpShown then
@@ -5123,6 +5126,7 @@ function M.redrawPage(key)
   tempTimer(0.2, function()
     pcall(function()
       if key == "view" and M.viewShown then M.viewShow()
+      elseif key == "char" and M.charPg then M.charShow()
       elseif key == "log" and M.logPg and M.logShown then M.logAdd(M.sessionLines(M.pageCols(M.logPg)), M.logLinks())
       end
     end)
@@ -5176,6 +5180,11 @@ function M.dataChanged()
   if M.dataTimer then return end
   M.dataTimer = tempTimer(0.3, function()
     M.dataTimer = nil
+    -- (the Character tab's page on show: drawn again too)
+    local ce = M.charEntries and M.charEntries[M.charOn or ""]
+    if ce and ce.make and M.cfg.tabs and M.charPg then
+      if M.tabOn == "char" or M.tabIsOut("char") then pcall(M.charShow) end
+    end
     local e = M.viewHist[M.viewPos or #M.viewHist]
     if not (e and e.make and M.viewShown) then return end
     -- on a tab that isn't showing: drawn when you go back to it
@@ -5239,6 +5248,73 @@ function M.viewShow()
   M.pageShow(M.viewPg, segsToDecho(e.lines), "decho", links, rowLinks)
   if M.cfg.tabs then tabEnd("view", prev) end
   if M.raiseQuestHud then M.raiseQuestHud() end
+end
+
+---------------------------------------------------------------------------
+-- Character tab: your character's pages - score, eq, the build page, affects, skills - each kept at its latest
+-- (not one result at a time, as the Inspector's are), the one on show picked by the links along its top. Tabs off:
+-- they go to the Inspector, as before
+---------------------------------------------------------------------------
+M.CHAR_PAGES = { { key = "score", title = "Score" }, { key = "eq", title = "Eq" }, { key = "build", title = "Build" },
+                 { key = "affects", title = "Affects" }, { key = "skills", title = "Skills" } }
+M.charEntries = M.charEntries or {}
+function M.charKind(kind)
+  for _, p in ipairs(M.CHAR_PAGES) do if p.key == kind then return true end end
+  return false
+end
+function M.charAdd(kind, entry)
+  if not (M.cfg.tabs and M.cfg.window) then return M.viewAdd(entry) end
+  M.charEntries[kind] = entry
+  M.charOn = kind
+  M.charShow(true)
+end
+-- a page drawn from Oven's data (the build page): as viewLive, in the Character tab
+function M.charLive(kind, make)
+  if not (M.cfg.tabs and M.cfg.window) then return M.viewLive(make) end
+  M.createWindow()
+  local lines, links = make(M.charCols())
+  M.charAdd(kind, { lines = lines, links = links or {}, make = make })
+  if M.cfg.mirror.view == false then return end
+  render("main", (make(columns("main"))))
+end
+function M.charCols()
+  M.createWindow()
+  if not M.charPg then M.charPg = M.newPage("ovenChar", M.tabPages and M.tabPages.char or M.container) end
+  return math.min(M.pageCols(M.charPg), 110)
+end
+-- arrived: brings the tab forward (as the Inspector's do - tabs.auto); just drawn again: stays where it is
+function M.charShow(arrived)
+  if not M.cfg.tabs then return end
+  M.createWindow()
+  if not M.charPg then M.charPg = M.newPage("ovenChar", M.tabPages.char) end
+  M.tabWindowShow("char")
+  local e = M.charEntries[M.charOn or ""]
+  if not e then
+    for _, p in ipairs(M.CHAR_PAGES) do if M.charEntries[p.key] then M.charOn = p.key; e = M.charEntries[p.key]; break end end
+  end
+  -- the pages along the top: the one on show marked
+  local links = {}
+  for _, p in ipairs(M.CHAR_PAGES) do
+    if M.charEntries[p.key] then
+      local key = p.key
+      links[#links + 1] = { (key == M.charOn and "● " or "") .. p.title, function() M.charOn = key; M.charShow() end }
+    end
+  end
+  if not e then
+    return M.pageShow(M.charPg, { M.drgb("dim") .. "Your character's pages show here - type score, eq, aff, or sbo eq build." }, "decho")
+  end
+  if e.make then
+    local ok, lines, more = pcall(e.make, math.min(M.pageCols(M.charPg), 110))
+    if ok and lines then e.lines, e.links = lines, more or {} end
+  end
+  for _, l in ipairs(e.links or {}) do links[#links + 1] = l end
+  local prev = arrived and M.tabBegin("char")
+  local rowLinks = {}
+  for i, segs in ipairs(e.lines or {}) do
+    if type(segs.link) == "table" then rowLinks[#rowLinks + 1] = { line = i, fn = segs.link[1], hint = segs.link[2] } end
+  end
+  M.pageShow(M.charPg, segsToDecho(e.lines), "decho", links, rowLinks)
+  if arrived then M.tabEnd("char", prev) end
 end
 
 ---------------------------------------------------------------------------
@@ -9467,17 +9543,17 @@ function M.buildCommand(b)
       return M.quietly("eq", "eq", function(plain)
         if plain then pcall(M.updateEqNames, plain); pcall(M.noteCombat, plain) end
         -- then aff: what's on you now (haste from a necklace, a potion, a friend)
-        if not plain then return M.viewLive(M.buildLines) end
+        if not plain then return M.charLive("build", M.buildLines) end
         tempTimer(0.1, function()   -- (once eq's own reply is done with)
-          if M.cap or M.quietNext then return M.viewLive(M.buildLines) end
+          if M.cap or M.quietNext then return M.charLive("build", M.buildLines) end
           M.quietly("aff", "affects", function(lines)
             if lines then pcall(M.noteAff, lines) end
-            M.viewLive(M.buildLines)
+            M.charLive("build", M.buildLines)
           end)
         end)
       end)
     end
-    return M.viewLive(M.buildLines)
+    return M.charLive("build", M.buildLines)
   end
   -- sbo eq build role defense 1.5: how much a role counts in this build
   local rname, rv = b:lower():match("^role%s+(%a+)%s+([%d%.]+)$")
@@ -14231,7 +14307,9 @@ function M.finish(reason)
       end
     end
     if cap.kind == "item" and not cap.moved then M.afterItem(cap.plain, entry) end
-    if entry then M.viewAdd(entry) end
+    if entry then
+      if M.charKind(cap.kind) then M.charAdd(cap.kind, entry) else M.viewAdd(entry) end
+    end
   end)
 
   local nxt = table.remove(M.queue, 1)
@@ -20726,8 +20804,8 @@ function M.legacyCommand(args)
     say(string.format("combat mode mxp: target bar %s, round lines and summaries %s",
       M.cfg.combatBar and "on" or "off", M.cfg.combatLines and "on" or "off"))
   elseif a == "chat" then return M.chatCommand(b)
-  elseif a == "tab" and (b == "inspector" or b == "help" or b == "log" or b == "chat" or b == "notes") then
-    local key = b == "inspector" and "view" or b
+  elseif a == "tab" and (b == "inspector" or b == "character" or b == "help" or b == "log" or b == "chat" or b == "notes") then
+    local key = b == "inspector" and "view" or (b == "character" and "char" or b)
     M.tabWindowShow(key); M.tabShow(key)
     return
   elseif a == "mirror" then
@@ -21019,11 +21097,11 @@ M.CMDS = {
       -- read eq first, quietly, so the page starts from what you're wearing now
       if M.inGame(M.lastStatusPrompt or M.lastPromptText) and not M.cap and not M.quietNext then
         return M.quietly("eq", "eq", function(plain)
-          if not plain then return M.viewLive(M.buildLines) end
+          if not plain then return M.charLive("build", M.buildLines) end
           pcall(M.updateEqNames, plain); pcall(M.noteCombat, plain)
           -- the enhanced eq: everything eq shows (Oven's layout of it), then the build page - after aff (what's on
           -- you now: haste from a necklace, a potion…)
-          local function show() M.viewLive(function(w)
+          local function show() M.charLive("build", function(w)
             M.pendingLinks = nil
             local ok, l = pcall(M.format, "eq", "", plain, w)
             local links = M.pendingLinks or {}
@@ -21041,7 +21119,7 @@ M.CMDS = {
           end)
         end)
       end
-      return M.viewLive(M.buildLines)
+      return M.charLive("build", M.buildLines)
     end, subs = {
     { name = "help", desc = "these commands", run = function()
         for _, x in ipairs(M.CMDS) do if x.name == "eq" then return M.groupHelp(x) end end end },
@@ -21411,9 +21489,9 @@ end
 -- sbo window undock / dock {tab}
 function M.tabMove(r, out)
   local tabs = { { name = "inspector", key = "view" } }
-  for _, t in ipairs(M.TABS) do if t.key ~= "view" then tabs[#tabs + 1] = { name = t.key, key = t.key } end end
+  for _, t in ipairs(M.TABS) do if t.key ~= "view" then tabs[#tabs + 1] = { name = t.key == "char" and "character" or t.key, key = t.key } end end
   local t = pick(tabs, r or "")
-  if not t then return say("sbo window " .. (out and "undock" or "dock") .. " inspector|help|log|chat|notes") end
+  if not t then return say("sbo window " .. (out and "undock" or "dock") .. " inspector|character|help|log|chat|notes") end
   if not M.cfg.tabs then return say("tabs are off (sbo config tabs on) - every page has its window already") end
   M.createWindow()
   if out then
@@ -21428,9 +21506,9 @@ function M.tabMove(r, out)
 end
 
 function M.windowTab(r)
-  local tabs = { { name = "inspector" }, { name = "help" }, { name = "log" }, { name = "chat" }, { name = "notes" } }
+  local tabs = { { name = "inspector" }, { name = "character" }, { name = "help" }, { name = "log" }, { name = "chat" }, { name = "notes" } }
   local t = pick(tabs, r)
-  if not t then return say("sbo window tab inspector|help|log|chat") end
+  if not t then return say("sbo window tab inspector|character|help|log|chat|notes") end
   return legacy("tab " .. t.name)
 end
 
