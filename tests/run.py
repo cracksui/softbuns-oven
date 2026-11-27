@@ -4017,6 +4017,46 @@ def help_waits_for_its_page():
 
 
 @test
+def help_facts_laid_out():
+    # the "*" lines atop a skill's help page: type and target on top, "label: value" rows aligned,
+    # the shops in one list, the rest as a list - every value kept
+    page = ["[1345 ] BACKSTAB", "Last Updated [Tue Dec 17 15:06:29 2024]",
+            "*Combat proficiency (10% complexity)", "*(No Specific Target) target, 2 second usage time",
+            "*Classes granted this proficiency: Wizard, Priest, Rogue, Barbarian, Paladin, Ranger,",
+            "                  Psionic, Monk (at 1% complexity)",
+            "*Races afflicted by this proficiency: (No player races)", "*Stamina Required: 50",
+            "*Skill Power: Every point of skill power correlates to a 3% chance that a successful backstab will result in an additional bleeding effect.",
+            "*This proficiency is short ranged.",
+            "*'backstab' is available for practice from the shop: 'Basic Combat Training'.",
+            "*'backstab' is available for practice from the shop: 'the Way of the Whale - Atlantis'.",
+            "*Saving throws are valued at a rate of (saving^0.92).", "      15^0.92 = 12", "     100^0.92 = 69",
+            "", "NAME", "backstab - stab an opponent in the back"]
+    o = Oven()
+    o.lua('function FACTS(t, cols) local out, ours = sbo.helpFacts(t, cols) local r = {} for k, d in ipairs(out) do local p = "" for _, x in ipairs(sbo.dechoRuns(d)) do p = p .. x[2] end r[#r+1] = (ours[k] and "|" or " ") .. p end return table.concat(r, "\\n") end')
+    got = o.L.globals().FACTS(o.L.table_from(page), 60).split("\n")
+    want = [" [1345 ] BACKSTAB", " Last Updated [Tue Dec 17 15:06:29 2024]",
+            "|Combat proficiency (10% complexity)", "|(No Specific Target) target, 2 second usage time", "|",
+            "|Classes granted     Wizard, Priest, Rogue, Barbarian,",
+            "|                    Paladin, Ranger, Psionic, Monk (at 1%",
+            "|                    complexity)",
+            "|Races afflicted by  (No player races)",
+            "|Stamina Required    50",
+            "|Skill Power         Every point of skill power correlates to",
+            "|                    a 3% chance that a successful backstab",
+            "|                    will result in an additional bleeding",
+            "|                    effect.",
+            "|Practice at         Basic Combat Training",
+            "|                    the Way of the Whale - Atlantis", "|",
+            "|· This proficiency is short ranged.",
+            "|· Saving throws are valued at a rate of (saving^0.92).",
+            "|     15^0.92 = 12", "|    100^0.92 = 69",
+            " ", " NAME", " backstab - stab an opponent in the back"]
+    eq(got, want, "help facts")
+    # a "* " bullet in a page's text (rules lists) isn't a fact
+    eq(o.L.globals().FACTS(o.L.table_from(["* Anti-idle scripts."]), 60), " * Anti-idle scripts.", "a bullet")
+
+
+@test
 def upgrades_up_to_a_level():
     # sbo upgrades eqdb 175: what you can wear now, then what's better up to that level in its own section
     o = Oven()

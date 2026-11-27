@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.73"
+M.version = "1.99.74"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4632,13 +4632,14 @@ end
 
 -- wrap one decho line to `cols` characters, keeping its colours; continuation
 -- lines keep the original indent. Returns a list of decho lines.
-function M.wrapDecho(d, cols)
+-- (hang: the continuation lines' indent, when it isn't the line's own)
+function M.wrapDecho(d, cols, hang)
   local runs = M.dechoRuns(d)
   local plain = ""
   for _, r in ipairs(runs) do plain = plain .. r[2] end
   local len = ulen(plain)
   if len <= cols then return { d } end
-  local indent = math.min(#(plain:match("^(%s*)")), math.floor(cols / 2))
+  local indent = math.min(hang or #(plain:match("^(%s*)")), math.floor(cols / 2))
   local out, pos, first = {}, 1, true
   while pos <= len do
     local width = first and cols or (cols - indent)
@@ -5386,14 +5387,121 @@ function M.helpLinkFor(plain)
   end
 end
 
+-- The facts at the top of a skill or spell page, each line starting with "*":
+--   *Combat proficiency (10% complexity)              <- what it is and its target: kept on top
+--   *Classes granted this proficiency: Rogue (...)    <- "label: value": aligned rows
+--   *'backstab' is available for practice from the shop: 'Basic Combat Training'.   <- one "Practice at" list
+--   *This proficiency is short ranged.                <- the rest: a list below
+-- Every value stays, in the game's colours; long values wrap under their own column.
+-- Returns the page's lines with the facts laid out, and which of them are Oven's rows (never links).
+function M.helpFacts(dechoLines, cols)
+  local function runsPlain(runs) local t = {} for _, r in ipairs(runs) do t[#t + 1] = r[2] end return table.concat(t) end
+  local function dropChars(runs, n)   -- the runs without their first n characters
+    local total = ulen(runsPlain(runs))
+    return n >= total and {} or sliceRuns(runs, n + 1, total)
+  end
+  local out, ours = {}, {}
+  local i = 1
+  while i <= #dechoLines do
+    local plain = runsPlain(M.dechoRuns(dechoLines[i]))
+    if not plain:match("^%*%S") then
+      out[#out + 1] = dechoLines[i]; i = i + 1
+    else
+      -- the block: "*" lines, and the indented lines that go on from one ("...Ranger," / "   Psionic, Monk")
+      local items = {}
+      while i <= #dechoLines do
+        local runs = M.dechoRuns(dechoLines[i])
+        local p = runsPlain(runs)
+        if p:match("^%*%S") then
+          items[#items + 1] = { runs = dropChars(runs, 1), subs = {} }
+        elseif p:match("^%s+%S") and #items > 0 then
+          local it = items[#items]
+          local lead = #(p:match("^(%s*)"))
+          if runsPlain(it.runs):match(",%s*$") and #it.subs == 0 then
+            -- a list the game wrapped: one value
+            it.runs[#it.runs + 1] = { nil, " " }
+            for _, r in ipairs(dropChars(runs, lead)) do it.runs[#it.runs + 1] = r end
+          else
+            it.subs[#it.subs + 1] = { runs = runs, lead = lead }   -- a worked example under it: its own row
+          end
+        else
+          break
+        end
+        i = i + 1
+      end
+      -- a worked example's rows keep their alignment with each other ("  25 = ..." / " 100 = ...")
+      for _, it in ipairs(items) do
+        local least
+        for _, sub in ipairs(it.subs) do least = math.min(least or sub.lead, sub.lead) end
+        for k, sub in ipairs(it.subs) do it.subs[k] = dropChars(sub.runs, least) end
+      end
+      local lead, rows, shops, rest = {}, {}, {}, {}
+      for _, it in ipairs(items) do
+        local p = runsPlain(it.runs)
+        local shop = p:match("^'.-' is available for practice from the shop: '(.*)'%.?$")
+        local label, value = p:match("^([%a][%w%s%-']-):%s+(%S.*)$")
+        if shop then
+          local from = ulen(p) - ulen(shop) - (p:match("%.$") and 2 or 1)
+          shops[#shops + 1] = sliceRuns(it.runs, from + 1, from + ulen(shop))
+        elseif label and ulen((label:gsub(" this [%w%-]+$", ""))) <= 24 and not label:match(" is$") and not label:match(" are$") then
+          rows[#rows + 1] = { label = label:gsub(" this [%w%-]+$", ""), labelRuns = sliceRuns(it.runs, 1, ulen(label)),
+                              value = dropChars(it.runs, ulen(p) - ulen(value)), subs = it.subs }
+        elseif #rows == 0 and #shops == 0 and #rest == 0
+            and (p:match("%(%d+%% complexity%)%s*$") or p:match("%) target")) then
+          lead[#lead + 1] = it   -- what it is, and its target
+        else
+          rest[#rest + 1] = it
+        end
+      end
+      if #shops > 0 then rows[#rows + 1] = { label = "Practice at", shops = shops } end
+      local width = 0
+      for _, r in ipairs(rows) do width = math.max(width, ulen(r.label)) end
+      width = math.min(width, 24)
+      local function add(d, hang)
+        for _, w in ipairs(M.wrapDecho(d, cols, hang)) do out[#out + 1] = w; ours[#out] = true end
+      end
+      local function addRuns(prefix, runs, hang) add(prefix .. runsToDecho(runs), hang) end
+      for _, it in ipairs(lead) do
+        addRuns("", it.runs, 0)
+        for _, sub in ipairs(it.subs) do addRuns("  ", sub) end
+      end
+      if #lead > 0 and (#rows > 0 or #rest > 0) then out[#out + 1] = ""; ours[#out] = true end
+      local hang = width + 2
+      for _, r in ipairs(rows) do
+        local labelColour = r.labelRuns and r.labelRuns[1] and r.labelRuns[1][1]
+        local head = (labelColour and string.format("<%d,%d,%d>", labelColour[1], labelColour[2], labelColour[3]) or M.drgb("title"))
+          .. r.label .. string.rep(" ", math.max(2, hang - ulen(r.label)))
+        local pad = string.rep(" ", math.max(2, hang - ulen(r.label)) + ulen(r.label))
+        if r.shops then
+          for k, sh in ipairs(r.shops) do addRuns(k == 1 and head or pad, sh, #pad) end
+        else
+          addRuns(head, r.value, #pad)
+          for _, sub in ipairs(r.subs) do addRuns(pad, sub) end
+        end
+      end
+      if #rows > 0 and #rest > 0 then out[#out + 1] = ""; ours[#out] = true end
+      for _, it in ipairs(rest) do
+        addRuns(M.drgb("dim") .. "· ", it.runs, 2)
+        for _, sub in ipairs(it.subs) do addRuns("    ", sub) end
+      end
+    end
+  end
+  return out, ours
+end
+
 function M.showHelp(topic, dechoLines)
   local body, links, inSeeAlso, lastWasLink = {}, {}, false, false
-  for _, d in ipairs(dechoLines) do
+  M.createHelpWindow()
+  local laidOut, ours = M.helpFacts(dechoLines, M.pageCols(M.helpPg))
+  for k, d in ipairs(laidOut) do
     local plain = ""
     for _, run in ipairs(M.dechoRuns(d)) do plain = plain .. run[2] end
     local blankLine = trim(plain) == ""
     local prevBlank = #body > 0 and trim(body[#body]:gsub("<[^<>]*>", "")) == ""
-    if inSeeAlso and lastWasLink and not blankLine and not M.helpLinkFor(plain) then
+    if ours[k] then
+      -- the facts, laid out by helpFacts: as they are, never a link
+      body[#body + 1] = d; lastWasLink = false
+    elseif inSeeAlso and lastWasLink and not blankLine and not M.helpLinkFor(plain) then
       -- an entry that wrapped onto a second line: "... through which you may trade" / "items to other players"
       links[#links][1] = links[#links][1] .. " " .. trim(plain)
     elseif blankLine and (prevBlank or inSeeAlso) then
