@@ -5583,6 +5583,34 @@ def dummy_backstab():
 
 
 @test
+def dummy_backstab_old_rounds():
+    # recorded 2026-11-27: melee kept by 1.99.63 had backstab rounds in it as plain swings (12 rounds, 38,214) - by the
+    # hit that made a swing ~9,500, and every backstab ~0. Those are started afresh; a practice keeps backstab% current
+    o = Oven()
+    o.lua("""gmcp.char = { lasttargeted = { short_descr = 'a practice dummy' } }
+      sbo.cfg.dummy = { v = 4, builds = {} }
+      local key = sbo.dummyBuild()
+      sbo.cfg.dummy.builds[key] = { label = key, first = 1, melee = { n = 12, sum = 38214, hits = 4 },
+        backstab = { n = 7, sum = 2380, tries = 7, fails = 0, costN = 0, costSum = 0 } }
+      ROUND = function(hits) sbo.lastMxp = { you_hit = hits, at = os.time() } end""")
+    def stab(dmg, hits, missed=False):
+        o.ev("sbo.dummyNoteSend")("backstab dummy")
+        o.ev("ROUND")(hits)
+        o.ev("sbo.dummyNoteLine")("You attempt to stab a practice dummy in the back with a hook, but miss." if missed
+                                  else "You stab a practice dummy in the back with a hook.")
+        o.ev("sbo.dummyNoteLine")("A practice dummy says 'I have [%d/10000hp 10000/10000sp 10000/10000st and -250 align]'" % (10000 - dmg))
+    stab(4412, 4)
+    stab(1259, 4, missed=True)
+    stab(3640, 2)
+    eq(o.ev("sbo.dummyLog(false).backstab.n"), 2, "both counted")
+    eq(round(o.ev("sbo.dummyLog(false).backstab.sum")), round(4412 - 4 * 1259 / 4 + 3640 - 2 * 1259 / 4), "less their melee, by the hit")
+    # practice: backstab% current
+    o.lua("sbo.cfg.skills = { backstab = { lrnd = 77 } }")
+    o.feed("Using 15 practices, you have increased your knowledge of 'backstab' to 86%.", "<1245hp 1300sp 1200st>")
+    eq(o.ev("sbo.cfg.skills.backstab.lrnd"), 86, "from the practice line")
+
+
+@test
 def backstab_calculator():
     # help 1345: ((weapon damage x 14) x (personality + backstab%)) / 100 + damage-backstab; +50% on a healthy target.
     # The build page shows it, and what would raise it most, best first

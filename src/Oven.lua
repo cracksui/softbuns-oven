@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.69"
+M.version = "1.99.70"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8842,6 +8842,16 @@ end
 -- this build's results (made when written to; nil to a reader when there are none)
 local function log(create)
   local d = store()
+  -- (before 1.99.70 a dummy's melee mixed in backstab rounds, and backstabs came out near nothing: both afresh, once)
+  if not d.meleeByHit then
+    d.meleeByHit = true
+    for _, b in pairs(d.builds or {}) do
+      if type(b) == "table" then
+        if b.melee and not b.melee.hitDmg then b.melee = nil end
+        b.backstab = nil
+      end
+    end
+  end
   local key = M.dummyBuild()
   if not d.builds[key] and create ~= false then d.builds[key] = { label = key, first = os.time() } end
   local b = d.builds[key]
@@ -8942,10 +8952,13 @@ function M.dummyNoteLine(l)
   local d = log()
   -- (a skill's share of a round: the round's damage less your swings in it - by the hit (the round says how many
   -- landed), else by the round)
+  -- (by the hit: only from rounds that said how many hit - rounds kept before that, 1.99.63's, have backstabs in
+  -- them counted as plain swings, and would make a hit look like thousands)
   local function swingFor(roundHits)
     local m = d.melee
     if not (m and m.n > 0) then return nil end
-    if roundHits and m.hits and m.hits > 0 then return roundHits * m.sum / m.hits end
+    if roundHits and m.hits and m.hits > 0 and m.hitDmg then return roundHits * m.hitDmg / m.hits end
+    if roundHits and m.hits and m.hits > 0 then return nil end
     return m.sum / m.n
   end
   local function credit(name, each, adj)
@@ -8960,7 +8973,10 @@ function M.dummyNoteLine(l)
     if meleeHit and dmg > 0 then
       d.melee = d.melee or { n = 0, sum = 0 }
       d.melee.n, d.melee.sum = d.melee.n + 1, d.melee.sum + dmg
-      d.melee.hits = (d.melee.hits or 0) + hits
+      if hits > 0 then
+        d.melee.hits = (d.melee.hits or 0) + hits
+        d.melee.hitDmg = (d.melee.hitDmg or 0) + dmg
+      end
       d.melee.last = os.time()
       -- the rounds kept before a plain swing was seen: sorted out now
       for name, r in pairs(d) do
@@ -17549,6 +17565,21 @@ function M.runStopped(atSign)
   if atSign then return M.mapWalkTo(R.target, true) end   -- the rest on foot
   M.notifyWalk("stopped: the run was cut short" .. (here and (" at #" .. here) or "") .. " - sbo go again to go on")
 end
+
+-- "Using 15 practices, you have increased your knowledge of 'backstab' to 86%.": the skill's figure kept current (the
+-- backstab calculator goes by it)
+M.addBlockReader("practice_gain", "*", function(b)
+  for _, l in ipairs(b.lines) do
+    local name, pct = trim(l):match("increased your knowledge of '([^']+)' to (%d+)%%")
+    if name then
+      M.cfg.skills = M.cfg.skills or {}
+      local sk = M.cfg.skills[name:lower()] or {}
+      sk.lrnd = tonumber(pct)
+      M.cfg.skills[name:lower()] = sk
+      M.saveSettings(); pcall(M.dataChanged)
+    end
+  end
+end)
 
 M.addBlockReader("signpost_runs", "*", function(b)
   local sign, atSign
