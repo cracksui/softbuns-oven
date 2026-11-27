@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.79"
+M.version = "1.99.80"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -15018,7 +15018,9 @@ end
 
 -- walk notes: a line in the game text (the prompt bar has no room to spare)
 function M.notifyWalk(msg)
-  if not M.trip then M.hideTripPanel() end
+  if not M.trip and M.lastRoute and not M.lastRoute.status then
+    M.finishRoute(msg == "arrived" and "Arrived" or "Stopped")
+  end
   say("walk " .. msg)
 end
 
@@ -18477,6 +18479,7 @@ function M.goToNow(targets)
   if type(targets) ~= "table" then targets = { targets } end
   local here = M.mapRoom or M.currentRoom()
   if not here then return say("Oven doesn't know where you are yet - move one room first") end
+  if M.goAsk and M.goAsk.resume then M.finishRoute("Stopped") end
   M.goAsk = nil
   local plan, fallback
   local gold = M.goldOnHand()
@@ -18545,7 +18548,7 @@ end
 function M.askTrip(plan, targets, title, resume)
   local lines, tail = M.planLines(plan)
   M.goAsk = { id = targets, at = os.time(), trip = true, route = M.planRoute(plan),
-              approval = M.tripApproval(plan), resume = resume }
+              approval = M.tripApproval(plan), resume = resume, lines = lines }
   if M.worldDraw then pcall(M.worldDraw) end
   M.sayPlan(title, lines, tail, "y to go, n to stay")
 end
@@ -20346,14 +20349,21 @@ function M.planLines(plan, separateWalks)
   return lines, string.format("about %d stamina · %s", math.floor(plan.cost + 0.5), tail)
 end
 
-function M.hideTripPanel()
-  if M.tripPanel then M.tripPanel:hide() end
+function M.finishRoute(status)
+  local last = M.lastRoute
+  if not last or last.status == status then return end
+  if last.status and last.status ~= "Awaiting confirmation" then return end
+  last.status = status
   if M.tabNew then M.tabNew.route = nil end
-  if M.cfg.tabs and M.tripPg then pcall(M.drawTripPanel) end
+  pcall(M.drawTripPanel)
 end
 
 function M.drawTripPanel(T, open)
-  local route = T and T.route
+  if T and T.route then
+    M.lastRoute = { target = T.target, route = T.route, done = T.routeDone, to = T.routeTo }
+  end
+  local last = M.lastRoute
+  local route = last and last.route
   local parent
   if M.cfg.tabs then
     if not M.tabPages or not M.tabPages.route then M.createWindow() end
@@ -20381,20 +20391,27 @@ function M.drawTripPanel(T, open)
     return
   end
   local function safe(text) return text:gsub("<", "‹"):gsub(">", "›") end
-  local name = roomExists(T.target) and getRoomName(T.target) or ("#" .. T.target)
-  local lines = { M.drgb("title") .. safe(name), "" }
+  local name = roomExists(last.target) and getRoomName(last.target) or ("#" .. last.target)
+  local lines = { M.drgb("title") .. safe(name) }
+  if last.status then lines[#lines + 1] = M.drgb("dim") .. last.status end
+  lines[#lines + 1] = ""
   for i, text in ipairs(route) do
-    lines[#lines + 1] = (i == 1 and (M.drgb("key") .. "▶ ") or (M.drgb("text") .. "  ")) .. safe(text)
+    local label = M.drgb("text") .. "  "
+    if not last.status and i == 1 then label = M.drgb("key") .. "▶ "
+    elseif last.status == "Arrived" and i == 1 and last.to == last.target then label = M.drgb("dim") .. "✓ " end
+    lines[#lines + 1] = label .. safe(text)
   end
-  if #T.routeDone > 0 then
+  if #last.done > 0 then
     lines[#lines + 1] = ""
     lines[#lines + 1] = M.drgb("dim") .. "Completed"
-    for _, text in ipairs(T.routeDone) do lines[#lines + 1] = M.drgb("dim") .. "✓ " .. safe(text) end
+    for _, text in ipairs(last.done) do lines[#lines + 1] = M.drgb("dim") .. "✓ " .. safe(text) end
   end
   M.pageShow(M.tripPg, lines, "decho")
   if not M.cfg.tabs then
-    M.tripPanel:show()
-  elseif open then
+    if open or not last.status then M.tripPanel:show() end
+  else
+    if last.status and not M.tabNew.route then M.tabLabels.route:echo("<center>Route</center>") end
+    if not open then return end
     if M.cfg.tabAuto ~= false or M.tabOn == "route" or M.tabIsOut("route") then
       M.tabWindowShow("route")
       M.tabShow("route", true)
@@ -20406,9 +20423,10 @@ function M.drawTripPanel(T, open)
 end
 
 -- going: the first leg of the plan from where you are; when it's done, planned again from there
-function M.tripStart(targets, approval)
+function M.tripStart(targets, approval, preview)
   if type(targets) ~= "table" then targets = { targets } end
-  M.trip = { targets = targets, target = targets[1], used = {}, legs = 0, approval = approval }
+  M.trip = { targets = targets, target = targets[1], used = {}, legs = 0, approval = approval, route = preview, routeDone = {} }
+  if preview then pcall(M.drawTripPanel, M.trip, true) end
   M.tripContinue()
 end
 function M.tripContinue()
@@ -20448,7 +20466,7 @@ function M.tripContinue()
     end
     if changed then
       M.trip = nil
-      M.hideTripPanel()
+      M.finishRoute("Awaiting confirmation")
       T.legs, T.from[here] = T.legs - 1, T.from[here] - 1
       return M.askTrip(plan, T.targets, "The route changed - the way from here:", T)
     end
@@ -20867,7 +20885,7 @@ function M.travelStart(plan, target, legNo)
     tempTimer(8, function()
       if M.travel == T and T.stage == "buying" then
         M.travel, M.trip = nil, nil
-        M.hideTripPanel()
+        M.finishRoute("Stopped")
         say("travel: the shop didn't sell the " .. L.kind:lower() .. " ticket - stopped")
       end
     end)
@@ -20907,7 +20925,7 @@ function M.travelLine(l)
       tempTimer(0.3, function() M.travelBoard() end)
     elseif t:match("^You can't afford") or t:match("^You don't have enough") or t:match("can't afford") then
       M.travel, M.trip = nil, nil
-      M.hideTripPanel()
+      M.finishRoute("Stopped")
       say("travel: not enough gold on hand for the " .. T.link.kind .. " - stopped")
     end
   end
@@ -20974,7 +20992,10 @@ function M.goAnswer(cmd)
   local A = M.goAsk
   if not A then return false end
   M.goAsk = nil
-  if os.time() - A.at > 60 then return false end
+  if os.time() - A.at > 60 then
+    if A.resume then M.finishRoute("Stopped") end
+    return false
+  end
   local c = trim(cmd or ""):lower()
   if c == "y" or c == "yes" then
     M.goAsk = A
@@ -20985,11 +21006,12 @@ function M.goAnswer(cmd)
         A.resume.approval = A.approval
         M.trip = A.resume
         M.tripContinue()
-      elseif A.trip then M.tripStart(A.id, A.approval)
+      elseif A.trip then M.tripStart(A.id, A.approval, A.lines)
       else M.mapWalkTo(A.id) end
     end)
     return true
   end
+  if A.resume then M.finishRoute("Stopped") end
   if c == "n" or c == "no" then tempTimer(0, function() say("staying put") end); return true end
   return false   -- anything else: the question's dropped, and the command goes as usual
 end
@@ -21504,7 +21526,7 @@ function M.legacyCommand(args)
   elseif a == "tabs" and onoff ~= nil then
     M.cfg.tabs = onoff
     if M.container then M.applyTabs(); M.viewShow() end
-    if M.trip and M.trip.route then M.drawTripPanel(M.trip, true) end
+    if M.lastRoute or (M.trip and M.trip.route) then M.drawTripPanel(M.trip, true) end
     say(onoff and "tabs on: Oven pages share one window" or "tabs off: help pages get their own window again")
   elseif a == "layout" and (b == "save" or b == "reset" or b == "restore") then
     if b == "save" then M.panelsSave(true); return say("panel layout saved - it's also saved by itself a few seconds after you move a panel")
@@ -22380,13 +22402,14 @@ function M.stopAll()
   local what = {}
   if M.limbo then M.stopLimbo(); what[#what + 1] = "exploring Limbo Maze" end
   if M.goAsk then
+    if M.goAsk.resume then M.finishRoute("Stopped") end
     M.goAsk = nil
     pcall(M.worldDraw)
     what[#what + 1] = "the proposed trip"
   end
   if M.travel or M.trip then
     M.travel, M.trip = nil, nil
-    M.hideTripPanel()
+    M.finishRoute("Stopped")
     what[#what + 1] = "the trip"
   end
   if M.walk or M.dirWalk or (M.running and M.running.target) then
@@ -23409,7 +23432,7 @@ function M.questClock()
 end
 
 function M.teardown()
-  M.hideTripPanel()
+  if M.tripPanel then M.tripPanel:hide() end
   M.stopLimbo()
   M.cancelCapture()
   if M.panelTimer then killTimer(M.panelTimer); M.panelTimer = nil end
@@ -23496,7 +23519,9 @@ function M.init()
     -- an update in the middle of a session: rebuild the open window with (or without) its tabs
     pcall(M.viewShow)
   end
-  if (M.trip and M.trip.route) or (M.cfg.tabs and M.tabOn == "route") then pcall(M.drawTripPanel, M.trip) end
+  if (M.trip and M.trip.route) or (M.cfg.tabs and M.tabOn == "route") or (M.lastRoute and not M.cfg.tabs) then
+    pcall(M.drawTripPanel, M.trip, not M.cfg.tabs)
+  end
   if M.cfg.bar then M.showBar(true) end
   if M.cfg.map then M.mapStart() end
   if M.cfg.mapPanel then pcall(M.showMapPanel, true) end

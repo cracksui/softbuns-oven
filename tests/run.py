@@ -5876,10 +5876,10 @@ def route_tab_highlights_the_active_leg():
       sbo.cfg.tabs = true
       sbo.mapRoom = 1
       sbo.recallToAsk = function() return false end
-      sbo.planTrip = function(from)
+      sbo.planTrip = function(from, targets)
         local legs = {}
         if from == 1 then legs[#legs + 1] = {kind="step", cmd="e", from=1, to=2} end
-        legs[#legs + 1] = {kind="run", name=from == 1 and "original" or "replanned", from=2, to=4}
+        legs[#legs + 1] = {kind="run", name=from == 1 and "original" or "replanned", from=2, to=targets[1]}
         return {cost=2, gold=0, legs=legs}
       end
       sbo.legStart = function() end
@@ -5887,9 +5887,14 @@ def route_tab_highlights_the_active_leg():
       sbo.goToNow(4)
       assert(sbo.goAsk and not sbo.tripPg)
       assert(sbo.goAnswer("y"))
-      local last = 0
-      for id in pairs(timers) do last = math.max(id, last) end
-      timers[last][2]()
+      function acceptTimer()
+        local last = 0
+        for id in pairs(timers) do last = math.max(id, last) end
+        local callback = timers[last][2]
+        timers[last] = nil
+        callback()
+      end
+      acceptTimer()
       assert(sbo.tabOn == "route" and sbo.tripPg.container == sbo.tabPages.route and not sbo.tripPanel)
       assert(panelText:find("▶ e into ", 1, true) and panelText:find("run original", 1, true))
       sbo.tabShow("view", true)
@@ -5899,18 +5904,26 @@ def route_tab_highlights_the_active_leg():
       assert(not panelText:find("original", 1, true) and sbo.tabOn == "view")
       sbo.mapRoom = 4
       sbo.tripContinue()
-      assert(panelText:find("No active route", 1, true))
+      assert(panelText:find("Arrived", 1, true) and panelText:find("✓ run replanned", 1, true))
+      assert(not panelText:find("▶", 1, true))
+      local lastRoute = panelText
       sbo.cfg.tabAuto = false
       sbo.mapRoom = 1
-      sbo.tripStart(4)
+      sbo.goToNow(3)
+      assert(panelText == lastRoute and sbo.goAnswer("n"))
+      assert(panelText == lastRoute)
+      sbo.goToNow(3)
+      assert(panelText == lastRoute and sbo.goAnswer("y"))
+      acceptTimer()
       assert(sbo.tabOn == "view" and sbo.tabNew.route)
+      assert(panelText:find("room 3", 1, true) and not panelText:find("Arrived", 1, true))
       sbo.stopAll()
-      assert(panelText:find("No active route", 1, true) and not sbo.tabNew.route)
+      assert(panelText:find("Stopped", 1, true) and panelText:find("room 3", 1, true) and not sbo.tabNew.route)
       sbo.cfg.tabs = false
       sbo.tripStart(4)
       assert(sbo.tripPanel.shown and sbo.tripPg.container == sbo.tripPanel)
       sbo.stopAll()
-      assert(not sbo.tripPanel.shown)
+      assert(sbo.tripPanel.shown and panelText:find("Stopped", 1, true))
     """)
 
 
