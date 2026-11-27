@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.76"
+M.version = "1.99.77"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11509,7 +11509,7 @@ function M.gmcpHandlersList()
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onFightStatus) end),
     registerAnonymousEventHandler("gmcp.room.info", function() pcall(M.onFightRoom) end),
     -- a new connection: read your aliases again at its first prompt
-    registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil end),
+    registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil; M.stopLimbo() end),
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onGmcpStatus) end),
     -- HP / SP / ST as they change (mid-fight too): redraw the bar
     registerAnonymousEventHandler("gmcp.char.vitals", function() if M.cfg.bar then pcall(M.drawBar) end end),
@@ -11523,6 +11523,7 @@ function M.gmcpHandlersList()
       pcall(M.wrongDir, type(w) == "table" and w.wrongdir or w)
     end),
     registerAnonymousEventHandler("gmcp.room.info", function() pcall(M.wayRoom) end),
+    registerAnonymousEventHandler("gmcp.room.info", function() M.limboRoom() end),
     registerAnonymousEventHandler("gmcp.char.affect_application_msg", function() pcall(M.onGmcpAffect) end),
     registerAnonymousEventHandler("gmcp.char.lasttargeted", function() pcall(M.onGmcpTarget) end),
   }
@@ -11658,6 +11659,7 @@ function M.onSend(_, cmd)
   if own and own > 0 then M.ownCmds[cmd] = (own > 1) and (own - 1) or nil
   else
     M.lastUserCmdAt = now()
+    if M.limbo then M.stopLimbo("stopped exploring Limbo Maze (you typed)") end
     if M.goAsk then
       local okA, mine = pcall(M.goAnswer, cmd)
       if okA and mine then pcall(denyCurrentSend); return end
@@ -12350,6 +12352,7 @@ end
 
 -- what's keeping Oven from doing something by itself right now (nil: nothing)
 function M.busyWhy(promptLine)
+  if M.limbo then return "exploring Limbo Maze" end
   if M.walk then return "walking" end
   if M.running then return "running (" .. tostring(M.running.name) .. ")" end
   if M.cap then return "reading a reply (" .. tostring(M.cap.kind) .. ")" end
@@ -14142,6 +14145,7 @@ function M.scanMarksShow()
 end
 
 function M.onLineWork()
+  if M.limbo then M.limboLine(line) end
   local cap = M.cap
   pcall(M.dummyNoteLine, line)
   -- the game's sounds (MSP lines): played, and off the screen
@@ -14863,6 +14867,97 @@ function M.onRoom()
   pcall(M.shopOnArrive, id)
   if M.travel then pcall(M.travelOnRoom, id) end
   if M.clanGoAt then pcall(M.clanHallNoteRoom, id) end
+end
+
+-- Limbo hides public room numbers. Use the real destination IDs exposed on its GMCP exits.
+function M.stopLimbo(msg)
+  local L = M.limbo
+  if not L then return end
+  M.limbo = nil
+  if L.timer then killTimer(L.timer) end
+  if msg then say(msg) end
+end
+
+function M.startLimbo()
+  local info = M.gmcpGet("room.info")
+  if type(info) ~= "table" or info.zone ~= "Limbo Maze" then return say("sbo limbo only works inside Limbo Maze") end
+  if M.limbo then return say("already exploring Limbo Maze") end
+  if not M.mayAutoSend() then return end
+  if M.trip or M.goAsk or M.walk or M.dirWalk or M.travel or M.running or M.cap or M.quietNext then
+    return say("finish or stop the current action before sbo limbo")
+  end
+  M.limbo = { rooms = {}, room = M.tempRealnum(info) or 0, steps = 0 }
+  M.limboRoom()
+end
+
+function M.limboRoom()
+  local L = M.limbo
+  if not L then return end
+  local info = M.gmcpGet("room.info")
+  if L.hermit then
+    if type(info) == "table" and info.exits ~= L.lastExits then L.arrived = true end
+    return
+  end
+  if type(info) ~= "table" or info.zone ~= "Limbo Maze" then return M.stopLimbo("left Limbo Maze") end
+  local exits = info.exits
+  if type(exits) ~= "table" then return M.stopLimbo("Limbo Maze: no exit data from the game") end
+  if not L.next and L.timer then return end
+  if L.next and L.lastExits == exits then return end
+  if L.timer then killTimer(L.timer) end
+  L.room, L.next = L.next or L.room, nil
+  local dir, dest
+  if exits.d ~= nil or exits.d_realnum ~= nil then
+    dir = "down"
+  else
+    local links = {}
+    for _, d in ipairs({ "n", "e", "s", "w", "ne", "se", "sw", "nw", "u" }) do
+      local to = tonumber(exits[d .. "_realnum"]) or tonumber(exits[d])
+      if to and to > 0 then links[#links + 1] = { dir = d, to = to } end
+    end
+    L.rooms[L.room] = links
+    local queue, seen = { { room = L.room } }, { [L.room] = true }
+    local head = 1
+    while head <= #queue and not dir do
+      local node = queue[head]
+      head = head + 1
+      for _, edge in ipairs(L.rooms[node.room]) do
+        if not seen[edge.to] then
+          local first = node.first or edge
+          if not L.rooms[edge.to] then dir, dest = first.dir, first.to; break end
+          seen[edge.to] = true
+          queue[#queue + 1] = { room = edge.to, first = first }
+        end
+      end
+    end
+    if not dir then return M.stopLimbo("Limbo Maze: no unexplored exit leads on from here") end
+  end
+  if L.steps >= 180 and dest then return M.stopLimbo("Limbo Maze: stopped after 180 moves; sbo limbo starts again") end
+  L.timer = tempTimer(0.2, function()
+    if M.limbo ~= L then return end
+    L.steps, L.next, L.hermit, L.lastExits = L.steps + 1, dest, not dest, exits
+    L.timer = tempTimer(L.hermit and 25 or 8, function()
+      if M.limbo == L then
+        M.stopLimbo(L.hermit and "Limbo Maze: no question heard; answer the hermit yourself if asked"
+          or "Limbo Maze: no room update after " .. dir)
+      end
+    end)
+    M.sendOwn(dir, false)
+  end)
+end
+
+function M.limboLine(text)
+  local L = M.limbo
+  if text:find("^%s*The Powers take pity on you and restore your soul") then return M.stopLimbo() end
+  if text:find("^%s*You cannot move in that direction") then return M.stopLimbo("Limbo Maze: the game refused the move") end
+  if not L.hermit then return end
+  local lower = text:lower()
+  if (L.arrived or lower:find("hermit", 1, true)) and lower:find("?", 1, true)
+      and (lower:find("back to life", 1, true) or lower:find("resurrect", 1, true)
+           or lower:find("return to life", 1, true) or lower:find("restore your soul", 1, true)
+           or lower:find("live again", 1, true)) then
+    M.stopLimbo()
+    M.sendOwn("say yes", false)
+  end
 end
 
 -- a walk by directions the game gave (where is: "e, sw, nw, d, e, s") - no map needed: the next is sent as soon
@@ -21597,6 +21692,7 @@ M.CMDS = {
       if who and (r:sub(1, 1) == "@" or M.isFriend(who)) then return M.friendWhere(who, true) end
       return M.mapRun(r, true)
     end },
+  { name = "limbo", desc = "find the down exit in Limbo Maze and accept the hermit's offer", run = function() return M.startLimbo() end },
   { name = "stop", desc = "stop a walk, or anything Oven is doing for you", run = function() return M.stopAll() end },
   { name = "travel", min = 3, desc = "the paid ways between towns Oven knows (Ganuk, balloons, passage) and their prices", run = function() return M.travelList() end },
   { name = "friend", min = 2, desc = "friends whose Oven can ask yours where you are (and you theirs)",
@@ -22175,6 +22271,7 @@ end
 -- sbo stop: whatever Oven is doing for you
 function M.stopAll()
   local what = {}
+  if M.limbo then M.stopLimbo(); what[#what + 1] = "exploring Limbo Maze" end
   if M.goAsk then
     M.goAsk = nil
     pcall(M.worldDraw)
@@ -23200,6 +23297,7 @@ function M.questClock()
 end
 
 function M.teardown()
+  M.stopLimbo()
   M.cancelCapture()
   if M.panelTimer then killTimer(M.panelTimer); M.panelTimer = nil end
   if M.questClockTimer then killTimer(M.questClockTimer); M.questClockTimer = nil end

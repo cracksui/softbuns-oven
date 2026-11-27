@@ -6425,6 +6425,64 @@ def go_asks_again_when_the_approved_route_changes():
 
 
 @test
+def limbo_finds_down_and_answers_the_hermit():
+    o = Oven()
+    o.lua("""
+      sent = {}
+      sbo.sendOwn = function(cmd) sent[#sent + 1] = cmd end
+      function ROOM(exits, zone)
+        gmcp.room = {info = {num = -99, name = "A Maze of Twisty Passages", zone = zone or "Limbo Maze", exits = exits}}
+        sbo.limboRoom()
+      end
+      function STEP()
+        local timer = sbo.limbo.timer
+        local tick = timers[timer][2]
+        timers[timer] = nil
+        tick()
+      end
+
+      ROOM({d = -99}, "Focault's Residence")
+      sbo.command("limbo")
+      assert(not sbo.limbo and #sent == 0)
+      ROOM({n_realnum = 21, e_realnum = 23})
+      sbo.command("limbo")
+      STEP()
+      sbo.limboRoom()  -- repeated data is still the old room
+      assert(#sent == 1 and sbo.limbo.room == 22)
+      ROOM({s_realnum = 22})
+      STEP()
+      ROOM({n_realnum = 21, e_realnum = 23})
+      STEP()
+      ROOM({d = -99, d_realnum = 90})
+      STEP()
+      assert(sent[1] == "n" and sent[2] == "s" and sent[3] == "e" and sent[4] == "down")
+      assert(#sent == 4)
+      ROOM({}, "Limbo Maze")
+      sbo.limboLine("Can you hear me?")
+      assert(#sent == 4)
+      sbo.limboLine("The wise old hermit asks, 'Would you like to be brought back to life?'")
+      assert(sent[5] == "say yes" and #sent == 5 and not sbo.limbo)
+    """)
+
+
+@test
+def limbo_stop_cancels_a_scheduled_move():
+    o = Oven()
+    o.lua("""
+      gmcp.room = {info = {num = -99, zone = "Limbo Maze", exits = {d = -99}}}
+      sbo.sendOwn = function() error("unexpected move") end
+      sbo.command("limbo")
+      timer = sbo.limbo.timer
+      sbo.command("stop")
+      assert(not sbo.limbo and not timers[timer])
+      sbo.command("limbo")
+      timer = sbo.limbo.timer
+      sbo.onSend("sysDataSendRequest", "look")
+      assert(not sbo.limbo and not timers[timer])
+    """)
+
+
+@test
 def stop_clears_trip_confirmation():
     o = Oven()
     o.lua('sbo.goAsk = {id = {42}, at = os.time(), trip = true}; sbo.command("stop")')

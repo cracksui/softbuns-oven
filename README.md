@@ -221,6 +221,7 @@ sbo                          the menu
 sbo go {what}                to a trainer, shop, quest, NPC, place, room #,
                              bookmark, or a "where is" feature (food, bank…):
                              the way that costs the least stamina (below)
+sbo limbo                    in Limbo Maze, find down and say yes to the hermit
 sbo stop                     stop a walk, or anything Oven is doing for you
 sbo item {text}              find an item: what you have (and in which bag), what you've
                              looked at, shops that sell it (nearest first, [go]),
