@@ -5866,6 +5866,47 @@ def trip_leg_on_the_bar():
 
 
 @test
+def trip_panel_highlights_the_active_leg():
+    o = Oven()
+    o.lua(r"""
+      MAPSTUB({[1] = {e = 2}, [2] = {}, [3] = {}, [4] = {}})
+      getRoomArea = function() return 1 end
+      getRoomAreaName = function() return "Towne" end
+      getRoomName = function(id) return "room " .. id end
+      sbo.mapRoom = 1
+      sbo.recallToAsk = function() return false end
+      sbo.planTrip = function(from)
+        local legs = {}
+        if from == 1 then legs[#legs + 1] = {kind="step", cmd="e", from=1, to=2} end
+        legs[#legs + 1] = {kind="run", name=from == 1 and "original" or "replanned", from=2, to=4}
+        return {cost=2, gold=0, legs=legs}
+      end
+      sbo.legStart = function() end
+      sbo.pageShow = function(pg, lines) if pg == sbo.tripPg then panelText = table.concat(lines, "\n") end end
+      sbo.goToNow(4)
+      assert(sbo.goAsk and not sbo.tripPanel)
+      assert(sbo.goAnswer("y"))
+      local last = 0
+      for id in pairs(timers) do last = math.max(id, last) end
+      timers[last][2]()
+      assert(sbo.tripPanel.shown)
+      assert(panelText:find("▶ e into ", 1, true) and panelText:find("run original", 1, true))
+      sbo.mapRoom = 2
+      sbo.tripContinue()
+      assert(panelText:find("▶ run replanned", 1, true) and panelText:find("✓ e into ", 1, true))
+      assert(not panelText:find("original", 1, true))
+      sbo.mapRoom = 4
+      sbo.tripContinue()
+      assert(not sbo.tripPanel.shown)
+      sbo.mapRoom = 1
+      sbo.tripStart(4)
+      assert(sbo.tripPanel.shown)
+      sbo.stopAll()
+      assert(not sbo.tripPanel.shown)
+    """)
+
+
+@test
 def go_asks_where_is_first():
     # sbo go questmaster in Decara, with questmasters Oven knows of in other towns (recorded 2026-11-26: it planned a
     # trip to Maldra Keep): where is FIRST, its path walked; elsewhere only when the game knows none here

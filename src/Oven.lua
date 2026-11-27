@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.77"
+M.version = "1.99.78"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -4575,7 +4575,7 @@ end
 -- remove page widgets left over from an earlier version in this session
 -- (0.10.0 pages didn't know their window, and 0.10.1-0.10.2 rebuilt them full-screen)
 function M.dropPages()
-  for _, key in ipairs({ "viewPg", "helpPg", "questPg" }) do
+  for _, key in ipairs({ "viewPg", "helpPg", "questPg", "tripPg" }) do
     local pg = M[key]
     if pg and pg.scroll then pcall(function() pg.scroll:delete() end) end
     M[key] = nil
@@ -15001,6 +15001,7 @@ end
 
 -- walk notes: a line in the game text (the prompt bar has no room to spare)
 function M.notifyWalk(msg)
+  if not M.trip then M.hideTripPanel() end
   say("walk " .. msg)
 end
 
@@ -20240,7 +20241,7 @@ function M.tripApproval(plan)
 end
 
 -- the plan in lines: one a leg (walks one after another in a place said as one)
-function M.planLines(plan, targets)
+function M.planLines(plan, separateWalks)
   local lines = {}
   -- (a signpost by what it says: "the signpost outside Sigil's north gate")
   local function name(id)
@@ -20257,7 +20258,7 @@ function M.planLines(plan, targets)
   local via, walked   -- (walks through the wilds, or on the map, one after another: one line)
   for i, leg in ipairs(plan.legs) do
     local k = leg.kind
-    if k == "walk" and plan.legs[i + 1] and plan.legs[i + 1].kind == "walk" then
+    if k == "walk" and not separateWalks and plan.legs[i + 1] and plan.legs[i + 1].kind == "walk" then
       -- (walks one after another: one line)
       walked = (walked or 0) + leg.n
     elseif k == "walk" then
@@ -20266,11 +20267,13 @@ function M.planLines(plan, targets)
       if i == #plan.legs then lines[#lines + 1] = string.format("about %d step%s on to %s", n, pl(n), name(leg.to))
       else lines[#lines + 1] = string.format("%d step%s to %s", n, pl(n), name(leg.to)) end
       -- a walk through other places (or a command on the way: enter mirror): which
-      local pd, pp = M.legPath(leg)
-      if pd or getPath(leg.from, leg.to) then
-        local okF, f = pcall(M.routeFoot, pd or speedWalkDir, pp or speedWalkPath)
-        local _, arrows = (okF and f or ""):gsub(" → ", "")
-        if arrows >= 2 then lines[#lines + 1] = "through " .. f end
+      if not separateWalks then
+        local pd, pp = M.legPath(leg)
+        if pd or getPath(leg.from, leg.to) then
+          local okF, f = pcall(M.routeFoot, pd or speedWalkDir, pp or speedWalkPath)
+          local _, arrows = (okF and f or ""):gsub(" → ", "")
+          if arrows >= 2 then lines[#lines + 1] = "through " .. f end
+        end
       end
     elseif k == "wild" and plan.legs[i + 1] and plan.legs[i + 1].kind == "wild" then
       -- (on through the wilds: said with the next one)
@@ -20326,6 +20329,36 @@ function M.planLines(plan, targets)
   return lines, string.format("about %d stamina · %s", math.floor(plan.cost + 0.5), tail)
 end
 
+function M.hideTripPanel()
+  if M.tripPanel then M.tripPanel:hide() end
+end
+
+function M.drawTripPanel(T, route)
+  if not M.tripPanel then
+    local d = M.PANEL_DEFAULTS.ovenTripPanel
+    M.tripPanel = Adjustable.Container:new({
+      name = "ovenTripPanel", titleText = M.panelTitle("Route"),
+      x = d.x, y = d.y, width = d.w, height = d.h,
+      adjLabelstyle = M.PANEL_STYLE, titleTxtColor = M.hex("title"),
+    })
+    M.panelPlace("ovenTripPanel", M.tripPanel)
+  end
+  if not M.tripPg then M.tripPg = M.newPage("ovenTrip", M.tripPanel) end
+  local function safe(text) return text:gsub("<", "‹"):gsub(">", "›") end
+  local name = roomExists(T.target) and getRoomName(T.target) or ("#" .. T.target)
+  local lines = { M.drgb("title") .. safe(name), "" }
+  for i, text in ipairs(route) do
+    lines[#lines + 1] = (i == 1 and (M.drgb("key") .. "▶ ") or (M.drgb("text") .. "  ")) .. safe(text)
+  end
+  if #T.routeDone > 0 then
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = M.drgb("dim") .. "Completed"
+    for _, text in ipairs(T.routeDone) do lines[#lines + 1] = M.drgb("dim") .. "✓ " .. safe(text) end
+  end
+  M.pageShow(M.tripPg, lines, "decho")
+  M.tripPanel:show()
+end
+
 -- going: the first leg of the plan from where you are; when it's done, planned again from there
 function M.tripStart(targets, approval)
   if type(targets) ~= "table" then targets = { targets } end
@@ -20369,6 +20402,7 @@ function M.tripContinue()
     end
     if changed then
       M.trip = nil
+      M.hideTripPanel()
       T.legs, T.from[here] = T.legs - 1, T.from[here] - 1
       return M.askTrip(plan, T.targets, "The route changed - the way from here:", T)
     end
@@ -20431,6 +20465,15 @@ function M.tripContinue()
   T.cur = okL and ls or leg.kind
   T.curGame = M.LEG_GAME[leg.kind] or false
   pcall(M.drawBar)
+  pcall(function()
+    local shown = { leg }
+    for i = j, #plan.legs do shown[#shown + 1] = plan.legs[i] end
+    local route = M.planLines({ legs = shown, cost = plan.cost, gold = plan.gold }, true)
+    T.routeDone = T.routeDone or {}
+    if T.routeTo == here and T.route then T.routeDone[#T.routeDone + 1] = T.route[1] end
+    T.routeTo, T.route = leg.to, route
+    M.drawTripPanel(T, route)
+  end)
   M.legStart(leg, T)
 end
 function M.legStart(leg, T)
@@ -20505,7 +20548,15 @@ function M.legStart(leg, T)
       local dirs = M.whereDirs(lines, "exit")
       if not dirs then
         -- (no exit the game knows: the walk planned, else stopped)
-        if leg.fallback then return M.legStart(leg.fallback, T) end
+        if leg.fallback then
+          pcall(function()
+            if not T.route then return end
+            local lines = M.planLines({ legs = { leg.fallback }, cost = leg.fallback.cost or 0 }, true)
+            T.routeTo, T.route[1] = leg.fallback.to, lines[1]
+            M.drawTripPanel(T, T.route)
+          end)
+          return M.legStart(leg.fallback, T)
+        end
         M.trip = nil; return M.notifyWalk("stopped: the game didn't say where the exit is")
       end
       M.walkDirs(dirs, cont)
@@ -20766,7 +20817,13 @@ function M.travelStart(plan, target, legNo)
     end
     T.stage = "buying"
     M.sendOwn("shop buy " .. L.no, true)
-    tempTimer(8, function() if M.travel == T and T.stage == "buying" then M.travel = nil; say("travel: the shop didn't sell the " .. L.kind:lower() .. " ticket - stopped") end end)
+    tempTimer(8, function()
+      if M.travel == T and T.stage == "buying" then
+        M.travel, M.trip = nil, nil
+        M.hideTripPanel()
+        say("travel: the shop didn't sell the " .. L.kind:lower() .. " ticket - stopped")
+      end
+    end)
   end
   if M.mapRoom == L.shop then return atShop() end
   if not M.mapRoom or not getPath(M.mapRoom, L.shop) then M.travel = nil; return say("no route on the map to " .. L.shopName) end
@@ -20802,7 +20859,9 @@ function M.travelLine(l)
       T.rideFrom = getRoomArea(M.mapRoom or 0)
       tempTimer(0.3, function() M.travelBoard() end)
     elseif t:match("^You can't afford") or t:match("^You don't have enough") or t:match("can't afford") then
-      M.travel = nil; say("travel: not enough gold on hand for the " .. T.link.kind .. " - stopped")
+      M.travel, M.trip = nil, nil
+      M.hideTripPanel()
+      say("travel: not enough gold on hand for the " .. T.link.kind .. " - stopped")
     end
   end
 end
@@ -22277,7 +22336,11 @@ function M.stopAll()
     pcall(M.worldDraw)
     what[#what + 1] = "the proposed trip"
   end
-  if M.travel or M.trip then M.travel, M.trip = nil, nil; what[#what + 1] = "the trip" end
+  if M.travel or M.trip then
+    M.travel, M.trip = nil, nil
+    M.hideTripPanel()
+    what[#what + 1] = "the trip"
+  end
   if M.walk or M.dirWalk or (M.running and M.running.target) then
     M.walk, M.dirWalk = nil, nil
     if M.running then M.running.target = nil end
@@ -23204,9 +23267,10 @@ M.PANEL_DEFAULTS = {
   ovenViewer   = { x = "-62%", y = "4%", w = "36%", h = "50%" },
   ovenHelp     = { x = "2%", y = "4%", w = "45%", h = "70%" },
   ovenMapPanel = { x = "-36%", y = "4%", w = "34%", h = "50%" },
+  ovenTripPanel = { x = "-36%", y = "55%", w = "34%", h = "36%" },
 }
 function M.panelList()
-  local t = { { "ovenViewer", M.container }, { "ovenHelp", M.helpContainer }, { "ovenMapPanel", M.mapPanel } }
+  local t = { { "ovenViewer", M.container }, { "ovenHelp", M.helpContainer }, { "ovenMapPanel", M.mapPanel }, { "ovenTripPanel", M.tripPanel } }
   for _, tab in ipairs(M.TABS or {}) do
     if M.tabWins and M.tabWins[tab.key] then t[#t + 1] = { "ovenTab_" .. tab.key, M.tabWins[tab.key] } end
   end
@@ -23297,6 +23361,7 @@ function M.questClock()
 end
 
 function M.teardown()
+  M.hideTripPanel()
   M.stopLimbo()
   M.cancelCapture()
   if M.panelTimer then killTimer(M.panelTimer); M.panelTimer = nil end
