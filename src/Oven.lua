@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.70"
+M.version = "1.99.71"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8887,9 +8887,25 @@ function M.dummyNoteSend(cmd)
   end
 end
 
-local function take(kind)
+-- the skill a line is about: a backstab's says "in the back", a kick's "kick"... (a backstab the game refused mid-fight
+-- stays queued - a kick's line after it isn't the backstab's)
+local SKILL_WORDS = { backstab = { " in the back" }, kick = { "kick" }, bash = { "bash" }, feeding = { "feed", "bite" } }
+local function says(low, name)
+  for _, w in ipairs(SKILL_WORDS[name] or {}) do if low:find(w, 1, true) then return true end end
+  return false
+end
+local function take(kind, line)
+  local low = line and line:lower()
+  local function fresh(q) return q.kind == kind and os.time() - q.at <= 20 end
+  -- (the queued skill the line names; a line naming none Oven knows the words of: the oldest queued, as ever)
+  if low then
+    for i, q in ipairs(M.dummyQueue) do
+      if fresh(q) and says(low, q.name) then return table.remove(M.dummyQueue, i) end
+    end
+    for name in pairs(SKILL_WORDS) do if says(low, name) then return nil end end
+  end
   for i, q in ipairs(M.dummyQueue) do
-    if q.kind == kind and os.time() - q.at <= 20 then return table.remove(M.dummyQueue, i) end
+    if fresh(q) then return table.remove(M.dummyQueue, i) end
   end
 end
 local function cost(q)
@@ -8930,13 +8946,13 @@ function M.dummyNoteLine(l)
   if again then table.insert(M.dummyRound, { name = again:lower() }); return end
   -- a skill: missed, or landed
   if t:match("^You attempt to .- but ") then
-    local q = take("skill")
+    local q = take("skill", t)
     if q and fightingDummy() then local r = rec(q.name); r.tries = r.tries + 1; r.misses = (r.misses or 0) + 1; cost(q) end
     return
   end
   if t:match("^You ") and t:find("practice dummy", 1, true) and not t:find("enter into combat", 1, true)
      and not t:find("knowingly", 1, true) and not t:find("arcs from", 1, true) then
-    local q = take("skill")
+    local q = take("skill", t)
     if q then cost(q); table.insert(M.dummyRound, { name = q.name }) end
     return
   end
@@ -8961,8 +8977,9 @@ function M.dummyNoteLine(l)
     if roundHits and m.hits and m.hits > 0 then return nil end
     return m.sum / m.n
   end
-  local function credit(name, each, adj)
+  local function credit(name, each, adj, raw)
     local r = rec(name)
+    if raw then r.raw = r.raw or {}; r.raw[#r.raw + 1] = raw end
     local key = adj and "adj" or "clean"
     r[key .. "N"] = (r[key .. "N"] or 0) + 1
     r[key .. "Sum"] = (r[key .. "Sum"] or 0) + each
@@ -8983,7 +9000,7 @@ function M.dummyNoteLine(l)
         if type(r) == "table" and r.mixed then
           local kept = r.mixed
           r.mixed = nil
-          for _, x in ipairs(kept) do credit(name, math.max(0, x.dmg - (swingFor(x.hits) or 0)) / (x.k or 1), true) end
+          for _, x in ipairs(kept) do credit(name, math.max(0, x.dmg - (swingFor(x.hits) or 0)) / (x.k or 1), true, x) end
         end
       end
       M.saveSettings(); M.dataChanged()
@@ -9006,9 +9023,29 @@ function M.dummyNoteLine(l)
   local each = math.max(0, dmg - swing) / #landed
   for _, x in ipairs(landed) do
     rec(x.name).tries = rec(x.name).tries + 1
-    credit(x.name, each, meleeHit)
+    credit(x.name, each, meleeHit, { dmg = dmg, hits = hits, k = #landed })
   end
   M.saveSettings(); M.dataChanged()
+end
+
+-- a skill's average on the dummy now: each round it landed in, less that round's melee at what a swing's measured to
+-- be by now (all the plain rounds so far - not just the few seen when it landed): avg, min, max, n
+function M.dummyAverage(name)
+  local d = log(false)
+  local r = d and d[name]
+  if not r or not r.raw or #r.raw == 0 then
+    if r and (r.n or 0) > 0 then return r.sum / r.n, r.min, r.max, r.n end
+    return nil
+  end
+  local m = d.melee
+  local perHit = m and m.hits and m.hits > 0 and m.hitDmg and m.hitDmg / m.hits
+  local sum, n, lo, hi = 0, 0, nil, nil
+  for _, x in ipairs(r.raw) do
+    local each = math.max(0, x.dmg - ((x.hits or 0) > 0 and perHit and x.hits * perHit or 0)) / (x.k or 1)
+    sum, n = sum + each, n + 1
+    lo, hi = math.min(lo or each, each), math.max(hi or each, each)
+  end
+  return sum / n, lo, hi, n
 end
 
 -- sbo eq dummy: the builds you've tested on the dummy (and how many results, how long ago); reset: this
@@ -9417,12 +9454,10 @@ function M.buildLines(width)
       string.format("%d dmg × 14 × (%d personality + %d%% backstab) / 100%s", bs.weapon, bs.personality, bs.skill,
         bs.gear ~= 0 and string.format(" + %d gear", bs.gear) or ""))
     -- what it really did on the practice dummy (full health: a healthy target), your melee in the same round taken out
-    local okD, dl = pcall(M.dummyLog, false)
-    local rec = okD and type(dl) == "table" and dl.backstab
-    if rec and (rec.n or 0) > 0 then
-      local avg = rec.sum / rec.n
+    local okD, avg, lo, hi, n = pcall(M.dummyAverage, "backstab")
+    if okD and avg then
       row("on the dummy", string.format("%.0f", avg), string.format("measured: %d backstab%s, %.0f-%.0f · the formula's %+.0f%%",
-        rec.n, rec.n == 1 and "" or "s", rec.min or avg, rec.max or avg, (bs.healthy / avg - 1) * 100), C.title)
+        n, n == 1 and "" or "s", lo or avg, hi or avg, (bs.healthy / avg - 1) * 100), C.title)
     end
     local levers = M.backstabLevers()
     if #levers > 0 then

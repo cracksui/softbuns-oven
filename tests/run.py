@@ -5611,6 +5611,30 @@ def dummy_backstab_old_rounds():
 
 
 @test
+def dummy_backstab_later_melee():
+    # a backstab the game refused mid-fight stays queued: a kick's line after it is the kick's, not the backstab's;
+    # and a backstab seen before much melee is measured again as more plain rounds come in
+    o = Oven()
+    o.lua("""sbo.cfg.dummy = nil
+      gmcp.char = { lasttargeted = { short_descr = 'a practice dummy' } }
+      ROUND = function(hits) sbo.lastMxp = { you_hit = hits, at = os.time() } end""")
+    def say(cmd, hits, line, dmg):
+        if cmd: o.ev("sbo.dummyNoteSend")(cmd)
+        o.ev("ROUND")(hits)
+        if line: o.ev("sbo.dummyNoteLine")(line)
+        o.ev("sbo.dummyNoteLine")("A practice dummy says 'I have [%d/10000hp 10000/10000sp 10000/10000st and -250 align]'" % (10000 - dmg))
+    say("backstab dummy", 4, "You stab a practice dummy in the back with a hook.", 4339)
+    say(None, 4, None, 1292)                       # a plain round: 323 a hit
+    say("backstab dummy", 3, None, 750)            # refused mid-fight: nothing landed
+    say("kick dummy", 3, "You deliver a roundhouse kick to a practice dummy, connecting solidly.", 1100)
+    eq(o.ev("sbo.dummyLog(false).backstab.n"), 1, "the kick isn't a backstab")
+    for _ in range(10): say(None, 4, None, 1000)   # more plain rounds: 250 a hit
+    avg = o.ev("function() local a = sbo.dummyAverage('backstab'); return a end")()
+    per = (1292 + 750 + 10000) / (4 + 3 + 40)
+    eq(round(avg), round(4339 - 4 * per), "measured again by all the plain rounds")
+
+
+@test
 def backstab_calculator():
     # help 1345: ((weapon damage x 14) x (personality + backstab%)) / 100 + damage-backstab; +50% on a healthy target.
     # The build page shows it, and what would raise it most, best first
