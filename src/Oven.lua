@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.68"
+M.version = "1.99.69"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -22521,11 +22521,43 @@ function M.helpProgressMark()
   return FILL[math.max(1, math.ceil(f * #FILL))]
 end
 -- the leg you're on, for the bar: where it starts -> where it ends ("Rune → New Rigel")
+-- a spot named for the bar: in a place, the place ("Sigil"); out in the wilds, a signpost there by what it says
+-- ("Sigil's south gate (sign)"), else the nearest town within 40 rooms ("near Sigil"); else its room's name
+-- (in the wilds that's only the road it's on: "The North Road"), else its spot
+function M.spotName(id)
+  id = tonumber(id)
+  if not id then return "?" end
+  if not M.isWildRoom(id) then
+    local pl = M.placeLabel(id) or select(2, M.placeOf(id))
+    if pl and pl ~= "" then return pl end
+  end
+  local sp = M.signAt and M.signAt(id)
+  if sp and sp.sign then
+    local t = sp.sign:gsub("^an? weatherbeaten signpost%s*", ""):gsub("^a signpost%s*", "")
+      :gsub("^outside%s+of%s+", ""):gsub("^outside%s+", ""):gsub("^near%s+", "")
+    if t ~= "" then return t .. " (sign)" end
+  end
+  local q = M.worldPos(id)
+  if q then
+    local best, bestD
+    local okT, towns = pcall(M.worldTowns)
+    for _, t in ipairs(okT and towns or {}) do
+      if t.map == q.map then
+        local d = math.max(math.abs(t.x - q.x), math.abs(t.y - q.y))
+        if d <= 40 and (not bestD or d < bestD) then best, bestD = t.name, d end
+      end
+    end
+    if best then return bestD == 0 and best or ("near " .. best) end
+  end
+  local n = roomExists(id) and getRoomName(id) or ""
+  if n ~= "" then return n end
+  return q and string.format("%d,%d", q.x, q.y) or ("#" .. id)
+end
 function M.legShort(leg)
   local function name(id, room)
-    local n = (not room and (M.placeLabel(id) or select(2, M.placeOf(id)))) or (roomExists(id) and getRoomName(id)) or ""
-    if n == "" then local q = M.worldPos(id); n = q and string.format("%d,%d", q.x, q.y) or ("#" .. id) end
-    if ulen(n) > 20 then n = M.usub(n, 1, 19) .. "…" end
+    local n = room and ((roomExists(id) and getRoomName(id)) or "") or M.spotName(id)
+    if n == "" then n = M.spotName(id) end
+    if ulen(n) > 28 then n = M.usub(n, 1, 27) .. "…" end
     return n
   end
   local a, b = name(leg.from), name(leg.to)

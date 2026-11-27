@@ -5450,6 +5450,23 @@ def aardwolf_prompt():
 
 
 @test
+def spots_named_for_the_bar():
+    # a spot of a leg, named: in a place, the place; at a signpost, what it says; else near the nearest town; else the
+    # road's own name (recorded 2026-11-27: "The South Road → The North Road" meant nothing)
+    o = Oven()
+    o.lua("""sbo.worldPos = function(id) return ({ [2000001] = { map = 'Alyria', x = 10, y = 10 }, [2000002] = { map = 'Alyria', x = 30, y = 12 },
+        [2000003] = { map = 'Alyria', x = 300, y = 300 } })[id] end
+      sbo.worldTowns = function() return { { map = 'Alyria', x = 33, y = 14, name = 'Sigil' } } end
+      roomExists = function(id) return true end; getRoomName = function(id) return id == 2000003 and 'The North Road' or 'The South Road' end
+      sbo.signAt = function(id) if id == 2000001 then return { sign = "a weatherbeaten signpost outside Sigil's south gate", looked = true } end end""")
+    eq(o.ev("sbo.spotName(2000001)"), "Sigil's south gate (sign)", "a signpost: what it says")
+    eq(o.ev("sbo.spotName(2000002)"), "near Sigil", "near a town")
+    eq(o.ev("sbo.spotName(2000003)"), "The North Road", "nothing near: the road")
+    o.lua("LG = { kind = 'run', from = 2000001, to = 2000002 }")
+    eq(o.ev("sbo.legShort(LG)"), "Sigil's south gate (sign) → near Sigil", "the leg")
+
+
+@test
 def realty_where_is_exit_first():
     # a realty inside its town, the town onto the wilds: in the realty, the way out leading into the town - where is
     # exit FIRST, the game's path walked; in the town, out to the wilds by the gate planned (not where is exit)
