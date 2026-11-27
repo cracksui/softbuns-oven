@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.64"
+M.version = "1.99.65"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11393,7 +11393,30 @@ function M.expandAlias(cmd)
 end
 
 -- a command Oven sends by itself, noted so onSend can tell it from one you typed (M.lastUserCmdAt)
+-- which game this profile's connected to, by the server's name (Mudlet's getConnectionInfo): "materia" (materiamagica.com,
+-- what Oven's made for), "aardwolf" (aardmud.org), "other"; nil when it can't tell (not connected, an older Mudlet)
+function M.game()
+  local ok, host = pcall(function() return getConnectionInfo and (getConnectionInfo()) end)
+  host = ok and type(host) == "string" and host:lower() or ""
+  if host == "" then return nil end
+  if host:find("materiamagica", 1, true) then return "materia" end
+  if host:find("aardmud", 1, true) or host:find("aardwolf", 1, true) then return "aardwolf" end
+  return "other"
+end
+-- on another game Oven only watches: nothing it'd send by itself (help reads, eq/aff checks, recall list…) is sent -
+-- they're Materia Magica's commands. Said once
+function M.mayAutoSend()
+  local g = M.game()
+  if g == nil or g == "materia" then return true end
+  if not M.watchOnlySaid then
+    M.watchOnlySaid = true
+    M.say("on this game Oven only watches - it sends nothing by itself here (it's made for Materia Magica)")
+  end
+  return false
+end
+
 function M.sendOwn(cmd, echo)
+  if not M.mayAutoSend() then return end
   M.ownCmds = M.ownCmds or {}
   M.ownCmds[cmd] = (M.ownCmds[cmd] or 0) + 1
   send(cmd, echo)
@@ -20583,6 +20606,7 @@ end
 
 -- a reply read quietly and handed to fn(lines): the next command of that kind
 function M.quietly(cmd, kind, fn)
+  if not M.mayAutoSend() then return fn and pcall(fn, nil) end
   local mine = { kind = kind, fn = fn }
   M.quietNext = mine
   M.sendOwn(cmd, false)

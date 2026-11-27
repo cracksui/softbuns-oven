@@ -5423,6 +5423,24 @@ def trips_dont_loop():
 
 
 @test
+def other_game_watch_only():
+    # connected to another game (Aardwolf): Oven sends nothing by itself - its commands are Materia Magica's - and says
+    # so once; Materia Magica, or not known (not connected), as ever
+    o = Oven()
+    o.lua("""SENT = {}; send = function(c) SENT[#SENT+1] = c end; SAYS = {}; sbo.log = function(m) SAYS[#SAYS+1] = m end
+      HOST = 'aardmud.org'; getConnectionInfo = function() return HOST, 4000, true end""")
+    eq(o.ev("sbo.game()"), "aardwolf", "aardmud.org: Aardwolf")
+    o.lua("sbo.sendOwn('recall list'); sbo.sendOwn('aff'); QGOT = 'no'; sbo.quietly('eq', 'eq', function(l) QGOT = tostring(l) end)")
+    eq(len(o.ev("SENT") or {}), 0, "nothing sent")
+    eq(o.ev("QGOT"), "nil", "a quiet read gets nothing back, at once")
+    eq(sum(1 for m in o.ev("SAYS").values() if "only watches" in m), 1, "said once")
+    o.lua("HOST = 'materiamagica.com'; sbo.sendOwn('aff')")
+    eq(list(o.ev("SENT").values()), ["aff"], "Materia Magica: sent")
+    o.lua("HOST = ''; SENT = {}; sbo.sendOwn('aff')")
+    eq(list(o.ev("SENT").values()), ["aff"], "can't tell (not connected): as before")
+
+
+@test
 def dummy_backstab():
     # backstab on the practice dummy: the round's damage less your melee in it, by the hit (the round says how many
     # landed); one before any plain swing was seen is kept, and sorted out once there's one
