@@ -5423,6 +5423,34 @@ def trips_dont_loop():
 
 
 @test
+def dummy_backstab():
+    # backstab on the practice dummy: the round's damage less your melee in it, by the hit (the round says how many
+    # landed); one before any plain swing was seen is kept, and sorted out once there's one
+    o = Oven()
+    o.lua("""sbo.cfg.dummy = nil
+      gmcp.char = { lasttargeted = { short_descr = 'a practice dummy' } }
+      ROUND = function(hits) sbo.lastMxp = { you_hit = hits, at = os.time() } end""")
+    def stab(dmg, hits, missed=False):
+        o.ev("sbo.dummyNoteSend")("backstab dummy")
+        o.ev("ROUND")(hits)
+        o.ev("sbo.dummyNoteLine")("You attempt to stab a practice dummy in the back with a hook, but miss." if missed
+                                  else "You stab a practice dummy in the back with a hook.")
+        o.ev("sbo.dummyNoteLine")("A practice dummy says 'I have [%d/10000hp 10000/10000sp 10000/10000st and -250 align]'" % (10000 - dmg))
+    stab(3698, 4)                 # (no plain swing seen yet: kept)
+    eq(o.ev("sbo.dummyLog(false).backstab.n"), 0, "kept for now")
+    stab(527, 3, missed=True)     # a miss: the round was all melee - 3 hits
+    stab(204, 1, missed=True)
+    per = 731 / 4
+    eq(round(o.ev("sbo.dummyLog(false).melee.sum / sbo.dummyLog(false).melee.hits")), round(per), "melee by the hit")
+    eq(o.ev("sbo.dummyLog(false).backstab.n"), 1, "the kept one, sorted out")
+    # (sorted out at the first plain round: 527 for 3 hits)
+    eq(round(o.ev("sbo.dummyLog(false).backstab.sum")), round(3698 - 4 * 527 / 3), "less its 4 hits")
+    stab(3544, 3)
+    eq((o.ev("sbo.dummyLog(false).backstab.n"), round(o.ev("sbo.dummyLog(false).backstab.sum"))),
+       (2, round(3698 - 4 * 527 / 3 + 3544 - 3 * per)), "the next, less its 3 (by all the plain rounds)")
+
+
+@test
 def backstab_calculator():
     # help 1345: ((weapon damage x 14) x (personality + backstab%)) / 100 + damage-backstab; +50% on a healthy target.
     # The build page shows it, and what would raise it most, best first

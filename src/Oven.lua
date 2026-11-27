@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.63"
+M.version = "1.99.64"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8809,7 +8809,7 @@ end
 -- taken off (clean rounds are preferred once there are a couple).
 ---------------------------------------------------------------------------
 do
-local SKILL_CMDS = { kick = "kick", bash = "bash", feed = "feeding", feeding = "feeding" }
+local SKILL_CMDS = { kick = "kick", bash = "bash", feed = "feeding", feeding = "feeding", backstab = "backstab", bs = "backstab" }
 
 local function vit(k)
   local v = M.gmcpGet and M.gmcpGet("char.vitals")
@@ -8935,41 +8935,61 @@ function M.dummyNoteLine(l)
   local dmg = tonumber(mx) - tonumber(cur)
   local mxp = M.lastMxp
   local meleeHit = mxp and os.time() - (mxp.at or 0) <= 2 and (tonumber(mxp.you_hit) or 0) > 0
+  local hits = meleeHit and (tonumber(mxp.you_hit) or 0) or 0
   local landed = M.dummyRound
   M.dummyRound = {}
   local d = log()
+  -- (a skill's share of a round: the round's damage less your swings in it - by the hit (the round says how many
+  -- landed), else by the round)
+  local function swingFor(roundHits)
+    local m = d.melee
+    if not (m and m.n > 0) then return nil end
+    if roundHits and m.hits and m.hits > 0 then return roundHits * m.sum / m.hits end
+    return m.sum / m.n
+  end
+  local function credit(name, each, adj)
+    local r = rec(name)
+    local key = adj and "adj" or "clean"
+    r[key .. "N"] = (r[key .. "N"] or 0) + 1
+    r[key .. "Sum"] = (r[key .. "Sum"] or 0) + each
+    r.n, r.sum = r.n + 1, r.sum + each
+    r.min = math.min(r.min or each, each); r.max = math.max(r.max or each, each)
+  end
   if #landed == 0 then
     if meleeHit and dmg > 0 then
       d.melee = d.melee or { n = 0, sum = 0 }
       d.melee.n, d.melee.sum = d.melee.n + 1, d.melee.sum + dmg
+      d.melee.hits = (d.melee.hits or 0) + hits
       d.melee.last = os.time()
+      -- the rounds kept before a plain swing was seen: sorted out now
+      for name, r in pairs(d) do
+        if type(r) == "table" and r.mixed then
+          local kept = r.mixed
+          r.mixed = nil
+          for _, x in ipairs(kept) do credit(name, math.max(0, x.dmg - (swingFor(x.hits) or 0)) / (x.k or 1), true) end
+        end
+      end
       M.saveSettings(); M.dataChanged()
     end
     return
   end
   local swing = 0
   if meleeHit then
-    local m = d.melee
-    if not (m and m.n > 0) then
-      -- no plain swing seen yet: keep it, to sort out later
+    swing = swingFor(hits)
+    if not swing then
+      -- no plain swing seen yet: keep it, to sort out once there's one
       for _, x in ipairs(landed) do
         local r = rec(x.name); r.tries = r.tries + 1
-        r.mixed = r.mixed or {}; r.mixed[#r.mixed + 1] = { dmg = dmg, k = #landed }
+        r.mixed = r.mixed or {}; r.mixed[#r.mixed + 1] = { dmg = dmg, k = #landed, hits = hits }
       end
       M.saveSettings(); M.dataChanged()
       return
     end
-    swing = m.sum / m.n
   end
   local each = math.max(0, dmg - swing) / #landed
   for _, x in ipairs(landed) do
-    local r = rec(x.name)
-    r.tries = r.tries + 1
-    local key = meleeHit and "adj" or "clean"
-    r[key .. "N"] = (r[key .. "N"] or 0) + 1
-    r[key .. "Sum"] = (r[key .. "Sum"] or 0) + each
-    r.n, r.sum = r.n + 1, r.sum + each
-    r.min = math.min(r.min or each, each); r.max = math.max(r.max or each, each)
+    rec(x.name).tries = rec(x.name).tries + 1
+    credit(x.name, each, meleeHit)
   end
   M.saveSettings(); M.dataChanged()
 end
@@ -9379,6 +9399,14 @@ function M.buildLines(width)
     row("any other target", string.format("%.0f", bs.hit),
       string.format("%d dmg × 14 × (%d personality + %d%% backstab) / 100%s", bs.weapon, bs.personality, bs.skill,
         bs.gear ~= 0 and string.format(" + %d gear", bs.gear) or ""))
+    -- what it really did on the practice dummy (full health: a healthy target), your melee in the same round taken out
+    local okD, dl = pcall(M.dummyLog, false)
+    local rec = okD and type(dl) == "table" and dl.backstab
+    if rec and (rec.n or 0) > 0 then
+      local avg = rec.sum / rec.n
+      row("on the dummy", string.format("%.0f", avg), string.format("measured: %d backstab%s, %.0f-%.0f · the formula's %+.0f%%",
+        rec.n, rec.n == 1 and "" or "s", rec.min or avg, rec.max or avg, (bs.healthy / avg - 1) * 100), C.title)
+    end
     local levers = M.backstabLevers()
     if #levers > 0 then
       out[#out + 1] = { { C.dim, "  what would raise it (on a healthy target · on any other):" } }
