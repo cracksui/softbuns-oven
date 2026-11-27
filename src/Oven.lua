@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.58"
+M.version = "1.99.59"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2244,9 +2244,41 @@ function M.formatters.score(raw, width)
     out[#out + 1] = { { C.dim, "Class path: " }, { C.item, table.concat(sc.path, " → ") } }
   end
 
+  -- attributes: 8 cells for up to the maximum; over it (gear, spells), the part above in green after them - about a
+  -- cell an eighth of the maximum - and the number green
+  local attrCells = {}
+  for _, a in ipairs(sc.attrs) do
+    local cur, max = tonumber(a[2]) or 0, tonumber(a[3]) or 0
+    local over = cur > max and max > 0
+    local segs = { { over and C.plus or C.num, string.format("%5s ", a[2] .. "/" .. a[3]) } }
+    -- (full only at the maximum: 17/18 isn't drawn as 18/18)
+    local filled = max > 0 and math.min(8, math.floor(8 * math.min(cur, max) / max)) or 0
+    segs[#segs + 1] = { C.slot, string.rep("█", filled) }
+    segs[#segs + 1] = { C.dim, string.rep("░", 8 - filled) }
+    if over then
+      segs[#segs + 1] = { C.plus, string.rep("█", math.min(4, math.max(1, math.floor(8 * (cur - max) / max + 0.5)))) }
+    end
+    attrCells[#attrCells + 1] = { a[1], segs }
+  end
+  -- (how wide the attributes' grid is: the pools' gauges reach its right edge)
+  local gridW
+  if #attrCells > 0 then
+    local kw, vw = 0, 0
+    for _, c in ipairs(attrCells) do kw = math.max(kw, ulen(c[1])); vw = math.max(vw, segLen(c[2])) end
+    local cellW = kw + 2 + vw
+    if width >= cellW * 2 + 3 and #attrCells > 1 then
+      -- (two columns: to where the right-hand one's widest value ends - grid() lays them out so)
+      local rightW = 0
+      for n = 2, #attrCells, 2 do rightW = math.max(rightW, segLen(attrCells[n][2])) end
+      gridW = cellW + 3 + kw + 2 + rightW
+    else
+      gridW = cellW
+    end
+  end
+
   if #sc.pools > 0 then
     blank(out)
-    local gw = math.max(10, math.min(30, width - 20))
+    local gw = gridW and math.max(10, gridW - 14) or math.max(10, math.min(30, width - 20))
     for _, v in ipairs(sc.pools) do
       local row = { { poolColor[v[1]] or C.key, pad(poolLabel[v[1]] or v[1], 4) },
                     { C.num, string.format("%9s ", v[2] .. "/" .. v[3]) } }
@@ -2255,15 +2287,9 @@ function M.formatters.score(raw, width)
     end
   end
 
-  if #sc.attrs > 0 then
+  if #attrCells > 0 then
     subhead(out, "Attributes  (current/max)")
-    local cells = {}
-    for _, a in ipairs(sc.attrs) do
-      local segs = { { C.num, string.format("%5s ", a[2] .. "/" .. a[3]) } }
-      addAll(segs, gauge(a[2], a[3], 8, C.slot))
-      cells[#cells + 1] = { a[1], segs }
-    end
-    grid(out, cells, width)
+    grid(out, attrCells, width)
   end
 
   if #sc.ratings > 0 then
@@ -2301,15 +2327,16 @@ function M.formatters.score(raw, width)
   -- kill record, spelled out
   if sc.mobKills or sc.pkKills or sc.marks then
     subhead(out, "Record")
+    -- "Creatures   killed / died by  4,441 / 68"
     local function kd(label, k, d)
-      out[#out + 1] = { { C.key, pad(label, 12) }, { C.text, "you killed " }, { C.plus, pad(k, 5) },
-                        { C.text, "killed you " }, { C.minus, d } }
+      out[#out + 1] = { { C.key, pad(label, 15) }, { C.dim, "killed / died by  " }, { C.plus, k }, { C.dim, " / " },
+                        { tonumber((tostring(d):gsub(",", ""))) == 0 and C.num or C.minus, d } }
     end
     if sc.mobKills then kd("Creatures", sc.mobKills, sc.mobDeaths) end
     if sc.pkKills then kd("Players", sc.pkKills, sc.pkDeaths) end
     if sc.marks then
-      out[#out + 1] = { { C.key, pad("Marks", 12) }, { C.num, pad(sc.marks, 16) },
-                        { C.key, "Relationships " }, { C.num, sc.rel } }
+      out[#out + 1] = { { C.key, pad("Marks", 15) }, { C.num, sc.marks } }
+      out[#out + 1] = { { C.key, pad("Relationships", 15) }, { C.num, sc.rel } }
     end
   end
 

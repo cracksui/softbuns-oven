@@ -5421,6 +5421,38 @@ def trips_dont_loop():
 
 
 @test
+def score_display():
+    # the score: HP/SP/ST bars reach the attributes' right edge; an attribute over its maximum shows the part above in
+    # green; the record as "killed / died by  4,441 / 68"
+    o = Oven()
+    o.L.globals().RAW = o.L.table_from([
+        "Player Information for: Tester the Brave",
+        "  Class Level:        50        Total Level:    170",
+        "  Race:               human     Gender:         female",
+        "  Hit Points:       1249/1287   Practices:      79",
+        "  Spell Points:       35/1440   Quest Points:   5,915 (142 quests)",
+        "  Stamina:           785/1370   Reputation:     100 (Saint)",
+        "  Strength:           25/22     Vitality:       14/19",
+        "  Knowledge:          21/21     Luck:           12/17",
+        "  Sanity:             17/18",
+        "* You have killed 4,441 and been killed by 68 creatures.",
+        "* You have killed 0 and been killed by 0 players.",
+        "* You have attained 71 marks and 0 relationships.",
+    ])
+    o.lua("OUT = sbo.formatters.score(RAW, 100)")
+    rows = ["".join(str(seg[2]) for seg in row.values()) for row in o.ev("OUT").values()]
+    hp = next(r for r in rows if r.startswith("HP "))
+    strength = next(r for r in rows if r.startswith("Strength"))
+    assert len(hp) == max(len(r) for r in rows if r.startswith(("Strength", "Knowledge"))), (hp, strength)
+    left = strength.split("Vitality")[0]
+    assert left.count("█") == 9 and "░" not in left, strength   # (8 + 1 over the max)
+    sanity = next(r for r in rows if r.startswith("Sanity"))
+    assert sanity.count("░") == 1, sanity   # (17/18: not drawn full)
+    assert any(r.startswith("Creatures") and r.endswith("killed / died by  4,441 / 68") for r in rows), rows
+    assert any(r.startswith("Relationships  0") for r in rows), rows
+
+
+@test
 def map_header_shows_the_find():
     # a search shows a room elsewhere: the map's header names that room and its area (the world map: the map it's on),
     # not the room you're in; back on you, yours again
