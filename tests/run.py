@@ -3385,7 +3385,7 @@ def trip_stamina():
     st = 900
     for r in range(1, 10):
         st -= 4; at(r, st)
-    eq(round(o.ev("sbo.cfg.stCost.walk.avg")), 4, "walking: 4 a room")
+    eq(round(o.ev("sbo.cfg.stCost.walkin.avg")), 4, "walking in a place: 4 a room (learned apart from the wilds)")
     o.lua("sbo.running = { started = true, name = 'x' }")
     for r in range(10, 20):
         st -= 2; at(r, st)
@@ -5444,6 +5444,47 @@ def aardwolf_prompt():
     # Materia Magica: as before
     o.lua("getConnectionInfo = function() return 'materiamagica.com', 4000, true end")
     eq(o.ev("sbo.promptPattern()"), o.ev("sbo.MM_PROMPT"), "Materia Magica's own")
+
+
+@test
+def walk_rest_by_terrain():
+    # a walk in a place: roads and floors (learned there, or the terrain table's), not the wilds' average - swimming
+    # and mountains made that 10.5 a room; a walk through the wilds: the planner's stamina for its path
+    o = Oven()
+    o.lua("""sbo.mounted = function() return false end; sbo.stLevitating = function() return false end
+      sbo.cfg.stCost = { walk = { avg = 10.5, n = 6380 } }
+      sbo.cfg.stTerrain = { foot = { ['paved road'] = { avg = 1.4, n = 22 }, indoors = { avg = 1.8, n = 9 },
+        ['gravel road'] = { avg = 1.4, n = 12 }, ['salt water'] = { avg = 19.8, n = 171 } } }""")
+    eq(o.ev("sbo.stNeed('walk', 30)"), 383, "the old way: 30 x 10.5, with the margin")
+    eq(o.ev("sbo.stNeed('walkin', 30)"), 69, "in a place: 30 x 1.4 (roads and floors), with the margin")
+    o.lua("sbo.cfg.stCost.walkin = { avg = 2, n = 9 }")
+    eq(o.ev("sbo.stNeed('walkin', 30)"), 89, "learned there: 30 x 2")
+    eq(o.ev("sbo.stNeedFor(200)"), 250, "through the wilds: the path's own 200, with the margin")
+    o.lua("sbo.stNow = function() return nil end")
+    eq(o.ev("sbo.stShort(500)"), False, "stamina not known: no rest")
+
+
+@test
+def signposts_read_on_the_way():
+    # a signpost passed (its line seen, not read): read the next time a walk comes through - "look signpost", then
+    # the next step; one read already: straight through
+    o = Oven()
+    o.lua("""MAPSTUB({ [1] = { e = 2 }, [2] = { e = 3 }, [3] = {} }); getRoomName = function(id) return 'room ' .. id end
+      SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end
+      QCMD = nil; sbo.quietly = function(cmd, kind, fn) QCMD = cmd; QFN = fn end
+      sbo.cfg.signLook = true; sbo.mapRoom = 1; centerview = function() end""")
+    o.lua("sbo.signSeen(2)")
+    eq(o.ev("sbo.signToRead(2)"), True, "seen, not read")
+    o.lua("sbo.walk = { dirs = { 'e', 'e' }, path = { 2, 3 }, step = 1 }; sbo.walkStep()")
+    eq(list(o.ev("SENT").values()), ["e"], "the first step")
+    o.lua("gmcp.room = { info = { num = '2' } }; sbo.mapRoomId = function() return 2 end; sbo.onRoom()")
+    eq((o.ev("QCMD"), list(o.ev("SENT").values())), ("look signpost", ["e"]), "at it: read first, the next step waits")
+    o.lua("sbo.signSave(2, 'a weatherbeaten signpost', { rune = 'east' }); QFN()")
+    eq(list(o.ev("SENT").values()), ["e", "e"], "read: on")
+    eq(o.ev("sbo.signToRead(2)"), False, "and not again")
+    # read already: no stop
+    o.lua("sbo.signSeen(2)")
+    eq(o.ev("sbo.signToRead(2)"), False, "a read one isn't kept as unread")
 
 
 @test

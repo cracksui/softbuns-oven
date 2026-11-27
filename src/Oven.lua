@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.66"
+M.version = "1.99.67"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -195,6 +195,7 @@ local SCHEMA = {
   -- every setting change: when, what, and how (typed, or clicked / by Oven itself)
   "CREATE TABLE IF NOT EXISTS setting_log (id INTEGER PRIMARY KEY, t INTEGER, name TEXT, value TEXT, how TEXT)",
   "CREATE TABLE IF NOT EXISTS signposts (room INTEGER PRIMARY KEY, sign TEXT, dests TEXT, exact INTEGER, last INTEGER)",
+  "CREATE TABLE IF NOT EXISTS signs_seen (room INTEGER PRIMARY KEY, last INTEGER)",
   -- mobs seen in rooms (untagged; tagged ones are room_npcs). ok = 0: might be a player, not shown until
   -- the game confirms it's a mob (you targeted it: char.lasttargeted)
   "CREATE TABLE IF NOT EXISTS room_mobs (room INTEGER, key TEXT, text TEXT, seen INTEGER, last INTEGER, ok INTEGER, vnum INTEGER, race TEXT, PRIMARY KEY (room, key))",
@@ -14633,7 +14634,7 @@ function M.onRoom()
         elseif M.whereAfterWalk then local q = M.whereAfterWalk; M.whereAfterWalk = nil; tempTimer(0.5, function() pcall(M.whereGo, q) end)
         else M.notifyWalk("arrived") end
       else
-        M.walkStep()
+        M.signThen(id, M.walkStep)   -- (a signpost here not read yet: read on the way)
       end
     elseif id ~= w.from then
       M.walk = nil
@@ -14661,7 +14662,7 @@ function M.onRoom()
     if W.wildOnly and type(info) == "table" and tostring(info.wilds) ~= "true" then
       M.dirWalk = nil
       if W.done then pcall(W.done) end
-    elseif W.i > 1 then M.dirWalkStep() end
+    elseif W.i > 1 then M.signThen(id, M.dirWalkStep) end
   end
   pcall(M.shopOnArrive, id)
   if M.travel then pcall(M.travelOnRoom, id) end
@@ -17398,6 +17399,31 @@ end
 
 -- a signpost in the room you're in that Oven hasn't read: look at it quietly, once you're idle
 M.signTried = M.signTried or {}
+-- signposts passed and not read (a walk's next step goes the moment the room's known - before its text says a
+-- signpost's there): kept, and read the next time a walk or trip comes through - a moment's stop, once each
+function M.signSeen(room)
+  room = tonumber(room)
+  if not room then return end
+  local known = M.signAt(room)
+  if known and known.looked then return end
+  M.dbx("INSERT OR REPLACE INTO signs_seen (room, last) VALUES (%s, %s)", room, os.time())
+end
+function M.signToRead(room)
+  room = tonumber(room)
+  if not room or M.signTried[room] or not M.cfg.signLook then return false end
+  if not M.dbRow("SELECT room FROM signs_seen WHERE room = %s", room) then return false end
+  local known = M.signAt(room)
+  return not (known and known.looked)
+end
+-- here, a signpost not read yet: read it, then fn (a walk's next step, a run on); else fn straight away
+function M.signThen(room, fn)
+  if not (M.signToRead(room) and room == M.mapRoom) then return fn() end
+  M.signTried[room] = true
+  M.quietly("look signpost", "item", function()
+    if M.signAt(room) and M.signAt(room).looked then M.dbx("DELETE FROM signs_seen WHERE room = %s", room) end
+    fn()
+  end)
+end
 function M.signAutoLook(room, promptLine)
   if not M.cfg.signLook or not room or M.signTried[room] or room ~= M.mapRoom then return end
   local known = M.signAt(room)
@@ -17464,6 +17490,14 @@ function M.runStopped(atSign)
     if roomExists(here) and roomExists(R.target) and getPath(here, R.target) then far = #speedWalkDir end
     if here ~= R.lastStop and far > M.RUN_SAVES and (R.restarts or 0) < 6 then
       M.notifyWalk(string.format("run %s stopped at a signpost on the way (%d steps to go) - running on", R.name, far))
+      -- (stopped at one anyway: read it first, if it's not been)
+      local known = M.signAt(here)
+      if M.cfg.signLook and not (known and known.looked) and not M.signTried[here] then
+        M.signTried[here] = true
+        return M.quietly("look signpost", "item", function()
+          M.runStart(R.name, R.target, { restarts = (R.restarts or 0) + 1, lastStop = here })
+        end)
+      end
       return M.runStart(R.name, R.target, { restarts = (R.restarts or 0) + 1, lastStop = here })
     end
   end
@@ -17551,6 +17585,7 @@ M.addBlockReader("signpost_runs", "*", function(b)
     end)
   end
   if sign and next(sign.dests) then M.noteSignpost(sign) end
+  if atSign and M.mapRoom then pcall(M.signSeen, M.mapRoom) end
   if atSign and b.prompt and M.mapRoom then
     local room, p = M.mapRoom, b.lines[#b.lines]
     tempTimer(0, function() pcall(M.signAutoLook, room, p) end)
@@ -19957,7 +19992,11 @@ function M.tripContinue()
   -- stopped at)
   local leg = plan.legs[1]
   local j = 2
-  while leg.kind == "wild" and plan.legs[j] and plan.legs[j].kind == "wild" do leg.to = plan.legs[j].to; j = j + 1 end
+  while leg.kind == "wild" and plan.legs[j] and plan.legs[j].kind == "wild" do
+    leg.to = plan.legs[j].to
+    leg.cost = (leg.cost or 0) + (plan.legs[j].cost or 0)
+    j = j + 1
+  end
   -- (for the prompt bar: legs taken so far, and the plan's legs left - walks or wilds one after another count once)
   local left = 0
   for i = j, #plan.legs do
@@ -19982,7 +20021,7 @@ function M.legStart(leg, T)
     local pd, pp = M.legPath(leg)
     if pd and leg.from == M.mapRoom then speedWalkDir, speedWalkPath = pd, pp
     elseif not getPath(M.mapRoom, leg.to) then M.trip = nil; return M.notifyWalk("stopped: no way on the map to " .. (getRoomName(leg.to) or ("#" .. leg.to))) end
-    local need = M.stNeed("walk", #speedWalkDir)
+    local need = M.stNeed("walkin", #speedWalkDir)
     if M.stShort(need) and not T.stOk then
       return M.stRest(need, function() if M.trip == T then T.stOk = true; M.legStart(leg, T) end end,
         "before the walk to " .. (getRoomName(leg.to) or ("#" .. leg.to)))
@@ -19993,6 +20032,15 @@ function M.legStart(leg, T)
     M.walk = { dirs = dirs, path = path, step = 1, thenDo = cont }
     return M.walkStep()
   elseif k == "wild" then
+    -- (short of what the planner says this path takes: rest first, as before a run)
+    if not T.stOk then
+      local need = M.stNeedFor(leg.cost)
+      if M.stShort(need) then
+        return M.stRest(need, function() if M.trip == T then T.stOk = true; M.legStart(leg, T) end end,
+          "before the walk through the wilds")
+      end
+    end
+    T.stOk = nil
     local p, q = M.worldPos(M.mapRoom), M.worldPos(leg.to)
     local dirs = p and q and p.map == q.map and M.gridLegDirs(p.map, p.x, p.y, q.x, q.y, M.GRID_LEG_MAX)
     if not dirs or #dirs == 0 then M.trip = nil; return M.notifyWalk("stopped: no way through the wilds from here") end
@@ -20098,7 +20146,11 @@ function M.stLearnRoom()
   local rooms = (x and y and prev.x and prev.y) and math.max(1, math.abs(x - prev.x), math.abs(y - prev.y)) or 1
   local drop = (prev.st - st) / rooms
   if drop <= 0 or drop > 200 then return end   -- regained, or something else took it
-  local kind = ((prev.run and M.running and M.running.started) and "run" or "walk") .. (M.stLevitating() and "+lev" or "")
+  -- (a walk in a place - towns, inside: roads and floors - is learned apart from the wilds', where swimming and
+  -- mountains make a room cost several times as much)
+  local inPlace = type(info) == "table" and tostring(info.wilds) ~= "true"
+  local kind = ((prev.run and M.running and M.running.started) and "run" or (inPlace and "walkin" or "walk"))
+    .. (M.stLevitating() and "+lev" or "")
   M.cfg.stCost = M.cfg.stCost or {}
   local c = M.cfg.stCost[kind] or { avg = drop, n = 0 }
   c.n = c.n + 1
@@ -20122,11 +20174,38 @@ function M.stRunFix()
   if M.cfg.stCost then M.cfg.stCost.run, M.cfg.stCost["run+lev"] = nil, nil end
   for _, T in pairs(M.cfg.stTerrain or {}) do if type(T) == "table" then T["@run"] = nil end end
 end
+-- a room of a walk in a place: as learned there (after 5 moves); till then what roads and floors cost on foot
+-- (the terrain table: paved road, indoors...); else nil
+M.PLACE_TERRAINS = { "paved road", "gravel road", "dirt road", "indoors", "city", "inside", "road" }
+function M.stWalkInPerRoom(k)
+  local per = M.stPerRoom(k or "walkin")
+  if per then return per end
+  local foot = (M.cfg.stTerrain or {}).foot or {}
+  local v = {}
+  for _, t in ipairs(M.PLACE_TERRAINS) do
+    local e = foot[t]
+    if e and (e.n or 0) >= 2 then v[#v + 1] = e.avg end
+  end
+  if #v == 0 then return nil end
+  table.sort(v)
+  return v[math.ceil(#v / 2)]
+end
+-- the stamina a walk through the wilds needs: what the planner worked out for its path (terrain by terrain), with
+-- the same margin; nil when not to check (riding, sbo config go.rest off, not known)
+function M.stNeedFor(cost)
+  if M.cfg.tripRest == false or M.mounted() or not cost or cost <= 0 then return nil end
+  return math.ceil(cost * 1.15) + 20
+end
 function M.stNeed(kind, rooms)
   if M.cfg.tripRest == false or M.mounted() or not rooms or rooms <= 0 then return nil end
   local k = M.stLevitating() and (kind .. "+lev") or kind
-  local per = M.stPerRoom(k)
-  if not per and k ~= kind then per = M.stPerRoom(kind) end
+  local per
+  if kind == "walkin" then
+    per = M.stWalkInPerRoom(k) or (k ~= kind and M.stWalkInPerRoom(kind)) or nil
+  else
+    per = M.stPerRoom(k)
+    if not per and k ~= kind then per = M.stPerRoom(kind) end
+  end
   if not per then return nil end
   local c = { avg = per }
   return math.ceil(rooms * c.avg * 1.15) + 20   -- a margin: terrain differs
@@ -20193,7 +20272,9 @@ end
 -- short of stamina for a leg, enough to be worth resting first: under what it needs and under half your
 -- maximum (with more, you go - a run that runs out stops "Exhausted…", and Oven rests there)
 function M.stShort(need)
-  local st, mx = M.stNow() or 0, M.stMax()
+  -- (stamina not known: no reason to rest)
+  if not M.stNow() then return false end
+  local st, mx = M.stNow(), M.stMax()
   return need ~= nil and st < need and (not mx or st < mx / 2)
 end
 -- `what`: the leg it's for ("before the run to lasler"), in the message
