@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.67"
+M.version = "1.99.68"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -19997,6 +19997,43 @@ function M.tripContinue()
     leg.cost = (leg.cost or 0) + (plan.legs[j].cost or 0)
     j = j + 1
   end
+  -- in a place inside another (a realty, in its town), the way on walking out into that other place: where is exit
+  -- FIRST - the game's own path out, walked - and planned again where it comes out (the town: its gate toward where
+  -- you're going, as planned). Out of a town straight into the wilds: the gate the planner chose (where is exit gives
+  -- the nearest, maybe the wrong side of town). The game gives none: the walk planned (once a room)
+  -- (the wilds: the game's numbering, or an area set as the wilds - a test's map)
+  local function outside(r)
+    return M.isWildRoom(r) or (M.wildAreas and roomExists(r) and M.wildAreas[getRoomArea(r)]) and true or false
+  end
+  if not outside(here) then
+    local hk = M.placeKey(here)
+    local leaves = false
+    -- (the first room out of this place on the way: another place - nested - or the wilds - straight out)
+    local function firstOut(L)
+      if L.kind == "walk" then
+        local _, path = M.legPath(L)
+        for _, r in ipairs(path or {}) do
+          r = tonumber(r)
+          if r and (outside(r) or M.placeKey(r) ~= hk) then return r end
+        end
+      end
+      if outside(L.to) or M.placeKey(L.to) ~= hk then return L.to end
+    end
+    for _, L in ipairs(plan.legs) do
+      if L.kind == "walk" or L.kind == "step" then
+        local out = firstOut(L)
+        if out then
+          if not outside(out) then leaves = true end   -- (into another place: where is exit)
+          break                                              -- (straight into the wilds: as planned)
+        end
+      else break end
+    end
+    T.exitTried = T.exitTried or {}
+    if leaves and hk and not T.exitTried[here] then
+      T.exitTried[here] = true
+      if leg.kind ~= "whereout" then leg = { kind = "whereout", from = here, fallback = leg } end
+    end
+  end
   -- (for the prompt bar: legs taken so far, and the plan's legs left - walks or wilds one after another count once)
   local left = 0
   for i = j, #plan.legs do
@@ -20076,7 +20113,11 @@ function M.legStart(leg, T)
     return M.quietly("where is exit", "where", function(lines)
       if M.trip ~= T then return end
       local dirs = M.whereDirs(lines, "exit")
-      if not dirs then M.trip = nil; return M.notifyWalk("stopped: the game didn't say where the exit is") end
+      if not dirs then
+        -- (no exit the game knows: the walk planned, else stopped)
+        if leg.fallback then return M.legStart(leg.fallback, T) end
+        M.trip = nil; return M.notifyWalk("stopped: the game didn't say where the exit is")
+      end
       M.walkDirs(dirs, cont)
     end)
   elseif k == "run" then

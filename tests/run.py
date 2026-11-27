@@ -2717,6 +2717,9 @@ MAP_GAME = r"""
   getRoomName = function(id) return id == 250 and "Runic Highway" or ("Room " .. tostring(id)) end
   getRoomAreaName = function(a) return a == 3 and "Towne of Rune" or ("Area " .. tostring(a)) end
   centerview = function() end; highlightRoom = function() end; unHighlightRoom = function() end
+  -- (this map's wilds are area 1, rooms 100-250 - the game's are numbered from 1,000,000: for the trips' "out of a
+  -- place into another" rule)
+  sbo.wildAreas = { [1] = true }
   MAPSTUB(EXITS)
   HERE = 1
   local function at(id)
@@ -5444,6 +5447,35 @@ def aardwolf_prompt():
     # Materia Magica: as before
     o.lua("getConnectionInfo = function() return 'materiamagica.com', 4000, true end")
     eq(o.ev("sbo.promptPattern()"), o.ev("sbo.MM_PROMPT"), "Materia Magica's own")
+
+
+@test
+def realty_where_is_exit_first():
+    # a realty inside its town, the town onto the wilds: in the realty, the way out leading into the town - where is
+    # exit FIRST, the game's path walked; in the town, out to the wilds by the gate planned (not where is exit)
+    o = Oven()
+    o.lua("""-- realty 1-2 (area 5), town 3-5 (area 2), the wilds 100-104 (area 1)
+      local E = { [1] = { e = 2 }, [2] = { w = 1, s = 3 }, [3] = { n = 2, e = 4 }, [4] = { w = 3, e = 5 }, [5] = { w = 4, e = 100 },
+        [100] = { w = 5, e = 101 }, [101] = { w = 100, e = 102 }, [102] = { w = 101, e = 103 }, [103] = { w = 102, e = 104 }, [104] = { w = 103 } }
+      MAPSTUB(E)
+      local AREA = {}
+      for id in pairs(E) do AREA[id] = id <= 2 and 5 or (id <= 5 and 2 or 1) end
+      getRoomArea = function(id) return AREA[tonumber(id)] end
+      getRoomAreaName = function(a) return ({ [5] = 'Sigil Realty', [2] = 'Sigil', [1] = 'Alyria' })[a] end
+      getRoomName = function(id) return 'room ' .. id end
+      sbo.wildAreas = { [1] = true }; centerview = function() end
+      SENT = {}; sbo.sendOwn = function(c) SENT[#SENT+1] = c end
+      QCMD = nil; sbo.quietly = function(cmd, kind, fn) QCMD = cmd; QFN = fn end
+      sbo.recallToAsk = function() return false end
+      sbo.mapRoom = 1; gmcp.room = { info = { num = '1', wilds = 'false' } }
+      sbo.trip = { targets = { 104 }, used = {}, legs = 0 }; sbo.tripContinue()""")
+    eq(o.ev("QCMD"), "where is exit", "in the realty: where is exit first")
+    o.lua("QCMD = nil; QFN({ 'You sense that exit may be located e, s.' })")
+    eq(list(o.ev("SENT").values()), ["e"], "the game's path, walked")
+    o.lua("""sbo.mapRoom = 2; gmcp.room.info = { num = '2', wilds = 'false' }; sbo.mapRoomId = function() return sbo.mapRoom end; sbo.onRoom()
+      sbo.mapRoom = 3; gmcp.room.info = { num = '3', wilds = 'false' }; sbo.onRoom(); runTimers()""")
+    eq(o.ev("QCMD"), None, "in the town: no where is exit - out by the gate planned")
+    assert "e" in list(o.ev("SENT").values())[2:], list(o.ev("SENT").values())
 
 
 @test
