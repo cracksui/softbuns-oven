@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.71"
+M.version = "1.99.72"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -8842,6 +8842,14 @@ end
 -- this build's results (made when written to; nil to a reader when there are none)
 local function log(create)
   local d = store()
+  -- (before 1.99.71 a backstab was measured by the melee seen when it landed, and a kick after a refused one counted
+  -- as it - kept without its rounds, it can't be measured again: afresh, once)
+  if not d.rawRounds then
+    d.rawRounds = true
+    for _, b in pairs(d.builds or {}) do
+      if type(b) == "table" and b.backstab and not b.backstab.raw then b.backstab = nil end
+    end
+  end
   -- (before 1.99.70 a dummy's melee mixed in backstab rounds, and backstabs came out near nothing: both afresh, once)
   if not d.meleeByHit then
     d.meleeByHit = true
