@@ -402,7 +402,7 @@ def help_paged():
     o.lua('''
       local function B(cmds, lines) sbo.onBlock({ cmds = cmds, lines = lines, prompt = true }) end
       B({ "help elf" }, { "[1100 ] ELF", "elf - a graceful playable race", "Elves deal 15% more damage with piercing weapons.", "Maximum racial stats", "Strength: 15  Agility: 21", "<prompt>" })
-      sbo.cap = { kind = "help" }
+      sbo.cap = { kind = "help", helpStarted = true }
       B({ "" }, { "Wisdom: 19  Luck: 17", "<prompt>" })
       sbo.cap = nil
       B({ "n" }, { "You walk north.", "<prompt>" })''')
@@ -3974,6 +3974,46 @@ def help_ends_at_see_also():
     assert any("[1132] description" in g for g in gagged), "the help page itself went to the Help tab"
     page = o.ev("WIDGETS[sbo.helpPg.prefix .. sbo.helpPg.flip .. 'Label'].html") or ""
     assert "Great North Road" not in page and "LOOK" in page, "the Help tab has only the help page"
+
+
+@test
+def help_waits_for_its_page():
+    # running: help typed, the next room (and another command's answer) arrives before the page -
+    # they stay in the main window, the page alone goes to the Help tab
+    room = [" Ayara Lake                                             NW     N     NE",
+            "(-------------------------------------------------)     W <---(M)---> E",
+            "                                                        SW     S     SE",
+            "",
+            "        ~~~~~~~~~~~~~~~",
+            "~~~~~~~~~~~~~~~@~~~~~~~~~~~~~~~",
+            "        ~~~~~~~~~~~~~~~",
+            "A small speckled fish darts in and out of view."]
+    page = ["[1345 ] BACKSTAB", "Last Updated [Tue Dec 17 15:06:29 2024]",
+            "*Combat proficiency (10% complexity)", "*(No Specific Target) target, 2 second usage time",
+            "", "Backstab is an attack from behind.", "", "SEE ALSO:", " [1347] dodge - move out of the way of an attack"]
+    for before in (room, ["Whom do you wish to kick?"], room + ["<270hp 550sp 401st>"] + room):
+        o = Oven()
+        o.lua('''sbo.cfg.window = true; sbo.cfg.promptPattern = "<%d+hp"; GAGGED = {}
+          deleteLine = function() GAGGED[#GAGGED + 1] = line end''')
+        o.lua('sbo.onSend(nil, "help backstab")')
+        o.feed(*before)
+        o.feed("<270hp 550sp 401st>")
+        o.feed(*page)
+        o.feed("<270hp 550sp 401st>")
+        o.L.execute("runTimers()")
+        gagged = [g for g in o.ev("GAGGED").values() if not g.startswith("<270hp")]
+        assert not any(g in before for g in gagged if g.strip()), f"taken off the main screen: {[g for g in gagged if g in before]}"
+        assert "[1345 ] BACKSTAB" in gagged and "Backstab is an attack from behind." in gagged, f"the page went to the Help tab: {gagged}"
+        html = o.ev("WIDGETS[sbo.helpPg.prefix .. sbo.helpPg.flip .. 'Label'].html") or ""
+        assert "BACKSTAB" in html and "Ayara" not in html and "kick" not in html, "the Help tab has only the page"
+    # other help replies start it too
+    for first in ("2 help entries match the specified search criteria. To view a specific",
+                  "These help entries match your specified search criteria. To view a specific",
+                  "There were no direct matches for your search criteria. Here are some possible",
+                  "That help entry does not exist."):
+        assert Oven().ev('sbo.helpOpener(%r)' % first), first
+    for other in ("Whom do you wish to kick?", "You do not see that here.", "Bob tells you 'help me'", "[CLAN] Bob: 'help'"):
+        assert not Oven().ev('sbo.helpOpener(%r)' % other), other
 
 
 @test

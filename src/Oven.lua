@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.72"
+M.version = "1.99.73"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11661,6 +11661,20 @@ M.shapes = {
     if t:match("^Phase %d+:") or t:match(" consists of:$") or t:match("^This quest ") then return true end
     return not M.looksLikeActivity(t)
   end,
+  -- a help reply starts with one of the game's own openers; until one comes, whatever arrives (the room
+  -- you ran into, "Whom do you wish to kick?") is another command's and stays in the main window
+  help = function(t, l, cap)
+    if not cap.helpStarted then
+      if not M.helpOpener(t) then return false end
+      cap.helpStarted = true
+      -- the page's own time starts now
+      if cap.maxTimer then killTimer(cap.maxTimer) end
+      cap.maxTimer = tempTimer(M.cfg.maxTime, function() M.finish("maxtime") end)
+      return true
+    end
+    -- the page itself is free text: only someone's activity after a pause isn't part of it
+    return not (M.looksLikeActivity(t) and now() - (cap.lastAt or 0) > 0.15)
+  end,
   affects = function(t)
     return t:match("^You are affected") or t:match("^You are not affected") or t:match("^%*")
       or t:match("^%a[%a ]-:%s") or t:match("^Total of") or t:match("^%[AFFECTS")
@@ -11676,6 +11690,13 @@ M.activity = {
   " drops ", " puts ", " gets ", " picks up ", " wears ", " wields ", " removes ", " gives ",
   " eats ", " drinks ", " is DEAD", " dies", "^You hear ", "^%[%a[%w%s]*%] ",
 }
+-- the first line of the game's reply to help: "[1345 ] BACKSTAB", "2 help entries match…", "These help entries
+-- match…", "That help entry does not exist.", "There were no direct matches…" - or any other line about help
+-- that isn't someone talking
+function M.helpOpener(t)
+  if t:match("^%[%s*%d+%s*%]%s+%S") or t:match("^There were no direct matches") then return true end
+  return t:lower():find("help", 1, true) ~= nil and not M.looksLikeActivity(t) and not M.chatFind(t)
+end
 function M.looksLikeActivity(t)
   for _, p in ipairs(M.activity) do
     if t:find(p, 1, p:sub(1, 1) ~= "^") then return true end
@@ -11685,7 +11706,8 @@ end
 
 function M.belongs(cap, l)
   local t = trim(l)
-  if t == "" then return true end
+  -- (a blank line before a help reply has begun is part of whatever came first, not the page)
+  if t == "" then return not (cap.kind == "help" and not cap.helpStarted) end
   local shape = M.shapes[cap.kind]
   local ok
   if shape then
@@ -12053,7 +12075,7 @@ M.addBlockKind("help", function(b)
     end
   end
   for _, c in ipairs(b.cmds) do if c:lower():match("^%s*help%s") then return { topic = c } end end
-  if M.cap and M.cap.kind == "help" then return { topic = M.cap.target or "" } end
+  if M.cap and M.cap.kind == "help" and M.cap.helpStarted then return { topic = M.cap.target or "" } end
 end)
 
 -- help pages teach Oven about classes and races: `help classes` (which group each class is in),
