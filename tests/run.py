@@ -6523,12 +6523,14 @@ def limbo_finds_down_and_answers_the_hermit():
       sbo.limboLine("Can you hear me?")
       assert(#sent == 4)
       sbo.limboLine("The wise old hermit asks, 'Would you like to be brought back to life?'")
-      assert(sent[5] == "say yes" and #sent == 5 and not sbo.limbo)
+      assert(sent[5] == "say yes" and #sent == 5 and sbo.limbo)
+      sbo.limboLine("The Powers take pity on you and restore your soul to your body.")
+      assert(not sbo.limbo and not sbo.limboMap)
     """)
 
 
 @test
-def limbo_resumes_after_a_stall_without_repeating_the_route():
+def limbo_recovers_from_a_stall_without_repeating_the_route():
     o = Oven()
     o.lua("""
       sent = {}
@@ -6555,12 +6557,51 @@ def limbo_resumes_after_a_stall_without_repeating_the_route():
       TICK()
       assert(table.concat(sent, ",") == "n,s,e")
       TICK()
-      assert(not sbo.limbo)
-      sbo.command("limbo")
+      assert(sbo.limbo.waiting)
       TICK()
-      assert(table.concat(sent, ",") == "n,s,e,w")
+      assert(table.concat(sent, ",") == "n,s,e,look")
+      sbo.limboLine(" A Maze of Twisty Passages          N")
+      TICK()
+      assert(table.concat(sent, ",") == "n,s,e,look,w")
       ROOM({}, "Ethereal Void")
       assert(not sbo.limbo and not sbo.limboMap)
+    """)
+
+
+@test
+def limbo_walks_past_180_moves_and_waits_at_a_closed_cycle():
+    o = Oven()
+    o.lua("""
+      sent = {}
+      sbo.sendOwn = function(cmd) sent[#sent + 1] = cmd end
+      function ROOM(id, exits)
+        gmcp.room = {info={num=id, name="A Maze of Twisty Passages", zone="Limbo Maze", exits=exits}}
+        sbo.limboRoom()
+      end
+      function TICK()
+        local id = sbo.limbo.timer
+        local callback = timers[id][2]
+        timers[id] = nil
+        callback()
+      end
+      ROOM(1, {e_realnum=2})
+      sbo.command("limbo")
+      for i = 2, 220 do
+        TICK()
+        assert(sent[#sent] == "e")
+        ROOM(i, {e_realnum=i + 1})
+      end
+      TICK()
+      ROOM(221, {w_realnum=1})
+      assert(#sent == 220 and sbo.limbo.waiting)
+      TICK()
+      assert(sent[221] == "look")
+      ROOM(221, {w_realnum=1})
+      TICK()
+      assert(sent[222] == "look" and sbo.limbo.waiting)
+      ROOM(221, {w_realnum=1, d_realnum=222})
+      TICK()
+      assert(sent[223] == "down")
     """)
 
 
@@ -6592,6 +6633,8 @@ def limbo_stop_cancels_a_scheduled_move():
       sbo.command("limbo")
       timer = sbo.limbo.timer
       sbo.onSend("sysDataSendRequest", "look")
+      assert(sbo.limbo and timers[timer])
+      sbo.command("stop")
       assert(not sbo.limbo and not timers[timer])
     """)
 

@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.81"
+M.version = "1.99.82"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11676,7 +11676,6 @@ function M.onSend(_, cmd)
   if own and own > 0 then M.ownCmds[cmd] = (own > 1) and (own - 1) or nil
   else
     M.lastUserCmdAt = now()
-    if M.limbo then M.stopLimbo("stopped exploring Limbo Maze (you typed)") end
     if M.goAsk then
       local okA, mine = pcall(M.goAnswer, cmd)
       if okA and mine then pcall(denyCurrentSend); return end
@@ -14921,30 +14920,54 @@ function M.startLimbo()
     return say("finish or stop the current action before sbo limbo")
   end
   M.limboMap = M.limboMap or { rooms = {}, byExits = {}, blocked = {}, unknown = 0 }
-  M.limbo = { map = M.limboMap, steps = 0 }
+  M.limbo = { map = M.limboMap, tried = {} }
   M.limboRoom()
+end
+
+-- If the server goes quiet or the known graph is exhausted, ask for fresh room data
+-- without issuing another movement command blindly.
+local function waitForRoom(L)
+  if L.timer then killTimer(L.timer) end
+  L.waiting = true
+  L.timer = tempTimer(8, function()
+    if M.limbo ~= L then return end
+    M.sendOwn("look", false)
+    if M.limbo == L and L.waiting then waitForRoom(L) end
+  end)
 end
 
 function M.limboRoom()
   local L = M.limbo
   local info = M.gmcpGet("room.info")
-  local inside = type(info) == "table" and info.zone == "Limbo Maze"
+  if type(info) ~= "table" or not info.zone then
+    if L and not L.waiting then waitForRoom(L) end
+    return
+  end
+  local inside = info.zone == "Limbo Maze"
   if not inside then M.limboMap = nil end
   if not L then return end
   if L.hermit then
-    if not inside or exitKey(info) ~= L.key then L.arrived = true end
+    if not inside and info.plane ~= "ethereal" then
+      return M.stopLimbo("left Limbo Maze")
+    end
+    if exitKey(info) ~= L.key then L.arrived = true end
     return
   end
   if not inside then return M.stopLimbo("left Limbo Maze") end
   local exits = info.exits
-  if type(exits) ~= "table" then return M.stopLimbo("Limbo Maze: no exit data from the game") end
+  if type(exits) ~= "table" then
+    if not L.waiting then waitForRoom(L) end
+    return
+  end
   local key = exitKey(info)
-  if not L.next and L.timer then return end
-  if L.next and L.key == key then return end
+  if L.key == key and L.timer and not L.retryRoom then return end
   if L.timer then killTimer(L.timer); L.timer = nil end
+  L.waiting, L.retryRoom = nil, nil
   local map = L.map
   local real = tonumber(info.num)
-  local room = (real and real > 0 and real) or L.next or map.byExits[key] or M.tempRealnum(info)
+  local known = map.byExits[key]
+  local room = (real and real > 0 and real) or known or L.next or M.tempRealnum(info)
+  if not known then L.tried = {} end
   if not room then map.unknown = map.unknown - 1; room = map.unknown end
   L.room, L.next, L.key = room, nil, key
   map.byExits[key] = room
@@ -14966,7 +14989,7 @@ function M.limboRoom()
       local node = queue[head]
       head = head + 1
       for _, edge in ipairs(map.rooms[node.room]) do
-        if not seen[edge.to] then
+        if not seen[edge.to] and not (L.tried[node.room] or {})[edge.dir] then
           local first = node.first or edge
           if not map.rooms[edge.to] then dir, dest = first.dir, first.to; break end
           seen[edge.to] = true
@@ -14974,17 +14997,25 @@ function M.limboRoom()
         end
       end
     end
-    if not dir then return M.stopLimbo("Limbo Maze: no unexplored exit leads on from here") end
+    if not dir then
+      say("Limbo Maze: no reachable unexplored exits in the room data; waiting for a change")
+      return waitForRoom(L)
+    end
   end
-  if L.steps >= 180 and dest then return M.stopLimbo("Limbo Maze: paused after 180 moves; sbo limbo resumes") end
   L.timer = tempTimer(0.2, function()
     if M.limbo ~= L then return end
-    L.steps, L.next, L.hermit, L.direction = L.steps + 1, dest, not dest, dir
+    L.next, L.hermit, L.direction = dest, not dest, dir
+    if dest then
+      L.tried[L.room] = L.tried[L.room] or {}
+      L.tried[L.room][dir] = true
+    end
     L.timer = tempTimer(L.hermit and 25 or 8, function()
       if M.limbo == L then
-        if not L.hermit then blockMove(L) end
-        M.stopLimbo(L.hermit and "Limbo Maze: no question heard; answer the hermit yourself if asked"
-          or "Limbo Maze: no room update after " .. dir .. "; sbo limbo resumes by another exit")
+        L.timer = nil
+        if L.hermit then return waitForRoom(L) end
+        blockMove(L)
+        L.next, L.retryRoom = nil, true
+        waitForRoom(L)
       end
     end)
     M.sendOwn(dir, false)
@@ -15004,13 +15035,17 @@ function M.limboLine(text)
     L.timer, L.next, L.hermit = nil, nil, nil
     return M.limboRoom()
   end
-  if not L.hermit then return end
+  if L.waiting and L.retryRoom and not L.hermit then
+    local info = M.gmcpGet("room.info")
+    if info and info.name and trim(text):sub(1, #info.name) == info.name then M.limboRoom() end
+  end
+  if not L.hermit or L.answered then return end
   local lower = text:lower()
   if (L.arrived or lower:find("hermit", 1, true)) and lower:find("?", 1, true)
       and (lower:find("back to life", 1, true) or lower:find("resurrect", 1, true)
            or lower:find("return to life", 1, true) or lower:find("restore your soul", 1, true)
            or lower:find("live again", 1, true)) then
-    M.stopLimbo()
+    L.answered = true
     M.sendOwn("say yes", false)
   end
 end
