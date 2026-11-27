@@ -15,6 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(HERE, "stubs"))
 import sql as stub_sql
+from pathlib import Path
 from lupa import lua51
 
 SRC = open(os.path.join(ROOT, "src", "Oven.lua"), encoding="utf-8").read().replace("@@REPO@@", "x/y")
@@ -4054,6 +4055,11 @@ def help_facts_laid_out():
     eq(got, want, "help facts")
     # a "* " bullet in a page's text (rules lists) isn't a fact
     eq(o.L.globals().FACTS(o.L.table_from(["* Anti-idle scripts."]), 60), " * Anti-idle scripts.", "a bullet")
+    shops = ["*'heal' is available for practice from the shop: 'Temple'.",
+             "    Only during daylight.",
+             "*'heal' is available for practice from the shop: 'Guild'."]
+    eq(o.L.globals().FACTS(o.L.table_from(shops), 60),
+       "|Practice at  Temple\n|               Only during daylight.\n|             Guild", "shop continuation")
 
 
 @test
@@ -6301,6 +6307,165 @@ def update_follows_main():
     sha, url = tip(f"0040{b} refs/heads/main-old\n003f{a} refs/heads/main\n0000")
     eq(sha, a, "latest commit on main")
     assert url.endswith(f"/{a}/VERSION"), url
+
+
+@test
+def background_capture_cancel_keeps_next_reply():
+    for kind, fetch in (("help", "helpFetch"), ("skills", "classFetch")):
+        o = Oven()
+        o.lua(f"""
+          sbo.quietNext = {{kind = "{kind}", fn = function() end}}
+          sbo.start("{kind}", "", "{kind}")
+          sbo.cap.idleTimer = tempTimer(0.4, function() sbo.finish("idle") end)
+          idle, hard = sbo.cap.idleTimer, sbo.cap.maxTimer
+          sbo.{fetch} = {{saved = 0}}
+          sbo.onSend("sysDataSendRequest", "score")
+        """)
+        eq(o.ev("sbo.cap.kind"), "score", "your reply is active")
+        assert o.ev("timers[idle] == nil and timers[hard] == nil")
+
+
+@test
+def go_prefers_routes_within_total_fare():
+    o = Oven()
+    o.lua("""
+      roomExists = function() return false end
+      sbo.worldPos = function() end
+      sbo.isWildRoom = function() return false end
+      sbo.allGates = function() return {} end
+      sbo.goldOnHand = function() return PURSE end
+      sbo.tripEdges = function()
+        return {
+          {from=1, to=2, weight=1, link={cost=7}},
+          {from=1, to=2, weight=2, link={cost=3}},
+          {from=2, to=3, weight=1, link={cost=6}},
+          {from=1, to=3, weight=5, link={cost=0}},
+        }
+      end
+      function PLAN(gold)
+        PURSE = gold
+        local p = sbo.planTrip(1, {3}, {})
+        return p.gold, #p.legs
+      end
+    """)
+    eq(o.ev("PLAN(nil)"), (13, 2), "unknown purse: cheapest stamina")
+    eq(o.ev("PLAN(10)"), (9, 2), "a slower leg leaves enough for the next ticket")
+    eq(o.ev("PLAN(8)"), (0, 1), "the whole route has to fit")
+    eq(o.ev("PLAN(0)"), (0, 1), "zero cash")
+
+
+@test
+def go_checks_matches_beyond_the_shortlist():
+    o = Oven()
+    o.lua("""
+      MAPSTUB({[1]={}, [10]={}, [20]={}})
+      getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne" end
+      getRoomName = function(id) return "room " .. id end
+      sbo.mapRoom = 1
+      sbo.recallToAsk = function() return false end
+      sbo.goldOnHand = function() return 5 end
+      function OFFER(tooDear)
+        sbo.planTrip = function(_, ids)
+          if ids[1] == 2 and tooDear then
+            return {gold=10, cost=1, legs={{kind="step", from=1, to=10, cmd="e"}}}
+          end
+          if ids[1] == 10 then
+            return {gold=0, cost=2, legs={{kind="step", from=1, to=20, cmd="e"}}}
+          end
+        end
+        sbo.goToNow({2,3,4,5,6,7,8,9,10,20})
+        return sbo.goAsk.id[1]
+      end
+    """)
+    eq(o.ev("OFFER(false)"), 20, "first shortlist disconnected")
+    eq(o.ev("OFFER(true)"), 20, "first shortlist unaffordable")
+
+
+@test
+def go_asks_again_when_the_approved_route_changes():
+    for changed in ("ride", "fare", "recall", "clan"):
+        o = Oven()
+        o.lua("""
+          MAPSTUB({[1]={}, [2]={}, [3]={}, [4]={}})
+          getRoomArea = function() return 1 end; getRoomAreaName = function() return "Towne" end
+          getRoomName = function(id) return "room " .. id end
+          sbo.mapRoom = 1
+          sbo.recallToAsk = function() return false end
+          local step = {kind="step", from=1, to=2, cmd="e"}
+          local ride = {kind="ride", from=2, to=3, link={key="ticket", cost=5}}
+          initial = {cost=2, gold=5, legs={step, ride}}
+          replans = {
+            ride = {kind="ride", from=2, to=3, link={key="other", cost=5}},
+            fare = {kind="ride", from=2, to=3, link={key="ticket", cost=7}},
+            recall = {kind="recall", from=2, to=3, name="home"},
+            clan = {kind="clan", from=2, to=3},
+          }
+          sbo.planTrip = function() return initial end
+          started = {}
+          sbo.legStart = function(leg) started[#started+1] = leg end
+          sbo.goToNow(3)
+          function ANSWER(cmd)
+            assert(sbo.goAnswer(cmd))
+            local last = 0
+            for id in pairs(timers) do last = math.max(id, last) end
+            timers[last][2]()
+          end
+          ANSWER("y")
+          sbo.mapRoom = 2
+        """)
+        o.lua(f"""
+          local leg = replans.{changed}
+          sbo.planTrip = function() return {{cost=1, gold=sbo.legFare(leg), legs={{leg}}}} end
+          sbo.tripContinue()
+        """)
+        assert o.ev("sbo.trip == nil and sbo.goAsk.resume ~= nil and #started == 1"), changed
+        o.lua('ANSWER("y")')
+        eq(o.ev("#started"), 2, f"resumed after approving {changed}")
+        eq(o.ev("sbo.trip.legs"), 2, "kept the trip's progress")
+
+
+@test
+def stop_clears_trip_confirmation():
+    o = Oven()
+    o.lua('sbo.goAsk = {id = {42}, at = os.time(), trip = true}; sbo.command("stop")')
+    assert o.ev("sbo.goAsk == nil and not sbo.goAnswer('y')")
+
+
+@test
+def update_restores_oven_on_install_failure():
+    o = Oven()
+    home = Path(o.home)
+    (home / "Oven").mkdir()
+    (home / "oven_rollback").mkdir()
+    (home / "Oven" / "Oven.xml").write_text("working package")
+    o.lua("""
+      lfs = {mkdir = function() end}
+      installed = true
+      getPackages = function() return installed and {"Oven"} or {} end
+      uninstallPackage = function(pkg)
+        assert(pkg == "Oven")
+        installed = false
+        os.remove(getMudletHomeDir() .. "/Oven/Oven.xml")
+        return true
+      end
+      installPackage = function(path)
+        if path == "broken.mpackage" then return nil, "bad archive" end
+        assert(path == getMudletHomeDir() .. "/oven_rollback/Oven.xml")
+        local f = assert(io.open(path, "rb"))
+        assert(f:read("*a") == "working package")
+        f:close()
+        installed = true
+        sbo.updating = nil
+        return true
+      end
+      sbo.notify = function(msg) notice = msg end
+      sbo.installFrom("broken.mpackage")
+      local last = 0
+      for id in pairs(timers) do last = math.max(id, last) end
+      timers[last][2]()
+    """)
+    assert o.ev("installed")
+    assert "update failed: bad archive (restored v" in o.ev("notice")
 
 
 @test

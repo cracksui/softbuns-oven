@@ -147,8 +147,11 @@ way that costs the least stamina - your mount's while you ride. It joins up ever
   **worldgates** (where `time` says they are now) and **recall** - to where `recall list` says it goes from where
   you stand (Oven asks it there first, and learns each recall point's room the first time it lands you in it).
 
-A walk inside the place you're in just goes; anything more is shown first, a step a line, with the stamina
-it costs (and the gold, and whether you carry enough) - `y` goes, `n` stays. A place whose way in Oven
+A walk inside the place you're in just goes; longer trips show the route, estimated stamina and fare.
+Oven prefers a route you can afford when it knows how much gold you're carrying. Type `y` to go or `n`
+to stay. If a replan raises the fare or adds a paid ride, recall or clan-hall hop, Oven shows the new
+route and asks again. If the nearest matches for a name have no route you can take, Oven checks farther
+matches. A place whose way in Oven
 hasn't learned yet: it takes you to its spot on the world map and stops there for you to step in (that's
 learned, and next time it goes on in). Long walks rest first when your stamina is short.
 

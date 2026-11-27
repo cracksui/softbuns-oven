@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.74"
+M.version = "1.99.76"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -5442,7 +5442,7 @@ function M.helpFacts(dechoLines, cols)
         local label, value = p:match("^([%a][%w%s%-']-):%s+(%S.*)$")
         if shop then
           local from = ulen(p) - ulen(shop) - (p:match("%.$") and 2 or 1)
-          shops[#shops + 1] = sliceRuns(it.runs, from + 1, from + ulen(shop))
+          shops[#shops + 1] = { name = sliceRuns(it.runs, from + 1, from + ulen(shop)), subs = it.subs }
         elseif label and ulen((label:gsub(" this [%w%-]+$", ""))) <= 24 and not label:match(" is$") and not label:match(" are$") then
           rows[#rows + 1] = { label = label:gsub(" this [%w%-]+$", ""), labelRuns = sliceRuns(it.runs, 1, ulen(label)),
                               value = dropChars(it.runs, ulen(p) - ulen(value)), subs = it.subs }
@@ -5473,7 +5473,10 @@ function M.helpFacts(dechoLines, cols)
           .. r.label .. string.rep(" ", math.max(2, hang - ulen(r.label)))
         local pad = string.rep(" ", math.max(2, hang - ulen(r.label)) + ulen(r.label))
         if r.shops then
-          for k, sh in ipairs(r.shops) do addRuns(k == 1 and head or pad, sh, #pad) end
+          for k, sh in ipairs(r.shops) do
+            addRuns(k == 1 and head or pad, sh.name, #pad)
+            for _, sub in ipairs(sh.subs) do addRuns(pad .. "  ", sub, #pad + 2) end
+          end
         else
           addRuns(head, r.value, #pad)
           for _, sub in ipairs(r.subs) do addRuns(pad, sub) end
@@ -11630,6 +11633,14 @@ function M.userIdle(secs)
   return now() - (M.lastUserCmdAt or 0) >= (secs or 2)
 end
 
+function M.cancelCapture()
+  local cap = M.cap
+  if not cap then return end
+  if cap.idleTimer then killTimer(cap.idleTimer) end
+  if cap.maxTimer then killTimer(cap.maxTimer) end
+  M.cap = nil
+end
+
 function M.onSend(_, cmd)
   local own = M.ownCmds and M.ownCmds[cmd]
   pcall(M.stepWatch, cmd)
@@ -11658,8 +11669,7 @@ function M.onSend(_, cmd)
       M.classFetch = nil
       if C.timer then killTimer(C.timer) end
       if M.cap and M.cap.quiet and M.cap.kind == "skills" then
-        M.cap.gag, M.cap.quiet, M.cap.quietKind, M.cap.quietFn = false, false, nil, nil
-        M.cap = nil
+        M.cancelCapture()
       end
       M.quietNext = nil
       pcall(M.drawBar)
@@ -11670,8 +11680,7 @@ function M.onSend(_, cmd)
       M.helpFetch = nil
       if H.timer then killTimer(H.timer) end
       if M.cap and M.cap.quiet and M.cap.kind == "help" then
-        M.cap.gag, M.cap.quiet, M.cap.quietKind, M.cap.quietFn = false, false, nil, nil
-        M.cap = nil
+        M.cancelCapture()
       end
       M.quietNext = nil
       pcall(M.drawBar)
@@ -11694,9 +11703,7 @@ function M.onSend(_, cmd)
   -- still waiting on an earlier command of yours that got nothing back (its reply wasn't one Oven reads,
   -- "quest timer"): that wait is over - otherwise this command's reply would be read as the old one's
   if M.cap and #M.cap.plain == 0 and not M.cap.quiet and M.typedSend then
-    if M.cap.idleTimer then killTimer(M.cap.idleTimer) end
-    if M.cap.maxTimer then killTimer(M.cap.maxTimer) end
-    M.cap = nil
+    M.cancelCapture()
   end
   if M.cap then
     M.queue[#M.queue + 1] = { kind, target, cmd }
@@ -18305,9 +18312,9 @@ function M.mapRunNow(arg, planned)
       cands[#cands + 1] = t
     end
   end
-  table.sort(cands, function(a, b) return a.d < b.d end)
+  table.sort(cands, function(a, b) return a.d == b.d and a.id < b.id or a.d < b.d end)
   local ids = {}
-  for i = 1, math.min(#cands, M.GO_CANDIDATES) do ids[i] = cands[i].id end
+  for i, t in ipairs(cands) do ids[i] = t.id end
   if #cands > 1 then say(string.format("%d places for '%s' - planning the cheapest way to one of them (sbo map find %s lists them)", #cands, q, q))
   else say("going to " .. cands[1].why) end
   M.goTo(ids)
@@ -18357,8 +18364,20 @@ function M.goToNow(targets)
   if type(targets) ~= "table" then targets = { targets } end
   local here = M.mapRoom or M.currentRoom()
   if not here then return say("Oven doesn't know where you are yet - move one room first") end
-  local okP, plan = pcall(M.planTrip, here, targets, {})
-  if not okP then return say("couldn't plan the trip: " .. tostring(plan)) end
+  M.goAsk = nil
+  local plan, fallback
+  local gold = M.goldOnHand()
+  for first = 1, #targets, M.GO_CANDIDATES do
+    local batch = {}
+    for i = first, math.min(first + M.GO_CANDIDATES - 1, #targets) do batch[#batch + 1] = targets[i] end
+    local ok, result = pcall(M.planTrip, here, batch, {})
+    if not ok then return say("couldn't plan the trip: " .. tostring(result)) end
+    if result then
+      if not gold or (result.gold or 0) <= gold then plan = result; break end
+      fallback = fallback or result
+    end
+  end
+  plan = plan or fallback
   local function nm(id) return (roomExists(id) and getRoomName(id)) or ("#" .. tostring(id)) end
   -- (no way, or more than a walk here - below: where recall goes from here, first)
   if not plan and M.recallToAsk({}) and not M.goRecallAsked then
@@ -18367,6 +18386,7 @@ function M.goToNow(targets)
   end
   M.goRecallAsked = nil
   if not plan then
+    if #targets > 1 then return say("no known route to any of the " .. #targets .. " matches") end
     local hp, tp = M.worldPos(here), M.worldPos(targets[1])
     if hp and tp and hp.map ~= tp.map then
       return say(string.format("no way known from %s to %s yet - take a portal or gate between them once and Oven learns it", hp.map, tp.map))
@@ -18390,7 +18410,7 @@ function M.goToNow(targets)
   end
   if stays then
     M.notifyWalk(string.format("%d step%s…", leg1.n, leg1.n == 1 and "" or "s"))
-    return M.tripStart({ target })
+    return M.tripStart({ target }, M.tripApproval(plan))
   end
   -- more than a walk here: where recall goes from here, first (recall list), then planned again
   if M.recallToAsk({}) and not M.goRecallAsked then
@@ -18405,11 +18425,16 @@ function M.goToNow(targets)
     end
   end
   M.goGateChecked = nil
-  local lines, tail = M.planLines(plan)
-  M.goAsk = { id = { target }, at = os.time(), trip = true, route = M.planRoute(plan) }
-  if M.worldDraw then pcall(M.worldDraw) end
   local place = M.placeLabel(target)
-  M.sayPlan(string.format("%s%s - the way:", nm(target), place and (" (" .. place .. ")") or ""), lines, tail, "y to go, n to stay")
+  M.askTrip(plan, { target }, string.format("%s%s - the way:", nm(target), place and (" (" .. place .. ")") or ""))
+end
+
+function M.askTrip(plan, targets, title, resume)
+  local lines, tail = M.planLines(plan)
+  M.goAsk = { id = targets, at = os.time(), trip = true, route = M.planRoute(plan),
+              approval = M.tripApproval(plan), resume = resume }
+  if M.worldDraw then pcall(M.worldDraw) end
+  M.sayPlan(title, lines, tail, "y to go, n to stay")
 end
 -- a plan as world-map pieces (drawn while Oven asks): its walks on the map and its runs
 function M.planRoute(plan)
@@ -19859,10 +19884,13 @@ end
 function M.planTrip(here, targets, used)
   used = used or {}
   local plan = M.planTripOnce(here, targets, used)
-  if plan or used.recallHere then return plan end
+  local gold = M.goldOnHand()
+  if used.recallHere or (plan and (not gold or plan.gold <= gold)) then return plan end
   local u = { recallHere = true }
   for k, v in pairs(used) do u[k] = v end
-  return M.planTripOnce(here, targets, u)
+  local fallback = M.planTripOnce(here, targets, u)
+  if fallback and (not plan or fallback.gold <= gold) then return fallback end
+  return plan
 end
 function M.planTripOnce(here, targets, used)
   here = tonumber(here)
@@ -20029,27 +20057,55 @@ function M.planTripOnce(here, targets, used)
   end
   -- Dijkstra; the wilds legs on the way found costed by the coarse search, and searched again until none is a guess
   local G = {}
-  local function search()
-    local dist, prev, done = { [here] = 0 }, {}, {}
-    while true do
-      local u, du
-      for id, d in pairs(dist) do if not done[id] and (not du or d < du) then u, du = id, d end end
-      if not u then return nil end
-      if isTarget[u] then
-        local legs, k = {}, u
-        while prev[k] do table.insert(legs, 1, prev[k]); k = prev[k].from end
-        return legs, du
+  local function search(budget)
+    local function better(a, b)
+      return a.cost < b.cost or (a.cost == b.cost and a.gold < b.gold)
+    end
+    local function dominates(a, b)
+      if budget then return a.cost <= b.cost and a.gold <= b.gold end
+      return not better(b, a)
+    end
+    local first = { room = here, cost = 0, gold = 0 }
+    local labels, pending = { [here] = { first } }, { [first] = true }
+    while next(pending) do
+      local at
+      for p in pairs(pending) do if not at or better(p, at) then at = p end end
+      pending[at] = nil
+      if isTarget[at.room] then
+        local legs, step = {}, at
+        while step.leg do table.insert(legs, 1, step.leg); step = step.prev end
+        return legs, at.cost, at.gold
       end
-      done[u] = true
-      for _, leg in ipairs(adj[u] or {}) do
-        local nd = du + leg.cost
-        if not done[leg.to] and (not dist[leg.to] or nd < dist[leg.to]) then dist[leg.to], prev[leg.to] = nd, leg end
+      for _, leg in ipairs(adj[at.room] or {}) do
+        local gold = at.gold + M.legFare(leg)
+        if not budget or gold <= budget then
+          local room = leg.to
+          local candidate = { room = room, cost = at.cost + leg.cost, gold = gold, leg = leg, prev = at }
+          local seen = labels[room] or {}
+          local dominated = false
+          for _, other in ipairs(seen) do
+            if dominates(other, candidate) then dominated = true; break end
+          end
+          if not dominated then
+            for i = #seen, 1, -1 do
+              if dominates(candidate, seen[i]) then
+                pending[seen[i]] = nil
+                table.remove(seen, i)
+              end
+            end
+            seen[#seen + 1] = candidate
+            labels[room] = seen
+            pending[candidate] = true
+          end
+        end
       end
     end
   end
-  local legs, cost
+  local budget = M.goldOnHand()
+  local legs, cost, gold
   for _ = 1, 12 do
-    legs, cost = search()
+    legs, cost, gold = search(budget)
+    if not legs and budget then legs, cost, gold = search() end
     if not legs then return nil end
     local guessed = false
     for _, leg in ipairs(legs) do
@@ -20065,9 +20121,27 @@ function M.planTripOnce(here, targets, used)
     if not guessed then break end
   end
   if not legs or cost == math.huge then return nil end
-  local gold = 0
-  for _, leg in ipairs(legs) do if leg.kind == "ride" and leg.link and leg.link.cost then gold = gold + leg.link.cost end end
   return { legs = legs, cost = cost, gold = gold }
+end
+
+function M.legFare(leg)
+  if leg.kind ~= "ride" or not leg.link then return 0 end
+  local link = leg.link
+  return (link.cost or 0) + (link["then"] and link["then"].cost or 0)
+end
+
+local function approvalKey(leg)
+  if leg.kind == "recall" or leg.kind == "clan" then return leg.kind .. ":" .. leg.to end
+  if M.legFare(leg) > 0 then return leg.link.key or ("ride:" .. leg.from .. ":" .. leg.to) end
+end
+
+function M.tripApproval(plan)
+  local approval = { gold = plan.gold or 0, legs = {} }
+  for _, leg in ipairs(plan.legs) do
+    local key = approvalKey(leg)
+    if key then approval.legs[key] = M.legFare(leg) end
+  end
+  return approval
 end
 
 -- the plan in lines: one a leg (walks one after another in a place said as one)
@@ -20146,7 +20220,7 @@ function M.planLines(plan, targets)
     elseif k == "ride" then
       local L = leg.link or {}
       if L.anywhere then lines[#lines + 1] = L.board[1] .. " to " .. tostring(L.dest)
-      else lines[#lines + 1] = string.format("%s to %s - %s gold", tostring(L.kind), tostring(L.dest), commas(L.cost or 0)) end
+      else lines[#lines + 1] = string.format("%s to %s - %s gold", tostring(L.kind), tostring(L.dest), commas(M.legFare(leg))) end
     end
   end
   local gold, bank = M.goldOnHand()
@@ -20158,9 +20232,9 @@ function M.planLines(plan, targets)
 end
 
 -- going: the first leg of the plan from where you are; when it's done, planned again from there
-function M.tripStart(targets)
+function M.tripStart(targets, approval)
   if type(targets) ~= "table" then targets = { targets } end
-  M.trip = { targets = targets, target = targets[1], used = {}, legs = 0 }
+  M.trip = { targets = targets, target = targets[1], used = {}, legs = 0, approval = approval }
   M.tripContinue()
 end
 function M.tripContinue()
@@ -20192,6 +20266,18 @@ function M.tripContinue()
     return M.recallRefresh(function() if M.trip == T then M.tripContinue() end end)
   end
   if not plan or not plan.legs[1] then M.trip = nil; return M.notifyWalk("stopped: no way on from here") end
+  if T.approval then
+    local changed = (plan.gold or 0) > T.approval.gold
+    for _, leg in ipairs(plan.legs) do
+      local key = approvalKey(leg)
+      if key and (T.approval.legs[key] or -1) < M.legFare(leg) then changed = true; break end
+    end
+    if changed then
+      M.trip = nil
+      T.legs, T.from[here] = T.legs - 1, T.from[here] - 1
+      return M.askTrip(plan, T.targets, "The route changed - the way from here:", T)
+    end
+  end
   -- (through the wilds and on through the wilds - a signpost passed on the way: walked straight through, not
   -- stopped at)
   local leg = plan.legs[1]
@@ -20258,6 +20344,11 @@ function M.legStart(leg, T)
   M.recallPending = nil   -- (a recall or gohall still waited for: it's not this leg)
   local function cont() if M.trip == T and T.leg == mine then M.tripContinue() end end
   local k = leg.kind
+  local key = T.approval and approvalKey(leg)
+  if key then
+    T.approval.legs[key] = nil
+    T.approval.gold = T.approval.gold - M.legFare(leg)
+  end
   if k == "walk" then
     local pd, pp = M.legPath(leg)
     if pd and leg.from == M.mapRoom then speedWalkDir, speedWalkPath = pd, pp
@@ -20685,8 +20776,17 @@ function M.goAnswer(cmd)
   if os.time() - A.at > 60 then return false end
   local c = trim(cmd or ""):lower()
   if c == "y" or c == "yes" then
-    if A.trip then tempTimer(0, function() M.tripStart(A.id) end)
-    else tempTimer(0, function() M.mapWalkTo(A.id) end) end
+    M.goAsk = A
+    tempTimer(0, function()
+      if M.goAsk ~= A then return end
+      M.goAsk = nil
+      if A.resume then
+        A.resume.approval = A.approval
+        M.trip = A.resume
+        M.tripContinue()
+      elseif A.trip then M.tripStart(A.id, A.approval)
+      else M.mapWalkTo(A.id) end
+    end)
     return true
   end
   if c == "n" or c == "no" then tempTimer(0, function() say("staying put") end); return true end
@@ -22075,6 +22175,11 @@ end
 -- sbo stop: whatever Oven is doing for you
 function M.stopAll()
   local what = {}
+  if M.goAsk then
+    M.goAsk = nil
+    pcall(M.worldDraw)
+    what[#what + 1] = "the proposed trip"
+  end
   if M.travel or M.trip then M.travel, M.trip = nil, nil; what[#what + 1] = "the trip" end
   if M.walk or M.dirWalk or (M.running and M.running.target) then
     M.walk, M.dirWalk = nil, nil
@@ -22801,25 +22906,66 @@ function M.versionTag()
 end
 
 function M.installFrom(path)
+  if M.updating then return end
   if M.cap then   -- don't reinstall in the middle of capturing something
     return tempTimer(2, function() M.installFrom(path) end)
   end
+  local home = getMudletHomeDir()
+  local backupDir = home .. "/oven_rollback"
+  local backup = backupDir .. "/Oven.xml"
+  local hadOven = table.contains(getPackages(), "Oven")
+  if hadOven then
+    local f = io.open(home .. "/Oven/Oven.xml", "rb")
+    if f then
+      local xml = f:read("*a")
+      f:close()
+      lfs.mkdir(backupDir)
+      local out, err = io.open(backup, "wb")
+      if not out then return M.notify("update failed: " .. tostring(err)) end
+      local wrote, writeErr = out:write(xml)
+      local closed, closeErr = out:close()
+      if not wrote or not closed then return M.notify("update failed: " .. tostring(writeErr or closeErr)) end
+    else
+      -- A rollback installs the XML directly, so Mudlet may have no extracted copy.
+      local saved = io.open(backup, "rb")
+      local xml = saved and saved:read("*a")
+      if saved then saved:close() end
+      if not xml or not xml:find('M.version = "' .. M.version .. '"', 1, true) then
+        return M.notify("update failed: couldn't back up the installed Oven package")
+      end
+    end
+  end
+
   M.notify(path:find("oven_latest", 1, true) and "installing update…" or ("installing " .. path))
   local old = M.version
   M.updating = true   -- keep the windows and bar up while the package is swapped
-  for _, pkg in ipairs({ "MMFormat", "SoftbunsOS", "Oven" }) do  -- old names too
-    if table.contains(getPackages(), pkg) then uninstallPackage(pkg) end
+  if hadOven then
+    local ok, err = uninstallPackage("Oven")
+    if not ok then
+      M.updating = nil
+      return M.notify("update failed: " .. tostring(err or "couldn't remove the installed Oven package"))
+    end
   end
   tempTimer(1, function()
-    installPackage(path)
-    tempTimer(1, function()
-      if sbo and sbo.version then
-        local msg = "updated: v" .. old .. " -> v" .. sbo.version
-        if sbo.notify then sbo.notify(msg, 10)
-        elseif sbo and sbo.log then sbo.log("<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> " .. msg)
-        else cecho("\n<oven_dim>[<oven_flag>sbo<oven_dim>]<reset> " .. msg .. "\n") end
+    local ok, err = installPackage(path)
+    if ok and not err and not M.updating then
+      for _, pkg in ipairs({ "MMFormat", "SoftbunsOS" }) do
+        if table.contains(getPackages(), pkg) then uninstallPackage(pkg) end
       end
-    end)
+      return M.notify("updated: v" .. old .. " -> v" .. M.version, 10)
+    end
+
+    local msg = "update failed: " .. tostring(err or "the replacement didn't start")
+    M.updating = true
+    local cleared = not table.contains(getPackages(), "Oven") or uninstallPackage("Oven")
+    if hadOven and cleared then
+      local restored, restoreErr = installPackage(backup)
+      if restored and not restoreErr and not M.updating then
+        return M.notify(msg .. " (restored v" .. old .. ")")
+      end
+    end
+    M.updating = nil
+    M.notify(hadOven and (msg .. " (reinstall " .. backup .. ")") or msg)
   end)
 end
 
@@ -23054,6 +23200,7 @@ function M.questClock()
 end
 
 function M.teardown()
+  M.cancelCapture()
   if M.panelTimer then killTimer(M.panelTimer); M.panelTimer = nil end
   if M.questClockTimer then killTimer(M.questClockTimer); M.questClockTimer = nil end
   if M.whereTimer then killTimer(M.whereTimer); M.whereTimer = nil end
@@ -23074,7 +23221,6 @@ function M.teardown()
 end
 
 function M.init()
-  M.updating = nil
   M.teardown()
   M.dropPages()
   M.loadSettings()
@@ -23144,6 +23290,7 @@ function M.init()
   if M.cfg.mapPanel then pcall(M.showMapPanel, true) end
   if M.hudAny() then pcall(M.drawQuestTracker) end
   M.startUpdatePoll()
+  M.updating = nil
   if not M.booted then
     M.booted = true
     tempTimer(8, function() M.checkForUpdate() end)
