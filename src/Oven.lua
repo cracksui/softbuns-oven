@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.59"
+M.version = "1.99.60"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -2327,9 +2327,9 @@ function M.formatters.score(raw, width)
   -- kill record, spelled out
   if sc.mobKills or sc.pkKills or sc.marks then
     subhead(out, "Record")
-    -- "Creatures   killed / died by  4,441 / 68"
+    -- "Creatures      k/d  4,441/68" (as the bar's session line has it)
     local function kd(label, k, d)
-      out[#out + 1] = { { C.key, pad(label, 15) }, { C.dim, "killed / died by  " }, { C.plus, k }, { C.dim, " / " },
+      out[#out + 1] = { { C.key, pad(label, 15) }, { C.dim, "k/d  " }, { C.plus, k }, { C.dim, "/" },
                         { tonumber((tostring(d):gsub(",", ""))) == 0 and C.num or C.minus, d } }
     end
     if sc.mobKills then kd("Creatures", sc.mobKills, sc.mobDeaths) end

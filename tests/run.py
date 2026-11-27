@@ -5423,7 +5423,7 @@ def trips_dont_loop():
 @test
 def score_display():
     # the score: HP/SP/ST bars reach the attributes' right edge; an attribute over its maximum shows the part above in
-    # green; the record as "killed / died by  4,441 / 68"
+    # green; the record as k/d, the bar's way: "k/d  4,441/68"
     o = Oven()
     o.L.globals().RAW = o.L.table_from([
         "Player Information for: Tester the Brave",
@@ -5448,7 +5448,7 @@ def score_display():
     assert left.count("█") == 9 and "░" not in left, strength   # (8 + 1 over the max)
     sanity = next(r for r in rows if r.startswith("Sanity"))
     assert sanity.count("░") == 1, sanity   # (17/18: not drawn full)
-    assert any(r.startswith("Creatures") and r.endswith("killed / died by  4,441 / 68") for r in rows), rows
+    assert any(r.startswith("Creatures") and r.endswith("k/d  4,441/68") for r in rows), rows
     assert any(r.startswith("Relationships  0") for r in rows), rows
 
 
