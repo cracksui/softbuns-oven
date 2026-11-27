@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.65"
+M.version = "1.99.66"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10175,12 +10175,30 @@ function M.parsePrompt(t)
     p.ship = S
     t = t:gsub("%(%d+hull[^%)]*%)", "", 1)
   end
+  -- Aardwolf's: "[889/889hp 1037/1328mn 982/990mv 0qt 6tnl] >" - a bracket of current/most values (and quest time,
+  -- exp to level): those are the pools, not a tag; the most each can be is kept as its maximum
+  local pools = t:match("%[([^%]]*%d+/%d+%a+[^%]]*)%]")
+  if pools then
+    for cur, mx, k in pools:gmatch("(%-?%d+)/(%d+)(%a+)") do
+      k = k:lower()
+      p.vals[#p.vals + 1] = { k, tonumber(cur) }
+      p.maxes = p.maxes or {}
+      p.maxes[k] = tonumber(mx)
+    end
+    for n, k in pools:gmatch("%f[%d/](%d+)(%a+)%f[%A]") do
+      k = k:lower()
+      if k == "tnl" then p.vals[#p.vals + 1] = { "tnl", tonumber(n) }
+      elseif k == "qt" then p.questTime = tonumber(n) end
+    end
+    t = t:gsub("%[[^%]]*%d+/%d+%a+[^%]]*%]", "", 1)
+  end
   for tag in t:gmatch("%[([^%]]+)%]") do p.tags[#p.tags + 1] = tag end
   local inner = t:match("<(.-)>")
   if inner then
     for n, k in inner:gmatch("(%-?%d+)(%a+)") do p.vals[#p.vals + 1] = { k:lower(), tonumber(n) } end
   end
   p.rest = trim(t:gsub("%[[^%]]*%]", ""):gsub("<.->", ""))
+  if p.rest == ">" then p.rest = "" end   -- (the arrow Aardwolf's prompt ends with: nothing to show)
   return p
 end
 
@@ -10330,7 +10348,7 @@ function M.updateMaxes(raw)
   M.saveSettings()
 end
 
-local barColors = { hp = "tomato", sp = "light_sky_blue", st = "gold", mt = "sandy_brown" }
+local barColors = { hp = "tomato", sp = "light_sky_blue", st = "gold", mt = "sandy_brown", mn = "light_sky_blue", mv = "gold" }
 -- the bar's background (a slight tint so it stands apart from the game text)
 function M.barBg()
   local c = M.cfg.barBg
@@ -10522,6 +10540,11 @@ end
 local VITALS = { "hp", "sp", "st" }
 function M.barPrompt()
   local p = M.parsePrompt(M.lastPromptText or "")
+  -- (the prompt says the most each pool can be - Aardwolf's "889/889hp": the gauges go by it)
+  if p.maxes then
+    M.cfg.maxes = M.cfg.maxes or {}
+    for k, mx in pairs(p.maxes) do M.cfg.maxes[k] = mx end
+  end
   local v = M.gmcpGet and M.gmcpGet("char.vitals")
   if type(v) == "table" then
     local have = {}
@@ -10533,12 +10556,9 @@ function M.barPrompt()
         else p.vals[#p.vals + 1] = { k, n } end
       end
     end
-    -- keep hp, sp, st first and in that order
-    table.sort(p.vals, function(a, b)
-      local ia, ib = 0, 0
-      for i, k in ipairs(VITALS) do if a[1] == k then ia = i end; if b[1] == k then ib = i end end
-      return (ia == 0 and 99 or ia) < (ib == 0 and 99 or ib)
-    end)
+    -- keep hp, sp, st first and in that order (Aardwolf's mana and moves - mn, mv - after hp)
+    local ORDER = { hp = 1, sp = 2, st = 3, mn = 4, mv = 5 }
+    table.sort(p.vals, function(a, b) return (ORDER[a[1]] or 99) < (ORDER[b[1]] or 99) end)
   end
   return p
 end
@@ -10663,8 +10683,13 @@ function M.drawBar()
     local total = (M.live or {}).total or c.total
     tail[#tail + 1] = { C.dim, " (" .. (total or "-") .. ")" }   -- "-" until score has been seen
   end
+  if p.questTime then
+    -- (Aardwolf's quest timer: 0 - you can ask for one)
+    tail[#tail + 1] = { C.dim, (lvl and "  " or "") .. "quest " }
+    tail[#tail + 1] = { p.questTime == 0 and C.plus or C.title, p.questTime == 0 and "ready" or (p.questTime .. "m") }
+  end
   if tnl then
-    tail[#tail + 1] = { C.dim, (lvl and "  " or "") .. "tnl " }; tail[#tail + 1] = { C.plus, commaNum(tnl) }
+    tail[#tail + 1] = { C.dim, ((lvl or p.questTime) and "  " or "") .. "tnl " }; tail[#tail + 1] = { C.plus, commaNum(tnl) }
     local info = M.levelInfo()
     if info then tail[#tail + 1] = { C.dim, string.format(" %d%%", math.floor(info.frac * 100)) } end
     local rate = M.expRate()
@@ -10797,7 +10822,7 @@ function M.onGmcpStatus()
 end
 
 -- char.maxstats: HP/SP/ST maximums and each attribute's maximum
-local MAXSTAT_POOLS = { maxhp = "hp", maxsp = "sp", maxst = "st" }
+local MAXSTAT_POOLS = { maxhp = "hp", maxsp = "sp", maxst = "st", maxmana = "mn", maxmoves = "mv" }
 function M.onGmcpMaxStats()
   local s = G("char.maxstats")
   if type(s) ~= "table" then return end
@@ -11154,12 +11179,22 @@ function M.combatEcho(segs)
   decho("main", ((cur ~= "") and "\n" or "") .. table.concat(t) .. "<r>\n")
 end
 
+-- the pattern a prompt line matches: yours if you set one (sbo config prompt); else the game's - Materia Magica's
+-- "<1245hp 1313sp 600st>", Aardwolf's "[889/889hp 1037/1328mn 982/990mv 0qt 6tnl] >"
+M.MM_PROMPT = "^%s*<[^>]*%d[^>]*>%s*$"
+M.AARD_PROMPT = "^%s*%[.*%d+/%d+hp.*%]%s*>%s*$"
+function M.promptPattern()
+  local pp = M.cfg.promptPattern or ""
+  if (pp == M.MM_PROMPT or pp == "") and M.game and M.game() == "aardwolf" then return M.AARD_PROMPT end
+  return pp
+end
 -- is this main-window line one of the game's prompts?
 local function promptText(t)
   t = trim(t or "")
   if t == "" then return false end
   if M.lastPromptText and t == trim(M.lastPromptText) then return true end
-  return M.cfg.promptPattern ~= "" and t:match(M.cfg.promptPattern) ~= nil
+  local pat = M.promptPattern()
+  return pat ~= "" and t:match(pat) ~= nil
 end
 
 -- the fight's line, kept up to date: while nothing but prompts and blank lines has come in since
@@ -11606,7 +11641,8 @@ end
 local function isPromptLine()
   local ok, p = pcall(isPrompt)
   if ok and p then return true end
-  return M.cfg.promptPattern ~= "" and line:match(M.cfg.promptPattern) ~= nil
+  local pat = M.promptPattern()
+  return pat ~= "" and line:match(pat) ~= nil
 end
 
 M.recentLines = M.recentLines or {}

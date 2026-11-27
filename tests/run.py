@@ -5423,6 +5423,30 @@ def trips_dont_loop():
 
 
 @test
+def aardwolf_prompt():
+    # Aardwolf's prompt, "[*Daily Blessing*] [889/889hp 1037/1328mn 982/990mv 0qt 6tnl] >": recognised as a prompt
+    # there (not Materia Magica's <...>), its pools and their maximums on the bar, quest time and tnl at the end
+    o = Oven()
+    o.lua("""getConnectionInfo = function() return 'aardmud.org', 4000, true end
+      sbo.cfg.bar = true; sbo.showBar(true)
+      gmcp.char = { vitals = { hp = 889, mana = 1037, moves = 982 } }""")
+    P = "[*Daily Blessing*] [889/889hp 1037/1328mn 982/990mv 0qt 6tnl] > "
+    o.L.globals().P = P
+    eq(o.ev("P:match(sbo.promptPattern()) ~= nil"), True, "a prompt, on Aardwolf")
+    eq(o.ev("('<1245hp 1313sp 600st>'):match(sbo.promptPattern()) ~= nil"), False, "Materia Magica's isn't, there")
+    pp = o.ev("sbo.parsePrompt(P)")
+    eq([(v[1], v[2]) for v in pp.vals.values()], [("hp", 889), ("mn", 1037), ("mv", 982), ("tnl", 6)], "the pools")
+    eq((pp.questTime, list(pp.tags.values()), pp.rest), (0, ["*Daily Blessing*"], ""), "quest time, the tag, no '>'")
+    o.lua("sbo.lastPromptText = P; sbo.lastPromptDecho = P; sbo.drawBar()")
+    import re
+    bar = re.sub(r"<[^>]+>", "", o.ev("WIDGETS['ovenPromptBarLabel'].html"))
+    assert "HP" in bar and "889/889" in bar and "MN" in bar and "1037/1328" in bar and "982/990" in bar, bar
+    # Materia Magica: as before
+    o.lua("getConnectionInfo = function() return 'materiamagica.com', 4000, true end")
+    eq(o.ev("sbo.promptPattern()"), o.ev("sbo.MM_PROMPT"), "Materia Magica's own")
+
+
+@test
 def other_game_watch_only():
     # connected to another game (Aardwolf): Oven sends nothing by itself - its commands are Materia Magica's - and says
     # so once; Materia Magica, or not known (not connected), as ever
