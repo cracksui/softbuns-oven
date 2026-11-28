@@ -179,10 +179,18 @@ Green marks the better value in each row.
 **Gear score.** Every worn item gets a score from your **build**: each stat times how much it matters
 to you (+1 strength might count 3, +1 hp 0.2). Looking at an item shows its score against what you wear
 there (`+5.5 (+31%) upgrade`), comparisons start with it and end with a **score breakdown** (each
-stat's points, as value × weight, for both items), and `sbo upgrades` lists, slot by slot, the
-best item you carry (your last `i`, and inside the bags you've looked in) that beats your gear - `sbo upgrades
-all` searches every item you've ever looked at, shops included. Each suggestion says what makes the difference
-(`+6 ar · −2.2 hp`); click it (or `sbo upgrades 2`) for the full comparison. The build starts from your class (Materia Magica's 16 classes each map to monk, melee, caster, healer,
+stat's points, as value × weight, for both items).
+
+**Upgrades.** `sbo eq upgrades` checks the gear you carry (including bags you've looked in).
+Add `all` to search everything Oven has seen, or a weapon type such as `hook` to compare just that
+type. It ranks individual swaps by the change in melee damage per round and effective HP, using
+your last `eq`, item requirements, and set bonuses. It tests each position for paired slots.
+Use `offense`, `defense`, `casting`, or `recovery` to rank by one goal. Check any flagged
+requirements and effects before replacing your gear. Martial arts comparisons include an
+illustrative active round when the swap changes weapon compatibility. Click a suggestion or use
+`sbo upgrades 2` for the item comparison.
+
+The build starts from your class (Materia Magica's 16 classes each map to monk, melee, caster, healer,
 thief, tank or paladin - and Oven reads `help classes` to place any it doesn't know by their group); `sbo eq build` shows the weights, `sbo eq build set strength 4` changes one, `sbo eq build pvp`
 makes and switches to a new build, `sbo eq build reset` / `sbo eq build auto` go back. Stats already at their
 maximum in `score` (Strength 20/20) count a quarter, since more of them is mostly wasted; `sbo eq build` shows

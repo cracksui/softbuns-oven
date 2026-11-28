@@ -4102,6 +4102,49 @@ def upgrades_up_to_a_level():
 
 
 @test
+def upgrade_requirements_and_paired_slots():
+    o = Oven()
+    o.lua("""
+      sbo.cfg.char = { total = 180, combat = { damage = 100, accuracy = 75, crit = 10 } }
+      sbo.cfg.maxes = { hp = 1000 }
+      sbo.cfg.arLoc = { torso = 20 }
+      local function ring(name, affects, extra)
+        sbo.remember({ name = name, worn = "on a finger", level = 120, affects = affects, raw = {}, extra = extra })
+      end
+      ring("small ring", { { "hp", "10" } })
+      ring("knife ring", { { "damage", "5" } })
+      ring("new ring", { { "damage", "10" } })
+      ring("life ring", { { "melee-vamp-prcnt", "10" }, { "hp", "10" } })
+      ring("restricted ring", { { "damage", "80" } }, { { "Min level", { { "white", "200" } } } })
+      sbo.eqNames = { "knife ring", "small ring" }
+      function upgrades(level)
+        local lines = {}
+        for _, row in ipairs(sbo.upgradeLines(100, true, nil, nil, level)) do
+          local parts = {}
+          for _, seg in ipairs(row) do parts[#parts + 1] = seg[2] end
+          lines[#lines + 1] = table.concat(parts)
+        end
+        return table.concat(lines, "\\n")
+      end
+    """)
+    now, later = o.ev("upgrades(200)").split("Up to level 200")
+    assert "restricted ring" not in now and "restricted ring" in later
+    o.ev("upgrades(nil)")
+    swaps = {row["best"]: row["cur"] for row in o.ev("sbo.lastUpgrades").values()}
+    eq(swaps["new ring"], "small ring", "swap that gives the bigger measured improvement")
+    assert "Also review life ring" in now or "Review effects" in now, now
+    assert "melee-vamp-prcnt" in now, now
+    o.lua("""
+      R = sbo.items["restricted ring"]
+      R.extra = { { "Requires", { { "white", "level greater than 185" }, { "white", "  (Enforced)" } } } }
+    """)
+    eq(o.ev("(sbo.itemUsable(R, 185))"), False, "strict minimum keeps the requirement suffix out")
+    eq(o.ev("(sbo.itemUsable(R, 186))"), True, "future character level passes")
+    o.lua('R.extra = { { "Requires", { { "white", "race equal to ogre" } } } }')
+    eq(o.ev("select(3, sbo.itemUsable(R))[1]"), "race equal to ogre", "missing race is reported")
+
+
+@test
 def weapons_against_fists():
     # fighting unarmed: a weapon is weighed against your fists - hand to hand's damage, accuracy, crit and skill
     # against the weapon's own and its proficiency
@@ -4135,7 +4178,7 @@ def weapons_against_fists():
     assert "weapon hand to hand 80%→hook 75%  damage type water→pierce" in up, up
     assert "hand to hand 80%→hook 75%" in up and "weapon skill's part of damage" in up, up
     # the item's page measured what you'd deal with it: those parts are used (skill and strength included)
-    o.lua("""sbo.cfg.skills['two-handed axe'] = { lrnd = 42, cmplx = 1 }; sbo.cfg.skills.axe = { lrnd = 5 }
+    o.lua("""sbo.cfg.skills['martial arts'] = { lrnd = 76 }; sbo.cfg.skills['two-handed axe'] = { lrnd = 42, cmplx = 1 }; sbo.cfg.skills.axe = { lrnd = 5 }
       sbo.remember({ name = "a heavy battleaxe", worn = "wielded as a weapon", level = 10, raw = {}, affects = {},
         keywords = "heavy battleaxe two-handed axe", weapon = { name = "two-handed axe",
           summary = "Your two-handed axe will deal Max slash damage", dmgLevel = "Max", accuracy = "High", critChance = "Low",
@@ -4163,7 +4206,7 @@ def weapons_against_fists():
       sbo.eqNames = { "a worn vest" }; sbo.command("upgrades all two-handed axes")""")
     up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("SEEN").values())
     assert "two-handed axes only" in up and "a heavy battleaxe" in up and "a sharp hook" not in up, up
-    assert "Offense ▼" in up, up
+    assert "Offense ▼" in up and "martial arts active round" in up, up
     o.lua('sbo.command("upgrades all hook")')
     up = "\n".join("".join(str(g[2]) for g in r.values()) for r in o.ev("SEEN").values())
     assert "hooks only" in up and "a sharp hook" in up and "battleaxe" not in up and "dagger" not in up, up
@@ -4409,7 +4452,7 @@ def items_you_cant_use():
     o.lua("sbo.cfg.char.total = 151")
     eq(o.ev("U('level less than or equal to 210')"), "true|nil", "under a most")
     eq(o.ev("U('level less than or equal to 130')"), "false|level less than or equal to 130", "past a most")
-    eq(o.ev("U('level greater than or equal to 175')"), "true|nil", "a least: the list's own level sections")
+    eq(o.ev("U('level greater than or equal to 175')"), "false|level greater than or equal to 175", "explicit minimum is enforced")
     o.lua("WRAPS = { name = 'wraps', extra = { { 'Requires', { { 'white', 'Mark of Ferocity equal to True' } } }, { 'Max level', { { 'cyan', '60' }, { 'dim_grey', '  (Enforced)' } } } } }")
     eq(o.ev("select(2, sbo.itemUsable(WRAPS))"), "max level 60", "Max level 60: not at 151")
 
