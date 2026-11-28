@@ -4279,6 +4279,14 @@ def set_bonus_in_upgrades():
     o.lua('V145, M145 = sbo.upgradeValue(sbo.items["a recruit helm"], sbo.items["a plain cap"], select(2, sbo.activeBuild()))')
     assert o.ev("V130 < V145"), (o.ev("V130"), o.ev("V145"))
     assert "set-bonus" not in " ".join(o.ev("M145.estNames").values()), "not listed as not calculated"
+    # A weaker piece gives no benefit just for belonging to an inactive set.
+    o.lua("""sbo.eqNames = { "a plain cap" }
+      V, M_ = sbo.upgradeValue(sbo.items["a plain cap"], HELM, (select(2, sbo.activeBuild())))
+      sbo.upgradeLines(100, true)
+    """)
+    assert o.ev("V < 0 and not M_.unscoredGain")
+    eq(o.ev("#sbo.lastUpgrades"), 0, "inactive set piece is not suggested over better armor")
+    o.lua('sbo.eqNames = { "a recruit helm", "some recruit boots" }')
     # a piece saved before ranges were read: said so
     o.lua('for _, n in ipairs({"a recruit helm", "some recruit boots"}) do local S = sbo.items[n].set; S.minLevel, S.maxLevel, S.rangeRead = nil, nil, nil end')
     o.lua('sbo.setRanges = nil; S, G, L, U = sbo.setDelta(sbo.items["a recruit helm"], sbo.items["a plain cap"])')

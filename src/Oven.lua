@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.89"
+M.version = "1.99.90"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -6936,7 +6936,7 @@ end
 local HALF = { agility = 0.5, strength = 0.8 }
 -- stats the model covers in part: what's left out, said with the name
 M.EST_LABEL = { agility = "agility (dodging; its to-hit is counted)", strength = "strength (damage; its to-hit is counted)" }
-function M.estimatePoints(old, new, w, m)
+function M.estimatePoints(old, new, w, m, setsModeled)
   local pts, names = 0, {}
   for _, e in ipairs((m or {}).estimates or {}) do
     local k, dv = e[1], e[2]
@@ -6951,7 +6951,8 @@ function M.estimatePoints(old, new, w, m)
   for k in pairs(keys) do
     local dv = (eb[k] or 0) - (ea[k] or 0)
     -- spells whose affects are known are in the model already
-    if dv ~= 0 and not (k:match("^spell:") and M.spellAffects(k:match("^spell:(.+)$"))) then
+    if dv ~= 0 and not (setsModeled and k == "set-bonus")
+        and not (k:match("^spell:") and M.spellAffects(k:match("^spell:(.+)$"))) then
       pts = pts + dv * M.statWeight(w, k)
       names[#names + 1] = k:gsub("^spell:", ""):gsub("^skill:", "")
     end
@@ -7059,12 +7060,9 @@ function M.upgradeValue(old, new, w, role, lvl)
   end
   local m = M.combatModel(old, newEff)
   if not m then return nil end
-  local points, names = M.estimatePoints(old, new, w, m)
-  -- set bonuses are worked out above: only what has no number is left to judge
-  local kept = {}
-  for _, n in ipairs(names) do if n ~= "set-bonus" then kept[#kept + 1] = n end end
-  for _, sn in ipairs(sUnknown) do kept[#kept + 1] = "set bonus (look at " .. sn .. " again)" end
-  names = kept
+  -- Only a set threshold actually crossed can add a benefit to this swap.
+  local points, names = M.estimatePoints(old, new, w, m, true)
+  for _, sn in ipairs(sUnknown) do names[#names + 1] = "set bonus (look at " .. sn .. " again)" end
   for _, n in ipairs(m.notCalc or {}) do names[#names + 1] = n end
   table.sort(names)
   m.estNames, m.unscoredGain = names, points > 0 or #sGain > 0
