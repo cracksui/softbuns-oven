@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.92"
+M.version = "1.99.93"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14989,10 +14989,14 @@ end
 -- off the map: the temporary area, and every room in it
 function M.tempClear()
   local T = M.tempMap
-  M.tempMap = nil
-  M.roomGraphCache = nil
-  if T and T.area then pcall(deleteArea, T.area) end
+  if T and T.area then
+    local ok, deleted, err = pcall(deleteArea, T.area)
+    if not ok then return nil, deleted end
+    if not deleted then return nil, err end
+  end
+  M.tempMap, M.tempLastDir, M.roomGraphCache = nil, nil, nil
   pcall(updateMap)
+  return true
 end
 
 -- left over from last time (Mudlet closed while you were inside one)
@@ -15330,7 +15334,7 @@ local mapButtonStyle = [[
 
 -- bump when the panel's contents change, so a panel built by an older version (in the same
 -- Mudlet session) is rebuilt after an update instead of keeping its old layout
-local MAP_PANEL_LAYOUT = 7
+local MAP_PANEL_LAYOUT = 8
 
 function M.createMapPanel()
   if M.mapPanel and M.mapPanelLayout == MAP_PANEL_LAYOUT then return end
@@ -15364,11 +15368,30 @@ function M.createMapPanel()
   M.mapModeButton = button("ovenMapMode", "world", "switch between the world map and the room map", function()
     M.mapSetMode(M.mapMode == "world" and "local" or "world")
   end, 52)
-  button("ovenMapResetAuto", "Reset auto", "clear the current temporary automap", function()
-    if not M.tempMap then return say("no temporary automap to reset") end
-    M.tempClear()
-    say("temporary automap cleared · move to start mapping again")
-  end, 74)
+  local reset, resetTimer
+  reset = button("ovenMapResetAuto", "Reset auto", "clear the current temporary automap", function()
+    local label
+    if not M.tempMap then
+      label = "No automap"
+      say("no temporary automap in your current area")
+    else
+      local ok, err = M.tempClear()
+      if ok then
+        M.mapRoom, M.mapCenter = M.mapRoomId(), nil
+        M.mapSetMode("local", true)
+        M.centerOn(M.mapRoom)
+        M.drawMapHeader()
+        label = "Reset done"
+        say("temporary automap reset · move to map more rooms")
+      else
+        label = "Reset failed"
+        say("temporary automap reset failed" .. (err and (" · " .. tostring(err)) or ""))
+      end
+    end
+    reset:echo(label)
+    if resetTimer then killTimer(resetTimer) end
+    resetTimer = tempTimer(3, function() resetTimer = nil; reset:echo("Reset auto") end)
+  end, 84)
   button("ovenMapZoomOut", "−", "zoom out", function() if M.mapMode == "world" then M.worldZoom(-1) else M.mapZoom(1.25) end end)
   button("ovenMapZoomIn", "+", "zoom in", function() if M.mapMode == "world" then M.worldZoom(1) else M.mapZoom(0.8) end end)
   button("ovenMapCentre", "◎", "centre on you", function() if M.mapMode == "world" then M.worldFollow() else M.centerOn(M.mapRoom) end end)

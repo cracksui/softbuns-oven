@@ -1304,7 +1304,7 @@ def hidden_rooms_mapped():
       getAreaTable = function() local t = {} for n, id in pairs(AREAS) do t[n] = id end return t end
       addAreaName = function(n) nextArea = nextArea + 1; AREAS[n] = nextArea; return nextArea end
       deleteArea = function(id) for n, a in pairs(AREAS) do if a == id then AREAS[n] = nil end end
-        for r, v in pairs(ROOMS) do if v.area == id then ROOMS[r] = nil end end end
+        for r, v in pairs(ROOMS) do if v.area == id then ROOMS[r] = nil end end return true end
       roomExists = function(id) return ROOMS[tonumber(id)] ~= nil end
       addRoom = function(id) ROOMS[id] = { x = 0, y = 0, z = 0 } end
       setRoomArea = function(id, a) ROOMS[id].area = a end
@@ -3559,19 +3559,36 @@ def map_search_box():
 @test
 def map_reset_current_automap():
     o = Oven()
-    o.lua("""sbo.createMapPanel()
+    o.lua("""roomExists = function() return false end
+      sbo.createMapPanel()
       local removed = {}
-      deleteArea = function(id) removed[#removed + 1] = id end
-      local click = WIDGETS.ovenMapResetAuto.click
+      local fail = true
+      deleteArea = function(id)
+        if fail then return nil, "cannot delete area" end
+        removed[#removed + 1] = id
+        return true
+      end
+      local reset = WIDGETS.ovenMapResetAuto
+      local click = reset.click
       click()
-      assert(#removed == 0)
+      assert(#removed == 0 and reset.text == "No automap")
       local limbo = {}
       sbo.limboMap = limbo
       sbo.tempMap = {area = 37}
       sbo.roomGraphCache = {}
       click()
-      assert(#removed == 1 and removed[1] == 37)
-      assert(not sbo.tempMap and not sbo.roomGraphCache and sbo.limboMap == limbo)
+      assert(reset.text == "Reset failed" and sbo.tempMap.area == 37)
+      fail = false
+      sbo.mapMode = "world"
+      sbo.mapRoomId = function()
+        assert(not sbo.tempMap and not sbo.roomGraphCache)
+        sbo.tempMap = {area = 38}
+        return 2000000123
+      end
+      sbo.centerOn = function(id) assert(id == 2000000123 and sbo.mapMode == "local") end
+      click()
+      assert(#removed == 1 and removed[1] == 37 and reset.text == "Reset done")
+      assert(sbo.tempMap.area == 38 and sbo.limboMap == limbo)
     """)
 
 
