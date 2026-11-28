@@ -4261,6 +4261,43 @@ def set_bonus_in_upgrades():
 
 
 @test
+def item_lookup_shows_saved_stats_from_a_cold_cache():
+    o = Oven()
+    o.lua(r"""
+      sbo.storeItem({name="a silver hook", type="weapon", level="180", worn="wielded as a weapon",
+        affects={{"strength", "7"}}, relicAffects={{"agility", "2"}},
+        weapon={dmgLevel="High", dmgType="pierce", stats={{"Damage","148",{}}}}})
+      sbo.storeItem({name="a bronze hook", type="weapon", level="120", special="poisoned"})
+      sbo.loadItems()
+      assert(next(sbo.items) == nil)
+      function page()
+        local text = {}
+        for _, row in ipairs(sbo.viewHist[#sbo.viewHist].lines) do
+          for _, seg in ipairs(row) do text[#text + 1] = seg[2] end
+        end
+        return table.concat(text)
+      end
+      sbo.cfg.window = true
+      sbo.command("item silver hook")
+      local text = page()
+      assert(text:find("Saved stats", 1, true) and text:find("+7 strength", 1, true))
+      assert(text:find("Relics", 1, true) and text:find("+2 agility", 1, true))
+      assert(text:find("Weapon", 1, true) and text:find("148", 1, true))
+      sbo.command("item hook")
+      text = page()
+      assert(text:find("a silver hook", 1, true) and text:find("a bronze hook", 1, true))
+      assert(not text:find("Saved stats", 1, true))
+      local found
+      for _, link in ipairs(sbo.viewHist[#sbo.viewHist].links) do
+        if link[1] == "view saved stats for a bronze hook" then found = link[2]; break end
+      end
+      assert(found)
+      found()
+      assert(page():find("Saved stats", 1, true) and page():find("poisoned", 1, true))
+    """)
+
+
+@test
 def item_rows_go_to_their_room():
     # sbo item: a row with a room (sold at, picked up) is itself a link there - in the Inspector and on the main screen
     o = Oven()

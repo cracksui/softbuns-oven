@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.87"
+M.version = "1.99.88"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -1912,9 +1912,17 @@ function M.formatters.item(raw, width)
     if out then return out, title end
     return M.formatters.generic(raw, width)
   end
+  return M.renderItem(it, width, auction)
+end
+
+function M.renderItem(it, width, auction)
   local out = {}
   local cells = {}
-  local function add(k, segs) if segs then cells[#cells + 1] = { k, segs } end end
+  local function add(k, segs)
+    if not segs then return end
+    for _, seg in ipairs(segs) do seg[2] = tostring(seg[2]) end
+    cells[#cells + 1] = { k, segs }
+  end
   if auction then
     -- for sale: who's selling, and what it takes to win it
     local segs = { { C.dim, "from " }, { C.item, auction.from or "?" } }
@@ -1955,11 +1963,11 @@ function M.formatters.item(raw, width)
 
   local kw = 9
   if it.keywords then kvLine(out, "Keywords", kw, { { C.slot, it.keywords } }, width) end
-  if #it.flags > 0 then kvLine(out, "Flags", kw, { { C.flag, table.concat(it.flags, " · ") } }, width) end
+  if #(it.flags or {}) > 0 then kvLine(out, "Flags", kw, { { C.flag, table.concat(it.flags, " · ") } }, width) end
   if it.attrs and it.attrs ~= "" then
     kvLine(out, "Attribs", kw, { { it.attrs == "none" and C.dim or C.flag, it.attrs } }, width)
   end
-  if #it.affects > 0 then
+  if #(it.affects or {}) > 0 then
     local segs = {}
     for n, a in ipairs(it.affects) do
       if n > 1 then segs[#segs + 1] = { C.dim, ", " } end
@@ -1968,7 +1976,7 @@ function M.formatters.item(raw, width)
     end
     kvLine(out, "Affects", kw, segs, width)
   end
-  if #it.relics > 0 then
+  if #(it.relics or {}) > 0 then
     local first = true
     for _, rel in ipairs(it.relics) do
       local r = type(rel) == "table" and rel.text or rel
@@ -1995,10 +2003,17 @@ function M.formatters.item(raw, width)
       kvLine(out, first and "Relics" or "", kw, segs, width)
       first = false
     end
+  elseif #(it.relicAffects or {}) > 0 then
+    local segs = {}
+    for i, a in ipairs(it.relicAffects) do
+      if i > 1 then segs[#segs + 1] = { C.dim, ", " } end
+      addAll(segs, affectSegs(a[1], a[2]))
+    end
+    kvLine(out, "Relics", kw, segs, width)
   end
-  for _, x in ipairs(it.extra) do kvLine(out, x[1], kw, x[2], width) end
+  for _, x in ipairs(it.extra or {}) do kvLine(out, x[1], kw, x[2], width) end
   if it.special then kvLine(out, "Special", kw, { { C.flag, it.special } }, width) end
-  for n, g in ipairs(it.grants) do
+  for n, g in ipairs(it.grants or {}) do
     -- "… (Requires 5 items)": a set bonus - say so in words
     local desc, need = tostring(g[3]):match("^(.-)%s*%(Requires (%d+) items?%)$")
     local segs = { { C.slot, g[1] }, { C.num, " " .. g[2] }, { C.dim, "  " .. (desc or g[3]) } }
@@ -2031,7 +2046,7 @@ function M.formatters.item(raw, width)
     renderWeapon(out, it.weapon, width)
     blank(out)
   end
-  for n, note in ipairs(it.notes) do
+  for n, note in ipairs(it.notes or {}) do
     kvLine(out, n == 1 and "Notes" or "", kw, { { C.text, note } }, width)
   end
   if it.set then
@@ -2064,13 +2079,13 @@ function M.formatters.item(raw, width)
       kvLine(out, "At " .. n, kw, bs, width)
     end
   end
-  if #it.other > 0 then
+  if #(it.other or {}) > 0 then
     blank(out)
     for _, o in ipairs(it.other) do prose(out, { o }, width) end
   end
-  paragraphs(out, it.desc, width)
+  paragraphs(out, it.desc or {}, width)
   for _, a in ipairs(it.after or {}) do blank(out); prose(out, { a }, width) end
-  for _, b in ipairs(it.bonus) do
+  for _, b in ipairs(it.bonus or {}) do
     blank(out)
     local text = table.concat(b, " "):gsub("%s+", " ")
     addAll(out, wrapWords(trim(text), width, 4, C.text, { { C.flag, "+++ " } }, 4))
@@ -22739,21 +22754,34 @@ function M.itemFind(q)
     for k, m in ipairs(mine) do if k > 1 then segs[#segs + 1] = { C.dim, " · " } end segs[#segs + 1] = m end
     kvLine(out, "You have", kw, segs, width)
   end
-  -- known: looked at (stats remembered)
-  local known = {}
-  for n, it in pairs(M.items or {}) do if has(n) then known[#known + 1] = { n, it } end end
-  table.sort(known, function(a, b) return a[1] < b[1] end)
-  for k, x in ipairs(known) do
+  -- Query the database: items are loaded into M.items on demand.
+  local known = M.dbRows([[SELECT name FROM items WHERE instr(lower(name), %s) > 0
+    ORDER BY lower(name) = %s DESC, name]], ql, ql)
+  local selected
+  for k, row in ipairs(known) do
     if k > 6 then kvLine(out, "", kw, { { C.dim, string.format("… and %d more (sbo eq items)", #known - 6) } }, width); break end
-    any = true
-    local it = x[2]
-    local bits = {}
-    if it.type then bits[#bits + 1] = it.type end
-    if it.level then bits[#bits + 1] = "level " .. it.level end
-    if it.worn then bits[#bits + 1] = it.worn end
-    kvLine(out, k == 1 and "Known" or "", kw, { { C.item, x[1] }, { C.dim, #bits > 0 and ("  " .. table.concat(bits, " · ")) or "" } }, width)
-    local n = x[1]
-    links[#links + 1] = { "compare " .. n .. " with what you wear", function() M.compareAgainstWorn(n) end }
+    local n = row.name
+    local it = M.items[n]
+    if it then
+      any = true
+      local bits = {}
+      if it.type then bits[#bits + 1] = it.type end
+      if it.level then bits[#bits + 1] = "level " .. it.level end
+      if it.worn then bits[#bits + 1] = it.worn end
+      kvLine(out, k == 1 and "Known" or "", kw, { { C.item, n }, { C.dim, #bits > 0 and ("  " .. table.concat(bits, " · ")) or "" } }, width)
+      if not selected and (#known == 1 or n:lower() == ql) then
+        selected = it
+      else
+        links[#links + 1] = { "view saved stats for " .. n, function() M.itemFind(n) end }
+      end
+      links[#links + 1] = { "compare " .. n .. " with what you wear", function() M.compareAgainstWorn(n) end }
+    end
+  end
+  if selected then
+    blank(out)
+    subhead(out, "Saved stats")
+    addAll(out, M.renderItem(selected, width))
+    blank(out)
   end
   -- sold at: nearest first
   local sold = {}

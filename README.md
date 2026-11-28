@@ -231,7 +231,7 @@ sbo reagent                  refill reagents in batches that fit your free inven
 sbo limbo                    find down and say yes to the hermit; keeps searching until you leave Limbo
 sbo stop                     cancel Oven’s active actions and show elapsed time and progress
 sbo item {text}              find an item: what you have (and in which bag), what you've
-                             looked at, shops that sell it (nearest first, [go]),
+                             looked at and their saved stats, shops that sell it (nearest first, [go]),
                              where it was picked up, quests that ask for it
 
 sbo eq                       equipment and items (shown in the Inspector)
