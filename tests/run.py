@@ -3557,6 +3557,25 @@ def map_search_box():
 
 
 @test
+def map_reset_current_automap():
+    o = Oven()
+    o.lua("""sbo.createMapPanel()
+      local removed = {}
+      deleteArea = function(id) removed[#removed + 1] = id end
+      local click = WIDGETS.ovenMapResetAuto.click
+      click()
+      assert(#removed == 0)
+      local limbo = {}
+      sbo.limboMap = limbo
+      sbo.tempMap = {area = 37}
+      sbo.roomGraphCache = {}
+      click()
+      assert(#removed == 1 and removed[1] == 37)
+      assert(not sbo.tempMap and not sbo.roomGraphCache and sbo.limboMap == limbo)
+    """)
+
+
+@test
 def map_town_by_name():
     # "sbo map vir": the town Vir, not the shop selling "virga pastoris" nor New Kolvir
     o = Oven()

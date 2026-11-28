@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.91"
+M.version = "1.99.92"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14990,6 +14990,7 @@ end
 function M.tempClear()
   local T = M.tempMap
   M.tempMap = nil
+  M.roomGraphCache = nil
   if T and T.area then pcall(deleteArea, T.area) end
   pcall(updateMap)
 end
@@ -15329,7 +15330,7 @@ local mapButtonStyle = [[
 
 -- bump when the panel's contents change, so a panel built by an older version (in the same
 -- Mudlet session) is rebuilt after an update instead of keeping its old layout
-local MAP_PANEL_LAYOUT = 6
+local MAP_PANEL_LAYOUT = 7
 
 function M.createMapPanel()
   if M.mapPanel and M.mapPanelLayout == MAP_PANEL_LAYOUT then return end
@@ -15363,6 +15364,11 @@ function M.createMapPanel()
   M.mapModeButton = button("ovenMapMode", "world", "switch between the world map and the room map", function()
     M.mapSetMode(M.mapMode == "world" and "local" or "world")
   end, 52)
+  button("ovenMapResetAuto", "Reset auto", "clear the current temporary automap", function()
+    if not M.tempMap then return say("no temporary automap to reset") end
+    M.tempClear()
+    say("temporary automap cleared · move to start mapping again")
+  end, 74)
   button("ovenMapZoomOut", "−", "zoom out", function() if M.mapMode == "world" then M.worldZoom(-1) else M.mapZoom(1.25) end end)
   button("ovenMapZoomIn", "+", "zoom in", function() if M.mapMode == "world" then M.worldZoom(1) else M.mapZoom(0.8) end end)
   button("ovenMapCentre", "◎", "centre on you", function() if M.mapMode == "world" then M.worldFollow() else M.centerOn(M.mapRoom) end end)
