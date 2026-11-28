@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.93"
+M.version = "1.99.94"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -14989,10 +14989,15 @@ end
 -- off the map: the temporary area, and every room in it
 function M.tempClear()
   local T = M.tempMap
-  if T and T.area then
-    local ok, deleted, err = pcall(deleteArea, T.area)
-    if not ok then return nil, deleted end
-    if not deleted then return nil, err end
+  if T then
+    local name = PREFIX .. tostring(T.zone)
+    local areas = getAreaTable()
+    if areas[name] then
+      local ok, result, err = pcall(deleteArea, areas[name])
+      if getAreaTable()[name] then
+        return nil, (ok and err or result) or ("Mudlet still has " .. name)
+      end
+    end
   end
   M.tempMap, M.tempLastDir, M.roomGraphCache = nil, nil, nil
   pcall(updateMap)

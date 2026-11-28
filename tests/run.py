@@ -3563,10 +3563,13 @@ def map_reset_current_automap():
       sbo.createMapPanel()
       local removed = {}
       local fail = true
+      local areas = { ["Oven: Hidden"] = 37, ["Oven: Other"] = 39 }
+      getAreaTable = function() return areas end
       deleteArea = function(id)
         if fail then return nil, "cannot delete area" end
         removed[#removed + 1] = id
-        return true
+        areas["Oven: Hidden"] = nil
+        -- Some Mudlet builds do not return a success value.
       end
       local reset = WIDGETS.ovenMapResetAuto
       local click = reset.click
@@ -3574,10 +3577,10 @@ def map_reset_current_automap():
       assert(#removed == 0 and reset.text == "No automap")
       local limbo = {}
       sbo.limboMap = limbo
-      sbo.tempMap = {area = 37}
+      sbo.tempMap = {area = 36, zone = "Hidden"}
       sbo.roomGraphCache = {}
       click()
-      assert(reset.text == "Reset failed" and sbo.tempMap.area == 37)
+      assert(reset.text == "Reset failed" and sbo.tempMap.area == 36)
       fail = false
       sbo.mapMode = "world"
       sbo.mapRoomId = function()
@@ -3588,7 +3591,7 @@ def map_reset_current_automap():
       sbo.centerOn = function(id) assert(id == 2000000123 and sbo.mapMode == "local") end
       click()
       assert(#removed == 1 and removed[1] == 37 and reset.text == "Reset done")
-      assert(sbo.tempMap.area == 38 and sbo.limboMap == limbo)
+      assert(sbo.tempMap.area == 38 and sbo.limboMap == limbo and areas["Oven: Other"] == 39)
     """)
 
 
