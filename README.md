@@ -304,7 +304,7 @@ sbo config {name} {value}    change one (sbo set works too)
 
 Shortcuts: `sbo compare` and `sbo upgrades` work without `eq`.
 
-Click **Stop** just above the input field to run `sbo stop`. The button appears while Oven has an action you can cancel.
+Click **Stop** just above the input field to run `sbo stop`. The button appears while Oven has an action you can cancel. The lower bar shows the active action, such as `GO: <leg>` or `WAIT: <mob>`.
 
 ### Settings (`sbo config`)
 

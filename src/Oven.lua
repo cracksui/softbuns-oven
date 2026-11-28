@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.85"
+M.version = "1.99.86"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10343,7 +10343,11 @@ function M.showSessionBar(on)
 end
 
 function M.syncBarStop()
-  if M.bar and M.cfg.bar and M.barStopShown ~= M.canStop() then M.layoutBar() end
+  if not M.bar or not M.cfg.bar then return end
+  local action, detail, color = M.actionStatus()
+  local key = action and (action .. ":" .. (detail or "") .. ":" .. (color or ""))
+  if M.barStopShown ~= (action ~= nil) then M.layoutBar() end
+  if M.barActionKey ~= key then M.drawBar() end
 end
 
 function M.hideBarStop()
@@ -10849,12 +10853,16 @@ function M.roomFlagSegs(promptTags)
 end
 
 function M.drawBar()
-  if not M.bar or not M.bar.rawEcho or not M.lastPromptText then return end
-  local p = M.barPrompt()
-  if M.cfg.barMode == "raw" or #p.vals == 0 then
+  if not M.bar or not M.bar.rawEcho then return end
+  local action, detail, color = M.actionStatus()
+  local activity = M.actionSegs(action, detail, color)
+  M.barActionKey = action and (action .. ":" .. (detail or "") .. ":" .. (color or ""))
+  local p = M.lastPromptText and M.barPrompt()
+  if not p or M.cfg.barMode == "raw" or #p.vals == 0 then
     -- drop the game's (black) text background so the bar's tint shows through
-    local d = (M.lastPromptDecho or M.lastPromptText):gsub("<(%d+,%d+,%d+):[%d,]+>", "<%1>")
-    barEcho(d)
+    local d = (M.lastPromptDecho or M.lastPromptText or ""):gsub("<(%d+,%d+,%d+):[%d,]+>", "<%1>")
+    if activity then addAll(activity, M.versionTag()) end
+    barEcho(d, nil, activity and M.segsToDecho({ activity })[1])
     return
   end
   M.cfg.maxes = M.cfg.maxes or {}
@@ -10975,8 +10983,7 @@ function M.drawBar()
   if M.cfg.barSession and not top then
     local sess = M.sessionSegs()
     local sep = { C.dim, "   │ " }
-    local okT, ts = pcall(M.tripSegs)
-    local tagW = ulen(" [v" .. M.version .. " ✓]  ") + (M.helpFetch and 2 or 0) + ((okT and ts) and segLen(ts) or 0)
+    local tagW = ulen(" [v" .. M.version .. " ✓]  ") + (M.helpFetch and 2 or 0) + (activity and segLen(activity) or 0)
     local need = segLen(main) + ulen(sep[2]) + segLen(sess) + tagW - cols
     if need > 0 and #p.vals > 0 then
       local smaller = gw - math.ceil(need / #p.vals)
@@ -10993,8 +11000,7 @@ function M.drawBar()
   end
 
   local tag = M.versionTag()
-  local okT, ts = pcall(M.tripSegs)
-  if okT and ts then addAll(ts, tag); tag = ts end
+  if activity then addAll(activity, tag); tag = activity end
   if collapsed ~= (M.barCollapsed or false) then
     M.barCollapsed = collapsed
     M.layoutBar()
@@ -22798,9 +22804,7 @@ end
 
 -- The Stop button and sbo stop cover the same activities.
 function M.canStop()
-  return not not (M.mobWait or M.reagentRun or M.limbo or M.goAsk or M.travel or M.trip
-    or M.walk or M.dirWalk or (M.running and M.running.target)
-    or M.learnQueue or M.learnThen or M.pickupPending or M.stResting)
+  return M.actionStatus() ~= nil
 end
 
 -- sbo stop: whatever Oven is doing for you
@@ -23517,15 +23521,30 @@ end
 -- legs whose way the game picks (a run follows its roads, recall and gohall and rides land where they land, where
 -- is gives its path) - the bar shows them in another colour from Oven's own (walks, the wilds, a step)
 M.LEG_GAME = { run = true, recall = true, clan = true, gate = true, whereout = true, ride = true }
-function M.tripSegs()
+function M.actionStatus()
   local T = M.trip
-  if not T or not T.cur then return nil end
-  local out = { { T.curGame and C.plus or C.text, T.cur } }   -- (green: the game's - as the quest panel's room the game names)
-  -- (resting for the leg: it's waiting, not stopped - how far along)
+  if T then return "GO", T.cur or "planning", T.curGame and C.plus or C.text end
+  if M.goAsk then return "GO", "awaiting confirmation" end
+  if M.travel then return "GO", M.travel.link and M.travel.link.dest or "traveling" end
+  if M.running and M.running.target then return "GO", "run " .. (M.running.name or "") end
+  if M.walk or M.dirWalk then return "GO", "walking" end
+  if M.stResting then return "GO", "resting" end
+  if M.limbo then return "LIMBO", M.limbo.hermit and "waiting for the hermit" or "finding the exit" end
+  if M.reagentRun then return "REAGENT", "refilling" end
+  if M.mobWait then return "WAIT", M.mobWait.mob or "mob" end
+  if M.learnQueue or M.learnThen then return "LEARN", "items" end
+  if M.pickupPending then return "LOOK", "picked-up items" end
+end
+
+function M.actionSegs(action, detail, color)
+  if not action then return end
+  if ulen(detail) > 60 then detail = M.usub(detail, 1, 59) .. "…" end
+  detail = detail:gsub("<", "‹"):gsub(">", "›")
+  local out = { { C.key, action .. ": " }, { color or C.text, detail } }
   local R = M.stResting
-  if R and R.need then
-    out[#out + 1] = { C.dim, " · resting " }
-    out[#out + 1] = { C.num, string.format("%d/%d st", M.stNow() or 0, R.need) }
+  if action == "GO" and R and R.need then
+    if M.trip then out[#out + 1] = { C.dim, " · resting" } end
+    out[#out + 1] = { C.num, string.format(" %d/%d st", M.stNow() or 0, R.need) }
   end
   out[#out + 1] = { C.dim, "   " }
   return out

@@ -5850,19 +5850,19 @@ def trip_leg_on_the_bar():
         else return { cost = 1, gold = 0, legs = { { kind = 'walk', from = 2, to = 3, n = 1 } } } end end
       STARTED = {}; sbo.legStart = function(leg) STARTED[#STARTED+1] = leg.kind end
       sbo.recallToAsk = function() return false end
-      SEG = function() local t = {}; for _, s in ipairs(sbo.tripSegs() or {}) do t[#t+1] = s[2] end; return table.concat(t) end
+      SEG = function() local t = {}; for _, s in ipairs(sbo.actionSegs(sbo.actionStatus()) or {}) do t[#t+1] = s[2] end; return table.concat(t) end
       sbo.trip = { targets = { 3 }, used = {}, legs = 0 }; sbo.tripContinue()""")
-    eq(o.ev("SEG()"), "room 1 → room 2   ", "the first leg of two")
+    eq(o.ev("SEG()"), "GO: room 1 → room 2   ", "the first leg of two")
     o.lua("sbo.mapRoom = 2; sbo.tripContinue()")
-    eq(o.ev("SEG()"), "room 2 → room 3   ", "the second")
+    eq(o.ev("SEG()"), "GO: room 2 → room 3   ", "the second")
     o.lua("sbo.stResting = { need = 900 }; sbo.stNow = function() return 615 end")
-    eq(o.ev("SEG()"), "room 2 → room 3 · resting 615/900 st   ", "resting for it: waiting, not stopped")
+    eq(o.ev("SEG()"), "GO: room 2 → room 3 · resting 615/900 st   ", "resting for it: waiting, not stopped")
     o.lua("sbo.stResting = nil")
     # the game's way (a run) in another colour from Oven's own (a walk)
-    o.lua("OWN = sbo.tripSegs()[1][1]; sbo.trip.curGame = true; GAME = sbo.tripSegs()[1][1]")
+    o.lua("OWN = sbo.actionSegs(sbo.actionStatus())[2][1]; sbo.trip.curGame = true; GAME = sbo.actionSegs(sbo.actionStatus())[2][1]")
     eq(o.ev("OWN ~= GAME and GAME ~= nil"), True, "a run (the game's way) in another colour from a walk (Oven's)")
     o.lua("sbo.mapRoom = 3; sbo.tripContinue()")
-    eq(o.ev("sbo.tripSegs()"), None, "gone on arrival")
+    eq(o.ev("sbo.actionSegs(sbo.actionStatus())"), None, "gone on arrival")
 
 
 @test
@@ -6172,8 +6172,12 @@ def prompt_stop_appears_for_cancelable_activity():
       sbo.showBar(true)
       assert(not WIDGETS.ovenBarStop)
       local timer = tempTimer(10, function() error("watch should have stopped") end)
-      sbo.mobWait = {timer=timer}
+      sbo.mobWait = {timer=timer, mob="wise old hermit"}
       timers[sbo.barStopTimer][2]()
+      assert(sbo.bar.html:find("WAIT: ", 1, true) and sbo.bar.html:find("wise old hermit", 1, true))
+      sbo.mobWait.mob = "orca"
+      timers[sbo.barStopTimer][2]()
+      assert(sbo.bar.html:find("orca", 1, true) and not sbo.bar.html:find("wise old hermit", 1, true))
       local button = WIDGETS.ovenBarStop
       assert(button.shown and button.text == "Stop")
       getBorderSizes = function() return {left=30, right=50} end
@@ -6184,15 +6188,17 @@ def prompt_stop_appears_for_cancelable_activity():
       assert(stopX == 30 and stopY == barY and barX == stopX + stopW)
       button.click()
       assert(not sbo.mobWait and not timers[timer] and not button.shown and barX == stopX)
+      assert(not sbo.bar.html:find("WAIT: ", 1, true))
       sbo.walk = {}
       timers[sbo.barStopTimer][2]()
       assert(button.shown)
       sbo.walk = nil
       timers[sbo.barStopTimer][2]()
       assert(not button.shown)
+      sbo.cfg.barMode = "raw"
       sbo.goAsk = {}
       timers[sbo.barStopTimer][2]()
-      assert(button.shown)
+      assert(button.shown and sbo.bar.html:find("GO: ", 1, true) and sbo.bar.html:find("awaiting confirmation", 1, true))
       local refresh = sbo.barStopTimer
       sbo.showBar(false)
       assert(not button.shown and not timers[refresh])
