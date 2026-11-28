@@ -3015,7 +3015,7 @@ def command_tree():
     eq(o.ev("sbo.cfg.questHud"), False, "quest HUD off")
     # stop
     o.lua('sbo.walk = { dirs = {"e"}, path = {2}, step = 1 }')
-    assert "stopped the walk" in says("stop")
+    assert "GO stopped" in says("stop")
     eq(o.ev("sbo.walk"), None, "walk cancelled")
     assert "nothing to stop" in says("st")
     # log clear asks first
@@ -6546,6 +6546,7 @@ def wait_for_mob_runs_the_full_command_once():
     view = ["The Watchtower", "(--------------------)", "", "  The wise old hermit once lived here.  "]
     o.block(view + ["An adventurer tells you 'The wise old hermit is here.'", "<10hp 10sp 10st>"], cmds=["look"])
     eq(list(o.ev("sent").values()), ["look"], "prose and tells do not match")
+    eq(o.ev("sbo.mobWait.checks"), 1, "counted the first observed room view")
     o.lua("WATCH_TICK()")
     occupants = view + ["[Shop] A wise old hermit sits by the fire.", "<10hp 10sp 10st>"]
     o.block(occupants, cmds=["look"])
@@ -6610,6 +6611,8 @@ def reagent_refill_batches_live_shop_items_and_verifies_progress():
               "You may carry a maximum of 68 items weighing up to 40 stones.")
         reply("shop buy 7 41", "You purchase seven pinches of sulfur.")
         supply(fire)
+        if fire < 28:
+            eq(o.ev("sbo.reagentRun.bought.fire"), fire, "confirmed purchases only")
     assert not o.ev("sbo.reagentRun")
     assert "reagents: full" in o.ev("messages[#messages]")
     eq(sum(command == "shop buy 7 41" for command in o.ev("sent").values()), 4)
@@ -6733,7 +6736,7 @@ def limbo_walks_past_180_moves_and_waits_at_a_closed_cycle():
       end
       TICK()
       ROOM(221, {w_realnum=1})
-      assert(#sent == 220 and sbo.limbo.waiting)
+      assert(#sent == 220 and sbo.limbo.waiting and sbo.limbo.roomsSeen == 221)
       TICK()
       assert(sent[221] == "look")
       ROOM(221, {w_realnum=1})
@@ -6777,6 +6780,41 @@ def limbo_stop_cancels_a_scheduled_move():
       sbo.command("stop")
       assert(not sbo.limbo and not timers[timer])
     """)
+
+
+@test
+def stop_reports_elapsed_time_and_verified_progress():
+    o = Oven()
+    o.lua("""
+      messages = {}
+      sbo.log = function(msg) messages[#messages + 1] = msg end
+      getEpoch = function() return 134 end
+      gmcp.room = {info={num="10"}}
+      roomExists = function(id) return id == 10 end
+      getRoomName = function() return "Western Gate of Rune" end
+      sbo.trip = {started=0, routeDone={"first leg", "second leg"}, routeTo=10}
+      sbo.dirWalk = {started=128, dirs={"w"}, i=1}
+      sbo.mobWait = {started=89, checks=9, mob="orca"}
+      sbo.limbo = {started=66, roomsSeen=42}
+      sbo.reagentRun = {started=122, bought={fire=14}, counts={fire={have=14, cap=28}}, buying=true}
+      sbo.learnStats, sbo.learnQueue = {started=130, ok=2, fail=1}, {"an item"}
+      sbo.pickupPending = {started=133, "another item"}
+      sbo.command("stop")
+      assert(not sbo.trip and not sbo.dirWalk and not sbo.mobWait and not sbo.limbo
+        and not sbo.reagentRun and not sbo.learnQueue and not sbo.pickupPending)
+    """)
+    msgs = list(o.ev("messages").values())
+    expected = (
+        "WAIT stopped · 45s · 9 room checks · orca",
+        "REAGENT stopped · 12s · 14 fire bought · still short: fire 14 · last purchase still unverified",
+        "LIMBO stopped · 1m 08s · 42 rooms explored",
+        "GO stopped · 2m 14s · 3 legs completed · at Western Gate of Rune",
+        "LEARN stopped · 4s · 2 learned · 1 failed · 1 queued",
+        "LOOK stopped · 1s · 1 item queued",
+    )
+    eq(len(msgs), len(expected), "one message per action")
+    for got, want in zip(msgs, expected):
+        assert want in got, got
 
 
 @test

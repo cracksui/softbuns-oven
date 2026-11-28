@@ -229,7 +229,7 @@ sbo go {what}                to a trainer, shop, quest, NPC, place, room #,
 sbo wait <mob> <command>      check this room every five seconds and run the command once when the mob appears
 sbo reagent                  refill reagents in batches that fit your free inventory slots
 sbo limbo                    find down and say yes to the hermit; keeps searching until you leave Limbo
-sbo stop                     stop a walk, or anything Oven is doing for you
+sbo stop                     cancel Oven’s active actions and show elapsed time and progress
 sbo item {text}              find an item: what you have (and in which bag), what you've
                              looked at, shops that sell it (nearest first, [go]),
                              where it was picked up, quests that ask for it

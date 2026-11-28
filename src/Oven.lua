@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.86"
+M.version = "1.99.87"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -12971,7 +12971,7 @@ function M.startMobWait(args)
   if not here then return M.say("couldn't identify the current room; move one room and try sbo wait again") end
   M.stopMobWait()
   mob = trim(mob:gsub("%s+", " ")):lower()
-  local W = { room = here, mob = mob, cmd = cmd }
+  local W = { room = here, mob = mob, cmd = cmd, started = now(), checks = 0 }
   M.mobWait = W
   M.say("waiting for " .. mob .. " · sbo stop cancels")
   pollMob(W)
@@ -12985,6 +12985,7 @@ M.addBlockReader("mob_wait", "room", function(b, seg)
     if trim(cmd):lower() == "look" then looked = true; break end
   end
   if not looked then return end
+  W.checks = W.checks + 1
   for i, line in ipairs(seg.here) do
     local fg = seg.hereFg[i]
     local _, tagged = M.npcTags(line)
@@ -15023,6 +15024,7 @@ function M.onRoom()
   if M.dirWalk and M.dirWalk.at ~= id then
     local W = M.dirWalk
     W.at = id
+    if W.i > 1 then W.confirmed = (W.confirmed or 0) + 1 end
     local info = M.gmcpGet and M.gmcpGet("room.info")
     if W.wildOnly and type(info) == "table" and tostring(info.wilds) ~= "true" then
       M.dirWalk = nil
@@ -15069,7 +15071,7 @@ function M.startLimbo()
     return say("finish or stop the current action before sbo limbo")
   end
   M.limboMap = M.limboMap or { rooms = {}, byExits = {}, blocked = {}, unknown = 0 }
-  M.limbo = { map = M.limboMap, tried = {} }
+  M.limbo = { map = M.limboMap, tried = {}, started = now(), visited = {}, roomsSeen = 0 }
   M.limboRoom()
 end
 
@@ -15119,6 +15121,7 @@ function M.limboRoom()
   if not known then L.tried = {} end
   if not room then map.unknown = map.unknown - 1; room = map.unknown end
   L.room, L.next, L.key = room, nil, key
+  if not L.visited[room] then L.visited[room] = true; L.roomsSeen = L.roomsSeen + 1 end
   map.byExits[key] = room
   local blocked = map.blocked[key] or {}
   map.blocked[key] = blocked
@@ -15208,7 +15211,7 @@ function M.walkDirs(dirs, done)
   if type(dirs) == "table" then for i, d in ipairs(dirs) do list[i] = d end
   else for d in tostring(dirs or ""):gmatch("[^,%s]+") do list[#list + 1] = d:lower() end end
   if #list == 0 then return false end
-  M.dirWalk = { dirs = list, i = 1, done = done, at = M.mapRoom }
+  M.dirWalk = { dirs = list, i = 1, done = done, at = M.mapRoom, started = now() }
   M.dirWalkStep()
   return true
 end
@@ -15273,7 +15276,7 @@ function M.doSpeedWalk()
   if type(speedWalkDir) ~= "table" or #speedWalkDir == 0 then return end
   local dirs, path = {}, {}
   for i, d in ipairs(speedWalkDir) do dirs[i] = d; path[i] = tonumber(speedWalkPath[i]) end
-  M.walk = { dirs = dirs, path = path, step = 1 }
+  M.walk = { dirs = dirs, path = path, step = 1, started = now() }
   M.notifyWalk(string.format("%d step%s…", #dirs, #dirs == 1 and "" or "s"))
   M.walkStep()
 end
@@ -17827,7 +17830,7 @@ function M.mapWalkTo(id, onFoot)
   local dirs, path = {}, {}
   for i, d in ipairs(speedWalkDir) do dirs[i] = d; path[i] = tonumber(speedWalkPath[i]) end
   if #dirs == 0 then return say("you're already there") end
-  M.walk = { dirs = dirs, path = path, step = 1 }
+  M.walk = { dirs = dirs, path = path, step = 1, started = now() }
   -- leaving the area: the walk in brief (areas, enter …); in town, just the count
   local leaves = false
   local ha = getRoomArea(M.mapRoom)
@@ -18280,7 +18283,7 @@ function M.runVia(plan, target, dirs)
   if not getPath(M.mapRoom, plan.start) then return say("no route on the map to the signpost #" .. plan.start) end
   local d, p = {}, {}
   for i2, x in ipairs(speedWalkDir) do d[i2] = x; p[i2] = tonumber(speedWalkPath[i2]) end
-  M.walk = { dirs = d, path = p, step = 1, thenRun = plan.name, target = target }
+  M.walk = { dirs = d, path = p, step = 1, thenRun = plan.name, target = target, started = now() }
   M.walkStep()
 end
 
@@ -18784,7 +18787,7 @@ end
 
 function M.askTrip(plan, targets, title, resume, arrived)
   local lines, tail = M.planLines(plan)
-  M.goAsk = { id = targets, at = os.time(), trip = true, route = M.planRoute(plan),
+  M.goAsk = { id = targets, at = os.time(), started = now(), trip = true, route = M.planRoute(plan),
               approval = M.tripApproval(plan), resume = resume, lines = lines, arrived = arrived or (resume and resume.arrived) }
   if M.worldDraw then pcall(M.worldDraw) end
   M.sayPlan(title, lines, tail, "y to go, n to stay")
@@ -20662,7 +20665,7 @@ end
 -- going: the first leg of the plan from where you are; when it's done, planned again from there
 function M.tripStart(targets, approval, preview, arrived)
   if type(targets) ~= "table" then targets = { targets } end
-  M.trip = { targets = targets, target = targets[1], used = {}, legs = 0, approval = approval, route = preview, routeDone = {}, arrived = arrived }
+  M.trip = { targets = targets, target = targets[1], used = {}, legs = 0, approval = approval, route = preview, routeDone = {}, arrived = arrived, started = now() }
   if preview then pcall(M.drawTripPanel, M.trip, true) end
   M.tripContinue()
 end
@@ -20806,7 +20809,7 @@ function M.legStart(leg, T)
     T.stOk = nil
     local dirs, path = {}, {}
     for i, d in ipairs(speedWalkDir) do dirs[i] = d; path[i] = tonumber(speedWalkPath[i]) end
-    M.walk = { dirs = dirs, path = path, step = 1, thenDo = cont }
+    M.walk = { dirs = dirs, path = path, step = 1, thenDo = cont, started = now() }
     return M.walkStep()
   elseif k == "wild" then
     -- (short of what the planner says this path takes: rest first, as before a run)
@@ -21104,7 +21107,7 @@ function M.travelStart(plan, target, legNo)
   local g = plan.legs[legNo]
   if not g then return M.mapWalkTo(target) end
   local L = g.link
-  M.travel = { plan = plan, leg = legNo, link = L, target = target, stage = "toShop", at = os.time() }
+  M.travel = { plan = plan, leg = legNo, link = L, target = target, stage = "toShop", at = os.time(), started = now() }
   if L.anywhere then
     local T = M.travel
     T.stage, T.boardStep, T.rideFrom = "boarding", 1, getRoomArea(M.mapRoom or 0)
@@ -21136,7 +21139,7 @@ function M.travelStart(plan, target, legNo)
   if not M.mapRoom or not getPath(M.mapRoom, L.shop) then M.travel = nil; return say("no route on the map to " .. L.shopName) end
   local d, p = {}, {}
   for i, x in ipairs(speedWalkDir) do d[i] = x; p[i] = tonumber(speedWalkPath[i]) end
-  M.walk = { dirs = d, path = p, step = 1, thenDo = atShop }
+  M.walk = { dirs = d, path = p, step = 1, thenDo = atShop, started = now() }
   M.walkStep()
 end
 
@@ -21508,6 +21511,7 @@ end
 -- Each entry is { name, cmd, inside = container name or nil }; done() runs when the queue is empty.
 function M.learnStart(entries, what, done, silent)
   M.learnQueue, M.learnStats, M.learnDone = entries, M.learnStats or { ok = 0, fail = 0 }, done
+  M.learnStats.started = M.learnStats.started or now()
   if #entries > 0 and not silent then say("looking at " .. #entries .. " " .. what .. (#entries == 1 and "" or "s") .. "…") end
   M.learnNext()
 end
@@ -21585,17 +21589,30 @@ local function slots(lines)
   if used and max then return math.max(0, max - used) end
 end
 
-function M.stopReagent(msg)
-  local R = M.reagentRun
-  if not R then return end
-  M.reagentRun = nil
-  if not msg then return end
+local function reagentShortages(R)
   local left = {}
   for _, name in ipairs(missing(R.counts or {})) do
     local v = R.counts[name]
     left[#left + 1] = name .. " " .. (v.cap - v.have)
   end
-  say("reagents: " .. msg .. (#left > 0 and (" · still short: " .. table.concat(left, ", ")) or ""))
+  if #left > 0 then return "still short: " .. table.concat(left, ", ") end
+end
+
+function M.reagentStopStats(R)
+  local bought = {}
+  for name, n in pairs(R.bought or {}) do bought[#bought + 1] = n .. " " .. name end
+  table.sort(bought)
+  return #bought > 0 and (table.concat(bought, ", ") .. " bought") or "0 verified purchases",
+    reagentShortages(R), R.buying and "last purchase still unverified" or nil
+end
+
+function M.stopReagent(msg)
+  local R = M.reagentRun
+  if not R then return end
+  M.reagentRun = nil
+  if not msg then return end
+  local left = reagentShortages(R)
+  say("reagents: " .. msg .. (left and (" · " .. left) or ""))
 end
 
 local function readReagent(R, cmd, kind, fn)
@@ -21619,8 +21636,10 @@ local function refill(R)
     if free == 0 then return M.stopReagent("no free slots for a purchase") end
     local before = R.counts[key]
     local n = math.min(free, before.cap - before.have, 500)
+    R.buying = true
     readReagent(R, string.format("shop buy %d %d", n, R.stock[key]), "reagentbuy", function(reply)
       readReagent(R, "score reagents", "reagents", function(after)
+        R.buying = nil
         local updated = counts(after)
         if not updated or not updated[key] then return M.stopReagent("couldn't verify the purchase") end
         for name, v in pairs(updated) do R.counts[name] = v end
@@ -21628,6 +21647,7 @@ local function refill(R)
           local reason = M.shopRefusal(trim(reply[1] or "")) or trim(reply[1] or "")
           return M.stopReagent("purchase added no " .. key .. (reason ~= "" and (" · " .. reason:gsub("[<>]", "")) or ""))
         end
+        R.bought[key] = (R.bought[key] or 0) + math.min(n, updated[key].have - before.have)
         refill(R)
       end)
     end)
@@ -21690,7 +21710,7 @@ function M.startReagent()
   if M.trip or M.goAsk or M.walk or M.dirWalk or M.travel or M.running or M.limbo or M.cap or M.quietNext or M.fighting() then
     return say("finish or stop the current action before sbo reagent")
   end
-  local R = {}
+  local R = { started = now(), bought = {} }
   M.reagentRun = R
   readReagent(R, "score reagents", "reagents", function(lines)
     R.counts = counts(lines)
@@ -21810,7 +21830,7 @@ function M.notePickup(loot)
     if not have then c.inv[#c.inv + 1] = n end
   end
   if M.items[n] then return M.pickupVerdict(M.items[n]) end
-  M.pickupPending = M.pickupPending or {}
+  M.pickupPending = M.pickupPending or { started = now() }
   for _, e in ipairs(M.pickupPending) do if e.name == n then return end end
   M.pickupPending[#M.pickupPending + 1] = { name = n, pickup = true }
 end
@@ -22809,35 +22829,68 @@ end
 
 -- sbo stop: whatever Oven is doing for you
 function M.stopAll()
-  local what = {}
-  if M.mobWait then M.stopMobWait(); what[#what + 1] = "waiting for a mob" end
-  if M.reagentRun then M.stopReagent(); what[#what + 1] = "refilling reagents" end
-  if M.limbo then M.stopLimbo(); what[#what + 1] = "exploring Limbo Maze" end
-  if M.goAsk then
-    if M.goAsk.resume then M.finishRoute("Stopped") end
-    M.goAsk = nil
-    pcall(M.worldDraw)
-    what[#what + 1] = "the proposed trip"
+  local stopped = false
+  local function report(action, started, ...)
+    local parts = { action .. " stopped" }
+    if started then
+      local secs = math.max(0, math.floor(now() - started))
+      local hours, mins = math.floor(secs / 3600), math.floor(secs / 60) % 60
+      parts[#parts + 1] = (hours > 0 and string.format("%dh %02dm %02ds", hours, mins, secs % 60))
+        or (mins > 0 and string.format("%dm %02ds", mins, secs % 60)) or (secs .. "s")
+    end
+    for i = 1, select("#", ...) do
+      local text = select(i, ...)
+      if text then parts[#parts + 1] = text:gsub("<", "‹"):gsub(">", "›") end
+    end
+    stopped = true
+    say(table.concat(parts, " · "))
   end
-  if M.travel or M.trip then
-    M.travel, M.trip = nil, nil
-    M.finishRoute("Stopped")
-    what[#what + 1] = "the trip"
+  local function units(n, unit) return n .. " " .. unit .. (n == 1 and "" or "s") end
+
+  local W, R, L = M.mobWait, M.reagentRun, M.limbo
+  if W then M.stopMobWait(); report("WAIT", W.started, units(W.checks or 0, "room check"), W.mob) end
+  if R then M.stopReagent(); report("REAGENT", R.started, M.reagentStopStats(R)) end
+  if L then M.stopLimbo(); report("LIMBO", L.started, units(L.roomsSeen or 0, "room") .. " explored") end
+
+  local ask, trip = M.goAsk, M.trip
+  local travel, walk, dirWalk, run, rest = M.travel, M.walk, M.dirWalk, M.running, M.stResting
+  if ask or trip or travel or walk or dirWalk or (run and run.target) or rest then
+    trip = trip or (ask and ask.resume)
+    local action = trip or ask or travel or walk or dirWalk or (run and run.target and run) or rest
+    local room = M.currentRoom()
+    local place = room and ((getRoomName and roomExists and roomExists(room) and getRoomName(room)) or ("#" .. room))
+    local progress
+    if trip then
+      local legs = #(trip.routeDone or {}) + ((trip.routeTo and trip.routeTo == room) and 1 or 0)
+      progress = units(legs, "leg") .. " completed"
+    elseif ask then progress = "route not yet accepted"
+    elseif walk then progress = units(math.max(0, (walk.step or 1) - 1), "step") .. " completed"
+    elseif dirWalk then progress = units(dirWalk.confirmed or 0, "step") .. " completed"
+    elseif travel and travel.link then progress = travel.link.dest
+    elseif run and run.target then progress = "run " .. (run.name or "") end
+
+    M.goAsk, M.travel, M.trip, M.walk, M.dirWalk, M.stResting = nil, nil, nil, nil, nil, nil
+    if run then run.target = nil end
+    if ask then pcall(M.worldDraw) end
+    if trip or travel then M.finishRoute("Stopped") end
+    report("GO", action.started or (action == run or action == rest) and action.at,
+      progress, place and ("at " .. place),
+      run and "the game will finish the signpost run",
+      rest and "you're still resting")
   end
-  if M.walk or M.dirWalk or (M.running and M.running.target) then
-    M.walk, M.dirWalk = nil, nil
-    if M.running then M.running.target = nil end
-    what[#what + 1] = "the walk"
-  end
+
   if M.learnQueue or M.learnThen then
+    local stats, left = M.learnStats or {}, #(M.learnQueue or {})
     M.learnQueue, M.learnDone, M.learnThen = nil, nil, nil
-    what[#what + 1] = "looking at items"
+    report("LEARN", stats.started, (stats.ok or 0) .. " learned", (stats.fail or 0) .. " failed", left .. " queued")
   end
-  if M.pickupPending then M.pickupPending = nil; what[#what + 1] = "looking at picked-up items" end
-  if M.stResting then M.stResting = nil; what[#what + 1] = "resting for the trip (you're still resting - stand when you like)" end
+  if M.pickupPending then
+    local q = M.pickupPending
+    M.pickupPending = nil
+    report("LOOK", q.started, units(#q, "item") .. " queued")
+  end
   M.syncBarStop()
-  if #what == 0 then return say("nothing to stop") end
-  say("stopped " .. table.concat(what, " and ") .. (M.running and " (a signpost run goes on until it stops)" or ""))
+  if not stopped then say("nothing to stop") end
 end
 
 -- sbo eq compare against [item]
