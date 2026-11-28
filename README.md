@@ -206,6 +206,10 @@ your group's lowest health, mount stamina - still comes from the prompt.
 
 ## Commands
 
+Use single quotes for a mob name with spaces, for example
+`sbo wait 'wise old hermit' sayto hermit I like you!`. Match the name or phrase
+as it appears in the room. Leaving the room or using `sbo stop` cancels the watch.
+
 Every part of the screen has one word, used for its command, its title and its settings: the
 **inspector**, **help**, **log**, **chat** and **notes** tabs, the **quest** panel and the **map** panel. The word on
 its own opens that part (`sbo log` opens the Log tab, `sbo map` the map panel); `sbo help {word}` lists
@@ -222,6 +226,7 @@ sbo                          the menu
 sbo go {what}                to a trainer, shop, quest, NPC, place, room #,
                              bookmark, or a "where is" feature (food, bank…):
                              the way that costs the least stamina (below)
+sbo wait <mob> <command>      check this room every five seconds and run the command once when the mob appears
 sbo reagent                  refill reagents in batches that fit your free inventory slots
 sbo limbo                    find down and say yes to the hermit; keeps searching until you leave Limbo
 sbo stop                     stop a walk, or anything Oven is doing for you

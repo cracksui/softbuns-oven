@@ -6487,6 +6487,47 @@ def go_asks_again_when_the_approved_route_changes():
 
 
 @test
+def wait_for_mob_runs_the_full_command_once():
+    o = Oven()
+    o.lua("""
+      gmcp.room = {info={num="99", name="The Watchtower"}}
+      sent = {}
+      sbo.sendOwn = function(cmd) sent[#sent + 1] = cmd end
+      function WATCH_TICK()
+        local id = sbo.mobWait.timer
+        local callback = timers[id][2]
+        timers[id] = nil
+        callback()
+      end
+      sbo.command("wait 'wise old hermit' sayto hermit I like you! Let me tell you why.")
+    """)
+    eq(list(o.ev("sent").values()), ["look"], "immediate look")
+    view = ["The Watchtower", "(--------------------)", "", "  The wise old hermit once lived here.  "]
+    o.block(view + ["An adventurer tells you 'The wise old hermit is here.'", "<10hp 10sp 10st>"], cmds=["look"])
+    eq(list(o.ev("sent").values()), ["look"], "prose and tells do not match")
+    o.lua("WATCH_TICK()")
+    occupants = view + ["[Shop] A wise old hermit sits by the fire.", "<10hp 10sp 10st>"]
+    o.block(occupants, cmds=["look"])
+    o.block(occupants, cmds=["look"])
+    o.lua("WATCH_TICK()")
+    eq(list(o.ev("sent").values()), ["look", "look", "sayto hermit I like you! Let me tell you why."])
+    assert not o.ev("sbo.mobWait")
+
+    o.lua('sbo.command("wait orc backstab orc")')
+    o.block(view + ["A prowling orca circles here.", "<10hp 10sp 10st>"], cmds=["look"])
+    assert o.ev("sbo.mobWait and not sbo.mobWait.found")
+    o.block(view + ["A hungry orc circles here.", "<10hp 10sp 10st>"], cmds=["score"])
+    assert o.ev("sbo.mobWait and not sbo.mobWait.found")
+    o.block(view + ["A hungry orc circles here.", "<10hp 10sp 10st>"], cmds=["look"])
+    o.lua('gmcp.room.info.num = "100"; sbo.checkMobWaitRoom()')
+    assert not o.ev("sbo.mobWait")
+    eq(o.ev("sent[#sent]"), "look", "leaving cancels the queued command")
+
+    o.lua('sbo.command("wait orc backstab orc"); id = sbo.mobWait.timer; sbo.command("stop")')
+    assert o.ev("not sbo.mobWait and not timers[id]")
+
+
+@test
 def reagent_refill_batches_live_shop_items_and_verifies_progress():
     o = Oven()
     o.lua("""

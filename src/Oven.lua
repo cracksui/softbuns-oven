@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.83"
+M.version = "1.99.84"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -11529,7 +11529,7 @@ function M.gmcpHandlersList()
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onFightStatus) end),
     registerAnonymousEventHandler("gmcp.room.info", function() pcall(M.onFightRoom) end),
     -- a new connection: read your aliases again at its first prompt
-    registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil; M.stopLimbo(); M.limboMap = nil; M.stopReagent() end),
+    registerAnonymousEventHandler("sysConnectionEvent", function() M.aliasesRead, M.aliasesAsked = nil, nil; M.stopLimbo(); M.limboMap = nil; M.stopReagent(); M.stopMobWait() end),
     registerAnonymousEventHandler("gmcp.char.status", function() pcall(M.onGmcpStatus) end),
     -- HP / SP / ST as they change (mid-fight too): redraw the bar
     registerAnonymousEventHandler("gmcp.char.vitals", function() if M.cfg.bar then pcall(M.drawBar) end end),
@@ -11543,7 +11543,7 @@ function M.gmcpHandlersList()
       pcall(M.wrongDir, type(w) == "table" and w.wrongdir or w)
     end),
     registerAnonymousEventHandler("gmcp.room.info", function() pcall(M.wayRoom) end),
-    registerAnonymousEventHandler("gmcp.room.info", function() M.limboRoom() end),
+    registerAnonymousEventHandler("gmcp.room.info", function() M.limboRoom(); M.checkMobWaitRoom() end),
     registerAnonymousEventHandler("gmcp.char.affect_application_msg", function() pcall(M.onGmcpAffect) end),
     registerAnonymousEventHandler("gmcp.char.lasttargeted", function() pcall(M.onGmcpTarget) end),
   }
@@ -12869,6 +12869,106 @@ M.addBlockReader("room_mobs", "room", function(b, seg)
     end
   end
 end)
+
+do
+local function watchRoom()
+  local info = M.gmcpGet("room.info")
+  if type(info) ~= "table" then return end
+  local id = tonumber(info.num)
+  if id and id > 0 then return id end
+  -- A hidden room has no public ID. Its exits can still distinguish it from other rooms.
+  local exits = info.exits
+  if type(exits) ~= "table" then return end
+  local links = {}
+  for dir, to in pairs(exits) do
+    if dir:match("_realnum$") then links[#links + 1] = dir .. ":" .. tostring(to) end
+  end
+  if #links == 0 then return end
+  table.sort(links)
+  return tostring(info.zone) .. ":" .. tostring(info.name) .. ":" .. table.concat(links, ",")
+end
+
+function M.stopMobWait(msg)
+  local W = M.mobWait
+  if not W then return end
+  M.mobWait = nil
+  if W.timer then killTimer(W.timer) end
+  if msg then M.say(msg) end
+end
+
+function M.checkMobWaitRoom()
+  local W = M.mobWait
+  if not W then return end
+  local here = watchRoom()
+  if here and here ~= W.room then
+    M.stopMobWait("stopped waiting for " .. W.mob .. " (you left the room)")
+  end
+end
+
+local function pollMob(W)
+  if M.mobWait ~= W then return end
+  M.checkMobWaitRoom()
+  if M.mobWait ~= W then return end
+  W.timer = tempTimer(5, function() pollMob(W) end)
+  if watchRoom() == W.room and not M.cap and not M.quietNext and not M.limbo and not M.reagentRun then
+    M.sendOwn("look", false)
+  end
+end
+
+function M.startMobWait(args)
+  local mob, cmd
+  if args:sub(1, 1) == "'" then mob, cmd = args:match("^'(.-)'%s+(.+)$")
+  else mob, cmd = args:match("^(%S+)%s+(.+)$") end
+  if not mob or trim(mob) == "" or trim(cmd) == "" then
+    return M.say("usage: sbo wait <mob or 'mob name'> <command>")
+  end
+  if not M.mayAutoSend() then return end
+  local here = watchRoom()
+  if not here then return M.say("couldn't identify the current room; move one room and try sbo wait again") end
+  M.stopMobWait()
+  mob = trim(mob:gsub("%s+", " ")):lower()
+  local W = { room = here, mob = mob, cmd = cmd }
+  M.mobWait = W
+  M.say("waiting for " .. mob .. " · sbo stop cancels")
+  pollMob(W)
+end
+
+M.addBlockReader("mob_wait", "room", function(b, seg)
+  local W = M.mobWait
+  if not W or W.found or not b.prompt or watchRoom() ~= W.room then return end
+  local looked
+  for _, cmd in ipairs(b.cmds) do
+    if trim(cmd):lower() == "look" then looked = true; break end
+  end
+  if not looked then return end
+  for i, line in ipairs(seg.here) do
+    local fg = seg.hereFg[i]
+    local _, tagged = M.npcTags(line)
+    local mob, confirmed = M.mobLine(line, fg)
+    local text = tagged or ((confirmed == 1 or (confirmed == 0 and fg == MOB_FG)) and mob)
+    local a, z
+    if text and not M.chatFind(line) then
+      text = text:lower()
+      local from = 1
+      repeat
+        a, z = text:find(W.mob, from, true)
+        if not a then break end
+        if not text:sub(a - 1, a - 1):match("[%w_]") and not text:sub(z + 1, z + 1):match("[%w_]") then
+          W.found = true
+          if W.timer then killTimer(W.timer) end
+          W.timer = tempTimer(0, function()
+            if M.mobWait ~= W then return end
+            M.stopMobWait()
+            if watchRoom() == W.room then M.sendOwn(W.cmd, true) end
+          end)
+          return
+        end
+        from = z + 1
+      until false
+    end
+  end
+end)
+end
 
 -- Quest targets ([!]): kept in quest_targets, and a small table in memory of which are, so a room's mobs
 -- cost nothing to check. A mob is one row (where it was last marked); a shop's and a worn item's are by room.
@@ -22079,6 +22179,7 @@ M.CMDS = {
       if who and (r:sub(1, 1) == "@" or M.isFriend(who)) then return M.friendWhere(who, true) end
       return M.mapRun(r, true)
     end },
+  { name = "wait", args = "<mob> <command>", desc = "wait for a mob in this room, then run a command once", run = M.startMobWait },
   { name = "reagent", desc = "refill reagents in batches that fit your inventory", run = function() return M.startReagent() end },
   { name = "limbo", desc = "find the down exit in Limbo Maze and accept the hermit's offer", run = function() return M.startLimbo() end },
   { name = "stop", desc = "stop a walk, or anything Oven is doing for you", run = function() return M.stopAll() end },
@@ -22659,6 +22760,7 @@ end
 -- sbo stop: whatever Oven is doing for you
 function M.stopAll()
   local what = {}
+  if M.mobWait then M.stopMobWait(); what[#what + 1] = "waiting for a mob" end
   if M.reagentRun then M.stopReagent(); what[#what + 1] = "refilling reagents" end
   if M.limbo then M.stopLimbo(); what[#what + 1] = "exploring Limbo Maze" end
   if M.goAsk then
@@ -23692,6 +23794,7 @@ function M.questClock()
 end
 
 function M.teardown()
+  M.stopMobWait()
   M.stopReagent()
   if M.tripPanel then M.tripPanel:hide() end
   M.stopLimbo()
