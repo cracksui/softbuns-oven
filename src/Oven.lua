@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.90"
+M.version = "1.99.91"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -15232,6 +15232,7 @@ function M.limboLine(text)
   if (L.arrived or lower:find("hermit", 1, true)) and lower:find("?", 1, true)
       and (lower:find("back to life", 1, true) or lower:find("resurrect", 1, true)
            or lower:find("return to life", 1, true) or lower:find("restore your soul", 1, true)
+           or lower:find("restore you to the world of the living", 1, true)
            or lower:find("live again", 1, true)) then
     L.answered = true
     M.sendOwn("say yes", false)

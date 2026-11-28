@@ -6753,8 +6753,11 @@ def limbo_finds_down_and_answers_the_hermit():
       ROOM({}, "Limbo Maze")
       sbo.limboLine("Can you hear me?")
       assert(#sent == 4)
-      sbo.limboLine("The wise old hermit asks, 'Would you like to be brought back to life?'")
+      local offer = "A wise old hermit asks you, 'Would you like me to restore you to the world of the living?'"
+      sbo.limboLine(offer)
       assert(sent[5] == "say yes" and #sent == 5 and sbo.limbo)
+      sbo.limboLine(offer)
+      assert(#sent == 5)
       sbo.limboLine("The Powers take pity on you and restore your soul to your body.")
       assert(not sbo.limbo and not sbo.limboMap)
     """)
