@@ -6164,6 +6164,41 @@ def top_bar():
 
 
 @test
+def prompt_stop_appears_for_cancelable_activity():
+    o = Oven()
+    o.lua("""
+      sbo.cfg.bar = true
+      sbo.lastPromptText = "<291hp 696sp 457st>"
+      sbo.showBar(true)
+      assert(not WIDGETS.ovenBarStop)
+      local timer = tempTimer(10, function() error("watch should have stopped") end)
+      sbo.mobWait = {timer=timer}
+      timers[sbo.barStopTimer][2]()
+      local button = WIDGETS.ovenBarStop
+      assert(button.shown and button.text == "Stop")
+      getBorderSizes = function() return {left=30, right=50} end
+      button.move = function(_, x, y) stopX, stopY = x, y end
+      button.resize = function(_, w) stopW = w end
+      sbo.bar.move = function(_, x, y) barX, barY = x, y end
+      sbo.layoutBar()
+      assert(stopX == 30 and stopY == barY and barX == stopX + stopW)
+      button.click()
+      assert(not sbo.mobWait and not timers[timer] and not button.shown and barX == stopX)
+      sbo.walk = {}
+      timers[sbo.barStopTimer][2]()
+      assert(button.shown)
+      sbo.walk = nil
+      timers[sbo.barStopTimer][2]()
+      assert(not button.shown)
+      sbo.goAsk = {}
+      timers[sbo.barStopTimer][2]()
+      assert(button.shown)
+      local refresh = sbo.barStopTimer
+      sbo.showBar(false)
+      assert(not button.shown and not timers[refresh])
+    """)
+
+@test
 def bar_leaves_questions():
     o = Oven()
     o.lua('''sbo.cfg.bar = true; sbo.cfg.promptPattern = "[<?]"; GONE = {}

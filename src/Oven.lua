@@ -15,7 +15,7 @@ sbo = sbo or oven or {}
 oven = sbo           -- old name, kept so older links/commands still work
 local M = sbo
 
-M.version = "1.99.84"
+M.version = "1.99.85"
 M.settingsFile = getMudletHomeDir() .. "/oven_settings.lua"
 M.samplesFile  = getMudletHomeDir() .. "/oven_samples.txt"
 
@@ -10262,8 +10262,32 @@ function M.layoutBar()
   local combatOn = M.cbar and M.cbarShown
   local total = H - barY + (combatOn and h or 0)
   setBorderBottom(total)
-  M.bar:move(left, barY)
-  M.bar:resize(W - left - right, h)
+  local stopWidth = 0
+  M.barStopShown = M.canStop()
+  if M.barStopShown then
+    if not M.barStop then
+      M.barStop = Geyser.Label:new({ name = "ovenBarStop", x = 0, y = 0, width = 48, height = 20 })
+      M.barStop:echo("Stop")
+      M.barStop:setClickCallback(function() M.stopAll() end)
+      M.barStop:setCursor("PointingHand")
+      M.barStop:setToolTip("sbo stop")
+    end
+    local font = M.barFontSize()
+    local r, g, b = M.barBg()
+    local css = string.format([[QLabel { background-color: rgb(%d,%d,%d); color: %s; font-size: %dpt; font-weight: bold;
+      border: 1px solid %s; qproperty-alignment: 'AlignCenter'; } QLabel:hover { color: %s; }]],
+      r, g, b, M.hex("minus"), font, M.hex("dim"), M.hex("title"))
+    if M.barStopCss ~= css then M.barStop:setStyleSheet(css); M.barStopCss = css end
+    stopWidth = math.min(math.max(48, math.ceil(font * 3.6)), math.max(0, W - left - right))
+    M.barStop:move(left, H - h)
+    M.barStop:resize(stopWidth, h)
+    M.barStop:show()
+  elseif M.barStop then
+    M.barStop:hide()
+  end
+  local inset = below and 0 or stopWidth
+  M.bar:move(left + inset, barY)
+  M.bar:resize(W - left - right - inset, h)
   if combatOn then
     M.cbar:show(); M.cbar:move(left, barY - h); M.cbar:resize(W - left - right, h)
   elseif M.cbar then
@@ -10290,8 +10314,9 @@ function M.layoutBar()
     local css = string.format("background-color: rgb(%d,%d,%d); padding-left: 4px; qproperty-alignment: 'AlignVCenter | AlignLeft';", r, g, b)
     if M.sbarCss ~= css then M.sbar:setStyleSheet(css); M.sbarCss = css end
     M.sbar:show()
-    M.sbar:move(left, atTop and (M.baseTop or 0) or (H - h))
-    M.sbar:resize(W - left - right, h)
+    local inset = below and stopWidth or 0
+    M.sbar:move(left + inset, atTop and (M.baseTop or 0) or (H - h))
+    M.sbar:resize(W - left - right - inset, h)
   elseif M.sbar then
     M.sbar:hide()
   end
@@ -10317,6 +10342,16 @@ function M.showSessionBar(on)
   pcall(M.drawBar)
 end
 
+function M.syncBarStop()
+  if M.bar and M.cfg.bar and M.barStopShown ~= M.canStop() then M.layoutBar() end
+end
+
+function M.hideBarStop()
+  if M.barStop then M.barStop:hide() end
+  if M.barStopTimer then killTimer(M.barStopTimer); M.barStopTimer = nil end
+  M.barStopShown = false
+end
+
 function M.showBar(on)
   if on then
     if M.bar and not M.bar.rawEcho then
@@ -10334,9 +10369,11 @@ function M.showBar(on)
     M.applyBarBg()
     M.drawBar()
     if M.cfg.barSession or M.cfg.barTop ~= false then M.showSessionBar(true) end
+    if not M.barStopTimer then M.barStopTimer = tempTimer(0.25, M.syncBarStop, true) end
   else
     if M.bar then M.bar:hide() end
     if M.sbar then M.sbar:hide() end
+    M.hideBarStop()
     if M.sessTimer then killTimer(M.sessTimer); M.sessTimer = nil end
     if M.topTaken then setBorderTop(M.baseTop or 0); M.topTaken = nil end
     setBorderBottom(0)
@@ -10553,6 +10590,7 @@ function M.applyBarBg()
   if M.bar then M.bar:setStyleSheet(css) end
   if M.sbar then M.sbar:setStyleSheet(css); M.sbarCss = css end
   if M.cbar then M.cbar:setStyleSheet(css) end
+  if M.barStopShown then M.layoutBar() end
 end
 
 -- characters across the bar
@@ -22485,6 +22523,7 @@ function M.typedCommand(args)
   M.lastUserCmdAt = now()
   local ok, err = pcall(M.command, args)
   M.typing = false
+  M.syncBarStop()
   if not ok then say("that command failed: " .. tostring(err)) end
 end
 
@@ -22757,6 +22796,13 @@ function M.compareAgainstWorn(name)
   M.compareNames(w.name, name)
 end
 
+-- The Stop button and sbo stop cover the same activities.
+function M.canStop()
+  return not not (M.mobWait or M.reagentRun or M.limbo or M.goAsk or M.travel or M.trip
+    or M.walk or M.dirWalk or (M.running and M.running.target)
+    or M.learnQueue or M.learnThen or M.pickupPending or M.stResting)
+end
+
 -- sbo stop: whatever Oven is doing for you
 function M.stopAll()
   local what = {}
@@ -22785,6 +22831,7 @@ function M.stopAll()
   end
   if M.pickupPending then M.pickupPending = nil; what[#what + 1] = "looking at picked-up items" end
   if M.stResting then M.stResting = nil; what[#what + 1] = "resting for the trip (you're still resting - stand when you like)" end
+  M.syncBarStop()
   if #what == 0 then return say("nothing to stop") end
   say("stopped " .. table.concat(what, " and ") .. (M.running and " (a signpost run goes on until it stops)" or ""))
 end
@@ -23794,6 +23841,7 @@ function M.questClock()
 end
 
 function M.teardown()
+  M.hideBarStop()
   M.stopMobWait()
   M.stopReagent()
   if M.tripPanel then M.tripPanel:hide() end
